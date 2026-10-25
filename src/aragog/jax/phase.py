@@ -13,7 +13,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -248,6 +248,42 @@ class PhaseParams(eqx.Module):
                 raise ValueError('phi_width must be finite and positive')
         self.rheology = rheo_obj
 
+    @classmethod
+    def from_parameters(cls, parameters: Any, **overrides: Any) -> 'PhaseParams':
+        """Construct ``PhaseParams`` from a ``Parameters`` object, with optional keyword overrides."""
+        kwargs: dict[str, Any] = {
+            'phi_rheo': float(parameters.phase_mixed.rheological_transition_melt_fraction),
+            'phi_width': float(parameters.phase_mixed.rheological_transition_width),
+            'viscosity_solid': float(parameters.phase_solid.viscosity),
+            'viscosity_liquid': float(parameters.phase_liquid.viscosity),
+            'grain_size': float(parameters.phase_mixed.grain_size),
+            'k_solid': float(parameters.phase_solid.thermal_conductivity),
+            'k_liquid': float(parameters.phase_liquid.thermal_conductivity),
+            'matprop_smooth_width': float(parameters.phase_mixed.matprop_smooth_width),
+            'conduction': bool(parameters.energy.conduction),
+            'convection': bool(parameters.energy.convection),
+            'grav_sep': bool(parameters.energy.gravitational_separation),
+            'mixing': bool(parameters.energy.mixing),
+            'eddy_diff_thermal': float(parameters.energy.eddy_diffusivity_thermal),
+            'eddy_diff_chemical': float(parameters.energy.eddy_diffusivity_chemical),
+            'kappah_floor': float(parameters.energy.kappah_floor),
+            'bottom_up_grav_sep': bool(parameters.energy.bottom_up_grav_sep),
+            'phase_smoothing': str(parameters.energy.phase_smoothing),
+            'phase_smoothing_width': float(
+                getattr(parameters.energy, 'phase_smoothing_width', 0.01)
+            ),
+            'separation_viscosity': str(parameters.phase_mixed.separation_viscosity),
+            'convective_threshold': float(parameters.energy.convective_threshold),
+            'separation_buoyancy': str(
+                getattr(
+                    parameters.phase_mixed, 'separation_buoyancy', SEPARATION_BUOYANCY_DEFAULT
+                )
+            ),
+            'rheology': getattr(parameters.phase_solid, 'rheology', None),
+        }
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
 
 class MeshArrays(eqx.Module):
     """Static mesh geometry arrays, converted from numpy Mesh once.
@@ -315,6 +351,8 @@ class MeshArrays(eqx.Module):
         top_limited=False,
         top_ratio=1.0,
         top_bounds=(-jnp.inf, jnp.inf),
+        *,
+        validate_rheology: bool = False,
     ):
         """Custom init so callers that predate the dP_dr_basic field
         keep working. When ``dP_dr_basic`` is not supplied we derive it
@@ -333,34 +371,6 @@ class MeshArrays(eqx.Module):
         self.P_stag = P_stag
         self.P_basic = P_basic
         self.gravity = gravity
-        if not isinstance(radii_basic, jax.core.Tracer):
-            r_b = np.asarray(radii_basic, dtype=float).ravel()
-            if (
-                r_b.size < 3
-                or not np.all(np.isfinite(r_b))
-                or r_b[0] <= 0.0
-                or not np.all(np.diff(r_b) > 0.0)
-            ):
-                raise ValueError(
-                    'basic-node radii must be finite, positive, and strictly increasing with >= 3 nodes'
-                )
-            ml = np.asarray(mixing_length, dtype=float).ravel()
-            if not np.all(np.isfinite(ml)) or np.any(ml < 0.0):
-                raise ValueError('basic-node mixing_length must be finite and non-negative')
-            p_b = np.asarray(P_basic, dtype=float).ravel()
-            p_s = np.asarray(P_stag, dtype=float).ravel()
-            if (
-                not np.all(np.isfinite(p_b))
-                or np.any(p_b < -1.0)
-                or not np.all(np.isfinite(p_s))
-                or np.any(p_s < -1.0)
-            ):
-                raise ValueError(
-                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
-                )
-            g_b = np.asarray(gravity, dtype=float).ravel()
-            if not np.all(np.isfinite(g_b)) or np.any(g_b <= 0.0):
-                raise ValueError('gravity at basic nodes must be finite and positive')
         if dP_dr_basic is None:
             import numpy as _np
 
@@ -379,9 +389,45 @@ class MeshArrays(eqx.Module):
         self.gravity_stag = jnp.asarray(gravity_stag)
         self.top_limited, self.top_ratio = bool(top_limited), float(top_ratio)
         self.top_bounds = jnp.asarray(top_bounds, dtype=float)
+        if validate_rheology:
+            self.validate_for_rheology()
+
+    def validate_for_rheology(self) -> None:
+        """Validate static mesh invariants required when solid-state rheology is enabled."""
+        if not isinstance(self.radii_basic, jax.core.Tracer):
+            r_b = np.asarray(self.radii_basic, dtype=float).ravel()
+            if (
+                r_b.size < 3
+                or not np.all(np.isfinite(r_b))
+                or r_b[0] <= 0.0
+                or not np.all(np.diff(r_b) > 0.0)
+            ):
+                raise ValueError(
+                    'basic-node radii must be finite, positive, and strictly increasing with >= 3 nodes'
+                )
+        if not isinstance(self.mixing_length, jax.core.Tracer):
+            ml = np.asarray(self.mixing_length, dtype=float).ravel()
+            if not np.all(np.isfinite(ml)) or np.any(ml < 0.0):
+                raise ValueError('basic-node mixing_length must be finite and non-negative')
+        if not isinstance(self.P_basic, jax.core.Tracer):
+            p_b = np.asarray(self.P_basic, dtype=float).ravel()
+            if not np.all(np.isfinite(p_b)) or np.any(p_b < -1.0):
+                raise ValueError(
+                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
+                )
+        if not isinstance(self.P_stag, jax.core.Tracer):
+            p_s = np.asarray(self.P_stag, dtype=float).ravel()
+            if not np.all(np.isfinite(p_s)) or np.any(p_s < -1.0):
+                raise ValueError(
+                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
+                )
+        if not isinstance(self.gravity, jax.core.Tracer):
+            g_b = np.asarray(self.gravity, dtype=float).ravel()
+            if not np.all(np.isfinite(g_b)) or np.any(g_b <= 0.0):
+                raise ValueError('gravity at basic nodes must be finite and positive')
 
     @staticmethod
-    def from_numpy_mesh(mesh) -> 'MeshArrays':
+    def from_numpy_mesh(mesh, *, validate_rheology: bool = False) -> 'MeshArrays':
         """Build from a numpy Aragog Mesh object."""
         P_basic_arr = np.asarray(mesh.basic_pressure).ravel()
         r_basic_arr = np.asarray(mesh.basic.radii).ravel()
@@ -420,6 +466,7 @@ class MeshArrays(eqx.Module):
             top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
             top_ratio=getattr(mesh, 'top_ratio', 1.0),
             top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
+            validate_rheology=validate_rheology,
         )
 
 
@@ -781,7 +828,6 @@ def compute_mlt(
     mesh: MeshArrays,
     params: PhaseParams,
     theta: jax.Array | float | None = None,
-    apply_q_mlt: bool = True,
     return_aux: bool = False,
     return_q_025: bool = False,
 ) -> tuple[jax.Array, ...]:
@@ -799,9 +845,6 @@ def compute_mlt(
         Static parameters.
     theta : jax.Array or float, optional
         Frank-Kamenetskii contrast for viscous mixing-length rescaling.
-    apply_q_mlt : bool, default True
-        When True and ``params.rheology.enabled`` is True, rescale the
-        viscous mixing-length factor by ``q_mlt``.
     return_aux : bool, default False
         When True, also return ``(reynolds, viscous_velocity)`` as the
         third and fourth elements of the returned tuple.
@@ -840,7 +883,7 @@ def compute_mlt(
     inviscid_velocity = jnp.sqrt(inviscid_velocity_sq + eps_sqrt)
 
     blend_width = 0.01 * RE_CRIT
-    if params.rheology.enabled and apply_q_mlt:
+    if params.rheology.enabled:
         q_mlt = _viscous_mixing_length_factor_core(
             radii=mesh.radii_basic,
             r_in=mesh.radii_basic[0],
@@ -854,29 +897,19 @@ def compute_mlt(
         )
         q_025 = q_mlt**0.25
         q_075 = q_mlt**0.75
-        viscous_velocity = (
-            velocity_prefactor * mesh.mixing_length_cu * q_075 / (18.0 * nu)
-        ) * conv_mask
-        reynolds = viscous_velocity * mesh.mixing_length * q_025 / nu
-        inviscid_weight = 0.5 * (
-            1.0 + jnp.tanh((reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
-        )
-        kh_raw = (
-            (1.0 - inviscid_weight) * (viscous_velocity * q_025)
-            + inviscid_weight * inviscid_velocity
-        ) * mesh.mixing_length
     else:
-        q_025 = jnp.ones_like(dSdr)
-        viscous_velocity = (
-            velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)
-        ) * conv_mask
-        reynolds = viscous_velocity * mesh.mixing_length / nu
-        inviscid_weight = 0.5 * (
-            1.0 + jnp.tanh((reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
-        )
-        kh_raw = (
-            (1.0 - inviscid_weight) * viscous_velocity + inviscid_weight * inviscid_velocity
-        ) * mesh.mixing_length
+        q_025 = q_075 = jnp.ones_like(dSdr)
+    viscous_velocity = (
+        velocity_prefactor * mesh.mixing_length_cu * q_075 / (18.0 * nu)
+    ) * conv_mask
+    reynolds = viscous_velocity * mesh.mixing_length * q_025 / nu
+    inviscid_weight = 0.5 * (
+        1.0 + jnp.tanh((reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
+    )
+    kh_raw = (
+        (1.0 - inviscid_weight) * (viscous_velocity * q_025)
+        + inviscid_weight * inviscid_velocity
+    ) * mesh.mixing_length
 
     # Thermal eddy diffusivity (SPIDER convention: positive=scale, negative=constant)
     kappa_h = jnp.where(
@@ -1006,7 +1039,6 @@ def compute_fluxes(
         mesh,
         params,
         theta=None,
-        apply_q_mlt=params.rheology.enabled,
         return_aux=True,
         return_q_025=True,
     )
@@ -1105,7 +1137,6 @@ def compute_fluxes(
             mesh,
             params,
             theta=theta_pass2,
-            apply_q_mlt=True,
         )
         jconv = params.convection * (rho * T * kappa_h * (-dSdr))
 

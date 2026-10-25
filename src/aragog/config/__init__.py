@@ -111,7 +111,6 @@ class Config:
             Legacy Parameters object, ready for Solver.
         """
         from aragog.parser import (
-            _RHEOLOGY_FIELD_NAMES,
             Parameters,
             _BoundaryConditionsParameters,
             _EnergyParameters,
@@ -120,6 +119,7 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
+            _reject_flat_rheology,
             _resolve_data_paths,
             _SolverParameters,
         )
@@ -141,38 +141,21 @@ class Config:
         mesh = _MeshParameters(**data['mesh'])
         energy = _EnergyParameters(**data['energy'])
         initial_condition = _InitialConditionParameters(**data.get('initial_condition', {}))
-        phase_liquid_data = dict(data['phase_liquid'])
-        if 'phase_liquid.rheology' in data:
-            if 'rheology' in phase_liquid_data:
-                raise ValueError(
-                    "Cannot specify both data['phase_liquid']['rheology'] and "
-                    "data['phase_liquid.rheology']"
-                )
-            phase_liquid_data['rheology'] = data['phase_liquid.rheology']
+        phase_data: dict[str, dict] = {}
+        for name in ('phase_liquid', 'phase_solid'):
+            phase_data[name] = dict(data[name])
+            if f'{name}.rheology' in data:
+                if 'rheology' in phase_data[name]:
+                    raise ValueError(
+                        f"Cannot specify both data['{name}']['rheology'] and "
+                        f"data['{name}.rheology']"
+                    )
+                phase_data[name]['rheology'] = data[f'{name}.rheology']
+        for name, section in phase_data.items():
+            _reject_flat_rheology(name, section)
 
-        phase_solid_data = dict(data['phase_solid'])
-        if 'phase_solid.rheology' in data:
-            if 'rheology' in phase_solid_data:
-                raise ValueError(
-                    "Cannot specify both data['phase_solid']['rheology'] and "
-                    "data['phase_solid.rheology']"
-                )
-            phase_solid_data['rheology'] = data['phase_solid.rheology']
-
-        for section_name, phase_data in (
-            ('phase_liquid', phase_liquid_data),
-            ('phase_solid', phase_solid_data),
-        ):
-            flat_rheo = [k for k in phase_data if k in _RHEOLOGY_FIELD_NAMES]
-            if flat_rheo:
-                raise ValueError(
-                    f'Configuration error in [{section_name}]: '
-                    f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
-                    f'not flat in [{section_name}]'
-                )
-
-        phase_liquid = _PhaseParameters(**phase_liquid_data)
-        phase_solid = _PhaseParameters(**phase_solid_data)
+        phase_liquid = _PhaseParameters(**phase_data['phase_liquid'])
+        phase_solid = _PhaseParameters(**phase_data['phase_solid'])
         phase_mixed = _PhaseMixedParameters(**data['phase_mixed'])
 
         radionuclides: list[_Radionuclide] = []

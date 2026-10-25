@@ -69,11 +69,19 @@ class SolidRheologyParams:
     -----
     Coupled and tabulated PALEOS runs evaluate the phase-boundary solidus
     :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from the PALEOS
-    :math:`\mathrm{MgSiO_3}` melting curve. When no solidus table reaches a
-    call, the linear fallback defaults ``t_sol_0 = 1400.0`` K and
-    ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
-    whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
-    1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
+    :math:`\mathrm{MgSiO_3}` melting curve. In both table-solidus and
+    linear-fallback modes, ``t_sol_0`` sets the zero-pressure reference
+    activation enthalpy ``h_0 = g_homologous * R * t_sol_0``, so
+    ``viscosity_solid`` is the viscosity at ``(arrhenius_t_ref, P=0)`` on the
+    linear solidus ``t_sol_0``; with a table solidus,
+    ``eta(T_ref, 0) = viscosity_solid * exp(g_homologous * (T_sol,table(0) - t_sol_0) / T_ref)``
+    (``1.8459 * viscosity_solid`` for the CI test table with
+    ``T_sol,table(0) = 1439.230032 K`` and ``t_sol_0 = 1400 K``). When no
+    solidus table reaches a call, the linear fallback defaults
+    ``t_sol_0 = 1400.0`` K and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a
+    table-free benchmark form whose largest deviation from the PALEOS solidus
+    over 0 to 135 GPa is 1108.1 K (see
+    ``docs/Explanations/solid_state_convection.md`` Section 1).
     See ``docs/Explanations/solid_state_convection.md`` for model formulation
     and derivations.
     """
@@ -690,7 +698,7 @@ def compute_arrhenius_viscosity(
     .. math::
         \eta_\mathrm{diff}(T, P) = \eta_0 f_\mathrm{water} \exp\left[
             g_\mathrm{hom} \left(
-                \frac{T_\mathrm{sol}(P)}{T} - \frac{T_\mathrm{sol}(0)}{T_\mathrm{ref}}
+                \frac{T_\mathrm{sol}(P)}{T} - \frac{T_{\mathrm{sol},0}}{T_\mathrm{ref}}
             \right)
         \right]
 
@@ -702,7 +710,12 @@ def compute_arrhenius_viscosity(
         Pressure P [Pa] (non-negative; negative round-off excursions down to
         ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     viscosity_solid : float, optional
-        Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
+        Reference solid-state dynamic viscosity eta_0 [Pa s] at ``(T_ref, P=0)``
+        on the linear solidus ``t_sol_0`` (since ``h_0 = g_hom * R * t_sol_0``;
+        with a table solidus ``T_sol,table(P)``,
+        ``eta_diff(T_ref, 0) = viscosity_solid * f_water * exp(g_hom * (T_sol,table(0) - t_sol_0) / T_ref)``,
+        which is ``1.8459 * viscosity_solid`` for the CI test table with
+        ``T_sol,table(0) = 1439.230032 K`` and ``t_sol_0 = 1400 K``).
         Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
@@ -711,8 +724,11 @@ def compute_arrhenius_viscosity(
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
         ``t_sol_0 + dt_sol_dp * P``.
     t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
-        ``solidus_temperature`` is provided; defaults to
+        Zero-pressure reference solidus temperature ``T_sol,0`` [K] setting the
+        reference activation enthalpy ``h_0 = g_hom * R * t_sol_0`` in both
+        table-solidus and linear-fallback modes (and the zero-pressure intercept
+        of the linear fallback when ``solidus_temperature`` is None). Required
+        when ``solidus_temperature`` is provided; defaults to
         ``SolidRheologyParams.t_sol_0`` for the linear fallback.
     dt_sol_dp : float, optional
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
