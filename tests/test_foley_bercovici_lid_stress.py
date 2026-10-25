@@ -1560,7 +1560,7 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
 
     earth_inputs = _make_earth_reference_inputs()
     st_earth = compute_stagnant_lid_state(**earth_inputs)
-    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-10)
+    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439610392, rel=1.0e-12)
 
 
 @pytest.mark.unit
@@ -1858,6 +1858,11 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
     st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.002})
     assert float(st_l33['r_lid_base']) == pytest.approx(5961284.616364969, rel=1.0e-12)
     assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 35.0e3
+
+    # Zero convective flux deactivates non-convective gating across the mantle.
+    st_zero = compute_stagnant_lid_state(**{**base_inp, 'convective_flux': np.zeros(n_nodes)})
+    assert float(st_zero['r_lid_base']) == pytest.approx(5668000.236544377, rel=1.0e-12)
+    assert float(st_zero['r_lid_base']) == pytest.approx(5668000.2, rel=1.0e-4)
 
     # Melt ramp confined to the 8 non-convecting lid nodes (-8:): moves from 6190.27 km to 5898.16 km.
     phi_lid = np.zeros(n_nodes)

@@ -37,8 +37,6 @@ from aragog.jax.phase import (
     evaluate_phase,
 )
 
-_phase_evaluate_phase = evaluate_phase
-
 # diffrax is imported lazily inside `solve_entropy` so that the rest
 # of this module (dSdt, BoundaryParams, BC helpers) can be used by
 # downstream code (e.g. CVODE wrappers, parity tests) without
@@ -407,12 +405,6 @@ def _dSdt_parts(
     # Compute fluxes (conduction, convection, grav sep, mixing).
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
-    _eval_phase = globals()['evaluate_phase']
-    evaluate_phase = (
-        _eval_phase
-        if _eval_phase is _phase_evaluate_phase
-        else (lambda eos_, params_, P_, S_, **kw: _eval_phase(eos_, params_, P_, S_))
-    )
 
     # Phase properties needed for BCs
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S, include_rheology=False)

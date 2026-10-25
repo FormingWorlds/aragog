@@ -36,7 +36,12 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
 )
-from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
+from aragog.rheology import (
+    SolidRheologyParams,
+    check_viscosity_ceiling,
+    delegate_rheology,
+    merge_rheology,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -348,6 +353,17 @@ class _PhaseMixedParameters:
 _RHEOLOGY_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in fields(SolidRheologyParams))
 
 
+def _reject_flat_rheology(section_name: str, keys: Any, source: str = '') -> None:
+    """Raise ``ValueError`` when a phase section holds a rheology key outside its subtable."""
+    flat_rheo = [k for k in keys if k in _RHEOLOGY_FIELD_NAMES]
+    if flat_rheo:
+        raise ValueError(
+            f'Configuration error in [{section_name}]{source}: '
+            f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+            f'not flat in [{section_name}]'
+        )
+
+
 @delegate_rheology
 @dataclass
 class _PhaseParameters:
@@ -392,17 +408,7 @@ class _PhaseParameters:
         self.viscosity = viscosity
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, kwargs)
-        if (
-            isinstance(viscosity, (int, float, np.number))
-            and not isinstance(viscosity, (bool, np.bool_))
-            and np.isfinite(float(viscosity))
-            and float(viscosity) > 0.0
-            and self.rheology.viscosity_max_log10 <= float(np.log10(float(viscosity)))
-        ):
-            raise ValueError(
-                f'viscosity_max_log10 ({self.rheology.viscosity_max_log10}) must be > '
-                f'log10(viscosity) ({float(np.log10(float(viscosity)))})'
-            )
+        check_viscosity_ceiling(viscosity, self.rheology)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
@@ -574,6 +580,14 @@ class Parameters:
         for r, r_scaled in zip(self.radionuclides, scaled):
             r.concentration = r_scaled.concentration
 
+        if self.phase_liquid.rheology != SolidRheologyParams():
+            raise ValueError(
+                'Solid-state rheology is only supported on phase_solid; '
+                'phase_liquid.rheology must keep default values (enabled=False).'
+            )
+        check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
+        check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
+
     @classmethod
     def from_file(cls, *filenames) -> Self:
         """Parse the parameters from a configuration file.
@@ -640,13 +654,7 @@ class Parameters:
                     f'in {path.name}'
                 )
             if dataclass_ is _PhaseParameters:
-                flat_rheo = [k for k in section if k in _RHEOLOGY_FIELD_NAMES]
-                if flat_rheo:
-                    raise ValueError(
-                        f'Configuration error in [{section_name}] of {path.name}: '
-                        f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
-                        f'not flat in [{section_name}]'
-                    )
+                _reject_flat_rheology(section_name, section, f' of {path.name}')
             try:
                 init_dict[section_name] = dataclass_(**section)
             except (TypeError, ValueError) as exc:
@@ -699,15 +707,11 @@ class Parameters:
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
             if dataclass_ is _PhaseParameters and parser.has_section(section_name):
-                flat_rheo = [
-                    k for k, _ in parser.items(section_name) if k in _RHEOLOGY_FIELD_NAMES
-                ]
-                if flat_rheo:
-                    raise ValueError(
-                        f'Configuration error in [{section_name}] of {Path(filenames[0]).name}: '
-                        f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
-                        f'not flat in [{section_name}]'
-                    )
+                _reject_flat_rheology(
+                    section_name,
+                    (k for k, _ in parser.items(section_name)),
+                    f' of {Path(filenames[0]).name}',
+                )
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )

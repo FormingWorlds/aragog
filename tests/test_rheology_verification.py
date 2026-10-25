@@ -1349,7 +1349,7 @@ def test_validation_and_lid_base_edge_cases():
             phi_width=0.15,
         )
 
-    # 7. In 'fixed' mode (Form 6B) when T < lid_base_temperature=5000 K everywhere: r_lid_base sits
+    # 7. In 'fixed' mode (compact non-convective weight) when T < lid_base_temperature=5000 K everywhere: r_lid_base sits
     # at r[-2] when nodes 0..n-2 convect, r[-1] (d_lid = 0) when all convect, and r[0] when none do.
     st_full_lid = compute_stagnant_lid_state(
         radii=r,
@@ -2355,7 +2355,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
     # Outside band edge d* = 3.453878e-3 K (at 1e-2 K > 1e-3 + d*), d_lid matches d_raw_dt to 1e-12.
     assert float(st_dt_out['d_lid']) == pytest.approx(d_raw_dt, rel=1.0e-12)
 
-    # Verify w_y uses un-gated tau_d_lid_raw so yield onset does not shift inside the w_lid_present gate band.
+    # Verify w_y uses raw tau_d_lid_raw so yield onset does not shift inside the w_lid_present transition band.
     tau_d_raw_mid = float(st_dt_out['tau_d_lid'])
     t_mid_arr = np.full(n, 1600.0)
     t_mid_arr[-1] = 1600.0 - 1.0e-3
@@ -2403,7 +2403,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
     g_dt_mid = float(grad_dt_fn(jnp.asarray(1.0e-3)))
     assert np.isfinite(g_dt_mid) and g_dt_mid > 0.0
 
-    # Hard-gate mutant canary for T_i - T_surf > 1e-3 K:
+    # Hard-threshold mutant canary for T_i - T_surf > 1e-3 K:
     smooth_jump_dt = abs(
         float(_eval_dt(1.0e-3 + 1.0e-6)['d_lid']) - float(_eval_dt(1.0e-3 - 1.0e-6)['d_lid'])
     )
@@ -2443,7 +2443,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
     )
     assert float(st_d08['d_lid']) == pytest.approx(expected_wd_08 * d_raw_08, rel=1.0e-12)
 
-    # Hard-gate mutant canary for d_lid_raw > 1.0 m:
+    # Hard-threshold mutant canary for d_lid_raw > 1.0 m:
     st_d12 = compute_stagnant_lid_state(
         radii=r100,
         temperature=t100,
@@ -2593,7 +2593,16 @@ def test_stagnant_lid_smooth_gates_and_scales():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
-    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and main parity across interior_flux_fraction."""
+    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and stagnant-lid interior state parity across interior_flux_fraction.
+
+    The 13 unchanged points are pinned to merge-base c8f0b6cd literals at rel=1e-12.
+    The 7 transition points (0 < w_weight < 1) are pinned to the independent evaluation
+    of the Section 1.1 geotherm endpoint-blended formulas produced by
+    tools/verification/evaluate_lid_transition_reference.py
+    (command: python tools/verification/evaluate_lid_transition_reference.py)
+    at rel=1e-12 (just above the measured kernel difference of <= 1e-15), with merge-base
+    values noted beside each.
+    """
     from pathlib import Path
 
     import aragog.rheology_lid as lid_mod
@@ -2608,7 +2617,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     t = np.linspace(2600.0, 300.0, n)
     phi = np.zeros(n)
 
-    # 1. Row 12: sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv.
+    # 1. Sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv:
     f_tot_sign = np.linspace(-100.0, 100.0, n)
     f_tot_sign[10] = 0.0
     f_loc_rms_10 = float(np.sqrt(np.mean(f_tot_sign[8:13] ** 2)))
@@ -2661,7 +2670,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
     assert float(st_internodal['w_active']) < 0.45
 
-    # 2. Row 20: mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1).
+    # 2. Mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1):
     fc_active = np.full(n, 80.0)
     fc_active[-4:] = 0.0
     ft_active = np.full(n, 100.0)
@@ -2710,36 +2719,74 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         )
 
     # 3. Sub-threshold and low-flux parity of eta_i, T_i, and mu_i across interior_flux_fraction
-    # in {0.05, 0.10, 0.20, 0.50} with geotherm endpoint blending (Row 5).
+    # in {0.05, 0.10, 0.20, 0.50} with geotherm endpoint blending.
     n_l1 = 50
     r_l1 = np.linspace(3.48e6, 6.371e6, n_l1)
     t_l1 = np.linspace(2600.0, 1400.0, n_l1)
     p_l1 = np.linspace(135.0e9, 0.0, n_l1)
     phi_l1 = np.zeros(n_l1)
     visc_mix_l1 = np.full(n_l1, 1.0e15)
-    main_literals = {
+
+    # 13 points outside transition bands pinned to merge-base c8f0b6cd literals:
+    merge_base_literals = {
         (0.05, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.05, 6.00843e-5): (2.3060133389415036e20, 1856.5546317909584, 2.3060133389415036e20),
-        (0.05, 1.0e-4): (3.211682389068213e17, 1626.722938791537, 3.211682389068213e17),
-        (0.05, 1.0e-3): (1000000065827477.6, 1424.4909098970506, 1000000065827477.6),
-        (0.05, 0.03): (1000000000000000.0, 1424.490907753382, 1000000000000000.0),
+        (0.05, 1.0e-3): (1000000065827473.5, 1424.4909098970506, 1000000065827473.5),
+        (0.05, 0.03): (1000000000000004.1, 1424.490907753382, 1000000000000004.1),
         (0.10, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.10, 6.00843e-5): (6.037030713767539e30, 2575.467182755998, 6.037030713767539e30),
-        (0.10, 1.0e-4): (6.030540111438592e30, 2575.438315702754, 6.030540111438592e30),
-        (0.10, 1.0e-3): (5.871807349442422e30, 2574.722430755179, 5.871807349442422e30),
-        (0.10, 0.03): (1.0036004104618392e18, 1667.4062468015593, 1.0036004104618392e18),
         (0.20, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.20, 0.03): (6.046715914763067e30, 2575.5101979531364, 6.046715914763067e30),
         (0.50, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
     }
-    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in main_literals.items():
+
+    # 7 transition points (0 < w_weight < 1) evaluated independently by
+    # tools/verification/evaluate_lid_transition_reference.py from Section 1.1 formulas:
+    transition_derivation_literals = {
+        (0.05, 6.00843e-5): (
+            2.3060133389415036e20,
+            1856.5546317909584,
+            2.3060133389415036e20,
+        ),  # c8f0b6cd merge base: 8.9648269867330201e20, 1856.5546317909584, 8.9648269867330201e20
+        (0.05, 1.0e-4): (
+            3.2116823890682131e17,
+            1626.7229387915370,
+            3.2116823890682131e17,
+        ),  # c8f0b6cd merge base: 5.4401391641927213e17, 1626.7229387915370, 5.4401391641927213e17
+        (0.10, 6.00843e-5): (
+            6.0370307137675392e30,
+            2575.4671827559978,
+            6.0370307137675392e30,
+        ),  # c8f0b6cd merge base: 6.0389133587052112e30, 2575.4671827559978, 6.0389133587052112e30
+        (0.10, 1.0e-4): (
+            6.0305401114385923e30,
+            2575.4383157027542,
+            6.0305401114385923e30,
+        ),  # c8f0b6cd merge base: 6.0336828502715910e30, 2575.4383157027542, 6.0336828502715910e30
+        (0.10, 1.0e-3): (
+            5.8718073494424216e30,
+            2574.7224307551792,
+            5.8718073494424216e30,
+        ),  # c8f0b6cd merge base: 5.9054014562120670e30, 2574.7224307551792, 5.9054014562120670e30
+        (0.10, 0.03): (
+            1.0036004104618392e18,
+            1667.4062468015593,
+            1.0036004104618392e18,
+        ),  # c8f0b6cd merge base: 1.9932572310324982e18, 1667.4062468015593, 1.9932572310324982e18
+        (0.20, 0.03): (
+            6.0467159147630670e30,
+            2575.5101979531364,
+            6.0467159147630670e30,
+        ),  # c8f0b6cd merge base: 6.0467165336094990e30, 2575.5101979531364, 6.0467165336094990e30
+    }
+    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in {
+        **merge_base_literals,
+        **transition_derivation_literals,
+    }.items():
         st_sub = compute_stagnant_lid_state(
             radii=r_l1,
             temperature=t_l1,
@@ -3633,7 +3680,7 @@ def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
+def test_geotherm_interior_state_and_monotone_subthreshold_band():
     """Verify P_T_i stays on the geotherm and eta_solid_arrhenius(s), eta_i(s), and theta(s) are monotone across s in [0, 1e-3]."""
     from pathlib import Path
 
@@ -3719,6 +3766,105 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
     assert float(st_aff['P_T_i']) == pytest.approx(p_aff_expected, rel=1.0e-14)
     assert float(st_aff['r_i']) == pytest.approx(r_aff_expected, rel=1.0e-14)
 
+    # Discriminating non-affine geotherm P(T) = a * (T - T_surf)**2:
+    # P_T_i strictly differs from the linear chord sum (Lens 2 F7 item 3).
+    p_quad = 120.0e9 * ((t_aff - 1200.0) / (3000.0 - 1200.0)) ** 2
+    st_quad = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_aff,
+        pressure=p_quad,
+        convective_flux=np.full(n_aff, 1.0e-4),
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    t_i_quad = float(st_quad['T_i'])
+    p_geo_quad = float(np.interp(t_i_quad, t_aff[::-1], p_quad[::-1]))
+    p_linear_chord = 120.0e9 * (t_i_quad - 1200.0) / (3000.0 - 1200.0)
+    assert float(st_quad['P_T_i']) == pytest.approx(p_geo_quad, rel=1.0e-9)
+    assert abs(float(st_quad['P_T_i']) - p_linear_chord) > 1.0e10
+
+    # Discriminating test for is_mono_T tolerance and dT_ep_nz threshold at 1e-12 (Lens 2 F4a):
+    # 1. is_mono_T: sub-threshold step (1e-13) takes fallback branch; super-threshold step (1e-11) takes geotherm branch.
+    t_sub = t_aff.copy()
+    t_sub[21:] = t_aff[21:] + (t_sub[20] - t_sub[21]) - 1.0e-13
+    st_sub_mono = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_sub,
+        pressure=p_quad,
+        convective_flux=np.full(n_aff, 1.0e-4),
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    t_sup = t_aff.copy()
+    t_sup[21:] = t_aff[21:] + (t_sup[20] - t_sup[21]) - 1.0e-11
+    st_sup_mono = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_sup,
+        pressure=p_quad,
+        convective_flux=np.full(n_aff, 1.0e-4),
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert abs(float(st_sub_mono['P_T_i']) - float(st_sup_mono['P_T_i'])) > 1.0e9
+
+    # 2. dT_ep_nz: across sub-threshold (1e-13) vs super-threshold (1e-11) temperature differences
+    fc_ep = np.zeros(n_aff)
+    fc_ep[1] = 6.00843e-5
+    fc_ep[2] = 6.00843e-5
+    t_ep_sub = t_aff.copy()
+    t_ep_sub[2] = t_ep_sub[1] - 1.0e-13
+    t_ep_sub[3:] = t_ep_sub[2] - np.linspace(10.0, 1000.0, n_aff - 3)
+    st_ep_sub = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_ep_sub,
+        pressure=p_quad,
+        convective_flux=fc_ep,
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    t_ep_sup = t_aff.copy()
+    t_ep_sup[2] = t_ep_sup[1] - 1.0e-11
+    t_ep_sup[3:] = t_ep_sup[2] - np.linspace(10.0, 1000.0, n_aff - 3)
+    st_ep_sup = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_ep_sup,
+        pressure=p_quad,
+        convective_flux=fc_ep,
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert abs(float(st_ep_sub['theta']) - float(st_ep_sup['theta'])) > 0.01
+
     # Curved geotherm where endpoint blending pushes unclipped P_T_i > max(P) and r_i < r[0]:
     # clipping keeps P_T_i inside [min(P), max(P)] and r_i inside [r[0], r[-1]].
     r_clip = np.array([3.0e6, 3.01e6, 3.02e6, 5.98e6, 5.99e6, 6.0e6])
@@ -3747,9 +3893,9 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
-    """Verify fixed lid-base mode (Form 6B) gates both w_hot_iso and w_hot_iso_mask by w_nonconv."""
-    import jax.numpy as jnp
+def test_fixed_lid_base_mode_excludes_convecting_nodes():
+    """Verify fixed lid-base mode weights both w_hot_iso and w_hot_iso_mask by w_nonconv."""
+    _, jnp = _import_jax_x64()
 
     n = 50
     r = np.linspace(3.48e6, 6.370e6, n)
@@ -3802,7 +3948,7 @@ def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_row8_and_row18_d_geom_floor_tau_d_lid_yield_and_d_lid_raw():
+def test_d_geom_floor_tau_d_lid_yield_and_d_lid_raw():
     """Verify d_geom floor bounds tau_d_lid on incipient lids, w_y compares tau_d_lid with tau_y_lid, and d_lid_raw is returned."""
     for n in (3, 10, 50, 100):
         r = np.linspace(3.48e6, 6.371e6, n)

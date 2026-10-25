@@ -71,11 +71,19 @@ class SolidRheologyParams:
     -----
     Coupled and tabulated PALEOS runs evaluate the phase-boundary solidus
     :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from the PALEOS
-    :math:`\mathrm{MgSiO_3}` melting curve. When no solidus table reaches a
-    call, the linear fallback defaults ``t_sol_0 = 1400.0`` K and
-    ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
-    whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
-    1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
+    :math:`\mathrm{MgSiO_3}` melting curve. In both table-solidus and
+    linear-fallback modes, ``t_sol_0`` sets the zero-pressure reference
+    activation enthalpy ``h_0 = g_homologous * R * t_sol_0``, so
+    ``viscosity_solid`` is the viscosity at ``(arrhenius_t_ref, P=0)`` on the
+    linear solidus ``t_sol_0``; with a table solidus,
+    ``eta(T_ref, 0) = viscosity_solid * exp(g_homologous * (T_sol,table(0) - t_sol_0) / T_ref)``
+    (``1.8459 * viscosity_solid`` for the CI test table with
+    ``T_sol,table(0) = 1439.230032 K`` and ``t_sol_0 = 1400 K``). When no
+    solidus table reaches a call, the linear fallback defaults
+    ``t_sol_0 = 1400.0`` K and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a
+    table-free benchmark form whose largest deviation from the PALEOS solidus
+    over 0 to 135 GPa is 1108.1 K (see
+    ``docs/Explanations/solid_state_convection.md`` Section 1).
     When ``activation_energy`` is set, activation enthalpy follows the saturating
     integral law :math:`H(P) = E_a + V_0 P_\mathrm{decay} (1 - \exp(-P / P_\mathrm{decay}))`
     (reducing to :math:`E_a + V_0 P` when :math:`P_\mathrm{decay} = \infty`); the
@@ -168,6 +176,26 @@ def merge_rheology(
     return replace(base, **overrides) if overrides else base
 
 
+def check_viscosity_ceiling(viscosity: Any, rheology: SolidRheologyParams) -> None:
+    """Raise ValueError when a numeric ``viscosity`` is not below ``10**viscosity_max_log10``."""
+    if isinstance(viscosity, (bool, np.bool_)):
+        return
+    is_num_scalar = isinstance(viscosity, (int, float, np.number)) or (
+        getattr(viscosity, 'ndim', None) == 0
+        and getattr(getattr(viscosity, 'dtype', None), 'kind', '') in 'iuf'
+    )
+    if is_num_scalar:
+        try:
+            v = float(viscosity)
+        except OverflowError as exc:
+            raise ValueError('viscosity must be finite') from exc
+        if math.isfinite(v) and v > 0.0 and rheology.viscosity_max_log10 <= math.log10(v):
+            raise ValueError(
+                f'viscosity_max_log10 ({rheology.viscosity_max_log10}) must be > '
+                f'log10(viscosity) ({math.log10(v)})'
+            )
+
+
 def delegate_rheology(cls):
     """Expose SolidRheologyParams fields as read-only properties reading self.rheology."""
     for f in fields(SolidRheologyParams):
@@ -257,6 +285,21 @@ def _softmax2(a: Any, b: Any, width: Any, xp: Any) -> Any:
 def _softmin2(a: Any, b: Any, width: Any, xp: Any) -> Any:
     """Smooth softplus minimum ``a - width * log(1 + exp((a - b) / width))``."""
     return -_softmax2(-xp.asarray(a, dtype=float), -xp.asarray(b, dtype=float), width, xp)
+
+
+def _vmax_not_above_log10_viscosity(viscosity_solid: Any, vmax_log10: Any, xp: Any) -> Any:
+    """Return the mask where ``vmax_log10 <= log10(viscosity_solid)``; raise on eager NumPy input."""
+    vs = xp.asarray(viscosity_solid, dtype=float)
+    ok_vs = (vs > 0.0) & xp.isfinite(vs)
+    bad = ok_vs & xp.isfinite(xp.asarray(vmax_log10, dtype=float))
+    bad = bad & (xp.asarray(vmax_log10, dtype=float) <= xp.log10(xp.where(ok_vs, vs, 1.0)))
+    if xp is np and bool(np.any(bad)):
+        v_bad = float(np.asarray(vs)[bad].flat[0])
+        raise ValueError(
+            f'viscosity_max_log10 ({vmax_log10}) must be > '
+            f'log10(viscosity_solid) ({math.log10(v_bad)})'
+        )
+    return bad
 
 
 def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
@@ -607,15 +650,19 @@ def compute_arrhenius_enthalpy(
         ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
-        ``SolidRheologyParams.g_homologous`` when None.
+        ``SolidRheologyParams.g_homologous`` when None. Not used when
+        ``activation_energy`` is set.
     solidus_temperature : float or array-like, optional
-        Local solidus temperature T_sol(P) [K].
+        Local solidus temperature T_sol(P) [K]. Not used when
+        ``activation_energy`` is set.
     t_sol_0 : float, optional
         Zero-pressure solidus T_sol(0) [K] for the linear fallback
-        (``SolidRheologyParams.t_sol_0`` when None).
+        (``SolidRheologyParams.t_sol_0`` when None). Not used when
+        ``activation_energy`` is set.
     dt_sol_dp : float, optional
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
-        ``SolidRheologyParams.dt_sol_dp`` when None.
+        ``SolidRheologyParams.dt_sol_dp`` when None. Not used when
+        ``activation_energy`` is set.
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     xp : array module, default np
@@ -850,21 +897,32 @@ def compute_arrhenius_viscosity(
         Pressure P [Pa] (non-negative; negative round-off excursions down to
         ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     viscosity_solid : float, optional
-        Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
+        Reference solid-state dynamic viscosity eta_0 [Pa s] at ``(T_ref, P=0)``
+        on the linear solidus ``t_sol_0`` (since ``h_0 = g_hom * R * t_sol_0``;
+        with a table solidus ``T_sol,table(P)``,
+        ``eta_diff(T_ref, 0) = viscosity_solid * f_water * exp(g_hom * (T_sol,table(0) - t_sol_0) / T_ref)``,
+        which is ``1.8459 * viscosity_solid`` for the CI test table with
+        ``T_sol,table(0) = 1439.230032 K`` and ``t_sol_0 = 1400 K``).
         Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
-        ``SolidRheologyParams.g_homologous`` when None.
+        ``SolidRheologyParams.g_homologous`` when None. Not used when
+        ``activation_energy`` is set.
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
-        ``t_sol_0 + dt_sol_dp * P``.
+        ``t_sol_0 + dt_sol_dp * P``. Not used when ``activation_energy`` is set.
     t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
-        ``solidus_temperature`` is provided and ``activation_energy`` is None;
-        defaults to ``SolidRheologyParams.t_sol_0`` for the linear fallback.
+        Zero-pressure reference solidus temperature ``T_sol,0`` [K] setting the
+        reference activation enthalpy ``h_0 = g_hom * R * t_sol_0`` in both
+        table-solidus and linear-fallback modes (and the zero-pressure intercept
+        of the linear fallback when ``solidus_temperature`` is None). Required
+        when ``solidus_temperature`` is provided and ``activation_energy`` is None;
+        defaults to ``SolidRheologyParams.t_sol_0`` for the linear fallback. Not
+        used when ``activation_energy`` is set.
     dt_sol_dp : float, optional
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
-        ``SolidRheologyParams.dt_sol_dp`` when None.
+        ``SolidRheologyParams.dt_sol_dp`` when None. Not used when
+        ``activation_energy`` is set.
     arrhenius_t_ref : float, optional
         Reference temperature T_ref [K]. Defaults to
         ``SolidRheologyParams.arrhenius_t_ref`` when None.
@@ -934,20 +992,7 @@ def compute_arrhenius_viscosity(
         ),
         xp,
     )
-    vs_arr = xp.asarray(vs_eff, dtype=float)
-    vmax_arr = xp.asarray(vmax_eff, dtype=float)
-    vs_pos_chk = xp.where((vs_arr > 0.0) & xp.isfinite(vs_arr), vs_arr, 1.0)
-    bad_vmax_vs = (
-        (vs_arr > 0.0)
-        & xp.isfinite(vs_arr)
-        & xp.isfinite(vmax_arr)
-        & (vmax_arr <= xp.log10(vs_pos_chk))
-    )
-    if xp is np and bool(np.any(bad_vmax_vs)):
-        raise ValueError(
-            f'viscosity_max_log10 ({vmax_eff}) must be > log10(viscosity_solid) ({math.log10(float(vs_eff))})'
-        )
-    invalid = invalid | bad_vmax_vs
+    invalid = invalid | _vmax_not_above_log10_viscosity(vs_eff, vmax_eff, xp)
     h_p = compute_arrhenius_enthalpy(
         pressure=pressure,
         g_homologous=g_hom_eff,
