@@ -2635,3 +2635,88 @@ def test_arrhenius_reference_viscosity_ci_table_vs_linear_solidus() -> None:
     )
     assert eta_ci == pytest.approx(expected_ci, rel=1.0e-14, abs=0.0)
     assert eta_ci == pytest.approx(1.8459e21, rel=1.0e-4, abs=0.0)
+
+
+@pytest.mark.unit
+def test_check_jax_factory_rheology_requires_cand_rheology_when_enabled() -> None:
+    """Verify _check_jax_factory_rheology raises ValueError when solver rheology is enabled
+    and the candidate factory does not expose PhaseParams.rheology."""
+    from types import SimpleNamespace
+
+    solver_rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(solver_rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    bare_factory = SimpleNamespace(rhs_fn=lambda t, y: y)
+
+    with pytest.raises(
+        ValueError,
+        match='JAX CVODE factory rhs_fn does not expose PhaseParams.rheology',
+    ):
+        solver._check_jax_factory_rheology(bare_factory, require_when_enabled=True)
+
+
+@pytest.mark.unit
+def test_build_jax_rhs_and_jacobian_validates_mesh_arrays_for_rheology() -> None:
+    """Verify build_jax_rhs_and_jacobian calls validate_for_rheology on mesh_arrays
+    when phase_params.rheology is enabled."""
+    rheo_on = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo_on, number_of_nodes=12)
+    pp = PhaseParams.from_parameters(params)
+    solver = _make_solver(params)
+    solver.set_initial_entropy(2500.0)
+    mesh_jax, eos_jax, _, dSdt_args = _build_jax_bundle(solver)
+    bc_jax = dSdt_args[3]
+    heating_arr = np.zeros(solver._n_stag, dtype=float)
+
+    bad_radii = mesh_jax.radii_basic.at[0].set(0.0)
+    bad_mesh = replace(mesh_jax, radii_basic=bad_radii)
+
+    with pytest.raises(ValueError, match='basic-node radii'):
+        build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=pp,
+            mesh_arrays=bad_mesh,
+            boundary_params=bc_jax,
+            heating_array=heating_arr,
+            scales=solver._build_nondim_scales(),
+            core_bc_mode='quasi_steady',
+        )
+
+
+@pytest.mark.unit
+def test_compute_stagnant_lid_state_fixed_mode_melt_ramp_transition() -> None:
+    """Verify compute_stagnant_lid_state in fixed mode uses a finite melt ramp width."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.full(n, 1400.0)
+    t[-4:] = np.linspace(1400.0, 300.0, 4)
+    ft = np.ones(n)
+    f_thresh = 0.10
+    fc = np.full(n, 0.5)
+    fc[10] = f_thresh * ft[10]
+
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True,
+            lid_base_mode='fixed',
+            lid_base_temperature=2000.0,
+            interior_flux_fraction=f_thresh,
+        ),
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    w_lid = np.asarray(st['w_lid'])
+    assert np.all(np.isfinite(w_lid))
+    assert not np.isnan(w_lid[10])
