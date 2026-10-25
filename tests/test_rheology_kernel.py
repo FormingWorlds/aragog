@@ -1099,45 +1099,93 @@ def test_pressure_surface_roundoff_clamping_and_validation():
 @pytest.mark.unit
 def test_required_rheology_inputs_reject_none():
     """Verify that None for required inputs raises ValueError naming the field."""
-    with pytest.raises(ValueError, match='pressure'):
+    try:
         compute_arrhenius_enthalpy(None)
+        pytest.fail('compute_arrhenius_enthalpy did not raise for pressure=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'pressure' in str(exc)
 
-    with pytest.raises(ValueError, match='temperature'):
+    try:
         compute_arrhenius_viscosity(None, 1.0e9)
+        pytest.fail('compute_arrhenius_viscosity did not raise for temperature=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'temperature' in str(exc)
 
-    with pytest.raises(ValueError, match='pressure'):
+    try:
         compute_arrhenius_viscosity(1600.0, None)
+        pytest.fail('compute_arrhenius_viscosity did not raise for pressure=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'pressure' in str(exc)
 
-    with pytest.raises(ValueError, match='pressure'):
+    try:
         compute_yield_stress(None)
+        pytest.fail('compute_yield_stress did not raise for pressure=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'pressure' in str(exc)
 
-    with pytest.raises(ValueError, match='theta'):
+    try:
         compute_mlt_top_slope(None)
+        pytest.fail('compute_mlt_top_slope did not raise for theta=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'theta' in str(exc)
 
-    with pytest.raises(ValueError, match='radii'):
+    try:
         viscous_mixing_length_factor(None, 1.0e6, 3.0e6, 1.0e5)
+        pytest.fail('viscous_mixing_length_factor did not raise for radii=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'radii' in str(exc)
 
-    with pytest.raises(ValueError, match='r_in'):
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), None, 3.0e6, 1.0e5)
+        pytest.fail('viscous_mixing_length_factor did not raise for r_in=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'r_in' in str(exc)
 
-    with pytest.raises(ValueError, match='r_out'):
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, None, 1.0e5)
+        pytest.fail('viscous_mixing_length_factor did not raise for r_out=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'r_out' in str(exc)
 
-    with pytest.raises(ValueError, match='mixing_length'):
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, 3.0e6, None)
+        pytest.fail('viscous_mixing_length_factor did not raise for mixing_length=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'mixing_length' in str(exc)
 
-    with pytest.raises(ValueError, match='viscous_velocity'):
+    try:
         compute_strain_rate_local(None, 1.0e5)
+        pytest.fail('compute_strain_rate_local did not raise for viscous_velocity=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'viscous_velocity' in str(exc)
 
-    with pytest.raises(ValueError, match='mixing_length'):
+    try:
         compute_strain_rate_local(1.0e-3, None)
+        pytest.fail('compute_strain_rate_local did not raise for mixing_length=None')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'mixing_length' in str(exc)
 
-    with pytest.raises(ValueError, match='eta_diff'):
+    try:
         compute_effective_viscosity(
             None, stress_closure_mode='lid', eta_i=1.0e20, tau_d=1.0e7, tau_y_lid=1.0e8
         )
+        pytest.fail('compute_effective_viscosity did not raise for eta_diff=None (lid)')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'eta_diff' in str(exc)
 
-    with pytest.raises(ValueError, match='eta_diff'):
+    try:
         compute_effective_viscosity(
             None,
             stress_closure_mode='local',
@@ -1145,6 +1193,10 @@ def test_required_rheology_inputs_reject_none():
             mixing_length=1.0e5,
             unyielded_velocity=1.0e-3,
         )
+        pytest.fail('compute_effective_viscosity did not raise for eta_diff=None (local)')
+    except Exception as exc:
+        assert isinstance(exc, ValueError)
+        assert 'eta_diff' in str(exc)
 
     r_test = np.linspace(3.48e6, 6.371e6, 11)
     ones11 = np.ones(11)
@@ -1165,10 +1217,9 @@ def test_required_rheology_inputs_reject_none():
         try:
             compute_stagnant_lid_state(**{**base_lid_kwargs, field: None})
             pytest.fail(f'compute_stagnant_lid_state did not raise for {field}=None')
-        except ValueError as exc:
-            assert field in str(exc)
         except Exception as exc:
-            pytest.fail(f'Expected ValueError naming {field}, got {type(exc).__name__}: {exc}')
+            assert isinstance(exc, ValueError)
+            assert field in str(exc)
 
 
 @pytest.mark.unit
