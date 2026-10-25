@@ -37,7 +37,7 @@ def _require_jax() -> tuple[Any, Any]:
     return jax, jnp
 
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 RHEOLOGY_FIELD_NAMES: tuple[str, ...] = tuple(f.name for f in fields(SolidRheologyParams))
 
