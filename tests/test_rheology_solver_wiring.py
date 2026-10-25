@@ -2874,6 +2874,20 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
     assert 'node 11' in msg_trace
     assert '4.200000e+01' in msg_trace
 
+    # Bypass when entropy_eos is None or const_properties=True
+    params_const = replace(
+        params_20,
+        phase_mixed=replace(params_20.phase_mixed, const_properties=True),
+    )
+    solver_const = EntropySolver(params_const, entropy_eos=None)
+    solver_const.initialize()
+    s_extreme = np.full(solver_const._n_stag, -5.0e5, dtype=float)
+    solver_const.state.update(s_extreme, 10.0)
+    solver_const._check_rheology_invariants()
+
+    if not EOS_DIR.is_dir():
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}.')
+
     # 4. Radiative cooling case (cfg/abe_solid.toml at (0.25, 0.25), T_eqm = 273 K)
     # stops at ~17 to 18 kyr when top staggered node 98 crosses below S_min.
     with importlib.resources.as_file(
@@ -2894,7 +2908,7 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
     heating_arr = np.zeros(solver_cool._n_stag, dtype=float)
 
     def _factory(scales, core_bc_mode):
-        rhs_fn, jac_fn, step_powers_fn = build_jax_rhs_and_jacobian(
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
             eos_jax=eos_jax,
             phase_params=pp,
             mesh_arrays=mesh_jax,
@@ -2903,7 +2917,6 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
             scales=scales,
             core_bc_mode=core_bc_mode,
         )
-        solver_cool._cvode_step_powers_batch = step_powers_fn
         return rhs_fn, jac_fn
 
     solver_cool.set_jax_cvode_factory(_factory, phase_params=pp)
@@ -2920,3 +2933,97 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
     s_fail = float(m_s.group(1))
     assert s_fail < s_min
     assert 1.7e4 <= float(solver_cool._solution.t[-1]) <= 1.85e4
+
+
+def test_step_energy_integrals_checks_eos_entropy_range_on_every_step_both_branches(
+    caplog,
+) -> None:
+    """_compute_step_energy_integrals checks the EOS entropy-range invariant on every column
+    of y_pts on both the JAX batch branch and the NumPy loop branch, raising RuntimeError when
+    an intermediate accepted step leaves [S_min, S_max] even if the final step is in bounds."""
+    import logging
+
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    params = replace(
+        params,
+        energy=replace(params.energy, use_jax_jacobian=True),
+        solver=replace(params.solver, end_time=20.0, max_steps=60),
+    )
+    solver = _make_solver(params, identity_alpha=False)
+    solver.set_initial_entropy(2500.0)
+    eos = solver.entropy_eos
+    assert eos is not None
+    s_min = float(eos.S_min)
+    s_max = float(eos.S_max)
+
+    mesh_jax, eos_jax, pp, dSdt_args = _build_jax_bundle(solver)
+    bc_jax = dSdt_args[3]
+    heating_arr = np.zeros(solver._n_stag, dtype=float)
+
+    def _factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=pp,
+            mesh_arrays=mesh_jax,
+            boundary_params=bc_jax,
+            heating_array=heating_arr,
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
+        return rhs_fn, jac_fn
+
+    solver.set_jax_cvode_factory(_factory, phase_params=pp)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        solver.solve()
+    assert solver._batch_powers_calls == 1
+    assert any('via JAX batch path' in r.message for r in caplog.records)
+    batch_fn = solver._cvode_step_powers_batch
+    assert batch_fn is not None
+
+    y_end = np.asarray(solver._solution.y[:, -1], dtype=float).copy()
+    t_trace = np.array([0.0, 10.0, 20.0], dtype=float)
+
+    # Intermediate step 1 below S_min; step 0 and final step 2 are valid in-bounds states.
+    y_below = np.column_stack([y_end, y_end, y_end])
+    y_below[12, 1] = s_min - 20.0
+    solver._solution['energy_trace'] = (t_trace, y_below)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        with pytest.raises(RuntimeError) as exc_batch_below:
+            solver._compute_step_energy_integrals()
+    msg_batch_below = str(exc_batch_below.value)
+    assert any('via JAX batch path' in r.message for r in caplog.records)
+    assert 'step 1' in msg_batch_below
+    assert 'node 12' in msg_batch_below
+    assert '1.000000e+01' in msg_batch_below
+    assert f'{s_min - 20.0:.6f}' in msg_batch_below
+
+    # Intermediate step 1 above S_max on the JAX batch branch.
+    y_above = np.column_stack([y_end, y_end, y_end])
+    y_above[5, 1] = s_max + 20.0
+    solver._solution['energy_trace'] = (t_trace, y_above)
+    with pytest.raises(RuntimeError) as exc_batch_above:
+        solver._compute_step_energy_integrals()
+    msg_batch_above = str(exc_batch_above.value)
+    assert 'step 1' in msg_batch_above
+    assert 'node 5' in msg_batch_above
+    assert '1.000000e+01' in msg_batch_above
+    assert f'{s_max + 20.0:.6f}' in msg_batch_above
+
+    # NumPy loop fallback branch also catches the intermediate step 1 excursion.
+    solver._cvode_step_powers_batch = None
+    solver._solution['energy_trace'] = (t_trace, y_below)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        with pytest.raises(RuntimeError) as exc_numpy_below:
+            solver._compute_step_energy_integrals()
+    msg_numpy_below = str(exc_numpy_below.value)
+    assert any('via numpy loop fallback' in r.message for r in caplog.records)
+    assert 'step 1' in msg_numpy_below
+    assert 'node 12' in msg_numpy_below
+    assert '1.000000e+01' in msg_numpy_below
+    assert f'{s_min - 20.0:.6f}' in msg_numpy_below
