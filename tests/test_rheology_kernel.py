@@ -2820,3 +2820,28 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
     diffs = np.diff(log10_eta)
     assert np.all(diffs >= 0.0)
     assert np.max(diffs) < 0.5
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
+    """Verify eta reaches the ceiling, not exp(-H_0 / (R T_ref)), when H(P) overflows to +inf."""
+    for xp_name in ('np', 'jnp'):
+        if xp_name == 'jnp':
+            jax = pytest.importorskip('jax')
+            jax.config.update('jax_enable_x64', True)
+            import jax.numpy as xp
+        else:
+            xp = np
+        h_p = compute_arrhenius_enthalpy(
+            1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
+        )
+        assert np.isposinf(float(h_p))
+        for kwargs in (
+            {'pressure': 1.0e9, 'solidus_temperature': 1.0e307, 't_sol_0': 1400.0},
+            {'pressure': 1.0e308, 'dt_sol_dp': 1.0},
+        ):
+            eta = float(compute_arrhenius_viscosity(1600.0, xp=xp, **kwargs))
+            # Dropping the infinite H(P) to 0 gives 1e21 * exp(-21.875) = 3.2e11 Pa s.
+            assert np.log10(eta) == pytest.approx(40.0, abs=1.0e-9)
+            assert abs(np.log10(eta) - np.log10(1.0e21 * np.exp(-21.875))) > 25.0
