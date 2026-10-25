@@ -1162,8 +1162,13 @@ def test_required_rheology_inputs_reject_none():
         'phi_width': 0.05,
     }
     for field in ('temperature', 'pressure', 'convective_flux', 'total_flux', 'melt_fraction'):
-        with pytest.raises(ValueError, match=field):
+        try:
             compute_stagnant_lid_state(**{**base_lid_kwargs, field: None})
+            pytest.fail(f'compute_stagnant_lid_state did not raise for {field}=None')
+        except ValueError as exc:
+            assert field in str(exc)
+        except Exception as exc:
+            pytest.fail(f'Expected ValueError naming {field}, got {type(exc).__name__}: {exc}')
 
 
 @pytest.mark.unit
@@ -1204,19 +1209,36 @@ def test_viscous_mixing_length_factor_domain_checks():
     tol = max(1.0, 1.0e-9 * span)  # 1.0 m
     # 0.5 * tol excursion must pass on NumPy and JAX
     r_excursion_pass = np.array([3.0e6 - 0.5 * tol, 4.5e6, 6.0e6 + 0.5 * tol])
-    out_pass_np = viscous_mixing_length_factor(
-        r_excursion_pass, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
-    )
+    try:
+        out_pass_np = viscous_mixing_length_factor(
+            r_excursion_pass, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+        )
+    except Exception as exc:
+        pytest.fail(
+            f'viscous_mixing_length_factor unexpectedly raised {type(exc).__name__}: {exc}'
+        )
     assert np.all(np.isfinite(out_pass_np))
-    out_pass_jax = viscous_mixing_length_factor(
-        jnp.asarray(r_excursion_pass), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
-    )
+    try:
+        out_pass_jax = viscous_mixing_length_factor(
+            jnp.asarray(r_excursion_pass), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+        )
+    except Exception as exc:
+        pytest.fail(
+            f'viscous_mixing_length_factor JAX unexpectedly raised {type(exc).__name__}: {exc}'
+        )
     assert bool(jnp.all(jnp.isfinite(out_pass_jax)))
 
     # 2.0 * tol excursion must raise on NumPy and evaluate to all NaN on JAX
     r_excursion_fail = np.array([3.0e6 - 2.0 * tol, 4.5e6, 6.0e6])
-    with pytest.raises(ValueError, match='radii'):
+    try:
         viscous_mixing_length_factor(r_excursion_fail, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np)
+        pytest.fail(
+            'viscous_mixing_length_factor did not raise ValueError on 2.0*tol excursion'
+        )
+    except ValueError as exc:
+        assert 'radii' in str(exc)
+    except Exception as exc:
+        pytest.fail(f'Expected ValueError for radii, got {type(exc).__name__}: {exc}')
     out_fail_jax = viscous_mixing_length_factor(
         jnp.asarray(r_excursion_fail), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
     )
@@ -1306,6 +1328,30 @@ def test_viscous_mixing_length_factor_c_theta_validated_when_theta_none():
 
     with pytest.raises(ValueError, match='c_theta'):
         viscous_mixing_length_factor(r, 1.0e6, 3.0e6, ml, theta=None, c_theta='invalid', xp=np)
+
+
+@pytest.mark.unit
+def test_effective_viscosity_lid_floor_pinned_sub_1e30():
+    """Verify compute_effective_viscosity uses 1e-300 floor in log_eff for eta_diff below 1e-30."""
+    res_35 = compute_effective_viscosity(
+        eta_diff=1.0e-35,
+        stress_closure_mode='lid',
+        eta_i=1.0e-34,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res_35, 1.0e-36, rtol=1.0e-12)
+
+    res_31 = compute_effective_viscosity(
+        eta_diff=1.0e-31,
+        stress_closure_mode='lid',
+        eta_i=1.0e-30,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res_31, 1.0e-32, rtol=1.0e-12)
 
 
 @pytest.mark.unit
