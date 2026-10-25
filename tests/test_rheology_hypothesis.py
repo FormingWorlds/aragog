@@ -99,9 +99,30 @@ def _assert_wrong_types_raise_type_error(
 
 @st.composite
 def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
-    """Generate a valid dictionary covering all 20 SolidRheologyParams fields."""
+    """Generate a valid dictionary covering all 23 SolidRheologyParams fields."""
     enabled = draw(st.booleans())
     g_min = 1.0e-6 if enabled else 0.0
+    use_act = draw(st.booleans())
+    if use_act:
+        ea_min = 1.0e-3 if enabled else 0.0
+        act_energy: float | None = draw(
+            st.floats(min_value=ea_min, max_value=2.0e6, allow_nan=False, allow_infinity=False)
+        )
+        act_vol = draw(
+            st.floats(min_value=0.0, max_value=1.0e-3, allow_nan=False, allow_infinity=False)
+        )
+        act_p_decay = draw(
+            st.one_of(
+                st.just(float('inf')),
+                st.floats(
+                    min_value=1.0e3, max_value=1.0e14, allow_nan=False, allow_infinity=False
+                ),
+            )
+        )
+    else:
+        act_energy = None
+        act_vol = 0.0
+        act_p_decay = float('inf')
     return {
         'enabled': enabled,
         'g_homologous': draw(
@@ -177,10 +198,59 @@ def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
         'c_theta': draw(
             st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False)
         ),
-        'activation_energy': None,
-        'activation_volume': 0.0,
-        'activation_volume_decay_pressure': float('inf'),
+        'activation_energy': act_energy,
+        'activation_volume': act_vol,
+        'activation_volume_decay_pressure': act_p_decay,
     }
+
+
+def _expected_cross_field_error(d: dict[str, Any]) -> str | None:
+    """Return the expected ValueError substring for cross-field rules on d, or None if valid."""
+    if d['activation_energy'] is None:
+        if d['activation_volume'] != 0.0:
+            return 'activation_volume requires activation_energy to be set'
+        if np.isfinite(float(d['activation_volume_decay_pressure'])):
+            return 'activation_volume_decay_pressure requires activation_energy to be set'
+        if d['enabled'] and d['g_homologous'] <= 0.0:
+            return 'enabled=True requires positive g_homologous'
+    elif d['enabled'] and float(d['activation_energy']) <= 0.0:
+        return 'enabled=True requires positive activation_energy'
+    return None
+
+
+def _normalize_sub_dict(sub: dict[str, Any], defaults: dict[str, Any]) -> None:
+    """Ensure a random subset dict satisfies cross-field rules when merged with defaults."""
+    eff_ea = sub.get('activation_energy', defaults['activation_energy'])
+    eff_enabled = sub.get('enabled', defaults['enabled'])
+    if eff_ea is None:
+        if sub.get('activation_volume', defaults['activation_volume']) != 0.0 or np.isfinite(
+            float(
+                sub.get(
+                    'activation_volume_decay_pressure',
+                    defaults['activation_volume_decay_pressure'],
+                )
+            )
+        ):
+            sub['activation_energy'] = 3.0e5
+        elif eff_enabled and sub.get('g_homologous', defaults['g_homologous']) <= 0.0:
+            sub['g_homologous'] = 25.0
+    elif eff_enabled and float(eff_ea) <= 0.0:
+        sub['activation_energy'] = 3.0e5
+
+
+def _assert_raises_with_match(
+    exc_type: type[BaseException], match: str, kwargs: dict[str, Any]
+) -> None:
+    """Assert SolidRheologyParams(**kwargs) raises exc_type containing match via AssertionError."""
+    caught: BaseException | None = None
+    try:
+        SolidRheologyParams(**kwargs)
+    except BaseException as exc:  # noqa: BLE001
+        caught = exc
+    assert isinstance(caught, exc_type), (
+        f'Expected {exc_type.__name__} matching {match!r} for {kwargs!r}, got {caught!r}'
+    )
+    assert match in str(caught), f'Expected {match!r} in {caught!r} message for {kwargs!r}'
 
 
 def _make_phase_config(**kwargs: Any) -> PhaseConfig:
@@ -257,14 +327,14 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
                 setattr(cfg_obj, name, expected_val)
 
         partial_overrides = {k: override_dict[k] for k in subset_keys}
-        if partial_overrides.get('enabled', rheo_dict['enabled']) and (
-            partial_overrides.get('g_homologous', rheo_dict['g_homologous']) <= 0.0
-        ):
-            with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
+        combined_dict = rheo_dict | partial_overrides
+        cross_err = _expected_cross_field_error(combined_dict)
+        if cross_err is not None:
+            with pytest.raises(ValueError, match=cross_err):
                 builder(rheology=params, **partial_overrides)
         else:
             cfg_merged = builder(rheology=params, **partial_overrides)
-            expected_merged = SolidRheologyParams(**(rheo_dict | partial_overrides))
+            expected_merged = SolidRheologyParams(**combined_dict)
             assert cfg_merged.rheology == expected_merged
 
         if builder is _make_phase_config:
@@ -348,15 +418,13 @@ def test_hypothesis_merge_rheology_dict_round_trip_and_unknown_key(
     """Verify merge_rheology round-trip from dict and SolidRheologyParams and unknown-key error."""
     defaults = asdict(SolidRheologyParams())
     sub_base = {k: base_dict[k] for k in base_keys}
-    if sub_base.get('enabled', defaults['enabled']) and (
-        sub_base.get('g_homologous', defaults['g_homologous']) <= 0.0
-    ):
-        sub_base['g_homologous'] = 25.0
+    _normalize_sub_dict(sub_base, defaults)
 
     sub_overrides = {k: override_dict[k] for k in override_keys}
     combined = defaults | sub_base | sub_overrides
-    if combined['enabled'] and combined['g_homologous'] <= 0.0:
-        with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
+    cross_err = _expected_cross_field_error(combined)
+    if cross_err is not None:
+        with pytest.raises(ValueError, match=cross_err):
             merge_rheology(sub_base, sub_overrides)
     else:
         merged_from_dict = merge_rheology(sub_base, sub_overrides)
@@ -478,6 +546,128 @@ def test_hypothesis_positive_and_non_negative_field_validators(
         POSITIVE_FIELDS + NON_NEGATIVE_FIELDS,
         (True, False, np.bool_(True), np.bool_(False), None, bad_str),
     )
+
+
+@pytest.mark.unit
+@settings(max_examples=50, deadline=None)
+@given(
+    ea_pos=st.floats(min_value=1.0e-6, max_value=2.0e6, allow_nan=False, allow_infinity=False),
+    v0_val=st.floats(min_value=0.0, max_value=1.0e-2, allow_nan=False, allow_infinity=False),
+    v0_pos=st.floats(
+        min_value=1.0e-12, max_value=1.0e-2, allow_nan=False, allow_infinity=False
+    ),
+    p_decay_pos=st.floats(
+        min_value=1.0e-6, max_value=1.0e14, allow_nan=False, allow_infinity=False
+    ),
+    neg_val=st.floats(max_value=-1.0e-12, allow_nan=False, allow_infinity=False),
+    bad_str=st.text(),
+)
+def test_hypothesis_activation_fields_and_cross_field_validators(
+    ea_pos: float,
+    v0_val: float,
+    v0_pos: float,
+    p_decay_pos: float,
+    neg_val: float,
+    bad_str: str,
+) -> None:
+    """Verify activation_energy, activation_volume, activation_volume_decay_pressure, and cross-field rules."""
+    # 1. Valid ranges when activation_energy is set:
+    p_valid = SolidRheologyParams(
+        enabled=True,
+        activation_energy=ea_pos,
+        activation_volume=v0_val,
+        activation_volume_decay_pressure=p_decay_pos,
+    )
+    assert p_valid.activation_energy == ea_pos
+    assert p_valid.activation_volume == v0_val
+    assert p_valid.activation_volume_decay_pressure == p_decay_pos
+
+    p_zero_ea_inf_p = SolidRheologyParams(
+        enabled=False,
+        activation_energy=0.0,
+        activation_volume=0.0,
+        activation_volume_decay_pressure=float('inf'),
+    )
+    assert p_zero_ea_inf_p.activation_energy == 0.0
+    assert p_zero_ea_inf_p.activation_volume == 0.0
+    assert np.isinf(p_zero_ea_inf_p.activation_volume_decay_pressure)
+
+    min_pos = float(np.nextafter(0.0, 1.0))
+    p_min_p = SolidRheologyParams(
+        enabled=False,
+        activation_energy=ea_pos,
+        activation_volume=v0_pos,
+        activation_volume_decay_pressure=min_pos,
+    )
+    assert p_min_p.activation_volume_decay_pressure == min_pos
+
+    # 2. Range validators when activation_energy is set:
+    for bad_ea in (neg_val, float('nan'), float('inf'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_energy must be non-negative and finite',
+            {'enabled': False, 'activation_energy': bad_ea},
+        )
+    for bad_v0 in (neg_val, float('nan'), float('inf'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_volume must be non-negative and finite',
+            {'enabled': False, 'activation_energy': ea_pos, 'activation_volume': bad_v0},
+        )
+    for bad_p in (0.0, -0.0, neg_val, float('nan'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_volume_decay_pressure must be positive (finite or +inf)',
+            {
+                'enabled': False,
+                'activation_energy': ea_pos,
+                'activation_volume_decay_pressure': bad_p,
+            },
+        )
+
+    # 3. Cross-field rules when activation_energy is None or enabled is True:
+    _assert_raises_with_match(
+        ValueError,
+        'activation_volume requires activation_energy to be set',
+        {'enabled': False, 'activation_energy': None, 'activation_volume': v0_pos},
+    )
+    _assert_raises_with_match(
+        ValueError,
+        'activation_volume_decay_pressure requires activation_energy to be set',
+        {
+            'enabled': False,
+            'activation_energy': None,
+            'activation_volume_decay_pressure': p_decay_pos,
+        },
+    )
+    _assert_raises_with_match(
+        ValueError,
+        'enabled=True requires positive activation_energy',
+        {'enabled': True, 'activation_energy': 0.0},
+    )
+
+    # 4. Wrong types on activation_energy, activation_volume, and activation_volume_decay_pressure:
+    for wt_ea in (
+        True,
+        False,
+        np.bool_(True),
+        np.bool_(False),
+        bad_str,
+        [ea_pos],
+        np.array([ea_pos]),
+    ):
+        _assert_raises_with_match(
+            TypeError,
+            'activation_energy must be a real number',
+            {'enabled': False, 'activation_energy': wt_ea},
+        )
+    for f_name in ('activation_volume', 'activation_volume_decay_pressure'):
+        for wt_num in (True, False, np.bool_(True), np.bool_(False), None, bad_str):
+            _assert_raises_with_match(
+                TypeError,
+                '',
+                {'enabled': False, 'activation_energy': ea_pos, f_name: wt_num},
+            )
 
 
 @pytest.mark.unit
@@ -682,10 +872,7 @@ def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
 
     defaults = asdict(SolidRheologyParams())
     sub_dict = {k: rheo_dict[k] for k in subset_keys}
-    if sub_dict.get('enabled', defaults['enabled']) and (
-        sub_dict.get('g_homologous', defaults['g_homologous']) <= 0.0
-    ):
-        sub_dict['g_homologous'] = 25.0
+    _normalize_sub_dict(sub_dict, defaults)
 
     expected_full = SolidRheologyParams(**rheo_dict)
     expected_sub = SolidRheologyParams(**sub_dict)
