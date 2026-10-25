@@ -4223,7 +4223,6 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
     ti_1d = np.asarray(traj['T_i_1d_K'], dtype=float)
     ti_0d_pinned = np.asarray(traj['T_i_0d_K'], dtype=float)
     dlid_1d = np.asarray(traj['d_lid_1d_m'], dtype=float)
-    dlid_cond_1d = np.asarray(traj['d_lid_cond_1d_m'], dtype=float)
     dlid_0d_pinned = np.asarray(traj['d_lid_0d_m'], dtype=float)
     ftop_1d = np.asarray(traj['F_top_1d_W_m2'], dtype=float)
     ftop_0d_pinned = np.asarray(traj['F_top_0d_W_m2'], dtype=float)
@@ -4463,8 +4462,8 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
     def figure():
         import matplotlib.pyplot as plt
 
-        sl = slice(None, None, 12)
-        t_gyr = t_yr[sl] / 1.0e9
+        idx = np.unique(np.append(np.arange(0, len(t_yr), 24), len(t_yr) - 1))
+        t_gyr = t_yr[idx] / 1.0e9
         order = [
             'below_0p1x_tau_d_lid',
             'below_0p2x_tau_d_lid',
@@ -4480,39 +4479,51 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
 
         plt.rcParams.update(
             {
-                'axes.labelsize': 10,
-                'xtick.labelsize': 9,
-                'ytick.labelsize': 9,
-                'legend.fontsize': 7,
+                'axes.labelsize': 9,
+                'xtick.labelsize': 8,
+                'ytick.labelsize': 8,
+                'legend.fontsize': 6.5,
+                'axes.grid': False,
             }
         )
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.0))
+        ax1b = ax1.twinx()
 
-        ax1.plot(t_gyr, ti_1d[sl] - 1000.0, label='1D T_i')
-        ax1.plot(t_gyr, ti_0d_pinned[sl] - 1000.0, '--', label='0D T_i')
-        ax1.plot(t_gyr, dlid_1d[sl] / 1.0e3, '-.', label='1D iso')
-        ax1.plot(t_gyr, dlid_cond_1d[sl] / 1.0e3, ':', label='1D cond')
-        ax1.plot(t_gyr, dlid_0d_pinned[sl] / 1.0e3, '--', label='0D d_lid')
+        l1 = ax1.plot(t_gyr, ti_1d[idx], '-', label='1-D T_i')
+        l2 = ax1.plot(t_gyr, ti_0d_pinned[idx], '--', label='0-D T_i')
+        l3 = ax1b.plot(t_gyr, dlid_1d[idx] / 1.0e3, '-.', label='1-D d_lid')
+        l4 = ax1b.plot(t_gyr, dlid_0d_pinned[idx] / 1.0e3, ':', label='0-D d_lid')
         ax1.set(
             xlabel='(a) t [Gyr]',
-            ylabel='T_i - 1000 [K] / d_lid [km]',
+            ylabel='T_i [K]',
+            xlim=(0.0, 4.5),
             xticks=[0, 2, 4],
+            yticks=[1200, 1800],
+        )
+        ax1b.set(
+            ylabel='d_lid [km]',
             yticks=[0, 400, 800],
         )
-        ax1.legend()
+        lines = l1 + l2 + l3 + l4
+        ax1.legend(lines, [ln.get_label() for ln in lines], loc='center right')
 
-        ax2.plot(log_mult, r_p1_fh, '-', label='iso (H)')
-        ax2.plot(log_mult, r_p1_mt, '--', label='iso (T_i)')
-        ax2.plot(log_mult, r_cd_fh, '-.', label='cond (H)')
-        ax2.plot(log_mult, r_cd_mt, ':', label='cond (T_i)')
-        ax2.plot(log_mult, r_0d, '-', label='0D ref')
+        ax2.plot(log_mult, r_p1_fh, '-', label='isotherm lid, fixed heating')
+        ax2.plot(log_mult, r_p1_mt, '--', label='isotherm lid, matched T_i')
+        ax2.plot(log_mult, r_cd_fh, '-.', label='conductive lid, fixed heating')
+        ax2.plot(
+            log_mult,
+            r_cd_mt,
+            ':',
+            label='conductive lid (diagnostic chosen after the result), matched T_i',
+        )
+        ax2.plot(log_mult, r_0d, '-', label='0-D cube-root law')
         ax2.set(
-            xlabel='(b) log10(tau_y / tau_d) [-]',
+            xlabel='(b) log10(tau_y/tau_d) [-]',
             ylabel='R_thin [-]',
             xticks=[-1, 0],
-            yticks=[0.5, 1.0, 1.5, 2.0],
+            yticks=[0.5, 1, 2],
         )
-        ax2.legend()
+        ax2.legend(loc='upper right')
 
         fig.tight_layout()
         return fig
