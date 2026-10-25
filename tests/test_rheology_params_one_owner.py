@@ -520,11 +520,18 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert r'w_\text{lid,present}' in doc_text
     assert 'YIELD_BLEND_RATIO_WIDTH' in doc_text
     assert '$C^0$' in doc_text
+    assert 'max(T_i, 1.0)' not in doc_text
+    assert 'max(H_T_i, 1e-6)' not in doc_text
     for switch_token in (
         'DeltaT_conv',
         'max(theta, 1e-6)',
-        'max(T_i, 1.0)',
-        'max(H_T_i, 1e-6)',
+        'max(T_0, 1.0)',
+        'max(T_1, 1.0)',
+        'max(H_0, 1e-6)',
+        'max(H_1, 1e-6)',
+        'w_eff',
+        'dT_ep_nz',
+        'is_mono_T',
         'f_int_max',
         'max(dr_min, 1.0)',
         'max(Ra_rh_raw, 1e-30)',
