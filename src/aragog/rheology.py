@@ -650,7 +650,7 @@ def compute_arrhenius_viscosity(
     t_safe = xp.where((t > 0.0) & xp.isfinite(t), t, 1.0)
     t_ref_safe = xp.where((t_ref_arr > 0.0) & xp.isfinite(t_ref_arr), t_ref_arr, 1.0)
     wp_pos = xp.where((wp > 0.0) & xp.isfinite(wp), wp, 1.0)
-    h_p_safe = xp.where(xp.isfinite(h_p), h_p, 0.0)
+    h_p_safe = xp.where(xp.isnan(h_p), 0.0, h_p)
     exponent = h_p_safe / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
