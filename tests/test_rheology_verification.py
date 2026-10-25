@@ -2140,6 +2140,7 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
 def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys, monkeypatch):
     """Verify PALEOS defaults, multi-crossing reporting, and non-1-GPa grid slicing."""
     import importlib.util
+    import re
     from pathlib import Path
 
     script_path = (
@@ -2167,7 +2168,24 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
         in out_default
     )
     assert 'Chebyshev minimax line over 0..135 GPa: 1979.7 K + 24.37 K/GPa * P' in out_default
-    assert 'max abs deviation: 514.93 K (514.9 K) at 35.965 GPa' in out_default
+    assert 'max abs deviation: 514.93 K (514.9 K)' in out_default
+    mm_line_default = [ln for ln in out_default.splitlines() if 'Chebyshev minimax line' in ln][
+        0
+    ]
+    mm_match_default = re.search(
+        r'exact:\s*([0-9.]+)\s*K\s*\+\s*([0-9.]+)\s*K/GPa\s*\*.*'
+        r'max abs deviation:\s*([0-9.]+)\s*K\s*\(([0-9.]+)\s*K\)\s*at\s*([0-9., ]+)\s*GPa',
+        mm_line_default,
+    )
+    assert mm_match_default is not None
+    assert float(mm_match_default.group(1)) == pytest.approx(1979.73, rel=1.0e-6)
+    assert float(mm_match_default.group(2)) == pytest.approx(24.3706, rel=1.0e-6)
+    assert float(mm_match_default.group(3)) == pytest.approx(514.93, abs=0.01)
+    assert float(mm_match_default.group(4)) == pytest.approx(514.9, abs=0.1)
+    peaks_default = [float(p.strip()) for p in mm_match_default.group(5).split(',')]
+    assert len(peaks_default) == 3
+    for p_act, p_exp in zip(peaks_default, [0.000, 35.965, 135.000]):
+        assert p_act == pytest.approx(p_exp, abs=1.0e-3)
     assert (
         'RMS: 350.64 K (350.6 K); crossings at 6.1, 98.5 GPa (all: [6.15, 98.54] GPa)'
         in out_default
@@ -2231,6 +2249,42 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
     old_truncated_desc = f'crossings below 1 GPa and at {c3[1]:.1f} GPa'
     assert '134.0' not in old_truncated_desc
     assert '134.0' in mod.format_crossings_description(c3)
+
+    # Copilot non-convex 4-point table: shifted secant gives 450 K max error,
+    # while Chebyshev minimax fit via linear programming achieves 375 K.
+    p_copilot_gpa = np.array([0.0, 45.0, 90.0, 135.0])
+    p_copilot = p_copilot_gpa * 1.0e9
+    t_copilot = np.array([1400.0, 3000.0, 3100.0, 4400.0])
+    t_copilot_file = tmp_path / 'solidus_copilot_nonconvex.dat'
+    np.savetxt(t_copilot_file, np.column_stack([p_copilot, t_copilot]))
+
+    mod.main(['--table', str(t_copilot_file), '--allow-md5-mismatch'])
+    out_copilot = capsys.readouterr().out
+    assert 'Chebyshev minimax line over 0..135 GPa: 1775.0 K + 18.89 K/GPa * P' in out_copilot
+    assert 'max abs deviation: 375.00 K (375.0 K)' in out_copilot
+    mm_line_copilot = [ln for ln in out_copilot.splitlines() if 'Chebyshev minimax line' in ln][
+        0
+    ]
+    mm_match_copilot = re.search(
+        r'exact:\s*([0-9.]+)\s*K\s*\+\s*([0-9.]+)\s*K/GPa\s*\*.*'
+        r'max abs deviation:\s*([0-9.]+)\s*K\s*\(([0-9.]+)\s*K\)\s*at\s*([0-9., ]+)\s*GPa',
+        mm_line_copilot,
+    )
+    assert mm_match_copilot is not None
+    assert float(mm_match_copilot.group(1)) == pytest.approx(1775.00, rel=1.0e-6)
+    assert float(mm_match_copilot.group(2)) == pytest.approx(18.8889, rel=1.0e-4)
+    assert float(mm_match_copilot.group(3)) == pytest.approx(375.0, abs=1.0e-6)
+    peaks_copilot = [float(p.strip()) for p in mm_match_copilot.group(5).split(',')]
+    assert len(peaks_copilot) == 3
+    for p_act, p_exp in zip(peaks_copilot, [0.0, 45.0, 90.0]):
+        assert p_act == pytest.approx(p_exp, abs=1.0e-3)
+    dev_line = [ln for ln in out_copilot.splitlines() if 'max abs deviation:' in ln][0]
+    err_minimax = float(dev_line.split('max abs deviation:')[1].split('K')[0].strip())
+    err_copilot = float(np.max(np.abs(t_copilot - (1700.0 + 20.0 * p_copilot_gpa))))
+    sec_slope = (t_copilot[-1] - t_copilot[0]) / (p_copilot_gpa[-1] - p_copilot_gpa[0])
+    sec_dev = t_copilot - (t_copilot[0] + sec_slope * p_copilot_gpa)
+    err_secant = float((np.max(sec_dev) - np.min(sec_dev)) / 2.0)
+    assert err_minimax < err_copilot < err_secant
 
 
 @pytest.mark.unit

@@ -996,7 +996,7 @@ def _compute_effective_viscosity_core(
         ty_fin = xp.where(inf_ty, 1.0, xp.maximum(ty, COHESION_FLOOR))
         sr_safe = xp.sqrt(sr**2 + LOCAL_STRAIN_RATE_FLOOR**2)
         tau_y_term = ty_fin / (2.0 * sr_safe)
-        is_unyielded = inf_ty | (sr <= 0.0) | xp.isnan(tau_y_term)
+        is_unyielded = inf_ty | xp.isnan(tau_y_term)
         log10_d = xp.log10(xp.maximum(eta_d, 1.0e-300))
         log10_y = xp.log10(xp.maximum(tau_y_term, 1.0e-300))
         d_loc = (log10_d - log10_y) / LOCAL_CAP_LOG10_WIDTH
