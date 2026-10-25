@@ -1479,3 +1479,47 @@ def test_check_rheology_eos_range_const_properties_bypasses_bounds() -> None:
         solver._check_rheology_eos_range(s_below)
     except RuntimeError as err:
         pytest.fail(f'const_properties=True must bypass EOS range check, but raised: {err}')
+
+
+def test_check_viscosity_ceiling_handles_boolean() -> None:
+    """check_viscosity_ceiling returns immediately when viscosity is a boolean."""
+    from aragog.rheology import check_viscosity_ceiling
+
+    check_viscosity_ceiling(True, SolidRheologyParams())
+    check_viscosity_ceiling(np.bool_(False), SolidRheologyParams())
+
+
+def test_check_rheology_eos_range_returns_when_s_bounds_none() -> None:
+    """_check_rheology_eos_range returns immediately when S_min or S_max is None."""
+    rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    solver.entropy_eos.S_min = None
+    solver._check_rheology_eos_range(np.array([2000.0] * 19))
+
+
+def test_check_rheology_eos_trace_returns_when_const_properties() -> None:
+    """_check_rheology_eos_trace returns immediately when const_properties is True."""
+    rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    solver.parameters.phase_mixed.const_properties = True
+    solver._check_rheology_eos_trace(np.array([0.0]), np.array([2000.0] * 19))
+
+
+def test_check_rheology_eos_trace_returns_when_s_min_is_none() -> None:
+    """_check_rheology_eos_trace returns immediately when EOS has no S_min."""
+    rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    solver.entropy_eos.S_min = None
+    solver._check_rheology_eos_trace(np.array([0.0]), np.array([2000.0] * 19))
+
+
+def test_check_rheology_eos_trace_reshapes_1d_y_arr() -> None:
+    """_check_rheology_eos_trace reshapes 1-D y_arr and evaluates steps without raising."""
+    rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    s_profile = _make_solid_profile(solver)
+    solver._check_rheology_eos_trace(np.array([0.0]), s_profile)
