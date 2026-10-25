@@ -3586,9 +3586,12 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
         )
         t_i = float(st['T_i'])
         p_t_i = float(st['P_T_i'])
+        r_i = float(st['r_i'])
         p_geo = float(np.interp(t_i, t[::-1], p[::-1]))
-        # Geotherm pressure agrees to within the endpoint discretization offset (< 1e-3 GPa).
+        r_geo = float(np.interp(t_i, t[::-1], r[::-1]))
+        # Geotherm pressure and radius agree to within the endpoint discretization offset.
         assert abs(p_t_i - p_geo) < 1.0e6
+        assert abs(r_i - r_geo) < 50.0
         log_eta_arr_vals.append(np.log10(float(st['eta_solid_arrhenius'])))
         log_eta_i_vals.append(np.log10(float(st['eta_i'])))
         theta_vals.append(float(st['theta']))
@@ -3621,7 +3624,36 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
         xp=np,
     )
     p_aff_expected = 120.0e9 * (float(st_aff['T_i']) - 1200.0) / (3000.0 - 1200.0)
+    r_aff_expected = 3.48e6 + (6.371e6 - 3.48e6) * (3000.0 - float(st_aff['T_i'])) / (
+        3000.0 - 1200.0
+    )
     assert float(st_aff['P_T_i']) == pytest.approx(p_aff_expected, rel=1.0e-14)
+    assert float(st_aff['r_i']) == pytest.approx(r_aff_expected, rel=1.0e-14)
+
+    # Curved geotherm where endpoint blending pushes unclipped P_T_i > max(P) and r_i < r[0]:
+    # clipping keeps P_T_i inside [min(P), max(P)] and r_i inside [r[0], r[-1]].
+    r_clip = np.array([3.0e6, 3.01e6, 3.02e6, 5.98e6, 5.99e6, 6.0e6])
+    t_clip = np.array([3000.0, 2900.0, 2500.0, 2100.0, 1300.0, 1000.0])
+    p_clip = np.array([100.0e9, 99.0e9, 98.0e9, 1.0e9, 0.5e9, 0.0])
+    fc_clip = np.array([0.0, 1.5e-5, 0.0, 0.0, 0.9 * 1.5e-5, 0.0])
+    st_clip = compute_stagnant_lid_state(
+        radii=r_clip,
+        temperature=t_clip,
+        pressure=p_clip,
+        convective_flux=fc_clip,
+        total_flux=np.ones(6),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(6),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(np.min(p_clip)) <= float(st_clip['P_T_i']) <= float(np.max(p_clip))
+    assert float(r_clip[0]) <= float(st_clip['r_i']) <= float(r_clip[-1])
+    assert float(st_clip['P_T_i']) == pytest.approx(float(np.max(p_clip)), rel=1.0e-14)
+    assert float(st_clip['r_i']) == pytest.approx(float(r_clip[0]), rel=1.0e-14)
 
 
 @pytest.mark.unit

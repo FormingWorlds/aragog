@@ -96,6 +96,8 @@ def test_fb2014_earth_reference_state():
     """
     inputs = _make_earth_reference_inputs()
     state = compute_stagnant_lid_state(**inputs)
+    assert 'd_lid_raw' in state
+    assert float(state['d_lid_raw']) >= float(state['d_lid'])
 
     t_i = float(state['T_i'])
     # Conductive lid nodes at f = 0 have zero weight under w_Ti (f_0 = 0.9, width = 0.02).

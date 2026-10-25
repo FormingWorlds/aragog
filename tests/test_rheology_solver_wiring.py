@@ -1850,11 +1850,29 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
     eta_eff = np.asarray(solver_mid.state._eta_eff_basic, dtype=float)
     assert np.any(eta_eff < eta_diff * 0.99)
 
-    # 3. _check_rheology_invariants enforces 0 <= d_lid <= mantle_thickness.
+    # 3. _check_rheology_invariants enforces 0 <= d_lid <= mantle_thickness and finite d_lid_raw.
+    assert 'd_lid_raw' in solver_mid.state._lid_state
     solver_mid._check_rheology_invariants()
-    solver_mid.state._lid_state['d_lid'] = -1.0
-    with pytest.raises(RuntimeError, match='d_lid'):
-        solver_mid._check_rheology_invariants()
-    solver_mid.state._lid_state['d_lid'] = 1.0e9
-    with pytest.raises(RuntimeError, match='d_lid'):
-        solver_mid._check_rheology_invariants()
+    d_lid_orig = float(solver_mid.state._lid_state['d_lid'])
+    d_lid_raw_orig = float(solver_mid.state._lid_state['d_lid_raw'])
+
+    for bad_dlid in (-1.0e-9, -1.0, 1.0e9):
+        solver_mid.state._lid_state['d_lid'] = bad_dlid
+        err_dlid = None
+        try:
+            solver_mid._check_rheology_invariants()
+        except Exception as exc:
+            err_dlid = exc
+        assert isinstance(err_dlid, RuntimeError) and 'd_lid' in str(err_dlid)
+    solver_mid.state._lid_state['d_lid'] = d_lid_orig
+
+    for bad_dlid_raw in (np.nan, np.inf, -np.inf):
+        solver_mid.state._lid_state['d_lid_raw'] = bad_dlid_raw
+        err_raw = None
+        try:
+            solver_mid._check_rheology_invariants()
+        except Exception as exc:
+            err_raw = exc
+        assert isinstance(err_raw, RuntimeError) and 'd_lid_raw' in str(err_raw)
+    solver_mid.state._lid_state['d_lid_raw'] = d_lid_raw_orig
+    solver_mid._check_rheology_invariants()

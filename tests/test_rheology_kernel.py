@@ -2693,6 +2693,7 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
     import jax
     import jax.numpy as jnp
 
+    jax.config.update('jax_enable_x64', True)
     from aragog.config.phases import PhaseConfig
     from aragog.parser import _PhaseParameters
 
@@ -2702,10 +2703,14 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
     )
     assert np.isfinite(val_ok) and val_ok > 0.0
     for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0), (1.0e35, 30.0)):
-        with pytest.raises(ValueError, match='viscosity_max_log10'):
+        err_arr = None
+        try:
             compute_arrhenius_viscosity(
                 1600.0, 0.0, viscosity_solid=bad_vs, viscosity_max_log10=bad_vmax
             )
+        except Exception as exc:
+            err_arr = exc
+        assert isinstance(err_arr, ValueError) and 'viscosity_max_log10' in str(err_arr)
         jit_fn = jax.jit(
             lambda vs, vm: compute_arrhenius_viscosity(
                 jnp.asarray(1600.0),
@@ -2727,7 +2732,8 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
     ft = np.full(n, 0.10)
     phi = np.zeros(n)
     for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0)):
-        with pytest.raises(ValueError, match='viscosity_max_log10'):
+        err_lid = None
+        try:
             compute_stagnant_lid_state(
                 radii=r,
                 temperature=t,
@@ -2742,6 +2748,9 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
                 phi_width=0.15,
                 xp=np,
             )
+        except Exception as exc:
+            err_lid = exc
+        assert isinstance(err_lid, ValueError) and 'viscosity_max_log10' in str(err_lid)
         st_jx = compute_stagnant_lid_state(
             radii=jnp.asarray(r),
             temperature=jnp.asarray(t),
@@ -2757,6 +2766,11 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             xp=jnp,
         )
         assert np.isnan(float(st_jx['eta_i']))
+        assert np.isnan(float(st_jx['T_i']))
+        assert np.isnan(float(st_jx['P_T_i']))
+        assert np.isnan(float(st_jx['d_lid']))
+        assert np.isnan(float(st_jx['d_lid_raw']))
+        assert np.all(np.isnan(np.asarray(st_jx['w_lid'])))
 
     # 3. PhaseConfig and _PhaseParameters enforce viscosity_max_log10 > log10(viscosity).
     cfg_ok = PhaseConfig(
@@ -2769,7 +2783,8 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
         rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=25.0),
     )
     assert cfg_ok.viscosity_max_log10 == 25.0
-    with pytest.raises(ValueError, match='viscosity_max_log10'):
+    err_cfg = None
+    try:
         PhaseConfig(
             density=4000.0,
             heat_capacity=1000.0,
@@ -2779,7 +2794,12 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             viscosity=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
-    with pytest.raises(ValueError, match='viscosity_max_log10'):
+    except Exception as exc:
+        err_cfg = exc
+    assert isinstance(err_cfg, ValueError) and 'viscosity_max_log10' in str(err_cfg)
+
+    err_pp = None
+    try:
         _PhaseParameters(
             density=4000.0,
             heat_capacity=1000.0,
@@ -2789,9 +2809,13 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             viscosity=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
+    except Exception as exc:
+        err_pp = exc
+    assert isinstance(err_pp, ValueError) and 'viscosity_max_log10' in str(err_pp)
 
     # 4. 1-D w_lid length mismatch in compute_effective_viscosity raises ValueError.
-    with pytest.raises(ValueError, match='w_lid'):
+    err_wlid = None
+    try:
         compute_effective_viscosity(
             eta_diff=np.full(10, 1.0e22),
             eta_i=1.0e20,
@@ -2801,9 +2825,18 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             w_lid=np.ones(5),
             xp=np,
         )
+    except Exception as exc:
+        err_wlid = exc
+    assert isinstance(err_wlid, ValueError) and 'w_lid' in str(err_wlid)
 
     # 5. Huge Python int (10**400) raises ValueError instead of OverflowError.
-    with pytest.raises(ValueError):
-        compute_arrhenius_enthalpy(10**400, xp=np)
-    with pytest.raises(ValueError):
-        compute_arrhenius_enthalpy(0.0, g_homologous=10**400, xp=np)
+    for call_kwargs in (
+        {'pressure': 10**400},
+        {'pressure': 0.0, 'g_homologous': 10**400},
+    ):
+        err_ovf = None
+        try:
+            compute_arrhenius_enthalpy(**call_kwargs, xp=np)
+        except Exception as exc:
+            err_ovf = exc
+        assert isinstance(err_ovf, ValueError)
