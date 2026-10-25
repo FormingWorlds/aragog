@@ -189,7 +189,7 @@ The surface-to-interior viscosity contrast $\eta_\text{diff}(T_\text{surf}, P_\t
 
 The parameter `lid_base_mode` governs the definition of the stagnant lid base temperature $T_{\text{lid,iso}}$:
 
-- `'fixed'`: The lid base is defined by a user-specified isotherm $T_{\text{lid,iso}} = T_\text{base}$ set by `lid_base_temperature` (default $1400.0\text{ K}$), multiplied by the non-convective weight $w_\text{nonconv} = 1 - w_{\text{melt,compact}}(f,\, f_\text{thresh},\, \max(0.2 f_\text{thresh}, 10^{-6}))$ on both $1 - w_\text{hot,iso}$ and $1 - w_\text{hot,iso,mask}$ so that a convecting node is never part of the lid.
+- `'fixed'`: The lid base is defined by a user-specified isotherm $T_{\text{lid,iso}} = T_\text{base}$ set by `lid_base_temperature` (default $1400.0\text{ K}$), multiplied by the non-convective weight $w_\text{nonconv} = 1 - w_{\text{melt,compact}}(f,\, f_\text{thresh},\, 0.2 f_\text{thresh})$ on both $1 - w_\text{hot,iso}$ and $1 - w_\text{hot,iso,mask}$ so that a convecting node is never part of the lid.
 - `'rheological'`: The lid base is evaluated dynamically from the Frank-Kamenetskii temperature scale:
 
     $$
