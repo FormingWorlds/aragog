@@ -286,14 +286,15 @@ def compute_stagnant_lid_state(
     -------
     dict[str, Any]
         Dictionary of boundary layer state diagnostics, including
-        ``tau_d = w_lid_present * w_active * 2 * eta_i * v_m_raw / d = w_active * 2 * eta_i * v_m / d``
+        ``tau_d = w_lid_present * w_active * 2 * eta_i * v_m_raw / d_conv``
         and the lid-thickness-scaled stress diagnostic
-        ``tau_d_lid = w_lid_present * w_active * 2 * eta_i * v_m_raw / max(r_top - r_lid_base, 1e-6 m)``
+        ``tau_d_lid = w_lid_present * w_active * 2 * eta_i * v_m_raw / d_geom``
+        with smooth geometric length floor
+        ``d_geom = _softmax2(r_top - r_lid_base, d_geom_floor, 0.01 * d_geom_floor)``
+        and ``d_geom_floor = _softmax2(delta_rh, dr_top, 0.01 * dr_top)``
         (gated smoothly by ``w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight``;
-        because ``w_d == 0`` at ``d_lid_raw <= 0`` and ``has_lid`` turns on at
-        ``d_lid_raw > NO_LID_THICKNESS_THRESHOLD`` of 1.0 m, the 1e-6 m floor is
-        inactive whenever ``has_lid`` is True, returns 0.0 in non-lid columns,
-        and ``tau_d_lid / tau_d = d / d_geom`` scales as ``1 / d_lid`` down to 1 m).
+        returns 0.0 in non-lid columns, and ``tau_d_lid / tau_d = d_conv / d_geom``
+        is bounded above by ``d_conv / max(delta_rh, dr_top)`` on incipient lids).
         ``has_lid`` is False when any input is NaN while numeric diagnostics propagate NaN.
 
     Raises
@@ -376,6 +377,12 @@ def compute_stagnant_lid_state(
     ``w_lid = (1 - w_interior_mask) * w_active`` uses the smooth capped width
     ``scale_mask = _softmin2(scale, scale_cap, SCALE_MASK_REL_WIDTH * scale_cap)`` with
     ``scale_cap = lid_mask_width_cells * _softmax2(dT_rh, 1.0 K, SCALE_FLOOR_WIDTH)``.
+    In ``'fixed'`` mode (``lid_base_mode = 'fixed'``), both ``1 - w_hot_iso`` and
+    ``1 - w_hot_iso_mask`` are multiplied by
+    ``w_nonconv = 1 - _melt_ramp(f, f_thresh, max(0.2 * f_thresh, 1e-6), compact=True)``
+    so a convecting node is never part of the lid; when no node is non-convecting
+    (``w_nonconv == 0`` everywhere), ``w_interior == 1`` on all nodes and ``r_lid_base``
+    sits at ``r[-1]`` with ``d_lid_raw = 0`` and ``d_lid = 0``.
     The solidus crossing indicators ``w_hot_sol`` and ``w_hot_sol_mask`` evaluate the
     compactly supported $C^2$ quintic melt-fraction ramp ``w_sol_phi`` on
     ``[SOLIDUS_MELT_FRACTION_THRESHOLD - SOLIDUS_MELT_FRACTION_WIDTH,
@@ -571,51 +578,17 @@ def _compute_stagnant_lid_state_core(
 
     T_0 = T[1]
     P_0 = P[1]
-    r_0 = r[1]
     T_1 = xp.sum(W_Ti_tilde * T)
     P_1 = xp.sum(W_Ti_tilde * P)
-    r_1 = xp.sum(W_Ti_tilde * r)
     T_i = xp.sum(W_tilde * T)
+    P_T_i = xp.sum(W_tilde * P)
+    r_i = xp.sum(W_tilde * r)
     dT_ep = T_0 - T_1
     dT_ep_nz = xp.abs(dT_ep) > 1.0e-12
     w_eff = xp.where(
         dT_ep_nz,
         xp.clip((T_0 - T_i) / xp.where(dT_ep_nz, dT_ep, 1.0), 0.0, 1.0),
         w_weight,
-    )
-    is_mono_T = xp.all(T[1:] < T[:-1] - 1.0e-12)
-    T_rev = xp.where(is_mono_T, T[::-1], xp.linspace(0.0, 1.0, T.shape[0]))
-    P_geo_Ti = xp.interp(T_i, T_rev, P[::-1])
-    P_geo_T1 = xp.interp(T_1, T_rev, P[::-1])
-    P_geo_T0 = xp.interp(T_0, T_rev, P[::-1])
-    P_T_i = xp.where(
-        w_weight >= 1.0 - 1.0e-15,
-        xp.sum(W_tilde * P),
-        xp.where(
-            is_mono_T,
-            xp.clip(
-                P_geo_Ti + w_eff * (P_1 - P_geo_T1) + (1.0 - w_eff) * (P_0 - P_geo_T0),
-                xp.min(P),
-                xp.max(P),
-            ),
-            xp.sum(W_tilde * P),
-        ),
-    )
-    r_geo_Ti = xp.interp(T_i, T_rev, r[::-1])
-    r_geo_T1 = xp.interp(T_1, T_rev, r[::-1])
-    r_geo_T0 = xp.interp(T_0, T_rev, r[::-1])
-    r_i = xp.where(
-        w_weight >= 1.0 - 1.0e-15,
-        xp.sum(W_tilde * r),
-        xp.where(
-            is_mono_T,
-            xp.clip(
-                r_geo_Ti + w_eff * (r_1 - r_geo_T1) + (1.0 - w_eff) * (r_0 - r_geo_T0),
-                r[0],
-                r[-1],
-            ),
-            xp.sum(W_tilde * r),
-        ),
     )
 
     w_active = (
@@ -776,6 +749,7 @@ def _compute_stagnant_lid_state_core(
         f_thresh = params.interior_flux_fraction
         df_nonconv = max(0.2 * float(f_thresh), 1.0e-6)
         w_nonconv = 1.0 - _melt_ramp(f, f_thresh, df_nonconv, xp, compact=True)
+        w_hot_iso = 1.0 - (1.0 - w_hot_iso) * w_nonconv
         w_hot_iso_mask = 1.0 - (1.0 - w_hot_iso_mask) * w_nonconv
     w_sol_phi = _melt_ramp(
         phi,
@@ -1056,8 +1030,9 @@ def compute_effective_viscosity(
     minimum closure of diffusion creep and plastic yield viscosity per
     Moresi & Solomatov (1998):
 
-    In boundary-layer lid mode, plastic yield viscosity is evaluated at the interior
-    convective strain-rate invariant scale D_conv = 2 * v_m / d_conv = tau_d / eta_i:
+    In boundary-layer lid mode, plastic yield viscosity is evaluated from the supplied
+    driving shear stress ``tau_d`` (in solver pass 2, ``stagnant_lid_state['tau_d_lid']``,
+    corresponding to the lid strain-rate scale ``2 * v_m / d_geom = tau_d_lid / eta_i``):
         log10(eta_y) = _softmin2(log10(eta_diff), log10(eta_i * (tau_y_lid / tau_d)), LOCAL_CAP_LOG10_WIDTH)
         w_b = 0.5 * (1 + tanh(((tau_d / tau_y_lid) - 1) / YIELD_BLEND_RATIO_WIDTH))
         log10(eta_eff_lid) = (1 - w_b) * log10(eta_diff) + w_b * log10(eta_y)
