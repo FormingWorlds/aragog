@@ -3817,3 +3817,263 @@ def test_wp4_row8_and_row18_d_geom_floor_tau_d_lid_yield_and_d_lid_raw():
     )
     assert bool(st_sub['has_lid']) is False
     assert 0.0 < float(st_sub['d_lid']) < float(st_sub['d_lid_raw'])
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
+def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
+    """Verify P_decay -> inf and V_0 = 0 limits of saturating activation enthalpy."""
+    import math
+
+    jax, jnp = _import_jax_x64()
+    from aragog.rheology import compute_arrhenius_enthalpy
+
+    p_gpa = np.linspace(0.0, 1000.0, 201)
+    p_pa = p_gpa * 1.0e9
+    e_a = 300.0e3
+
+    # Limit P_decay = inf: bitwise equality with E_a + V_0 * P for Tackley et al. (2013)
+    # Table 2 upper mantle (V_0 = 5.00 cm^3/mol) and Armann & Tackley (2012) (V_0 = 6.00 cm^3/mol)
+    for v_0 in (5.0e-6, 6.0e-6):
+        h_lin_exact = e_a + v_0 * p_pa
+        h_inf_np = compute_arrhenius_enthalpy(
+            p_pa,
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=math.inf,
+            xp=np,
+        )
+        h_inf_jax = np.asarray(
+            compute_arrhenius_enthalpy(
+                jnp.asarray(p_pa),
+                activation_energy=e_a,
+                activation_volume=v_0,
+                activation_volume_decay_pressure=math.inf,
+                xp=jnp,
+            )
+        )
+        np.testing.assert_array_equal(h_inf_np, h_lin_exact)
+        np.testing.assert_array_equal(h_inf_jax, h_lin_exact)
+
+        # Canary: perturbing 1 entry by 1 ulp fails bitwise equality
+        h_bad = h_inf_np.copy()
+        h_bad[100] = np.nextafter(h_bad[100], math.inf)
+        with pytest.raises(AssertionError):
+            np.testing.assert_array_equal(h_bad, h_lin_exact)
+
+    # Analytical Lagrange remainder bound: 0 <= H_lin(P) - H_int(P) <= V_0 * P^2 / (2 * P_decay)
+    v0_ref = 5.0e-6
+    h_lin_ref = e_a + v0_ref * p_pa
+    p_decay_curves_gpa = (200.0, 1100.0, 1610.0)
+    curves_kj: dict[float, np.ndarray] = {}
+    for pd_gpa in p_decay_curves_gpa:
+        pd_pa = pd_gpa * 1.0e9
+        h_int_np = compute_arrhenius_enthalpy(
+            p_pa,
+            activation_energy=e_a,
+            activation_volume=v0_ref,
+            activation_volume_decay_pressure=pd_pa,
+            xp=np,
+        )
+        h_int_jax = np.asarray(
+            compute_arrhenius_enthalpy(
+                jnp.asarray(p_pa),
+                activation_energy=e_a,
+                activation_volume=v0_ref,
+                activation_volume_decay_pressure=pd_pa,
+                xp=jnp,
+            )
+        )
+        np.testing.assert_allclose(h_int_np, h_int_jax, rtol=1.0e-15, atol=0.0)
+        dev = h_lin_ref - h_int_np
+        bound = v0_ref * (p_pa**2) / (2.0 * pd_pa)
+        assert np.all(dev >= 0.0)
+        assert np.all(dev <= bound * (1.0 + 1.0e-14))
+        assert np.all(h_int_np <= e_a + v0_ref * pd_pa * (1.0 + 1.0e-15))
+        curves_kj[pd_gpa] = h_int_np / 1.0e3
+
+    # Tackley et al. (2013) secant form H_sec(P) = E_0 + P * V_0 * exp(-P / P_decay) diverges above P_decay
+    pd_200_pa = 200.0e9
+    h_sec_200_kj = (e_a + p_pa * v0_ref * np.exp(-p_pa / pd_200_pa)) / 1.0e3
+    assert curves_kj[200.0][-1] > h_sec_200_kj[-1] + 500.0
+
+    # Physical discrimination canaries: secant form and wrong-sign exponential violate Lagrange bounds
+    dev_sec_200 = h_lin_ref[1:] - (e_a + p_pa[1:] * v0_ref * np.exp(-p_pa[1:] / pd_200_pa))
+    bound_200 = v0_ref * (p_pa[1:] ** 2) / (2.0 * pd_200_pa)
+    assert np.any(dev_sec_200 > bound_200 * 1.1)
+    h_wrong_sign = e_a + v0_ref * pd_200_pa * np.expm1(p_pa[1:] / pd_200_pa)
+    assert np.all(h_lin_ref[1:] - h_wrong_sign < 0.0)
+
+    # Verify compute_arrhenius_viscosity 0-ulp bitwise equality at P_decay = inf and V_0 = 0
+    temp_arr = np.linspace(1600.0, 3500.0, p_pa.size)
+    eta_lin_np = compute_arrhenius_viscosity(
+        temp_arr,
+        p_pa,
+        viscosity_solid=1.0e21,
+        activation_energy=e_a,
+        activation_volume=v0_ref,
+        activation_volume_decay_pressure=math.inf,
+        xp=np,
+    )
+    eta_lin_default_np = compute_arrhenius_viscosity(
+        temp_arr,
+        p_pa,
+        viscosity_solid=1.0e21,
+        activation_energy=e_a,
+        activation_volume=v0_ref,
+        xp=np,
+    )
+    np.testing.assert_array_equal(eta_lin_np, eta_lin_default_np)
+
+    # Verify JAX autodiff dH/dP = V_0 * exp(-P / P_decay) for V_0 > 0 across Taylor and exp branches
+    p_grad_test = np.array([0.0, 100.0, 1000.0, 1.0e9, 50.0e9, 135.0e9])
+    for pd_pa in (200.0e9, 1100.0e9, 1610.0e9):
+        grad_v0_pos = jax.grad(
+            lambda p_s: jnp.sum(
+                compute_arrhenius_enthalpy(
+                    p_s,
+                    activation_energy=e_a,
+                    activation_volume=v0_ref,
+                    activation_volume_decay_pressure=pd_pa,
+                    xp=jnp,
+                )
+            )
+        )
+        dh_dp_pos = np.asarray(grad_v0_pos(jnp.asarray(p_grad_test)))
+        expected_dh_dp = v0_ref * np.exp(-p_grad_test / pd_pa)
+        np.testing.assert_allclose(dh_dp_pos, expected_dh_dp, rtol=1.0e-12, atol=0.0)
+
+    # Sweep P_decay across [100, 1e6] GPa at P = 135 GPa (Earth CMB)
+    p_cmb = 135.0e9
+    p_decay_sweep_gpa = np.logspace(2.0, 6.0, 41)
+    dev_cmb_kj = np.empty_like(p_decay_sweep_gpa)
+    bound_cmb_kj = np.empty_like(p_decay_sweep_gpa)
+    h_lin_cmb = e_a + v0_ref * p_cmb
+    for idx, pd_gpa in enumerate(p_decay_sweep_gpa):
+        pd_pa = float(pd_gpa) * 1.0e9
+        h_val = float(
+            compute_arrhenius_enthalpy(
+                p_cmb,
+                activation_energy=e_a,
+                activation_volume=v0_ref,
+                activation_volume_decay_pressure=pd_pa,
+                xp=np,
+            )
+        )
+        dev_cmb_kj[idx] = (h_lin_cmb - h_val) / 1.0e3
+        bound_cmb_kj[idx] = (v0_ref * (p_cmb**2) / (2.0 * pd_pa)) / 1.0e3
+    assert np.all(dev_cmb_kj > 0.0)
+    assert np.all(dev_cmb_kj <= bound_cmb_kj * (1.0 + 1.0e-14))
+
+    # Limit V_0 = 0: bitwise equality H(P) == E_a and dH/dP == 0.0 across P_decay in {200, 1100, 1610, inf} GPa
+    expected_v0_zero = np.full_like(p_pa, e_a)
+    eta_iso_ref_np = compute_arrhenius_viscosity(
+        temp_arr,
+        p_pa,
+        viscosity_solid=1.0e21,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        activation_volume_decay_pressure=math.inf,
+        xp=np,
+    )
+    eta_iso_ref_jax = np.asarray(
+        compute_arrhenius_viscosity(
+            jnp.asarray(temp_arr),
+            jnp.asarray(p_pa),
+            viscosity_solid=1.0e21,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            activation_volume_decay_pressure=math.inf,
+            xp=jnp,
+        )
+    )
+    for pd_pa in (200.0e9, 1100.0e9, 1610.0e9, math.inf):
+        h_v0_np = compute_arrhenius_enthalpy(
+            p_pa,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            activation_volume_decay_pressure=pd_pa,
+            xp=np,
+        )
+        h_v0_jax = np.asarray(
+            compute_arrhenius_enthalpy(
+                jnp.asarray(p_pa),
+                activation_energy=e_a,
+                activation_volume=0.0,
+                activation_volume_decay_pressure=pd_pa,
+                xp=jnp,
+            )
+        )
+        np.testing.assert_array_equal(h_v0_np, expected_v0_zero)
+        np.testing.assert_array_equal(h_v0_jax, expected_v0_zero)
+
+        eta_v0_np = compute_arrhenius_viscosity(
+            temp_arr,
+            p_pa,
+            viscosity_solid=1.0e21,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            activation_volume_decay_pressure=pd_pa,
+            xp=np,
+        )
+        eta_v0_jax = np.asarray(
+            compute_arrhenius_viscosity(
+                jnp.asarray(temp_arr),
+                jnp.asarray(p_pa),
+                viscosity_solid=1.0e21,
+                activation_energy=e_a,
+                activation_volume=0.0,
+                activation_volume_decay_pressure=pd_pa,
+                xp=jnp,
+            )
+        )
+        np.testing.assert_array_equal(eta_v0_np, eta_iso_ref_np)
+        np.testing.assert_array_equal(eta_v0_jax, eta_iso_ref_jax)
+
+        grad_fn = jax.grad(
+            lambda p_s: jnp.sum(
+                compute_arrhenius_enthalpy(
+                    p_s,
+                    activation_energy=e_a,
+                    activation_volume=0.0,
+                    activation_volume_decay_pressure=pd_pa,
+                    xp=jnp,
+                )
+            )
+        )
+        dh_dp = np.asarray(grad_fn(jnp.asarray(p_pa)))
+        np.testing.assert_array_equal(dh_dp, np.zeros_like(p_pa))
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        sl = slice(None, None, 4)
+        sl_pd = slice(None, None, 2)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.1))
+        ax1.plot(p_gpa[sl], (h_lin_ref / 1.0e3)[sl], label='P_decay = inf')
+        ax1.plot(p_gpa[sl], curves_kj[1610.0][sl], '--', label='1610 GPa')
+        ax1.plot(p_gpa[sl], curves_kj[1100.0][sl], '-.', label='1100 GPa')
+        ax1.plot(p_gpa[sl], curves_kj[200.0][sl], ':', label='200 GPa (int)')
+        ax1.plot(p_gpa[sl], h_sec_200_kj[sl], '--', label='200 GPa (sec)')
+        ax1.plot(p_gpa[sl], (expected_v0_zero / 1.0e3)[sl], '-', label='V_0 = 0')
+        ax1.set(xlabel='P [GPa]', ylabel='H(P) [kJ/mol]')
+        ax1.legend(fontsize=6.5)
+
+        ax2.plot(
+            np.log10(p_decay_sweep_gpa[sl_pd]),
+            np.log10(dev_cmb_kj[sl_pd]),
+            label='H_lin - H_int',
+        )
+        ax2.plot(
+            np.log10(p_decay_sweep_gpa[sl_pd]),
+            np.log10(bound_cmb_kj[sl_pd]),
+            '--',
+            label='Bound',
+        )
+        ax2.set(xlabel='log10 P_decay [GPa]', ylabel='log10 dH [kJ/mol]')
+        ax2.legend(fontsize=7.0)
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'ssc_wp4_activation_law_limits')
