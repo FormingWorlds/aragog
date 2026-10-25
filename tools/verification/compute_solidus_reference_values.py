@@ -328,9 +328,14 @@ def main(argv: list[str] | None = None) -> None:
     slope_mm_gpa = float(lp_res.x[1])
     slope_mm_pa = slope_mm_gpa * 1.0e-9
     diff_mm = (t0_mm + slope_mm_pa * p_dense) - t_dense
-    idx_mm_peak = int(np.argmax(np.abs(diff_mm)))
-    max_abs_mm_k = float(np.max(np.abs(diff_mm)))
-    p_mm_peak_gpa = float(p_dense_gpa[idx_mm_peak])
+    abs_diff_mm = np.abs(diff_mm)
+    max_abs_mm_k = float(np.max(abs_diff_mm))
+    # Identify distinct local extrema within 1e-6 K of the Chebyshev minimax error.
+    idx_near_max = np.flatnonzero(abs_diff_mm >= max_abs_mm_k - 1.0e-6)
+    splits = np.where(np.diff(idx_near_max) > 1)[0] + 1
+    clusters = np.split(idx_near_max, splits)
+    p_mm_peaks_gpa = [float(p_dense_gpa[c[np.argmax(abs_diff_mm[c])]]) for c in clusters]
+    p_mm_peaks_desc = ', '.join(f'{p:.3f}' for p in p_mm_peaks_gpa)
     rms_mm_k = float(np.sqrt(np.mean(diff_mm**2)))
     cross_mm_desc = format_crossings_description(
         find_solidus_crossings(p_table, t_table, t0_mm, slope_mm_pa, p_max_pa=135.0e9)
@@ -404,7 +409,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f'Chebyshev minimax line over 0..135 GPa: {t0_mm:.1f} K + {slope_mm_gpa:.2f} K/GPa * P '
         f'(exact: {t0_mm:.2f} K + {slope_mm_gpa:.4f} K/GPa * P); max abs deviation: '
-        f'{max_abs_mm_k:.2f} K ({max_abs_mm_k:.1f} K) at {p_mm_peak_gpa:.3f} GPa; '
+        f'{max_abs_mm_k:.2f} K ({max_abs_mm_k:.1f} K) at {p_mm_peaks_desc} GPa; '
         f'RMS: {rms_mm_k:.2f} K ({rms_mm_k:.1f} K); {cross_mm_desc}'
     )
     print(
