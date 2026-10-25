@@ -1,6 +1,6 @@
 {
   "canary": {
-    "aragog_commit": "0cf32b380d7351b1b64cfbdf163fe2e694be7413",
+    "aragog_commit": "b85e4abd668a24302ba33abe82687ffb1535f575",
     "table_md5": {
       "density_melt.dat": "5f1dafa207d677668e4bbdd977b350ed",
       "density_solid.dat": "d54cb60d201e1713c5dfef290e53acda",
@@ -2554,7 +2554,7 @@
     },
     "abe_solid_default": {
       "case_name": "abe_solid_default",
-      "rationale": "Default inert-path state set (Ruling 58a): s_init=2900 J/kg/K, kappah_floor=10 m^2/s, viscosity_solid=1e21 Pa s. kappah_floor=10 clamps eddy diffusivity in both Pass 1 and Pass 2 so RHS on == RHS off in all 100 states.",
+      "rationale": "Default inert-path state set: s_init=2900 J/kg/K, kappah_floor=10 m^2/s, viscosity_solid=1e21 Pa s. kappah_floor=10 clamps eddy diffusivity in both Pass 1 and Pass 2 so RHS on == RHS off in all 100 states.",
       "n_states": 100,
       "s_init": 2900.0,
       "s_bot_span": 650.0,

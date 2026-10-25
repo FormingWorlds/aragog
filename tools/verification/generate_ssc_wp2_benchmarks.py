@@ -68,9 +68,10 @@ def sanitize_benchmarks(data: dict[str, Any]) -> dict[str, Any]:
             parity_block['flux_vs_rhs_diagnostic'] = parity_block.pop(
                 'ruling_59b_flux_vs_rhs_diagnostic'
             )
-        kf0 = parity_block.get('abe_solid_kappah_floor_0')
-        if isinstance(kf0, dict) and isinstance(kf0.get('rationale'), str):
-            kf0['rationale'] = kf0['rationale'].replace(' (Ruling 58a)', '')
+        for suite_key in ('abe_solid_kappah_floor_0', 'abe_solid_default'):
+            suite_obj = parity_block.get(suite_key)
+            if isinstance(suite_obj, dict) and isinstance(suite_obj.get('rationale'), str):
+                suite_obj['rationale'] = suite_obj['rationale'].replace(' (Ruling 58a)', '')
         yld = parity_block.get('abe_solid_yield_active')
         if isinstance(yld, dict) and isinstance(yld.get('rationale'), str):
             yld['rationale'] = yld['rationale'].replace(
