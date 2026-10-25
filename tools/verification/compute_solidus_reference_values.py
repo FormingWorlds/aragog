@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.optimize import linprog
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / 'src'))
@@ -304,12 +305,30 @@ def main(argv: list[str] | None = None) -> None:
     max_signed_rel_pct = float(rel_diff_dense[idx_max_rel])
     p_max_rel_gpa = float(p_dense_gpa[idx_max_rel])
 
-    slope_mm_pa = float((t_dense[-1] - t_dense[0]) / 135.0e9)
-    slope_mm_gpa = slope_mm_pa * 1.0e9
-    excess_mm = t_dense - (t_dense[0] + slope_mm_pa * p_dense)
-    idx_mm_peak = int(np.argmax(np.abs(excess_mm)))
-    t0_mm = float(t_dense[0] + 0.5 * (float(np.max(excess_mm)) + float(np.min(excess_mm))))
+    # Chebyshev minimax line minimizing max |t0 + slope_gpa * P_gpa - T(P)| over 0..135 GPa.
+    idx_lp = np.linspace(0, len(p_dense_gpa) - 1, 2001).astype(int)
+    g_lp = np.unique(np.concatenate([p_dense_gpa[idx_lp], p_table * 1.0e-9]))
+    g_lp = g_lp[(g_lp >= 0.0) & (g_lp <= 135.0)]
+    y_lp = np.interp(g_lp * 1.0e9, p_table, t_table)
+    a_mat = np.vstack(
+        [
+            np.c_[np.ones_like(g_lp), g_lp, -np.ones_like(g_lp)],
+            np.c_[-np.ones_like(g_lp), -g_lp, -np.ones_like(g_lp)],
+        ]
+    )
+    b_vec = np.r_[y_lp, -y_lp]
+    lp_res = linprog(
+        [0.0, 0.0, 1.0],
+        A_ub=a_mat,
+        b_ub=b_vec,
+        bounds=[(None, None), (None, None), (0.0, None)],
+        method='highs',
+    )
+    t0_mm = float(lp_res.x[0])
+    slope_mm_gpa = float(lp_res.x[1])
+    slope_mm_pa = slope_mm_gpa * 1.0e-9
     diff_mm = (t0_mm + slope_mm_pa * p_dense) - t_dense
+    idx_mm_peak = int(np.argmax(np.abs(diff_mm)))
     max_abs_mm_k = float(np.max(np.abs(diff_mm)))
     p_mm_peak_gpa = float(p_dense_gpa[idx_mm_peak])
     rms_mm_k = float(np.sqrt(np.mean(diff_mm**2)))
