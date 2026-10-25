@@ -2,7 +2,7 @@
 
 Intentional non-smooth switches retained for boolean diagnostics and physical bounds
 include ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on ``v_i``, the
-``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
+cap of ``f`` at 1, ``f_int_max = max(f * interior_node_mask)``,
 ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``, ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``,
 ``max(theta, 1.0e-6)``, ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in
 ``w_interior`` and ``w_hot_sol``, ``dTdr_floor`` with ``max(dr_min, 1.0)``, the
@@ -177,7 +177,7 @@ def _compute_f_tot_safe(
     Parameters
     ----------
     total_flux : FloatOrArray
-        Total surface and interior heat flux [W/m^2].
+        Total surface and interior heat flux array of length N >= 3 [W/m^2].
     xp : module, optional
         Array module (numpy or jax.numpy). Default is numpy.
 
@@ -351,7 +351,7 @@ def compute_stagnant_lid_state(
     convective flux fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth
     switches retained for boolean diagnostics and physical bounds include
     ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on the diagnostic
-    ``v_i``, the ``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
+    ``v_i``, the cap of ``f`` at 1, ``f_int_max = max(f * interior_node_mask)``,
     ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``,
     ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``, ``max(theta, 1.0e-6)``,
     ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in ``w_interior`` and
@@ -383,6 +383,16 @@ def compute_stagnant_lid_state(
     so that ``w_sol_phi == 0`` for ``phi <= 0.008`` and ``w_sol_phi == 1`` for
     ``phi >= 0.012``, giving ``has_lid = False`` and ``d_lid = 0`` for any column
     with ``phi >= 0.012`` at every node across all mesh resolutions ``N``.
+
+    Raises
+    ------
+    ValueError
+        If any required parameter or array (``radii``, ``temperature``,
+        ``pressure``, ``convective_flux``, ``total_flux``, ``melt_fraction``,
+        ``viscosity_solid``, ``phi_rheo``, ``phi_width``) is None.
+        If array dimensions or shapes do not match ``radii``.
+        If any scalar argument is array-valued or non-real.
+        If ``radii`` is not strictly increasing.
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
@@ -415,6 +425,8 @@ def compute_stagnant_lid_state(
         ('thermal_diffusivity', thermal_diffusivity, True),
     ):
         if val is None:
+            if not allow_scalar:
+                raise ValueError(f'{name} must be a real number or array, got None')
             continue
         if _is_non_real(val):
             raise ValueError(f'{name} must be a real number or array, got {val!r}')
@@ -896,7 +908,7 @@ def _compute_effective_viscosity_core(
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
         log_diff = log10_d_lid
-        log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
+        log_eff = xp.log10(xp.maximum(eta_eff_val, 1.0e-300))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
         res = 10.0**log_solid
         eta_eff_val = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
@@ -940,6 +952,7 @@ def compute_effective_viscosity(
     Raises
     ------
     ValueError
+        If ``eta_diff`` is None.
         If ``stress_closure_mode`` is not ``'lid'`` or ``'local'``, if required
         mode arguments are missing or cross-mode arguments are passed, if any
         input is non-real (such as a boolean, string, or complex value), or, on
@@ -973,6 +986,8 @@ def compute_effective_viscosity(
         (alternative harmonic mean formulation)
     """
     _require_x64_if_jax(xp)
+    if eta_diff is None:
+        raise ValueError('eta_diff must be a real number or array, got None')
     if stress_closure_mode not in ('lid', 'local'):
         hint = (
             ". 'global' mode is unsupported; use 'lid'."
