@@ -1321,3 +1321,66 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
     S_all = np.asarray(sol.y)[: s._n_stag, :]
     assert np.min(S_all) >= -1406.28, f'Entropy fell below S_min + 200: {np.min(S_all)}'
     assert any(not np.isfinite(seg[2]) for seg in segs), 'max_step never relaxed to inf'
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos):
+    """Regime 4 segments use rtol 1e-9 and atol 1e-8 while super-solidus keep caller tolerances."""
+    s = _solver(shared_eos, 'rate', tol=1.0e-7, end_time=100.0)
+    S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
+    S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
+
+    s.set_initial_entropy(0.5 * (S_sol + S_liq))
+    scales = s._build_nondim_scales()
+    y_sub_nd = (S_sol - 10.0 - scales.state_offset) / scales.state_scale
+
+    recorded = []
+
+    def mock_solve_cvode(**kw):
+        t = kw['start_time']
+        rtol = kw.get('rtol')
+        atol = kw.get('atol')
+        y0 = kw.get('y0')
+        recorded.append({'t': t, 'rtol': rtol, 'atol': atol, 'y0': y0})
+        call_idx = len(recorded) - 1
+        if call_idx == 0:
+            # Segment 0: super-solidus start, fires root landing in sub-solidus.
+            res = OptimizeResult(
+                t=np.array([t, t + 10.0]),
+                y=np.column_stack([y0, y_sub_nd]),
+                status=0,
+                cvode_flag=2,
+                nfev=1,
+                cvode_nst=1,
+                cvode_nfe=1,
+            )
+        else:
+            # Segment 1: sub-solidus start, completes call.
+            res = OptimizeResult(
+                t=np.array([t, kw['end_time']]),
+                y=np.column_stack([y0, y0]),
+                status=0,
+                cvode_flag=0,
+                nfev=1,
+                cvode_nst=1,
+                cvode_nfe=1,
+            )
+        return res
+
+    s._solve_cvode = mock_solve_cvode
+    s.solve()
+
+    assert len(recorded) == 2, 'Expected two segments (super-solidus then sub-solidus)'
+    assert recorded[0]['rtol'] == 1.0e-7, 'Super-solidus segment did not keep caller rtol'
+
+    assert recorded[1]['rtol'] == 1.0e-9, 'Sub-solidus segment did not tighten rtol to 1e-9'
+    atol_phys = (
+        recorded[1]['atol'][0] * scales.state_scale[0]
+        if hasattr(recorded[1]['atol'], '__len__')
+        else recorded[1]['atol']
+    )
+    assert atol_phys == pytest.approx(1.0e-8), (
+        'Sub-solidus segment did not set physical atol to 1e-8'
+    )
