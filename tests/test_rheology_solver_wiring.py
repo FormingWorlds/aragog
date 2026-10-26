@@ -805,13 +805,22 @@ def test_public_effective_viscosity_local_delegates_to_compute_strain_rate_local
 # ============================================================================
 
 
-@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
 def test_perturbed_starts_spread(validation_plot) -> None:
-    """Verify stored-data consistency of five runs of abe_solid.toml from perturbed initial entropy profiles
-    S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr, checking that stored trajectories satisfy
-    Delta T_on(r) <= max(2 * Delta T_off(r), 0.05 K) on both the active-solid variant (s_init=2500,
-    kappah_floor=0, viscosity_solid=1e18) and the default inert configuration (s_init=2900, kappah_floor=10,
-    viscosity_solid=1e21) (asserts consistency of stored benchmark data, not live reference_pinned solver integration)."""
+    """Verify stored-data consistency for perturbation-spread benchmarks.
+
+    Reads tests/reference/ssc_solver_wiring_benchmarks.json to verify that five
+    runs of abe_solid.toml from perturbed initial entropy profiles
+    S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
+    Delta T_on(r) <= 3.5e-5 K on active-solid (2x margin over measured 1.751e-5 K)
+    and Delta T_on(r) <= 2.0e-6 K on default inert (3.6x margin over measured
+    5.557e-7 K) across the full radial profile.
+
+    Parameters
+    ----------
+    validation_plot : pytest fixture
+        Plot generation fixture for verification artifacts.
+    """
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     epsilons = data['perturbed_starts']['epsilons']
     assert epsilons == [-2.0e-12, -1.0e-12, 0.0, 1.0e-12, 2.0e-12]
@@ -825,14 +834,15 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     dt_def_on = np.asarray(def_suite['on']['delta_T_basic_profile_K'], dtype=float)
     dt_def_off = np.asarray(def_suite['off']['delta_T_basic_profile_K'], dtype=float)
 
-    assert np.all(dt_var_on <= np.maximum(2.0 * dt_var_off, 0.05))
-    assert np.all(dt_def_on <= np.maximum(2.0 * dt_def_off, 0.05))
-    assert float(np.max(dt_var_on)) <= 0.05
-    assert float(np.max(dt_var_off)) <= 0.05
+    active_spread_bound_k = 3.5e-5
+    default_spread_bound_k = 2.0e-6
+
+    assert np.all(dt_var_on <= active_spread_bound_k)
+    assert np.all(dt_def_on <= default_spread_bound_k)
+    assert float(np.max(dt_var_on)) <= active_spread_bound_k
+    assert float(np.max(dt_def_on)) <= default_spread_bound_k
     assert float(np.max(dt_def_on)) == pytest.approx(5.557178610615665e-07, rel=1.0e-9)
     assert float(np.max(dt_def_off)) == pytest.approx(1.034986325976206e-06, rel=1.0e-9)
-    assert float(np.max(dt_def_on)) <= 0.05
-    assert float(np.max(dt_def_off)) <= 0.05
 
     var_act = var_suite['on_vs_off_activity']
     def_act = def_suite['on_vs_off_activity']
