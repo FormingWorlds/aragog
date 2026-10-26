@@ -113,9 +113,9 @@ def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
 
 
 def test_bc5_refuses_a_constant_mixing_length():
-    """A constant mixing length puts a convective flux of up to 8.8e12 W/m2 on a molten surface
-    node held at its temperature (test tables); the setup refuses mixing_length_profile =
-    'constant' with BC 5, and nearest_boundary, mixing length 0 at the surface, is accepted."""
+    """A constant mixing length puts an eddy flux on a surface face held at its temperature,
+    driven by the steep half-cell gradient; the setup refuses it with BC 5, and
+    nearest_boundary, mixing length 0 at the surface, is accepted."""
     with pytest.raises(Exception) as err:
         _solver(300.0, profile='constant')
     assert err.type is ValueError, repr(err.value)
