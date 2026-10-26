@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from aragog.rheology import SolidRheologyParams
+from tests.conftest import needs_eos
 
 pytestmark = [pytest.mark.smoke, pytest.mark.timeout(120)]
 
@@ -24,12 +25,12 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     thinning ratio (11 % at 0.5 * tau_d_lid against 0.5**(1/3) = 0.7937):
     1. Over 4.5 Gyr of spherical constant-property secular cooling from T_init = 1800 K
        at (s_top_inf, c_theta) = (0.25, 0.25), the 1-D interior temperature T_i(t)
-       deviates from the 0-D ODE by up to 6.67 % (0.066718 at 4.50 Gyr, exceeding 5 %
-       after 3.32 Gyr; linear crossing at 3.324 Gyr, first grid sample above 5 % at
-       3.384 Gyr, and 5.34 % maximum error within the strict 0-D Nu > 1 validity window
-       t < 3.632 Gyr before the 0-D Nu = max(Nu_unyielded, 1.0) clamp activates), and the
+       deviates from the 0-D ODE by up to 6.78 % (0.067831 at 4.50 Gyr, exceeding 5 %
+       after 3.27 Gyr; linear crossing at 3.269 Gyr, first grid sample above 5 % at
+       3.323 Gyr, and 5.51 % maximum error within the strict 0-D Nu > 1 validity window
+       t < 3.696 Gyr before the 0-D Nu = max(Nu_unyielded, 1.0) clamp activates), and the
        post-relaxation (t >= 25 Myr) isotherm lid thickness d_lid(t) deviates by up to
-       47.32 % (0.473228 at 3.63 Gyr, crossing 22 % at 408.4 Myr; 1.000000 at t = 0 yr
+       46.93 % (0.469280 at 3.63 Gyr, crossing 22 % at 413.0 Myr; 1.000000 at t = 0 yr
        before boundary-layer relaxation).
     2. In the steady-state planar internal-heating yield-ceiling sweep (E300, N = 100,
        tau_d_lid = 1.956 MPa), lowering surface cohesion to 0.5, 0.2, and 0.1 * tau_d_lid
@@ -163,40 +164,40 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     max_err_ti_4p5 = float(np.max(rel_err_ti))
     max_err_dlid_post = float(np.max(rel_err_dlid[mask_post_relax]))
     max_err_dlid_all = float(np.max(rel_err_dlid))
-    assert max_err_ti_4p5 == pytest.approx(0.06671792832545187, rel=rel_pin)
+    assert max_err_ti_4p5 == pytest.approx(0.06783066295802885, rel=rel_pin)
     assert float(tr_4p5['max_rel_err_T_i_valid_nu_ge_1']) == pytest.approx(
         float(np.max(rel_err_ti[mask_valid_nu])), rel=rel_pin
     )
     assert float(tr_4p5['max_rel_err_T_i_valid_nu_ge_1']) == pytest.approx(
-        0.05339733875471053, rel=rel_pin
+        0.05509135636935051, rel=rel_pin
     )
     assert float(np.max(rel_err_ti[mask_to_clamp])) == pytest.approx(
-        0.05430943733844024, rel=rel_pin
+        0.056036153381308414, rel=rel_pin
     )
     assert float(tr_4p5['t_cross_rel_err_T_i_0p05_yr']) == pytest.approx(
-        3323877118.8670225, rel=rel_pin
+        3269211012.604643, rel=rel_pin
     )
-    assert max_err_dlid_post == pytest.approx(0.4732278443438256, rel=rel_pin)
+    assert max_err_dlid_post == pytest.approx(0.4692803063581456, rel=rel_pin)
     assert max_err_dlid_all == pytest.approx(1.0, rel=rel_pin)
     assert float(np.max(rel_err_ti[mask_25_400myr])) == pytest.approx(
-        0.03601152242691059, rel=rel_pin
+        0.03605001471081263, rel=rel_pin
     )
     assert float(np.max(rel_err_dlid[mask_25_400myr])) == pytest.approx(
-        0.21720708687458298, rel=rel_pin
+        0.21614266488544823, rel=rel_pin
     )
     assert float(tr_4p5['t_cross_rel_err_d_lid_0p22_yr']) == pytest.approx(
-        408352329.28442734, rel=rel_pin
+        412954882.4827467, rel=rel_pin
     )
     assert float(ftop_1d[-1] / ode_live['F_top_W_m2'][-1]) == pytest.approx(
-        2.170113464492712, rel=rel_pin
+        2.2070921659128095, rel=rel_pin
     )
 
     tr_def_4p5 = data['trajectory_default_4p5Gyr']
     assert float(tr_def_4p5['max_rel_err_T_i_all']) == pytest.approx(
-        0.05861057437471298, rel=rel_pin
+        0.05973297525267639, rel=rel_pin
     )
     assert float(tr_def_4p5['max_rel_err_d_lid_post_relax']) == pytest.approx(
-        0.45685389428887524, rel=rel_pin
+        0.4527836527982292, rel=rel_pin
     )
 
     # 3. Live 1-D EntropySolver RHS at 4.5 Gyr and live 25 Myr trajectory integration
@@ -269,7 +270,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     live_rel_err_ti_end = abs(
         float(sol_live.state._lid_state['T_i']) - float(ode_live['T_i_K'][-1])
     ) / float(ode_live['T_i_K'][-1])
-    assert live_rel_err_ti_end == pytest.approx(0.06671792832545187, rel=rel_pin)
+    assert live_rel_err_ti_end == pytest.approx(0.06783066295802885, rel=rel_pin)
 
     # Short live 1-D integration over the first 25 Myr (17 output points) vs pinned trajectory
     seg_spread = data['segment_25Myr_spread_5starts']
@@ -755,3 +756,83 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         return fig
 
     validation_plot(figure, 'ssc_0d_reference_comparison')
+
+
+@needs_eos
+def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, capsys) -> None:
+    """Execute the Python blocks in docs/Tutorials/solid_state_convection.md and verify outputs match the page."""
+    import re
+    from pathlib import Path
+
+    from tests.conftest import EOS_DIR
+
+    repo_root = Path(__file__).resolve().parents[1]
+    tut_path = repo_root / 'docs' / 'Tutorials' / 'solid_state_convection.md'
+    tut_text = tut_path.read_text(encoding='utf-8')
+
+    assert '._lid_state' not in tut_text
+    assert '._eta_eff_basic' not in tut_text
+    assert 'solver.state.lid_state' in tut_text
+    assert 'solver_yield.state.eta_eff_basic' in tut_text
+
+    py_blocks = re.findall(r'```python\n(.*?)```', tut_text, flags=re.DOTALL)
+    assert len(py_blocks) == 3
+
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', str(EOS_DIR))
+    ns: dict[str, object] = {'__name__': '__main__'}
+    for block in py_blocks:
+        exec(compile(block, str(tut_path), 'exec'), ns)  # noqa: S102
+
+    captured = capsys.readouterr().out
+    expected_lines = [
+        'Rheology off: status=0, eta_surf=3.000e+17 Pa s, eta_cmb=1.664e+17 Pa s, '
+        'eta_diff_cmb=3.000e+17 Pa s, max_jconv=166020.23 W/m^2, max_kappah=16.3075 m^2/s, '
+        'T_magma=781.64 K, T_core=3563.96 K',
+        'Rheology on: status=0, eta_surf=9.352e+27 Pa s, eta_cmb=1.916e+18 Pa s, '
+        'eta_diff_cmb=3.601e+18 Pa s, max_jconv=249.54 W/m^2, max_kappah=0.0422 m^2/s, '
+        'T_magma=781.55 K, T_core=3563.96 K',
+        'has_lid:     True',
+        'd_lid:       31.53 km',
+        'r_lid_base:  6339.47 km',
+        'T_i:         1962.84 K',
+        'T_lid:       1441.97 K',
+        'theta:       14.942',
+        'dT_rh:       79.06 K',
+        'eta_i:       4.494e+18 Pa s',
+        'tau_d_lid:   653.04 kPa',
+        'tau_y_lid:   500.00 MPa',
+        'w_y:         2.116e-09',
+        'w_y = 1.0, yielding nodes = 10',
+        'Surface eta_diff = 9.193e+27 Pa s -> eta_eff = 1.033e+15 Pa s',
+    ]
+    actual_lines = [ln.strip() for ln in captured.strip().splitlines() if ln.strip()]
+    assert actual_lines == expected_lines
+
+    for token in (
+        '3.000e+17',
+        '1.664e+17',
+        '166020.23',
+        '16.3075',
+        '781.64',
+        '3563.96',
+        '9.352e+27',
+        '1.916e+18',
+        '3.601e+18',
+        '249.54',
+        '0.0422',
+        '781.55',
+        '31.53',
+        '6339.47',
+        '1962.84',
+        '1441.97',
+        '14.942',
+        '79.06',
+        '4.494e+18',
+        '653.04',
+        '500.00',
+        '2.116e-09',
+        '`10` basic nodes',
+        '9.193e+27',
+        '1.033e+15',
+    ):
+        assert token in tut_text

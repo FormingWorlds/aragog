@@ -1665,70 +1665,108 @@ def test_solve_core_module_refuses_unmodelled_regime_on_trace_y(
 def test_compute_step_energy_integrals_early_return_reports_last_step_index(
     monkeypatch,
 ) -> None:
-    """When entropy_eos is None, _compute_step_energy_integrals reports the last step index."""
+    """_compute_step_energy_integrals reports the step index on both EOS-present and None paths."""
     from types import SimpleNamespace
 
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
     s_stag = _make_solid_profile(solver)
-    solver.entropy_eos = None
-    solver._solution = SimpleNamespace(
-        t=np.array([0.0, 5.0, 10.0, 15.0]),
-        y=np.tile(s_stag[:, None], (1, 4)),
-    )
+    solver.state.update(s_stag, 0.0)
+    assert solver.state.eta_eff_basic.shape == (20,)
+    assert isinstance(solver.state.lid_state, dict)
 
+    y_trace = np.tile(s_stag[:, None], (1, 4))
+    y_trace[0, 2] = float(solver.entropy_eos.S_min) - 100.0
+    solver._solution = SimpleNamespace(
+        t=np.array([0.0, 3.0, 7.0, 15.0]),
+        y=y_trace,
+        get=lambda k, d=None: None,
+    )
+    solver._cvode_step_powers_batch = None
+    with pytest.raises(RuntimeError, match=r'at step 2, t=7\.000000e\+00 yr'):
+        solver._compute_step_energy_integrals()
+
+    # Early-return path with EOS present (sol.t.size == 1 < 2) checks _check_rheology_eos_range
+    # and reports both step index and time.
+    y_single = s_stag[:, None].copy()
+    y_single[0, 0] = float(solver.entropy_eos.S_max) + 100.0
+    solver._solution = SimpleNamespace(
+        t=np.array([15.0]),
+        y=y_single,
+        get=lambda k, d=None: None,
+    )
+    with pytest.raises(RuntimeError, match=r'at step 0, t=1\.500000e\+01 yr'):
+        solver._compute_step_energy_integrals()
+
+    solver._solution = SimpleNamespace(
+        t=np.array([0.0, 3.0, 7.0, 15.0]),
+        y=np.tile(s_stag[:, None], (1, 4)),
+        get=lambda k, d=None: None,
+    )
     orig_dSdt = solver._dSdt_single
 
-    def _corrupt_eta_eff(t_val, y_val):
-        orig_dSdt(t_val, y_val)
+    def _corrupt_always(t_val, y_val):
+        res = orig_dSdt(t_val, y_val)
         solver.state._eta_eff_basic = np.full(20, -1.0)
+        return res
 
-    monkeypatch.setattr(solver, '_dSdt_single', _corrupt_eta_eff)
-    with pytest.raises(RuntimeError, match='at step 3'):
+    solver.entropy_eos = None
+    monkeypatch.setattr(solver, '_dSdt_single', _corrupt_always)
+    with pytest.raises(RuntimeError, match=r'at step 3, node 0'):
         solver._compute_step_energy_integrals()
 
 
-def test_commit_matches_generator_inputs_guard(tmp_path) -> None:
-    """_check_commit_matches_generator_inputs rejects commits where src/aragog diverged."""
-    import subprocess
-
-    from tools.verification._ssc_helpers import _check_commit_matches_generator_inputs
+def test_generator_input_fingerprint_guard(tmp_path) -> None:
+    """_check_generator_input_fingerprint verifies unchanged inputs and rejects changed inputs or merged branch JSONs."""
+    from tools.verification._ssc_helpers import (
+        _check_generator_input_fingerprint,
+        compute_generator_input_fingerprint,
+    )
 
     repo = tmp_path / 'repo'
     (repo / 'src' / 'aragog').mkdir(parents=True)
+    (repo / 'tools' / 'verification').mkdir(parents=True)
     (repo / 'docs').mkdir(parents=True)
-    subprocess.run(['git', 'init', str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ['git', '-C', str(repo), 'config', 'user.email', 't@example.com'], check=True
-    )
-    subprocess.run(['git', '-C', str(repo), 'config', 'user.name', 'Test'], check=True)
 
     (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 1\n', encoding='utf-8')
-    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
-    subprocess.run(
-        ['git', '-C', str(repo), 'commit', '-m', 'base'], check=True, capture_output=True
+    (repo / 'tools' / 'verification' / 'gen.py').write_text('y = 1\n', encoding='utf-8')
+    watched = ('src/aragog', 'tools/verification/gen.py')
+    commit_a = 'a' * 40
+    commit_b = 'b' * 40
+
+    sha_a, files_a = compute_generator_input_fingerprint(watched, repo_root=repo)
+    assert (
+        _check_generator_input_fingerprint(
+            commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
+        )
+        == []
     )
-    base_sha = subprocess.check_output(
-        ['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True
-    ).strip()
 
-    assert _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo) == []
-
-    # Docs-only commit keeps generator inputs ('src/aragog',) unchanged
+    # Unwatched file edit keeps generator input fingerprint unchanged
     (repo / 'docs' / 'note.md').write_text('doc\n', encoding='utf-8')
-    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
-    subprocess.run(
-        ['git', '-C', str(repo), 'commit', '-m', 'docs'], check=True, capture_output=True
+    assert (
+        _check_generator_input_fingerprint(
+            commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
+        )
+        == []
     )
-    assert _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo) == []
 
-    # Modifying src/aragog makes base_sha stale (as when merging another branch's JSON)
+    # Branch B modifies src/aragog and records its own JSON fingerprint sha_b
     (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 2\n', encoding='utf-8')
-    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
-    subprocess.run(
-        ['git', '-C', str(repo), 'commit', '-m', 'src'], check=True, capture_output=True
+    sha_b, files_b = compute_generator_input_fingerprint(watched, repo_root=repo)
+    assert sha_b != sha_a
+
+    # (ii) Changed input fails against recorded sha_a
+    errs_changed = _check_generator_input_fingerprint(
+        commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
     )
-    errs = _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo)
-    assert len(errs) == 1
-    assert 'Generator inputs changed' in errs[0]
+    assert len(errs_changed) == 1
+    assert 'Generator inputs changed' in errs_changed[0]
+
+    # (iii) Merging branch A's JSON (sha_a) onto branch B's tree fails without needing git history
+    errs_merge = _check_generator_input_fingerprint(
+        commit_b, sha_a, watched, recorded_files=files_b, repo_root=repo
+    )
+    assert len(errs_merge) == 1
+    assert 'Generator inputs changed' in errs_merge[0]

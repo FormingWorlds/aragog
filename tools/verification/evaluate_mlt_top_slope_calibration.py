@@ -14,15 +14,17 @@ used to assess the viscosity-contrast-dependent upper mixing-length slope
    normalised residuals, 84 normalised residuals in total across the 36 cases).
 
 In default / ``--full`` mode, the script runs all 36 steady-state solves at the
-planar-calibrated pair ``(s_top_inf, c_theta) = (0.25, 0.25)`` and at the
+chosen pair ``(s_top_inf, c_theta) = (0.25, 0.25)`` and at the
 ``SolidRheologyParams`` default pair ``(0.22, 0.15)`` using
 ``stress_closure_mode = 'local'``, ``s_top`` frozen at each table's nominal
-``theta`` via ``c_theta = 0.0``, and a Frank-Kamenetskii viscosity override
-during steady-state integration on the spherical cases, verifies the generated
-payload in memory, and writes
+``theta`` via ``c_theta = 0.0``, a half-cell conductive boundary-flux patch on
+outer BC 5 and inner BC 3 via ``_patched_state_update``, and a
+Frank-Kamenetskii viscosity override during steady-state integration on the
+spherical cases, verifies the generated payload in memory, and writes
 ``tests/reference/ssc_mlt_top_slope_calibration.json``.
 
-In ``--check`` mode, the script validates the provenance commit format and
+In ``--check`` mode, the script validates the 40-hex provenance commit SHA, the
+SHA-256 generator-input fingerprint (``generator_input_sha256``), and
 tolerance/default metadata fields, recomputes every per-row normalised residual,
 top-slope evaluation, and summary statistic (maxima, worst-case row names,
 exceedance counts, and mean-square normalised residuals) from the stored row
@@ -71,12 +73,19 @@ from aragog.solver import entropy_solver as es_mod  # noqa: E402
 from aragog.solver import entropy_state as estate_mod  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tools.verification._ssc_helpers import (  # noqa: E402
+    _check_generator_input_fingerprint,
     _is_valid_commit_sha,
     _resolve_origin_head_commit,
+    compute_generator_input_fingerprint,
     korenaga_ti_fixed_point,
 )
 
 DEFAULT_OUT = REPO_ROOT / 'tests' / 'reference' / 'ssc_mlt_top_slope_calibration.json'
+MLT_CALIBRATION_INPUT_PATHS: tuple[str, ...] = (
+    'src/aragog',
+    'tools/verification/_ssc_helpers.py',
+    'tools/verification/evaluate_mlt_top_slope_calibration.py',
+)
 
 KORENAGA_NU_REL_TOL = 0.10
 DV2021_TM_ABS_TOL = 0.03
@@ -189,14 +198,16 @@ def _patched_state_update(self: Any, entropy: Any, time_val: Any, *a: Any, **k: 
         )
 
 
-def _fast_check_rheo_inv(self: Any, trace_y: Any = None, trace_t: Any = None) -> None:
+def _fast_check_rheo_inv(
+    self: Any, trace_y: Any = None, trace_t: Any = None, *args: Any, **kwargs: Any
+) -> None:
     if trace_y is not None:
         y_pts = np.asarray(trace_y, dtype=float)
         if y_pts.ndim == 2:
             y_pts = y_pts[:, -1:]
         t_pts = np.asarray(trace_t, dtype=float).ravel()[-1:] if trace_t is not None else None
-        return _orig_check_rheo_inv(self, y_pts, t_pts)
-    return _orig_check_rheo_inv(self, None, None)
+        return _orig_check_rheo_inv(self, y_pts, t_pts, *args, **kwargs)
+    return _orig_check_rheo_inv(self, None, None, *args, **kwargs)
 
 
 def _make_fk_viscosity(orig_fn: Any) -> Any:
@@ -489,123 +500,126 @@ def run_deschamps_vilella_row(
 ) -> dict[str, Any]:
     """Run one Deschamps and Vilella (2021, Table 1) spherical row to steady state."""
     _install_benchmark_patches()
-    ra_s, f_core, deta, h_dimless, tm_ref, phi_top_ref, phi_bot_ref, d_lid_ref = (
-        DESCHAMPS_VILELLA_2021_ROWS[row_name]
-    )
-    d_shell = 1.0e6
-    r_out = d_shell / (1.0 - f_core)
-    rho, cp, k_cond, alpha, g = 4000.0, 1000.0, 4.0, 3.0e-5, 10.0
-    t_s, dt_k = 273.0, 1000.0
-    t_bot = t_s + dt_k
-    kappa = k_cond / (rho * cp)
-    eta0 = alpha * rho * g * dt_k * d_shell**3 / (kappa * ra_s)
-    gamma = float(np.log(deta) / dt_k)
-    theta = float(np.log(deta))
-    h_heat = h_dimless * k_cond * dt_k / (rho * d_shell**2)
-
-    _FK_STATE.clear()
-    _FK_STATE.update(eta0=eta0, gamma=gamma, T0=t_s)
-
-    s_top_used = _row_s_top(theta, s_top_inf, c_theta)
-    g_hom = gamma * t_bot
-    rheo = SolidRheologyParams(
-        enabled=True,
-        g_homologous=g_hom,
-        t_sol_0=t_bot,
-        dt_sol_dp=0.0,
-        arrhenius_t_ref=t_bot,
-        s_top_inf=s_top_used,
-        c_theta=0.0,
-        mlt_bottom_slope=1.0,
-        yield_stress_c=1.0e30,
-        yield_stress_max=1.0e30,
-        stress_closure_mode='local',
-    )
-    bc = _BoundaryConditionsParameters(
-        outer_boundary_condition=5,
-        outer_boundary_value=t_s,
-        inner_boundary_condition=3,
-        inner_boundary_value=t_bot,
-        emissivity=1.0,
-        equilibrium_temperature=t_s,
-        core_heat_capacity=880.0,
-        core_bc='quasi_steady',
-    )
-    en = _EnergyParameters(
-        conduction=True,
-        convection=True,
-        gravitational_separation=False,
-        mixing=False,
-        radionuclides=True,
-        tidal=False,
-        solver_method='cvode',
-        use_jax_jacobian=False,
-        kappah_floor=0.0,
-    )
-    ic = _InitialConditionParameters(
-        initial_condition=1,
-        surface_temperature=t_s + 0.9 * dt_k,
-        basal_temperature=t_s + 0.9 * dt_k,
-    )
-    mesh = _MeshParameters(
-        outer_radius=r_out,
-        inner_radius=r_out - d_shell,
-        number_of_nodes=n_nodes,
-        mixing_length_profile='nearest_boundary',
-        core_density=rho,
-        eos_method=1,
-        surface_density=rho,
-        gravitational_acceleration=g,
-        mass_coordinates=False,
-    )
-    common = dict(
-        density=rho, heat_capacity=cp, thermal_conductivity=k_cond, thermal_expansivity=alpha
-    )
-    pl = _PhaseParameters(melt_fraction=1.0, viscosity=1.0e2, **common)
-    ps = _PhaseParameters(melt_fraction=0.0, viscosity=eta0, rheology=rheo, **common)
-    pm = _PhaseMixedParameters(
-        latent_heat_of_fusion=4.0e5,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        solidus='solidus.dat',
-        liquidus='liquidus.dat',
-        phase='mixed',
-        phase_transition_width=0.01,
-        grain_size=1.0e-3,
-        matprop_smooth_width=0.01,
-        const_properties=True,
-        const_rho=rho,
-        const_Cp=cp,
-        const_alpha=alpha,
-        const_cond=k_cond,
-        const_log10visc=float(np.log10(eta0)),
-        const_T_ref=t_bot,
-        const_S_ref=3000.0,
-    )
-    t_end = 2.0e11
-    chunks = 40
-    sv = _SolverParameters(start_time=0.0, end_time=t_end, atol=1.0e-6, rtol=1.0e-6)
-    rn = _Radionuclide(
-        name='const',
-        t0_years=0.0,
-        abundance=1.0,
-        concentration=1.0e6,
-        heat_production=h_heat,
-        half_life_years=1.0e30,
-    )
-    p = Parameters(
-        boundary_conditions=bc,
-        energy=en,
-        initial_condition=ic,
-        mesh=mesh,
-        phase_solid=ps,
-        phase_liquid=pl,
-        phase_mixed=pm,
-        radionuclides=[rn],
-        solver=sv,
-    )
-    t0 = time.time()
     try:
+        ra_s, f_core, deta, h_dimless, tm_ref, phi_top_ref, phi_bot_ref, d_lid_ref = (
+            DESCHAMPS_VILELLA_2021_ROWS[row_name]
+        )
+        d_shell = 1.0e6
+        r_out = d_shell / (1.0 - f_core)
+        rho, cp, k_cond, alpha, g = 4000.0, 1000.0, 4.0, 3.0e-5, 10.0
+        t_s, dt_k = 273.0, 1000.0
+        t_bot = t_s + dt_k
+        kappa = k_cond / (rho * cp)
+        eta0 = alpha * rho * g * dt_k * d_shell**3 / (kappa * ra_s)
+        gamma = float(np.log(deta) / dt_k)
+        theta = float(np.log(deta))
+        h_heat = h_dimless * k_cond * dt_k / (rho * d_shell**2)
+
+        _FK_STATE.clear()
+        _FK_STATE.update(eta0=eta0, gamma=gamma, T0=t_s)
+
+        s_top_used = _row_s_top(theta, s_top_inf, c_theta)
+        g_hom = gamma * t_bot
+        rheo = SolidRheologyParams(
+            enabled=True,
+            g_homologous=g_hom,
+            t_sol_0=t_bot,
+            dt_sol_dp=0.0,
+            arrhenius_t_ref=t_bot,
+            s_top_inf=s_top_used,
+            c_theta=0.0,
+            mlt_bottom_slope=1.0,
+            yield_stress_c=1.0e30,
+            yield_stress_max=1.0e30,
+            stress_closure_mode='local',
+        )
+        bc = _BoundaryConditionsParameters(
+            outer_boundary_condition=5,
+            outer_boundary_value=t_s,
+            inner_boundary_condition=3,
+            inner_boundary_value=t_bot,
+            emissivity=1.0,
+            equilibrium_temperature=t_s,
+            core_heat_capacity=880.0,
+            core_bc='quasi_steady',
+        )
+        en = _EnergyParameters(
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=True,
+            tidal=False,
+            solver_method='cvode',
+            use_jax_jacobian=False,
+            kappah_floor=0.0,
+        )
+        ic = _InitialConditionParameters(
+            initial_condition=1,
+            surface_temperature=t_s + 0.9 * dt_k,
+            basal_temperature=t_s + 0.9 * dt_k,
+        )
+        mesh = _MeshParameters(
+            outer_radius=r_out,
+            inner_radius=r_out - d_shell,
+            number_of_nodes=n_nodes,
+            mixing_length_profile='nearest_boundary',
+            core_density=rho,
+            eos_method=1,
+            surface_density=rho,
+            gravitational_acceleration=g,
+            mass_coordinates=False,
+        )
+        common = dict(
+            density=rho,
+            heat_capacity=cp,
+            thermal_conductivity=k_cond,
+            thermal_expansivity=alpha,
+        )
+        pl = _PhaseParameters(melt_fraction=1.0, viscosity=1.0e2, **common)
+        ps = _PhaseParameters(melt_fraction=0.0, viscosity=eta0, rheology=rheo, **common)
+        pm = _PhaseMixedParameters(
+            latent_heat_of_fusion=4.0e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='solidus.dat',
+            liquidus='liquidus.dat',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1.0e-3,
+            matprop_smooth_width=0.01,
+            const_properties=True,
+            const_rho=rho,
+            const_Cp=cp,
+            const_alpha=alpha,
+            const_cond=k_cond,
+            const_log10visc=float(np.log10(eta0)),
+            const_T_ref=t_bot,
+            const_S_ref=3000.0,
+        )
+        t_end = 2.0e11
+        chunks = 40
+        sv = _SolverParameters(start_time=0.0, end_time=t_end, atol=1.0e-6, rtol=1.0e-6)
+        rn = _Radionuclide(
+            name='const',
+            t0_years=0.0,
+            abundance=1.0,
+            concentration=1.0e6,
+            heat_production=h_heat,
+            half_life_years=1.0e30,
+        )
+        p = Parameters(
+            boundary_conditions=bc,
+            energy=en,
+            initial_condition=ic,
+            mesh=mesh,
+            phase_solid=ps,
+            phase_liquid=pl,
+            phase_mixed=pm,
+            radionuclides=[rn],
+            solver=sv,
+        )
+        t0 = time.time()
         s = EntropySolver(p, entropy_eos=None)
         s.initialize()
         s.set_initial_entropy(3000.0)
@@ -810,8 +824,15 @@ def verify_calibration_json(
     meta = data.get('metadata', {})
     if not isinstance(meta, dict):
         return ['Missing metadata block']
-    if not _is_valid_commit_sha(meta.get('git_commit')):
-        failures.append(f'Invalid metadata.git_commit format: {meta.get("git_commit")!r}')
+    failures.extend(
+        _check_generator_input_fingerprint(
+            meta.get('git_commit'),
+            meta.get('generator_input_sha256'),
+            MLT_CALIBRATION_INPUT_PATHS,
+            recorded_files=meta.get('generator_input_files'),
+            repo_root=REPO_ROOT,
+        )
+    )
 
     tols = meta.get('tolerances', {})
     expected_tols = {
@@ -979,6 +1000,9 @@ def build_full_payload(n_nodes: int = 100) -> dict[str, Any]:
         float(srp.c_theta),
         n_nodes=n_nodes,
     )
+    input_sha, input_files = compute_generator_input_fingerprint(
+        MLT_CALIBRATION_INPUT_PATHS, repo_root=REPO_ROOT
+    )
     return {
         'metadata': {
             'description': (
@@ -988,6 +1012,8 @@ def build_full_payload(n_nodes: int = 100) -> dict[str, Any]:
             ),
             'generator': 'tools/verification/evaluate_mlt_top_slope_calibration.py',
             'git_commit': get_git_commit(),
+            'generator_input_sha256': input_sha,
+            'generator_input_files': input_files,
             'parameter_defaults': {
                 's_top_inf': float(srp.s_top_inf),
                 'c_theta': float(srp.c_theta),

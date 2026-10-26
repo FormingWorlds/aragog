@@ -1,6 +1,6 @@
 # Solid-state convection and stagnant-lid rheology
 
-This tutorial walks through running Aragog with temperature-, pressure-, and stress-dependent solid-state mantle rheology (`[phase_solid.rheology]`). Starting from the bundled `abe_solid.toml` template, we compare a constant-viscosity solid mantle (`enabled = false`) against an Arrhenius diffusion-creep mantle (`enabled = true`), inspect the stagnant-lid boundary-layer diagnostics on `solver.state._lid_state`, and lower the Byerlee yield stress to observe plastic yielding in the cold upper boundary layer.
+This tutorial walks through running Aragog with temperature-, pressure-, and stress-dependent solid-state mantle rheology (`[phase_solid.rheology]`). Starting from the bundled `abe_solid.toml` template, we compare a constant-viscosity solid mantle (`enabled = false`) against an Arrhenius diffusion-creep mantle (`enabled = true`), inspect the stagnant-lid boundary-layer diagnostics on `solver.state.lid_state`, and lower the Byerlee yield stress to observe plastic yielding in the cold upper boundary layer.
 
 For the mathematical formulation and benchmark comparisons, see [Solid-state convection](../Explanations/solid_state_convection.md) and [Configuration: `[phase_solid.rheology]`](../How-to/configuration.md#phase_solidrheology).
 
@@ -118,10 +118,10 @@ With `enabled = False`, the cold upper boundary layer keeps the uniform solid vi
 
 ## 3. Read the stagnant-lid diagnostics
 
-When `enabled = True` and `stress_closure_mode = "lid"`, `solver.state._lid_state` stores the boundary-layer diagnostics computed by `compute_stagnant_lid_state` at the most recent state evaluation:
+When `enabled = True` and `stress_closure_mode = "lid"`, `solver.state.lid_state` stores the boundary-layer diagnostics computed by `compute_stagnant_lid_state` at the most recent state evaluation:
 
 ```python
-lid = solver_on.state._lid_state
+lid = solver_on.state.lid_state
 print(f"has_lid:     {lid['has_lid']}")
 print(f"d_lid:       {float(lid['d_lid']) * 1e-3:.2f} km")
 print(f"r_lid_base:  {float(lid['r_lid_base']) * 1e-3:.2f} km")
@@ -156,9 +156,9 @@ solver_yield = run_case(
         yield_stress_max=1.0e8,
     )
 )
-lid_yield = solver_yield.state._lid_state
+lid_yield = solver_yield.state.lid_state
 eta_diff = np.asarray(solver_yield.state.phase_basic.eta_diff()).ravel()
-eta_eff = np.asarray(solver_yield.state.phase_basic.viscosity()).ravel()
+eta_eff = solver_yield.state.eta_eff_basic
 n_yielding = int(np.sum(eta_eff < eta_diff * (1.0 - 1.0e-12)))
 print(f"w_y = {float(lid_yield['w_y']):.1f}, yielding nodes = {n_yielding}")
 print(f"Surface eta_diff = {eta_diff[-1]:.3e} Pa s -> eta_eff = {eta_eff[-1]:.3e} Pa s")

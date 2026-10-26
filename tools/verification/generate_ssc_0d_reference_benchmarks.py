@@ -54,7 +54,8 @@ Execution modes and per-block coverage:
      ``segment_25Myr_spread_5starts``): refreshes 0-D fixed-``T_i`` and fixed-``H``
      steady-state predictions and stamps ``source_git_commit`` and ``eos_tables`` on each
      fixed-input block.
-- ``--check``: verifies expected schema keys, commit-SHA format, and the no-table
+- ``--check``: verifies expected schema keys, 40-hex commit-SHA format, the SHA-256
+  generator-input fingerprint (``generator_input_sha256``), and the no-table
   constant-property record (``eos_tables``), combining live 0-D and 1-D solver
   evaluations with stored-data consistency checks across all blocks:
   1. ``a_nu_provenance`` (live 0-D ODE): recomputes all 12 Korenaga (2009) Table 1
@@ -71,7 +72,8 @@ Execution modes and per-block coverage:
      ``[0, 25 Myr]`` (17 output points) within ``1e-7``; evaluates live 1-D
      ``EntropySolver._dSdt_single`` on all four ``solver_last_S`` endpoint profiles
      within ``1e-9``; and verifies ``segment_25Myr_spread_5starts`` schema completeness
-     and ``< 1e-7`` bounds on the stored 5-start spread statistics.
+     and ``0 < spread < 1e-7`` bounds on the stored 5-start spread statistics
+     (bounded rather than recomputed in ``--check``).
   3. ``yield_sweep_0d_at_1600K``, ``yield_sweep_reference_state``,
      ``yield_sweep_1d_by_dt``, ``yield_sweep_1d_equal_Ti_from_S_ref``, and
      ``yield_sweep_1d_equal_Ti_1600K_from_init``: recomputes live all 5 0-D yield cases
@@ -126,8 +128,10 @@ from tests.reference.stagnant_lid_0d import (  # noqa: E402
 )
 from tools.verification._ssc_helpers import (  # noqa: E402
     REPO_ROOT,
-    _is_valid_commit_sha,
+    _check_generator_input_fingerprint,
     _resolve_origin_head_commit,
+    compute_generator_input_fingerprint,
+    evaluate_bc5_surface_patch_state,
     half_cell_surface_flux,
     unbounded_cvode_step,
 )
@@ -135,6 +139,12 @@ from tools.verification._ssc_helpers import (  # noqa: E402
 SECS_PER_YR = 31557600.0
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_0d_reference_benchmarks.json'
+SSC_0D_INPUT_PATHS: tuple[str, ...] = (
+    'src/aragog',
+    'tests/reference/stagnant_lid_0d.py',
+    'tools/verification/_ssc_helpers.py',
+    'tools/verification/generate_ssc_0d_reference_benchmarks.py',
+)
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
 )
@@ -170,6 +180,7 @@ EXPECTED_STEADY_KEYS = (
 EXPECTED_LIVE_YIELD_KEYS = (
     'e300_n100_steady_vectors',
     's_ref_51',
+    'bc5_surface_patch_diagnostics',
 )
 EXPECTED_PROVENANCE_KEYS = (
     'a_nu_value',
@@ -467,6 +478,17 @@ def solve_0d_fixed_h_steady_ratio(
             for tv in t_grid
         ]
         t_lo = float(t_grid[int(np.argmin(f_grid))])
+        f_lo = float(evaluate_stagnant_lid_0d(t_lo, p_case)['F_top_planar_W_m2']) - f_uny
+        f_hi = (
+            float(evaluate_stagnant_lid_0d(float(t_i_uny_k), p_case)['F_top_planar_W_m2'])
+            - f_uny
+        )
+        if f_lo * f_hi > 0.0:
+            raise ValueError(
+                f'solve_0d_fixed_h_steady_ratio bracket failed for {row_name} '
+                f'(mult={mult}): f_lo={f_lo:.6e} at T={t_lo:.2f} K, '
+                f'f_hi={f_hi:.6e} at T={float(t_i_uny_k):.2f} K'
+            )
         t_i_0d_fixed_h = float(
             brentq(
                 lambda t_val: (
@@ -488,10 +510,8 @@ def solve_0d_fixed_h_steady_ratio(
     }
 
 
-def evaluate_live_e300_steady_vector(
-    tau_y_pa: float, h_scale: float, s_vec: np.ndarray
-) -> dict[str, float]:
-    """Evaluate 1-D ``EntropySolver._dSdt_single`` on a stored ``E300`` steady-state vector."""
+def _build_e300_steady_params(tau_y_pa: float, h_scale: float) -> Parameters:
+    """Build ``Parameters`` for a stored ``E300`` (``N=100``) steady-state profile."""
     e_kj, dt_k, _, ra_i, nu_ref = 300.0, 1544.0, 16.9, 1.49e7, 3.40
     d_m = 1.0e6
     r_out = 100.0 * d_m
@@ -522,7 +542,7 @@ def evaluate_live_e300_steady_vector(
     common = dict(
         density=rho, heat_capacity=cp, thermal_conductivity=k_cond, thermal_expansivity=alpha
     )
-    params = Parameters(
+    return Parameters(
         boundary_conditions=_BoundaryConditionsParameters(
             outer_boundary_condition=5,
             outer_boundary_value=t_s,
@@ -593,18 +613,28 @@ def evaluate_live_e300_steady_vector(
         ],
         solver=_SolverParameters(start_time=0.0, end_time=1.0, atol=1.0e-6, rtol=1.0e-6),
     )
+
+
+def evaluate_live_e300_steady_vector(
+    tau_y_pa: float, h_scale: float, s_vec: np.ndarray
+) -> dict[str, float]:
+    """Evaluate 1-D ``EntropySolver._dSdt_single`` on a stored ``E300`` steady-state vector."""
+    params = _build_e300_steady_params(tau_y_pa, h_scale)
+    rheo = params.phase_solid.rheology
+    k_cond = float(params.phase_solid.thermal_conductivity)
+    t_s = float(params.boundary_conditions.outer_boundary_value)
     with half_cell_surface_flux():
         solver = EntropySolver(params, entropy_eos=None)
         solver.initialize()
         rhs = np.asarray(solver._dSdt_single(0.0, s_vec), dtype=float)
-        lid = solver.state._lid_state
+        lid = solver.state.lid_state
         f_top = float(solver.state.heat_flux[-1])
         t_i_lid = float(lid['T_i'])
         theta_lid = float(lid['theta'])
         delta_l_cond = k_cond * (t_i_lid - t_s) / f_top
         d_lid_cond = (1.0 - float(rheo.lid_contrast_coeff) / theta_lid) * delta_l_cond
         eta_diff_b = np.asarray(solver.state.phase_basic.eta_diff(), dtype=float).ravel()
-        eta_eff_b = np.asarray(solver.state._eta_eff_basic, dtype=float).ravel()
+        eta_eff_b = solver.state.eta_eff_basic
         w_lid_b = np.asarray(lid['w_lid'], dtype=float).ravel()
         eta_eff_lid_min = float(np.min(eta_eff_b[w_lid_b > 0.5]))
         return {
@@ -616,6 +646,64 @@ def evaluate_live_e300_steady_vector(
             'F_top_W_m2': f_top,
             'n_yielding_basic_nodes': int(np.sum(eta_eff_b < 0.999 * eta_diff_b)),
         }
+
+
+def compute_e300_bc5_surface_patch_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
+    """Compute BC 5 half-cell patch vs unpatched and surface-consistent closure diagnostics on E300 states."""
+    steady = data['steady_yield_thinning']
+    vecs = data['live_yield_states']['e300_n100_steady_vectors']
+    e300_fh = steady['e300_n100_fixed_h']['cases']
+    e300_mt = steady['e300_n100_matched_ti']['cases']
+    live_specs = (
+        ('unyielded_500MPa', e300_fh['unyielded_500MPa']),
+        ('fixed_h_below_0p5x_tau_d_lid', e300_fh['below_0p5x_tau_d_lid']),
+        ('matched_ti_below_0p5x_tau_d_lid', e300_mt['below_0p5x_tau_d_lid']),
+    )
+    states_out: dict[str, dict[str, Any]] = {}
+    for vec_key, ref_case in live_specs:
+        params = _build_e300_steady_params(
+            float(ref_case['tau_y_lid_Pa']),
+            float(ref_case['h_scale']),
+        )
+        s_vec = np.asarray(vecs[vec_key]['S_steady_J_kg_K'], dtype=float)
+        states_out[vec_key] = evaluate_bc5_surface_patch_state(params, s_vec, 0.0)
+
+    t_ext_vals = [float(st['T_basic_extrapolated_K']) for st in states_out.values()]
+    jcond_vals = [float(st['jcond_unpatched_surface_W_m2']) for st in states_out.values()]
+    ftop_vals = [float(st['with_patch_F_top_W_m2']) for st in states_out.values()]
+    dl_p1_diffs = [float(st['d_lid_pass1_rel_diff']) for st in states_out.values()]
+    dl_cond_diffs = sorted(float(st['d_lid_cond_lid_rel_diff']) for st in states_out.values())
+    theta_diffs = sorted(float(st['theta_rel_diff']) for st in states_out.values())
+    stored_rhs = [float(st['with_patch_max_abs_rhs_J_kg_K_yr']) for st in states_out.values()]
+    cons_rhs = sorted(
+        float(st['consistent_max_abs_rhs_J_kg_K_yr']) for st in states_out.values()
+    )
+    return {
+        'states': states_out,
+        'summary_ranges': {
+            'outer_boundary_condition_5': 5,
+            'outer_boundary_condition_4': 4,
+            'T_basic_extrapolated_min_K': min(t_ext_vals),
+            'T_basic_extrapolated_max_K': max(t_ext_vals),
+            'jcond_unpatched_min_W_m2': min(jcond_vals),
+            'jcond_unpatched_max_W_m2': max(jcond_vals),
+            'F_top_patched_min_W_m2': min(ftop_vals),
+            'F_top_patched_max_W_m2': max(ftop_vals),
+            'd_lid_pass1_rel_diff_min': min(dl_p1_diffs),
+            'd_lid_pass1_rel_diff_max_abs': max(abs(v) for v in dl_p1_diffs),
+            'd_lid_cond_lid_rel_diff_min': dl_cond_diffs[0],
+            'd_lid_cond_lid_rel_diff_mid': dl_cond_diffs[1],
+            'd_lid_cond_lid_rel_diff_max': dl_cond_diffs[2],
+            'theta_rel_diff_min': theta_diffs[0],
+            'theta_rel_diff_mid': theta_diffs[1],
+            'theta_rel_diff_max': theta_diffs[2],
+            'stored_max_abs_rhs_min': min(stored_rhs),
+            'stored_max_abs_rhs_max': max(stored_rhs),
+            'consistent_max_abs_rhs_min': cons_rhs[0],
+            'consistent_max_abs_rhs_mid': cons_rhs[1],
+            'consistent_max_abs_rhs_max': cons_rhs[2],
+        },
+    }
 
 
 def _compute_trajectory_metrics_from_arrays(
@@ -776,14 +864,20 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or not meta.get('git_commit') or 'params_0d' not in meta:
         failures.append("Missing 'git_commit' or 'params_0d' in metadata")
-    elif not _is_valid_commit_sha(str(meta.get('git_commit'))):
-        failures.append(
-            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a 40-hex commit SHA"
+    else:
+        failures.extend(
+            _check_generator_input_fingerprint(
+                meta.get('git_commit'),
+                meta.get('generator_input_sha256'),
+                SSC_0D_INPUT_PATHS,
+                recorded_files=meta.get('generator_input_files'),
+                repo_root=REPO_ROOT,
+            )
         )
-    elif meta.get('eos_tables') != NO_TABLE_RECORD or 'eos_md5' in meta:
-        failures.append(
-            f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r} or 'eos_md5' present"
-        )
+        if meta.get('eos_tables') != NO_TABLE_RECORD or 'eos_md5' in meta:
+            failures.append(
+                f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r} or 'eos_md5' present"
+            )
 
     steady = data.get('steady_yield_thinning', {})
     steady_keys = tuple(
@@ -1357,6 +1451,44 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             ):
                 failures.append(f'{vec_key} {m_key} live vs live_yield_states mismatch')
 
+    live_bc5 = compute_e300_bc5_surface_patch_diagnostics(data)
+    stored_bc5 = live_states.get('bc5_surface_patch_diagnostics', {})
+    if not isinstance(stored_bc5, dict):
+        failures.append('live_yield_states.bc5_surface_patch_diagnostics is not a dict')
+    else:
+        st_states = stored_bc5.get('states', {})
+        for vec_key, l_st in live_bc5['states'].items():
+            s_st = st_states.get(vec_key) if isinstance(st_states, dict) else None
+            if not isinstance(s_st, dict):
+                failures.append(f'bc5_surface_patch_diagnostics.states missing {vec_key!r}')
+                continue
+            for fk, fv in l_st.items():
+                sv = s_st.get(fk, '__missing__')
+                if fv is None:
+                    if sv is not None:
+                        failures.append(
+                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} expected None'
+                        )
+                elif isinstance(fv, int):
+                    if int(sv) != fv:
+                        failures.append(
+                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch'
+                        )
+                else:
+                    tol_f = 1.0e-4 if 'max_abs_rhs' in fk else 1.0e-9
+                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=1.0e-15):
+                        failures.append(
+                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch'
+                        )
+        st_sum = stored_bc5.get('summary_ranges', {})
+        for sk, sv_live in live_bc5['summary_ranges'].items():
+            if not isinstance(st_sum, dict) or sk not in st_sum:
+                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges missing {sk!r}')
+                continue
+            tol_s = 1.0e-4 if 'max_abs_rhs' in sk else 1.0e-9
+            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=1.0e-15):
+                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch')
+
     return failures
 
 
@@ -1511,12 +1643,17 @@ def main(argv: list[str] | None = None) -> int:
 
     data = json.loads(output_path.read_text(encoding='utf-8'))
     p0d = build_default_0d_params()
+    input_sha, input_files = compute_generator_input_fingerprint(
+        SSC_0D_INPUT_PATHS, repo_root=REPO_ROOT
+    )
     meta = data.setdefault('metadata', {})
     meta.pop('eos_tables_release', None)
     meta.pop('eos_md5', None)
     meta['eos_tables'] = NO_TABLE_RECORD
     meta['params_0d'] = asdict(p0d)
     meta['git_commit'] = head_sha
+    meta['generator_input_sha256'] = input_sha
+    meta['generator_input_files'] = input_files
 
     if args.full:
         base_params = Parameters.from_file(
@@ -1576,6 +1713,21 @@ def main(argv: list[str] | None = None) -> int:
                 p0d,
                 is_4p5gyr=is_4p5,
             )
+            for mk in (
+                'max_rel_err_T_i_all',
+                'max_rel_err_T_i_post_relax',
+                'max_rel_err_T_i_window_25_400Myr',
+                'max_rel_err_T_i_window_1600_1800',
+                'max_rel_err_d_lid_all',
+                'max_rel_err_d_lid_post_10Myr',
+                'max_rel_err_d_lid_post_16p5Myr',
+                'max_rel_err_d_lid_post_relax',
+                'max_rel_err_d_lid_window_25_400Myr',
+                'max_rel_err_d_lid_window_1600_1800',
+                'max_rel_err_d_lid_cond_post_relax',
+                't_cross_rel_err_d_lid_0p22_yr',
+            ):
+                blk[mk] = m_live[mk]
             if is_4p5:
                 blk['t_cross_rel_err_T_i_0p05_yr'] = m_live['t_cross_rel_err_T_i_0p05_yr']
                 blk['t_nu_0d_clamp_1_yr'] = m_live['t_nu_0d_clamp_1_yr']
@@ -1583,6 +1735,13 @@ def main(argv: list[str] | None = None) -> int:
                 blk['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = m_live[
                     'max_rel_err_d_lid_valid_nu_ge_1_post_relax'
                 ]
+            tr['T_i_0d_K'] = m_live['ti_0d'].tolist()
+            tr['d_lid_0d_m'] = m_live['dl_0d'].tolist()
+            tr['F_top_0d_W_m2'] = m_live['ft_0d'].tolist()
+            tr['signed_rel_err_T_i'] = m_live['s_err_ti'].tolist()
+            tr['signed_rel_err_d_lid'] = m_live['s_err_dl'].tolist()
+            tr['rel_err_T_i'] = m_live['err_ti'].tolist()
+            tr['rel_err_d_lid'] = m_live['err_dl'].tolist()
 
     steady = data.get('steady_yield_thinning', {})
     for sweep_key in (
@@ -1620,6 +1779,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     data['yield_sweep_0d_at_1600K'] = compute_yield_sweep_0d_at_1600k(p0d)
     data['acceptance_summary'] = compute_acceptance_summary(data)
+    data['live_yield_states']['bc5_surface_patch_diagnostics'] = (
+        compute_e300_bc5_surface_patch_diagnostics(data)
+    )
 
     failures = verify_benchmarks(data)
     if failures:

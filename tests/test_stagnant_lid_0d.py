@@ -280,7 +280,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
             'delta_rh_m': 20762.585185535932,
             'v_m_m_s': 1.5679735652105906e-9,
             'tau_d_lid_Pa': 246644.68779640345,
-            'F_top_spherical_W_m2': 0.01436773415197379,
+            'F_top_spherical_W_m2': 0.014284796961192866,
         },
         1600.0: {
             'eta_i_Pa_s': 4.688323238079306e18,
@@ -294,7 +294,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
             'delta_rh_m': 11818.673562390659,
             'v_m_m_s': 4.8390946459204725e-9,
             'tau_d_lid_Pa': 296573.8412269606,
-            'F_top_spherical_W_m2': 0.029336596693294092,
+            'F_top_spherical_W_m2': 0.029242232600672238,
         },
         1800.0: {
             'eta_i_Pa_s': 3.4744268752828806e17,
@@ -308,7 +308,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
             'delta_rh_m': 4589.396697409715,
             'v_m_m_s': 3.2091527821813407e-8,
             'tau_d_lid_Pa': 416994.3608205534,
-            'F_top_spherical_W_m2': 0.09714571829480309,
+            'F_top_spherical_W_m2': 0.09702628874007856,
         },
         2000.0: {
             'eta_i_Pa_s': 4.3328701992612024e16,
@@ -322,7 +322,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
             'delta_rh_m': 2137.378514818143,
             'v_m_m_s': 1.4795808857500208e-7,
             'tau_d_lid_Pa': 568163.5226965582,
-            'F_top_spherical_W_m2': 0.2587811131335361,
+            'F_top_spherical_W_m2': 0.2586336692388145,
         },
     }
 
@@ -608,7 +608,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
     sec_per_yr = 365.25 * 86400.0
     t_eval_s = (np.linspace(0.0, 1.0, 401) ** 2) * (1.0e9 * sec_per_yr)
 
-    # 1. Spherical isothermal secular cooling from 1800 K (1499.995025 K).
+    # 1. Spherical isothermal secular cooling from 1800 K (1500.437653 K).
     sol_sph_iso = integrate_stagnant_lid_0d(
         1800.0,
         t_eval_s,
@@ -616,8 +616,8 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
         conduction_geometry='spherical',
         heat_capacity_mode='isothermal',
     )
-    assert sol_sph_iso['T_i_K'][-1] == pytest.approx(1499.9950247662127, rel=1e-9)
-    assert sol_sph_iso['d_lid_eff_m'][-1] == pytest.approx(284059.4911176443, rel=1e-9)
+    assert sol_sph_iso['T_i_K'][-1] == pytest.approx(1500.437652917714, rel=1e-9)
+    assert sol_sph_iso['d_lid_eff_m'][-1] == pytest.approx(283236.3804114825, rel=1e-9)
 
     # 2. Planar isothermal secular cooling from 1800 K (1496.551907 K).
     sol_pla_iso = integrate_stagnant_lid_0d(
@@ -631,7 +631,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
     assert sol_pla_iso['d_lid_eff_m'][-1] == pytest.approx(290559.8713038643, rel=1e-9)
     assert sol_pla_iso['T_i_K'][-1] < sol_sph_iso['T_i_K'][-1]
 
-    # 3. Spherical adiabatic-heat-capacity secular cooling from 1800 K (1505.908642 K).
+    # 3. Spherical adiabatic-heat-capacity secular cooling from 1800 K (1506.337352 K).
     sol_sph_ad = integrate_stagnant_lid_0d(
         1800.0,
         t_eval_s,
@@ -639,8 +639,8 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
         conduction_geometry='spherical',
         heat_capacity_mode='adiabatic',
     )
-    assert sol_sph_ad['T_i_K'][-1] == pytest.approx(1505.9086416016703, rel=1e-9)
-    assert sol_sph_ad['d_lid_eff_m'][-1] == pytest.approx(273292.02730344643, rel=1e-9)
+    assert sol_sph_ad['T_i_K'][-1] == pytest.approx(1506.3373522789004, rel=1e-9)
+    assert sol_sph_ad['d_lid_eff_m'][-1] == pytest.approx(272530.38835508254, rel=1e-9)
     assert sol_sph_ad['C_eff_J_K'] > sol_sph_iso['C_eff_J_K']
     assert sol_sph_ad['T_i_K'][-1] > sol_sph_iso['T_i_K'][-1]
 

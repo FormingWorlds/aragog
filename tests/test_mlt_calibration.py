@@ -397,6 +397,9 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     from pathlib import Path
 
     from tools.verification import (
+        evaluate_mlt_top_slope_calibration as mlt_mod,
+    )
+    from tools.verification import (
         generate_ssc_0d_reference_benchmarks as ref0d_mod,
     )
     from tools.verification import (
@@ -413,6 +416,7 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
 
     ref_dir = Path(__file__).parent / 'reference'
     wiring_data = json.loads((ref_dir / 'ssc_solver_wiring_benchmarks.json').read_text('utf-8'))
+    mlt_data = json.loads((ref_dir / 'ssc_mlt_top_slope_calibration.json').read_text('utf-8'))
     ref0d_data = json.loads((ref_dir / 'ssc_0d_reference_benchmarks.json').read_text('utf-8'))
     scaling_data = json.loads(
         (ref_dir / 'ssc_scaling_exponents_benchmarks.json').read_text('utf-8')
@@ -472,12 +476,18 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     assert _is_valid_commit_sha('uncommitted') is False
     assert _is_commit_on_origin('uncommitted', tmp_repo) is False
 
+    assert mlt_mod.verify_calibration_json(mlt_data, run_live_spot_check=False) == []
+    bad_mlt = copy.deepcopy(mlt_data)
+    bad_mlt['metadata']['generator_input_sha256'] = '0' * 64
+    mlt_failures = mlt_mod.verify_calibration_json(bad_mlt, run_live_spot_check=False)
+    assert any('sha256' in f for f in mlt_failures)
+
     specs = (
-        ('wiring', wiring_mod, wiring_data, ('canary', 'aragog_commit')),
-        ('ref0d', ref0d_mod, ref0d_data, ('metadata', 'git_commit')),
-        ('scaling', scaling_mod, scaling_data, ('metadata', 'git_commit')),
+        ('wiring', wiring_mod, wiring_data, ('canary', 'aragog_commit'), 'canary'),
+        ('ref0d', ref0d_mod, ref0d_data, ('metadata', 'git_commit'), 'metadata'),
+        ('scaling', scaling_mod, scaling_data, ('metadata', 'git_commit'), 'metadata'),
     )
-    for label, mod, data, (sec_key, sha_key) in specs:
+    for label, mod, data, (sec_key, sha_key), fp_sec in specs:
         sha = str(data[sec_key][sha_key])
         assert _is_valid_commit_sha(sha) is True, f'{label} {sha} is not a 40-hex SHA'
 
@@ -490,6 +500,17 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
         )
         assert any('commit' in f or 'SHA' in f for f in failures), (
             f'{label} verify_benchmarks accepted malformed SHA'
+        )
+
+        bad_fp = copy.deepcopy(data)
+        bad_fp[fp_sec]['generator_input_sha256'] = '0' * 64
+        fp_failures = (
+            mod.verify_benchmarks(bad_fp, eos_dir=None)
+            if label == 'wiring'
+            else mod.verify_benchmarks(bad_fp)
+        )
+        assert any('sha256' in f for f in fp_failures), (
+            f'{label} verify_benchmarks accepted mismatched generator_input_sha256'
         )
 
         out_copy = tmp_path / f'{label}_copy.json'

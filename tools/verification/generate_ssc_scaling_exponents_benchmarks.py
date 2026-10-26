@@ -42,7 +42,8 @@ Execution modes and per-block coverage:
   (``eos_tables``), and compares every stored field across all blocks, combining live 1-D
   evaluations on the 5 stored snapshots with algebraic and regression checks on the
   remaining 7 stored rows:
-  1. ``metadata``: verifies ``git_commit`` as a valid commit object, ``eos_tables``,
+  1. ``metadata``: verifies ``git_commit`` as a 40-hex commit SHA and
+     ``generator_input_sha256``, ``eos_tables``,
      ``rheology_calibration``, ``acceptance_window``, and all ``fixed_parameters``
      conduction-floor values within ``1e-12``.
   2. ``cases_results`` and ``steady_state_snapshots``: evaluates live 1-D
@@ -89,8 +90,10 @@ from aragog.rheology import R_GAS, SolidRheologyParams, compute_mlt_top_slope  #
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tools.verification._ssc_helpers import (  # noqa: E402
     REPO_ROOT,
-    _is_valid_commit_sha,
+    _check_generator_input_fingerprint,
     _resolve_origin_head_commit,
+    compute_generator_input_fingerprint,
+    evaluate_bc5_surface_patch_state,
     half_cell_surface_flux,
     korenaga_ti_fixed_point,
     unbounded_cvode_step,
@@ -101,6 +104,11 @@ from tools.verification._ssc_helpers import (  # noqa: E402
 
 DEFAULT_BENCHMARK_PATH = (
     REPO_ROOT / 'tests' / 'reference' / 'ssc_scaling_exponents_benchmarks.json'
+)
+SSC_SCALING_INPUT_PATHS: tuple[str, ...] = (
+    'src/aragog',
+    'tools/verification/_ssc_helpers.py',
+    'tools/verification/generate_ssc_scaling_exponents_benchmarks.py',
 )
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
@@ -116,9 +124,12 @@ EXPECTED_TOP_KEYS = (
     'diagnostic_fits',
     'steady_state_snapshots',
     'realized_state_fits',
+    'bc5_surface_patch_diagnostics',
 )
 EXPECTED_META_KEYS = (
     'git_commit',
+    'generator_input_sha256',
+    'generator_input_files',
     'eos_tables',
     'rheology_calibration',
     'acceptance_window',
@@ -644,6 +655,70 @@ def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def compute_scaling_bc5_surface_patch_diagnostics(
+    specs_list: list[dict[str, Any]],
+    snaps: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute BC 5 half-cell patch vs unpatched and surface-consistent closure diagnostics on the 5 snapshots."""
+    specs_by_id = {str(s['case_id']): s for s in specs_list}
+    snaps_out: dict[str, dict[str, Any]] = {}
+    for cid in REQUIRED_SNAPSHOT_IDS:
+        params = build_scaling_case_params(specs_by_id[cid])
+        s_vec = np.asarray(snaps[cid]['S_final'], dtype=float)
+        t_yr = float(snaps[cid]['t_end_yr'])
+        snaps_out[cid] = evaluate_bc5_surface_patch_state(params, s_vec, t_yr)
+
+    t_ext_vals = [float(st['T_basic_extrapolated_K']) for st in snaps_out.values()]
+    jcond_vals = [float(st['jcond_unpatched_surface_W_m2']) for st in snaps_out.values()]
+    ftop_vals = [float(st['with_patch_F_top_W_m2']) for st in snaps_out.values()]
+    theta_diffs = [float(st['theta_rel_diff']) for st in snaps_out.values()]
+    stored_rhs = [float(st['with_patch_max_abs_rhs_J_kg_K_yr']) for st in snaps_out.values()]
+    return {
+        'snapshots': snaps_out,
+        'summary_ranges': {
+            'T_basic_extrapolated_min_K': min(t_ext_vals),
+            'T_basic_extrapolated_max_K': max(t_ext_vals),
+            'jcond_unpatched_min_W_m2': min(jcond_vals),
+            'jcond_unpatched_max_W_m2': max(jcond_vals),
+            'F_top_patched_min_W_m2': min(ftop_vals),
+            'F_top_patched_max_W_m2': max(ftop_vals),
+            'd_lid_rel_diff_case_06': float(snaps_out['case_06']['d_lid_pass1_rel_diff']),
+            'd_lid_abs_rel_diff_case_06': float(
+                snaps_out['case_06']['d_lid_pass1_abs_rel_diff']
+            ),
+            'd_lid_rel_diff_case_07': float(snaps_out['case_07']['d_lid_pass1_rel_diff']),
+            'd_lid_cond_lid_rel_diff_case_12': float(
+                snaps_out['case_12']['d_lid_cond_lid_rel_diff']
+            ),
+            'd_lid_cond_lid_rel_diff_case_01': float(
+                snaps_out['case_01']['d_lid_cond_lid_rel_diff']
+            ),
+            'd_lid_cond_lid_rel_diff_case_03': float(
+                snaps_out['case_03']['d_lid_cond_lid_rel_diff']
+            ),
+            'd_lid_cond_lid_rel_diff_case_07': float(
+                snaps_out['case_07']['d_lid_cond_lid_rel_diff']
+            ),
+            'd_lid_cond_lid_rel_diff_case_06': float(
+                snaps_out['case_06']['d_lid_cond_lid_rel_diff']
+            ),
+            'theta_rel_diff_min': min(theta_diffs),
+            'theta_rel_diff_max': max(theta_diffs),
+            'stored_max_abs_rhs_min': min(stored_rhs),
+            'stored_max_abs_rhs_max': max(stored_rhs),
+            'consistent_max_abs_rhs_min_case_12': float(
+                snaps_out['case_12']['consistent_max_abs_rhs_J_kg_K_yr']
+            ),
+            'consistent_max_abs_rhs_case_01': float(
+                snaps_out['case_01']['consistent_max_abs_rhs_J_kg_K_yr']
+            ),
+            'consistent_max_abs_rhs_max_case_06': float(
+                snaps_out['case_06']['consistent_max_abs_rhs_J_kg_K_yr']
+            ),
+        },
+    }
+
+
 def _compare_fit_bundle(
     live_bundle: dict[str, Any],
     stored_bundle: dict[str, Any],
@@ -707,14 +782,20 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or tuple(meta.keys()) != EXPECTED_META_KEYS:
         failures.append(f'metadata keys {tuple(meta.keys())} != {EXPECTED_META_KEYS}')
-    elif not _is_valid_commit_sha(str(meta.get('git_commit'))):
-        failures.append(
-            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a valid commit object"
+    else:
+        failures.extend(
+            _check_generator_input_fingerprint(
+                meta.get('git_commit'),
+                meta.get('generator_input_sha256'),
+                SSC_SCALING_INPUT_PATHS,
+                recorded_files=meta.get('generator_input_files'),
+                repo_root=REPO_ROOT,
+            )
         )
-    elif meta.get('eos_tables') != NO_TABLE_RECORD:
-        failures.append(
-            f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r}"
-        )
+        if meta.get('eos_tables') != NO_TABLE_RECORD:
+            failures.append(
+                f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r}"
+            )
 
     specs_list = data.get('cases_spec', [])
     if not isinstance(specs_list, list) or len(specs_list) != 12:
@@ -959,6 +1040,40 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             failures,
         )
 
+    live_bc5 = compute_scaling_bc5_surface_patch_diagnostics(specs_list, snaps)
+    stored_bc5 = data.get('bc5_surface_patch_diagnostics', {})
+    if not isinstance(stored_bc5, dict):
+        failures.append('bc5_surface_patch_diagnostics is not a dict')
+    else:
+        st_snaps = stored_bc5.get('snapshots', {})
+        for cid, l_st in live_bc5['snapshots'].items():
+            s_st = st_snaps.get(cid) if isinstance(st_snaps, dict) else None
+            if not isinstance(s_st, dict):
+                failures.append(f'bc5_surface_patch_diagnostics.snapshots missing {cid!r}')
+                continue
+            for fk, fv in l_st.items():
+                sv = s_st.get(fk, '__missing__')
+                if fv is None:
+                    if sv is not None:
+                        failures.append(
+                            f'bc5_surface_patch_diagnostics.{cid}.{fk} expected None'
+                        )
+                elif isinstance(fv, int):
+                    if int(sv) != fv:
+                        failures.append(f'bc5_surface_patch_diagnostics.{cid}.{fk} mismatch')
+                else:
+                    tol_f = 1.0e-4 if 'max_abs_rhs' in fk else 1.0e-9
+                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=1.0e-15):
+                        failures.append(f'bc5_surface_patch_diagnostics.{cid}.{fk} mismatch')
+        st_sum = stored_bc5.get('summary_ranges', {})
+        for sk, sv_live in live_bc5['summary_ranges'].items():
+            if not isinstance(st_sum, dict) or sk not in st_sum:
+                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges missing {sk!r}')
+                continue
+            tol_s = 1.0e-4 if 'max_abs_rhs' in sk else 1.0e-9
+            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=1.0e-15):
+                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch')
+
     return failures
 
 
@@ -1035,8 +1150,13 @@ def main(argv: list[str] | None = None) -> int:
     ]
     fp['steady_residual_bound_J_kg_K_yr'] = STEADY_RESIDUAL_BOUND
     acc_win = raw_meta.get('acceptance_window', {})
+    input_sha, input_files = compute_generator_input_fingerprint(
+        SSC_SCALING_INPUT_PATHS, repo_root=REPO_ROOT
+    )
     data['metadata'] = {
         'git_commit': head_sha,
+        'generator_input_sha256': input_sha,
+        'generator_input_files': input_files,
         'eos_tables': NO_TABLE_RECORD,
         'rheology_calibration': raw_meta.get('rheology_calibration', {}),
         'acceptance_window': acc_win,
@@ -1047,6 +1167,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     data['diagnostic_fits'] = compute_diagnostic_fits(data['cases_results'], acc_win)
     data['realized_state_fits'] = compute_realized_state_fits(data['cases_results'])
+    data['bc5_surface_patch_diagnostics'] = compute_scaling_bc5_surface_patch_diagnostics(
+        data['cases_spec'], data['steady_state_snapshots']
+    )
 
     failures = verify_benchmarks(data)
     if failures:
