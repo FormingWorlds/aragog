@@ -1,6 +1,6 @@
 {
   "canary": {
-    "aragog_commit": "b85e4abd668a24302ba33abe82687ffb1535f575",
+    "aragog_commit": "95556fa47d0cf09146c961eb2fc029e14d632f41",
     "table_md5": {
       "density_melt.dat": "5f1dafa207d677668e4bbdd977b350ed",
       "density_solid.dat": "d54cb60d201e1713c5dfef290e53acda",
