@@ -166,7 +166,28 @@ class SolidRheologyParams:
 def merge_rheology(
     rheology: SolidRheologyParams | Mapping[str, Any] | None, overrides: Mapping[str, Any]
 ) -> SolidRheologyParams:
-    """Return ``rheology`` (default parameters when None) with field ``overrides`` applied."""
+    """Return ``rheology`` (default parameters when None) with field ``overrides`` applied.
+
+    Parameters
+    ----------
+    rheology : SolidRheologyParams or Mapping[str, Any] or None
+        Base rheology parameter set, mapping of field values, or ``None`` for
+        default :class:`SolidRheologyParams`.
+    overrides : Mapping[str, Any]
+        Mapping of :class:`SolidRheologyParams` field names to replacement values
+        within the valid parameter bounds of :class:`SolidRheologyParams`.
+
+    Returns
+    -------
+    SolidRheologyParams
+        Validated rheology parameter set with ``overrides`` applied.
+
+    Raises
+    ------
+    TypeError, ValueError
+        If any field in ``rheology`` or ``overrides`` violates the type or range
+        constraints of :class:`SolidRheologyParams`.
+    """
     if isinstance(rheology, Mapping):
         base = SolidRheologyParams(**rheology)
     elif rheology is None:
@@ -177,7 +198,29 @@ def merge_rheology(
 
 
 def check_viscosity_ceiling(viscosity: Any, rheology: SolidRheologyParams) -> None:
-    """Raise ValueError when a numeric ``viscosity`` is not below ``10**viscosity_max_log10``."""
+    """Raise ValueError when a numeric ``viscosity`` is not below ``10**viscosity_max_log10``.
+
+    Parameters
+    ----------
+    viscosity : Any
+        Reference solid dynamic viscosity [Pa s]; finite positive scalar values
+        in ``(0, 10**viscosity_max_log10)`` are accepted, while non-scalar or
+        boolean values are ignored by this scalar ceiling check.
+    rheology : SolidRheologyParams
+        Rheology parameter set providing ``viscosity_max_log10`` (dimensionless,
+        valid range ``(20, 300]``).
+
+    Returns
+    -------
+    None
+        Returns ``None`` when ``viscosity`` satisfies the ceiling.
+
+    Raises
+    ------
+    ValueError
+        If ``viscosity`` overflows ``float`` or if ``viscosity > 0`` is finite
+        and ``rheology.viscosity_max_log10 <= log10(viscosity)``.
+    """
     if isinstance(viscosity, (bool, np.bool_)):
         return
     is_num_scalar = isinstance(viscosity, (int, float, np.number)) or (
@@ -197,7 +240,20 @@ def check_viscosity_ceiling(viscosity: Any, rheology: SolidRheologyParams) -> No
 
 
 def delegate_rheology(cls):
-    """Expose SolidRheologyParams fields as read-only properties reading self.rheology."""
+    """Expose :class:`SolidRheologyParams` fields as read-only properties reading ``self.rheology``.
+
+    Parameters
+    ----------
+    cls : type
+        Target class holding a ``rheology`` attribute of type
+        :class:`SolidRheologyParams`.
+
+    Returns
+    -------
+    type
+        The decorated class ``cls`` with one read-only property per field of
+        :class:`SolidRheologyParams`.
+    """
     for f in fields(SolidRheologyParams):
         setattr(cls, f.name, property(lambda self, n=f.name: getattr(self.rheology, n)))
     return cls

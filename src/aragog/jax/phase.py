@@ -250,7 +250,28 @@ class PhaseParams(eqx.Module):
 
     @classmethod
     def from_parameters(cls, parameters: Any, **overrides: Any) -> 'PhaseParams':
-        """Construct ``PhaseParams`` from a ``Parameters`` object, with optional keyword overrides."""
+        """Construct ``PhaseParams`` from a ``Parameters`` object, with optional keyword overrides.
+
+        Parameters
+        ----------
+        parameters : Parameters
+            Parsed Aragog runtime parameter container holding ``phase_solid``,
+            ``phase_liquid``, ``phase_mixed``, and ``energy`` sub-containers.
+        **overrides : Any
+            Optional keyword arguments overriding individual :class:`PhaseParams`
+            constructor fields within their valid domains.
+
+        Returns
+        -------
+        PhaseParams
+            Validated static material and transport parameter bundle.
+
+        Raises
+        ------
+        TypeError, ValueError
+            If any extracted or overridden parameter violates the domain or
+            rheology ceiling checks of :class:`PhaseParams`.
+        """
         kwargs: dict[str, Any] = {
             'phi_rheo': float(parameters.phase_mixed.rheological_transition_melt_fraction),
             'phi_width': float(parameters.phase_mixed.rheological_transition_width),
@@ -393,7 +414,22 @@ class MeshArrays(eqx.Module):
             self.validate_for_rheology()
 
     def validate_for_rheology(self) -> None:
-        """Validate static mesh invariants required when solid-state rheology is enabled."""
+        """Validate static mesh invariants required when solid-state rheology is enabled.
+
+        Returns
+        -------
+        None
+            Returns ``None`` when all mesh invariants hold.
+
+        Raises
+        ------
+        ValueError
+            If eager ``radii_basic`` [m] has fewer than 3 nodes or is not finite,
+            strictly positive, and strictly increasing; if ``mixing_length`` [m]
+            is non-finite or negative; if ``P_basic`` or ``P_stag`` [Pa] is
+            non-finite or below ``-1.0`` Pa; or if ``gravity`` [m/s^2] is
+            non-finite or non-positive.
+        """
         if not isinstance(self.radii_basic, jax.core.Tracer):
             r_b = np.asarray(self.radii_basic, dtype=float).ravel()
             if (
@@ -628,7 +664,26 @@ def blend_viscosity_with_solid_jax(
     log10_eta_solid: jax.Array | float,
     params: PhaseParams,
 ) -> jax.Array:
-    """Blend solid and liquid dynamic viscosities across the mushy zone."""
+    """Blend solid and liquid dynamic viscosities across the mushy zone.
+
+    Parameters
+    ----------
+    phi : jax.Array
+        Mass melt fraction (dimensionless, in ``[0, 1]``).
+    smth : jax.Array
+        Two-phase boundary smoothing weight (dimensionless, in ``[0, 1]``).
+    log10_eta_solid : jax.Array or float
+        Base-10 logarithm of the solid-branch dynamic viscosity ``log10(eta_solid [Pa s])``,
+        finite real scalar or array.
+    params : PhaseParams
+        Static phase parameters providing ``phi_rheo``, ``phi_width``,
+        ``log10_visc_liquid``, and ``rheology.phi_visc_single``.
+
+    Returns
+    -------
+    jax.Array
+        Blended dynamic viscosity [Pa s], strictly positive in ``(0, +inf)``.
+    """
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
     log_visc_mixed = (1.0 - w) * log10_eta_solid + w * params.log10_visc_liquid
     phi_thresh = params.rheology.phi_visc_single if params.rheology.enabled else 0.5

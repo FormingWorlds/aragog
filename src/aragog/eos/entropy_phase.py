@@ -521,7 +521,20 @@ class EntropyPhaseEvaluator:
             )
 
     def blend_viscosity_with_solid(self, eta_solid: FloatOrArray) -> FloatOrArray:
-        """Two-stage log10 blend of ``eta_solid`` with ``self._visc_liquid``."""
+        """Two-stage log10 blend of ``eta_solid`` with ``self._visc_liquid``.
+
+        Parameters
+        ----------
+        eta_solid : FloatOrArray
+            Solid-branch dynamic viscosity [Pa s], positive scalar or array in
+            ``(0, +inf)``.
+
+        Returns
+        -------
+        FloatOrArray
+            Blended dynamic viscosity [Pa s] across the mushy and single-phase
+            zones, positive in ``(0, +inf)``.
+        """
         phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
         smth = np.atleast_1d(np.asarray(self._smth_val, dtype=float))
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
@@ -593,11 +606,24 @@ class EntropyPhaseEvaluator:
         return self._temperature
 
     def solidus_temperature(self) -> npt.NDArray | None:
-        """Cached solidus temperature T_sol(P) [K] from the current EOS update."""
+        """Return cached solidus temperature ``T_sol(P)`` from the current EOS update.
+
+        Returns
+        -------
+        npt.NDArray or None
+            Solidus temperature [K] in ``(0, +inf)`` at each node, or ``None``
+            when no solidus curve is available.
+        """
         return self._solidus_temperature
 
     def visc_solid_weight(self) -> npt.NDArray:
-        """Two-stage solid log-viscosity blend weight w_solid(phi, smth) in [0, 1]."""
+        """Return two-stage solid log-viscosity blend weight ``w_solid(phi, smth)``.
+
+        Returns
+        -------
+        npt.NDArray
+            Dimensionless solid log-viscosity weight in ``[0, 1]`` at each node.
+        """
         phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
         smth = np.atleast_1d(np.asarray(self._smth_val, dtype=float))
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
@@ -605,12 +631,26 @@ class EntropyPhaseEvaluator:
         return smth * (1.0 - w) + (1.0 - smth) * np.where(phi_arr > phi_thresh, 0.0, 1.0)
 
     def eta_diff(self) -> npt.NDArray:
-        """Cached unyielded solid diffusion-creep viscosity eta_diff [Pa s]."""
+        """Return cached unyielded solid diffusion-creep viscosity ``eta_diff``.
+
+        Returns
+        -------
+        npt.NDArray
+            Unyielded diffusion-creep dynamic viscosity [Pa s] in
+            ``(0, 10**viscosity_max_log10]`` at each node.
+        """
         self._ensure_rheology_viscosity()
         return self._eta_diff
 
     def tau_y(self) -> npt.NDArray:
-        """Cached Byerlee yield stress tau_y(P) [Pa]."""
+        """Return cached Byerlee yield stress ``tau_y(P)``.
+
+        Returns
+        -------
+        npt.NDArray
+            Byerlee plastic yield stress [Pa] in ``[0, yield_stress_max]`` at
+            each node.
+        """
         self._ensure_rheology_viscosity()
         return self._tau_y
 
