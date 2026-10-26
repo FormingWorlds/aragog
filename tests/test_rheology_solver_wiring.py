@@ -1572,7 +1572,10 @@ def test_compute_step_energy_integrals_early_return_reports_last_step_index(
         y=np.tile(s_stag[:, None], (1, 4)),
     )
 
+    orig_dSdt = solver._dSdt_single
+
     def _corrupt_eta_eff(t_val, y_val):
+        orig_dSdt(t_val, y_val)
         solver.state._eta_eff_basic = np.full(20, -1.0)
 
     monkeypatch.setattr(solver, '_dSdt_single', _corrupt_eta_eff)
