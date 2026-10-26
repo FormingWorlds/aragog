@@ -144,7 +144,7 @@ Thermal boundary conditions at the surface and CMB.
 | Key | Unit | Description |
 |-----|------|-------------|
 | `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `4` = prescribed flux, `5` = prescribed temperature |
-| `outer_boundary_value` | W/m² or K | Surface flux (mode `4`) or temperature (mode `5`, a positive finite value inside the EOS tables at the surface pressure; not used in mode `1`); see [Surface boundary conditions](../Explanations/surface_bc.md) |
+| `outer_boundary_value` | W/m² or K | Surface flux (mode `4`) or temperature (mode `5`, a positive finite value inside the range the phase evaluator reaches at the surface pressure; not used in mode `1`); see [Surface boundary conditions](../Explanations/surface_bc.md) |
 | `inner_boundary_condition` | int | CMB BC mode. `1` = core cooling, `2` = prescribed flux, `3` = prescribed temperature |
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
 | `emissivity` | -- | Surface emissivity (used in mode `1`) |

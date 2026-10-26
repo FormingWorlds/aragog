@@ -232,9 +232,10 @@ def test_the_convecting_shell_converges_with_second_order(validation_plot):
         fig, (top, bottom) = plt.subplots(2, 1, figsize=(5.6, 4.8))
         n = np.array([100, 200, 400])
         top.plot(r / 1e3, t)
-        bottom.plot(n, n**2 * np.asarray(err), 'o-')
+        y = n**2 * np.asarray(err)
+        bottom.plot(n, y, 'o-')
         top.set(xlabel='r [km]', ylabel='T [K]')
-        bottom.set(xlabel='N', ylabel='N$^2$ error', ylim=(0, None))
+        bottom.set(xlabel='N', ylabel='N$^2$ error', ylim=(0, 1.2 * y.max()))
         fig.tight_layout()
         return fig
 

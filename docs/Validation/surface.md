@@ -62,7 +62,7 @@ and all heat made in the shell leaves through the surface: the surface heat flux
 
 **Why this check exists.** With convection on, the entropy gradient at the surface node also enters the mixing-length flux. This check shows that the steady solution with convection converges at the rate of the scheme and keeps the energy balance. It does not separate the wrong surface rules of the first case, which keep order 2 here too; the first case catches them.
 
-**What it tests.** The heated shell of the first case, now with mixing-length convection at a viscosity of 10²¹ Pa s and the mixing length 0 at both boundaries (`nearest_boundary`, the profile mode 5 accepts). The test runs it to steady state on 100, 200 and 400 cells. It compares the mean temperature and the temperature at 5 fixed radii between the grids.
+**What it tests.** The heated shell of the first case, with mixing-length convection at a viscosity of 10²¹ Pa s and the mixing length 0 at both boundaries (`nearest_boundary`, the profile mode 5 accepts). The test runs it to steady state on 100, 200 and 400 cells. It compares the mean temperature and the temperature at 5 fixed radii between the grids.
 
 **How we know the right answer.** For a second-order scheme the difference between two grids falls by a factor of 4 each time the cells are halved. From 3 grids, Richardson extrapolation estimates the value on an infinitely fine grid. The surface flux needs no extrapolation: in steady state it equals the total heating divided by the surface area on every grid. Before the check the test asserts that the surface boundary layer (the depth where the temperature reaches 90 % of its rise at mid-mantle) spans at least 8 cells, so that the finest grid resolves it.
 
@@ -71,7 +71,7 @@ and all heat made in the shell leaves through the surface: the surface heat flux
 ![Steady temperature of the convecting shell, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence.svg#only-light){ width="80%" }
 ![Steady temperature of the convecting shell, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** Top: the steady temperature against radius on 400 cells. Bottom: $N^2$ times the error of the mean temperature against its Richardson value, divided by the temperature rise; a horizontal line means second-order convergence.
+**How to read the plot.** Top: the steady temperature against radius on 400 cells. Bottom: $N^2$ times the error of the mean temperature against its Richardson value, divided by the temperature rise; a horizontal line means second-order convergence. The Richardson value comes from the 200- and 400-cell grids, so those 2 points lie at the same height by construction; the 100-cell point tests the order.
 
 ??? info "Test details"
     - Reference: the convergence order of the scheme and Richardson extrapolation; the steady surface flux from the energy balance.
@@ -82,13 +82,13 @@ and all heat made in the shell leaves through the surface: the surface heat flux
 
 ## Note: stagnant-lid benchmark states
 
-This comparison is not a test of this repository, so it is not one of the numbered cases above. The stagnant-lid scaling benchmarks hold the surface at 273 K, and their tools (`tools/verification/generate_ssc_wp6_a6_*_benchmarks.py` on the branch `tl/ssc-wp2-verification` of this repository) set the half-cell conduction $k (T_{N-1} - T_s) / (\Delta r / 2)$ through the surface outside the solver. Running those tools on their 8 stored states (5 of the internal-heating benchmark, 3 of the yield-stress benchmark) with `outer_boundary_condition = 5`, and with the eddy-diffusivity floor off as in the benchmarks, gives:
+This comparison is not a test of this repository, so it is not one of the numbered cases above. Stagnant-lid scaling benchmarks hold the surface at 273 K, and the tools that make them set the half-cell conduction $k (T_{N-1} - T_s) / (\Delta r / 2)$ through the surface outside the solver. A run outside this repository on 8 stored benchmark states (5 of an internal-heating benchmark, 3 of a yield-stress benchmark), with `outer_boundary_condition = 5` and the eddy-diffusivity floor off as in the benchmarks, gives the numbers below; no test here asserts them:
 
 - the same surface flux on all 8 states, to a relative $1.3 \times 10^{-16}$;
 - states that are not exactly steady with the surface node at 273 K: largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the tools;
 - steady runs of the internal-heating benchmark whose interior temperature moves by up to $2.5 \times 10^{-4}$ (relative).
 
-The committed test of this comparison, with its plot pair and benchmark references computed with this boundary condition (rates to $10^{-10}$, steady runs to $10^{-6}$), follows once both branches are merged.
+A committed test of this comparison follows, with its plot pair and benchmark references computed with this boundary condition (rates to $10^{-10}$, steady runs to $10^{-6}$).
 
 ## References
 

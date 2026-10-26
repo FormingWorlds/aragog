@@ -53,7 +53,7 @@ positive outward when the mantle is warmer than the surface. The convective flux
 
 ### Why the solver does not use an entropy difference
 
-A simpler rule would take the entropy gradient as $(S_s - S_{N-1}) / (\Delta r / 2)$. Entropy is not linear in temperature, so this rule gives the wrong flux. With constant $c_p$ it replaces $T_{N-1} - T_s$ by $T_s \ln(T_{N-1}/T_s)$. For a top cell at 380.46 K below a surface at 273 K that is 90.6 K instead of 107.5 K, a flux 16 % too low.
+A simpler rule would take the entropy gradient as $(S_s - S_{N-1}) / (\Delta r / 2)$. Entropy is not linear in temperature, so this rule gives the wrong flux. With constant $c_p$ it replaces $T_{N-1} - T_s$ by $T_s \ln(T_{N-1}/T_s)$. For a top cell at 380 K below a surface at 273 K, that is 90.3 K instead of 107 K, a flux 16 % too low.
 
 ### The half-cell distance
 
@@ -63,7 +63,7 @@ The solver takes $\Delta r / 2 = \Delta\xi / (2\, \mathrm{d}\xi/\mathrm{d}r)$, w
 
 - `outer_boundary_value` must be a positive finite number in kelvin. A string, a TOML `true`, NaN, an infinity, zero or a negative value stops the setup with a `ValueError`.
 - A temperature outside the range the phase evaluator reaches at the surface pressure stops the setup with a `ValueError` that gives the range and the smoothing width; the solver does not clamp it to the table edge. With smoothing this range can be narrower than the tables: at a width of 0.5 the test tables start at 363 K instead of 320 K.
-- A smoothing width of 0.1 or more makes the smoothed temperature jump where the melt fraction is 0.5: on the test tables by 0.02 K at a width of 0.1, 0.5 K at 0.15 and 2.6 K at 0.2 (from 1633.8 to 1636.4 K). No entropy gives a temperature inside the jump, so such a surface temperature stops the setup with a `ValueError`.
+- From a smoothing width between 0.03 and 0.05 on, the smoothed temperature jumps where the melt fraction is 0.5. On the test tables, at the surface pressure, the jump is 8 × 10⁻⁷ K at a width of 0.05, 2.4 × 10⁻⁴ K at 0.07, 0.006 K at 0.09, 0.02 K at 0.1, 0.5 K at 0.15 and 2.6 K at 0.2 (from 1633.8 to 1636.4 K); at 0.03 no jump is measurable. No entropy gives a temperature inside the jump. The setup accepts a surface temperature inside a jump of less than 10⁻⁹ of the temperature, as at a width of 0.05, and puts the surface node within the jump; a larger jump, as from a width of 0.07, stops the setup with a `ValueError`.
 - These settings stop the setup with a `ValueError`:
     - `param_utbl = true`: the UTBL correction belongs to the grey-body flux.
     - `core_bc = 'gradient'`: the gradient core keeps its own surface gradient.

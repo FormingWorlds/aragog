@@ -133,7 +133,8 @@ $$F(t) = \frac{k\,(T_i - T_s)}{\sqrt{\pi \kappa t}}$$
 ```python
 from scipy.constants import Julian_year
 
-k, kappa, t_i, t_s = 4.0, 1.0e-6, 1100.0, 1000.0
+k, kappa, t_i = 4.0, 1.0e-6, 1100.0
+t_s = params.boundary_conditions.outer_boundary_value
 t = params.solver.end_time * Julian_year  # s
 f_exact = k * (t_i - t_s) / np.sqrt(np.pi * kappa * t)
 f_top = float(np.ravel(out.heat_flux)[-1])
