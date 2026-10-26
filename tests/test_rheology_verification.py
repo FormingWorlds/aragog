@@ -4300,7 +4300,7 @@ def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
+def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     """Compare 1-D stagnant-lid cooling and yield thinning against the 0-D reference model.
 
     The comparison fails the derived 0-D reference bounds on both the 4.5 Gyr secular
@@ -5041,4 +5041,4 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
         fig.subplots_adjust(left=0.09, right=0.97, top=0.95, bottom=0.42, wspace=0.42)
         return fig
 
-    validation_plot(figure, 'ssc_a6_1_0d_reference_comparison')
+    validation_plot(figure, 'ssc_0d_reference_comparison')

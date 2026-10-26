@@ -469,8 +469,8 @@ The reference trajectory comes from integrating the 0-D stagnant-lid global ener
 **Why it matters.**
 Stagnant-lid thickness and plastic yielding control how fast a solid rocky mantle loses heat after magma-ocean solidification and whether lithospheric failure can transition a stagnant lid toward mobile-lid cooling in coupled PROTEUS evolutions.
 
-![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_a6_1_0d_reference_comparison.svg#only-light){ width="80%" }
-![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_a6_1_0d_reference_comparison_dark.svg#only-dark){ width="80%" }
+![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_0d_reference_comparison.svg#only-light){ width="80%" }
+![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_0d_reference_comparison_dark.svg#only-dark){ width="80%" }
 
 *Figure: Comparison of 1-D radial stagnant-lid cooling (panel a) and steady-state yield-thinning ratios (panel b) against the 0-D boundary-layer reference model.*
 
@@ -481,13 +481,13 @@ Panel (b) plots the lid-thinning ratio $R_\text{thin}$ against $\log_{10}(\tau_{
 **Known limit.**
 This comparison fails the derived 0-D reference bounds on the $4.50\text{ Gyr}$ cooling trajectory ($6.67\%$ full-run and $5.34\%$ pre-clamp vs $5\%$ on $T_i$; $47.32\%$ vs $22\%$ on post-relaxation $d_\text{lid}$) and on the steady-state Pass-1 isotherm yield-thinning ratio ($1.53$ fixed heating and $1.05$ matched $T_i$ vs $0.79$ at $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$), and pins the current 1-D and 0-D values to $10^{-7}$ relative.
 
-**Where this is checked.** This comparison is checked in `tests/test_rheology_verification.py::test_a6_1_0d_stagnant_lid_reference_and_yield_thinning`.
+**Where this is checked.** This comparison is checked in `tests/test_rheology_verification.py::test_0d_stagnant_lid_reference_and_yield_thinning`.
 
 ??? info "Test details"
     - Reference: Zero-dimensional stagnant-lid energy-balance ODE (`tests/reference/stagnant_lid_0d.py`), Korenaga (2009, p. 157, Table 1; p. 158, eq. 29), Solomatov and Moresi (2000, p. 21806, Table 6 and eq. 23), Moresi and Solomatov (1998, p. 672, eqs. 11, 13-14; p. 677, eqs. 25-26), and Foley and Bercovici (2014, p. 588, eqs. 26-27).
     - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation, and $1e-07$ relative on the live $25\text{ Myr}$ 1-D trajectory segment from its measured 5-start round-off spread ($\le 4.28 \times 10^{-9}$ on $T_i$, $\le 5.25 \times 10^{-9}$ on $d_\text{lid}$, and $\le 2.77 \times 10^{-8}$ on $F_\text{top}$; the comparison fails the derived $5\%$ $T_i$, $22\%$ $d_\text{lid}$, and $11\%$ isotherm thinning bounds as documented above).
-    - Test id: `tests/test_rheology_verification.py::test_a6_1_0d_stagnant_lid_reference_and_yield_thinning`
-    - Command: `pytest tests/test_rheology_verification.py -k test_a6_1_0d_stagnant_lid_reference_and_yield_thinning` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_wp6_a6_1_benchmarks.py`)
+    - Test id: `tests/test_rheology_verification.py::test_0d_stagnant_lid_reference_and_yield_thinning`
+    - Command: `pytest tests/test_rheology_verification.py -k test_0d_stagnant_lid_reference_and_yield_thinning` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_wp6_a6_1_benchmarks.py`)
 
 ## 11. Stagnant-Lid Internal-Heating Scaling Exponents
 
@@ -560,8 +560,8 @@ Boundary-layer theory and 2-D stagnant-lid numerical experiments for Newtonian i
 **Why it matters.**
 Radiogenic heating drives solid-mantle convection over gigayear timescales; knowing where the 1-D mixing-length closure follows or departs from stagnant-lid scaling laws tells users how accurately Aragog predicts deep-mantle temperatures across different rocky planet interiors.
 
-![Stagnant-lid internal-heating scaling exponents](../assets/validation/ssc_a6_2_stagnant_lid_scalings.svg#only-light){ width="80%" }
-![Stagnant-lid internal-heating scaling exponents](../assets/validation/ssc_a6_2_stagnant_lid_scalings_dark.svg#only-dark){ width="80%" }
+![Stagnant-lid internal-heating scaling exponents](../assets/validation/ssc_stagnant_lid_scalings.svg#only-light){ width="80%" }
+![Stagnant-lid internal-heating scaling exponents](../assets/validation/ssc_stagnant_lid_scalings_dark.svg#only-dark){ width="80%" }
 
 *Figure: Steady-state internal-heating Nusselt number scalings against internal Rayleigh number (panel a) and Frank-Kamenetskii viscosity-contrast parameter (panel b).*
 
@@ -572,10 +572,10 @@ Circles show the 12 steady-state 1-D runs, the solid line shows the 12-case ordi
 **Known limit.**
 Both the 12-case design-parameter fit ($\beta = 0.2820 \pm 0.0134$, $\alpha = 1.0371 \pm 0.0973$) and the realized-state fit ($\beta_\text{real} = 0.1129 \pm 0.0286$, $\alpha_\text{real} = -0.0787 \pm 0.4406$) fail the pre-run acceptance window $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$, and the test pins the current steady-state values and regressions to $10^{-7}$ relative.
 
-**Where this is checked.** This scaling sweep is checked in `tests/test_mlt_calibration.py::test_a6_2_stagnant_lid_scaling_exponents`.
+**Where this is checked.** This scaling sweep is checked in `tests/test_mlt_calibration.py::test_stagnant_lid_scaling_exponents`.
 
 ??? info "Test details"
     - Reference: Newtonian ($n = 1$) internal-heating stagnant-lid scaling theory and numerical fits of Solomatov and Moresi (2000, p. 21799, sec. 3; p. 21803, eqs. 9, 10, 12; p. 21804, Table 5; p. 21806, Table 6 rows 6-8), Korenaga (2009, p. 157, Table 1 and eq. 20; p. 158, eqs. 29-30), and Reese et al. (2005, p. 366, Table 2 and eq. 20).
     - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation (both the 12-case design-value fit $\beta = 0.2820 \pm 0.0134$, $\alpha = 1.0371 \pm 0.0973$ and the realized-state fit $\beta_\text{real} = 0.1129 \pm 0.0286$, $\alpha_\text{real} = -0.0787 \pm 0.4406$ fail the pre-run acceptance window $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$ as documented above).
-    - Test id: `tests/test_mlt_calibration.py::test_a6_2_stagnant_lid_scaling_exponents`
-    - Command: `pytest tests/test_mlt_calibration.py -k test_a6_2_stagnant_lid_scaling_exponents` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_wp6_a6_2_benchmarks.py`)
+    - Test id: `tests/test_mlt_calibration.py::test_stagnant_lid_scaling_exponents`
+    - Command: `pytest tests/test_mlt_calibration.py -k test_stagnant_lid_scaling_exponents` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_wp6_a6_2_benchmarks.py`)

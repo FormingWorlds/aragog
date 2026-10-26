@@ -341,7 +341,7 @@ def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, float]:
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
+def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     """Compare 12-case internal-heating stagnant-lid scaling exponents against theory.
 
     Across the 12-case planar internal-heating sweep (design Ra_i in [1e6, 1e9] at
@@ -827,4 +827,4 @@ half_life_years = 1.0e30
         fig.subplots_adjust(left=0.10, right=0.97, top=0.95, bottom=0.38, wspace=0.34)
         return fig
 
-    validation_plot(figure, 'ssc_a6_2_stagnant_lid_scalings')
+    validation_plot(figure, 'ssc_stagnant_lid_scalings')
