@@ -315,12 +315,14 @@ def _entry_point_calls(s, eos, params, mesh, bc, heating):
 
 
 @pytest.mark.parametrize(
-    'case', ['conduction-off', 'eddy-negative', 'constant-mixing-length', 'stale-2e-6']
+    'case',
+    ['conduction-off', 'eddy-negative', 'constant-mixing-length', 'stale-2e-6', 'stale--2e-6'],
 )
 def test_the_jax_entry_points_refuse_a_bc5_setup_without_the_prescribed_surface(case):
     """solve_entropy and the JAX CVODE factory refuse type 5 without conduction, with a surface
     eddy flux (a negative eddy_diffusivity_thermal, a constant mixing length), or with an
-    outer_bc_value 2e-6 relative off the temperature that S_surf gives at the surface pressure
+    outer_bc_value 2e-6 relative above or below the temperature that S_surf gives at the surface
+    pressure
     (the run check of the NumPy path allows 1e-6)."""
     eqx = pytest.importorskip('equinox')
     pytest.importorskip('diffrax')
@@ -339,8 +341,8 @@ def test_the_jax_entry_points_refuse_a_bc5_setup_without_the_prescribed_surface(
         c.initialize()
         mesh, match = MeshArrays.from_numpy_mesh(c.evaluator.mesh), 'mixing length'
     else:
-        bc = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + 2e-6))
-        match = 'S_surf'
+        offset = -2e-6 if case == 'stale--2e-6' else 2e-6
+        bc, match = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + offset)), 'S_surf'
     for name, call in _entry_point_calls(s, eos, params, mesh, bc, heating).items():
         with pytest.raises(Exception) as err:
             call()
@@ -348,26 +350,34 @@ def test_the_jax_entry_points_refuse_a_bc5_setup_without_the_prescribed_surface(
         assert match in str(err.value), (name, str(err.value))
 
 
-@pytest.mark.parametrize('case', ['smooth-0.2', 'offset-5e-7', 'type-4-eddy-negative'])
+@pytest.mark.parametrize(
+    'case', ['smooth-0.2', 'offset-5e-7', 'offset--5e-7', 'type-4-eddy-negative']
+)
 def test_the_jax_entry_points_accept_a_consistent_setup(case):
     """solve_entropy and the JAX CVODE factory accept the surface values of
     EntropySolver.surface_temperature_bc with a smoothing width of 0.2, an outer_bc_value 5e-7
-    relative off (inside the 1e-6 check), and a type 4 surface with a negative
-    eddy_diffusivity_thermal, which the type 5 checks do not concern."""
+    relative above or below (inside the 1e-6 check), and a type 4 surface with a negative
+    eddy_diffusivity_thermal, which the type 5 checks do not concern; solve_entropy then
+    succeeds with a finite entropy."""
     eqx = pytest.importorskip('equinox')
     pytest.importorskip('diffrax')
     s = _bc5_solver('quasi_steady', smooth=0.2 if case == 'smooth-0.2' else 0.0)
     _, (eos, params, mesh, bc, heating, *_) = _jax_rhs_and_args(s)
-    if case == 'offset-5e-7':
-        bc = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + 5e-7))
+    if case.startswith('offset'):
+        offset = -5e-7 if case == 'offset--5e-7' else 5e-7
+        bc = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + offset))
     elif case == 'type-4-eddy-negative':
         params = eqx.tree_at(lambda p: p.eddy_diff_thermal, params, -1.0)
         bc = dataclasses.replace(bc, outer_bc_type=4, outer_bc_value=100.0)
     for name, call in _entry_point_calls(s, eos, params, mesh, bc, heating).items():
         try:
-            call()
+            result = call()
         except Exception as exc:
             pytest.fail(f'{name} refused {case}: {exc!r}')
+        if name == 'solve_entropy':
+            assert result.success and np.all(np.isfinite(np.asarray(result.S_final))), case
+        else:
+            assert callable(result[0]) and callable(result[1]), case
 
 
 @pytest.mark.parametrize(

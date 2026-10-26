@@ -105,7 +105,6 @@ def test_the_surface_conduction_takes_the_node_temperature():
     check, the face flux is the half-cell conduction from the node temperature, not from the
     prescribed one."""
     s = _solver(300.0)
-    _rhs(s)
     s_surf, t_surf, half = s.surface_temperature_bc
     s.state.set_surface_temperature(s_surf + 5e-7 * CP, t_surf, half)
     _rhs(s)
