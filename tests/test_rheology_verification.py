@@ -4295,7 +4295,7 @@ def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
         fig.tight_layout()
         return fig
 
-    validation_plot(figure, 'ssc_wp4_activation_law_limits')
+    validation_plot(figure, 'ssc_activation_law_limits')
 
 
 @pytest.mark.unit
