@@ -11,7 +11,8 @@ Execution modes and per-block coverage:
   2. ``a2_2_rhs_parity_and_activity``: evaluates 100 boundary-layer cooling states and an
      integrated cooling trajectory on ``abe_solid_kappah_floor_0``, ``abe_solid_yield_active``,
      and ``abe_solid_default`` using the JIT-compiled JAX right-hand side path that CVODE
-     calls (`src/aragog/solver/cvode_jax.py:134, 388`), records the eager JAX right-hand
+     calls (``_make_jitted_rhs_and_jacobian`` and ``build_jax_rhs_and_jacobian`` in
+     ``src/aragog/solver/cvode_jax.py``), records the eager JAX right-hand
      side path beside it, and computes ``flux_vs_rhs_diagnostic`` at the worst state/node.
   3. ``a2_4_rhs_wall_time``: instruments NumPy and JAX right-hand side kernels to count
      per-evaluation function calls across ``off``, ``on_lid``, and ``on_local`` modes and
