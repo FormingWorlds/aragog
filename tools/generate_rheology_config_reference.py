@@ -19,7 +19,11 @@ import re
 import sys
 from pathlib import Path
 
-from aragog.rheology import SolidRheologyParams
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT / 'src') not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / 'src'))
+
+from aragog.rheology import SolidRheologyParams  # noqa: E402
 
 UNITS: dict[str, str] = {
     'enabled': '--',
@@ -118,7 +122,7 @@ def generate_table() -> str:
         elif f.type is str or f.type == 'str':
             tname = 'str'
         elif 'None' in str(f.type):
-            tname = 'float | None'
+            tname = 'float \\| None'
         else:
             tname = 'float'
 
@@ -142,6 +146,26 @@ def generate_table() -> str:
     return '\n'.join(lines)
 
 
+def check_table_fields(content: str) -> bool:
+    """Verify that every field in SolidRheologyParams is present in the table."""
+    match = _SECTION_PATTERN.search(content)
+    if not match:
+        print('Error: Rheology reference markers not found.', file=sys.stderr)
+        return False
+    table_text = match.group(0)
+    found_keys = set(re.findall(r'^\|\s*`([a-z0-9_]+)`\s*\|', table_text, re.MULTILINE))
+    expected_keys = {f.name for f in dataclasses.fields(SolidRheologyParams)}
+    missing = expected_keys - found_keys
+    extra = found_keys - expected_keys
+    if missing:
+        print(f'Error: Missing config row for fields: {sorted(missing)}', file=sys.stderr)
+        return False
+    if extra:
+        print(f'Error: Unexpected keys in table: {sorted(extra)}', file=sys.stderr)
+        return False
+    return True
+
+
 def update_doc(path: Path, write: bool = False, check: bool = False) -> int:
     """Update or verify the rheology reference table in the target document."""
     content = path.read_text(encoding='utf-8')
@@ -155,10 +179,15 @@ def update_doc(path: Path, write: bool = False, check: bool = False) -> int:
     new_content = _SECTION_PATTERN.sub(block, content)
 
     if check:
+        if not check_table_fields(content):
+            return 1
         if new_content != content:
             print(f'Error: {path} is not up to date with SolidRheologyParams.', file=sys.stderr)
             return 1
-        print(f'Check passed: {path} is up to date.')
+        print(
+            f'Check passed: {path} is up to date with all '
+            f'{len(dataclasses.fields(SolidRheologyParams))} fields.'
+        )
         return 0
 
     if write:
