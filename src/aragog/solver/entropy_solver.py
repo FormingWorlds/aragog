@@ -3673,7 +3673,11 @@ class EntropySolver:
 
         Each segment is a new CVODE solve from the previous segment's end. A segment ends at
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
-        ends the call. The segments' trajectories and energy traces are joined.
+        ends the call. The segments' trajectories and energy traces are joined. Segments
+        starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
+        ``rtol = 1e-9`` and physical ``atol = 1e-8`` J/(kg K) so that removing the 100 yr
+        ``max_step`` ceiling keeps the 1.3e-4 K accuracy; other segments keep the caller's
+        ``rtol`` and ``atol``.
 
         Parameters
         ----------
@@ -3721,6 +3725,16 @@ class EntropySolver:
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
             h = h_min if last else h_at(t, y)
+            seg_kw = (
+                {
+                    **cvode_kw,
+                    'rtol': 1.0e-9,
+                    'atol': 1.0e-8 / self._build_nondim_scales().state_scale,
+                }
+                if isinstance(roots, _PhaseBoundarySegmentRoot)
+                and np.all(roots.S0 <= roots.S_sol)
+                else cvode_kw
+            )
             log.append((t * t_ref, trigger, h * t_ref))
             logger.debug(
                 'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',
@@ -3743,7 +3757,7 @@ class EntropySolver:
                 phi_cap_rootfn=cap if last else roots,
                 tspan=tspan,
                 keep_points_before_root=True,
-                **cvode_kw,
+                **seg_kw,
             )
             ts.append(np.asarray(res.t, dtype=float)[1:])
             ys.append(np.asarray(res.y, dtype=float)[:, 1:])
