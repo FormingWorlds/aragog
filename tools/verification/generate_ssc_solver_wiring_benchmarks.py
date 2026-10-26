@@ -75,9 +75,6 @@ sys.path.insert(0, str(REPO_ROOT / 'src'))
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.verification._ssc_helpers import (  # noqa: E402
-    _is_commit_on_origin as _is_commit_on_origin,
-)
-from tools.verification._ssc_helpers import (
     _is_valid_commit_sha,
     _resolve_origin_head_commit,
     entropy_eos_copy,
