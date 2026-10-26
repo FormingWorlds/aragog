@@ -807,7 +807,7 @@ def test_public_effective_viscosity_local_delegates_to_compute_strain_rate_local
 
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_a2_3_perturbed_starts_spread(validation_plot) -> None:
+def test_perturbed_starts_spread(validation_plot) -> None:
     """Five runs of abe_solid.toml from perturbed initial entropy profiles
     S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
     Delta T_on(r) <= max(2 * Delta T_off(r), 0.05 K) across the full radial profile
@@ -870,20 +870,20 @@ def test_a2_3_perturbed_starts_spread(validation_plot) -> None:
         fig.tight_layout()
         return fig
 
-    validation_plot(figure, 'ssc_a2_3_perturbed_spread')
+    validation_plot(figure, 'ssc_perturbed_spread')
 
 
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_a2_4_rhs_call_counts_and_cost(validation_plot) -> None:
+def test_rhs_call_counts_and_cost(validation_plot) -> None:
     """Enabling two-pass solid rheology adds 0 extra EOS solidus lookups,
     +2 Arrhenius viscosity calls, +2 yield stress calls, +1 stagnant-lid state call,
     +1 effective viscosity call, and +2 viscous MLT factor calls per RHS on both
     NumPy and JAX, with JIT-compiled JAX per-RHS wall-time ratio <= 1.25."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    a2_4 = data['a2_4_rhs_wall_time']
-    ratios = a2_4['ratios']
-    table = a2_4['six_row_call_count_table']
+    cost_block = data['a2_4_rhs_wall_time']
+    ratios = cost_block['ratios']
+    table = cost_block['six_row_call_count_table']
 
     assert ratios['jax_ratio_on_lid_over_off'] <= 1.25
     assert ratios['jax_ratio_on_local_over_off'] <= 1.25
@@ -975,7 +975,7 @@ def test_a2_4_rhs_call_counts_and_cost(validation_plot) -> None:
         fig.tight_layout()
         return fig
 
-    validation_plot(figure, 'ssc_a2_4_rhs_cost')
+    validation_plot(figure, 'ssc_rhs_cost')
 
 
 def test_visc_single_threshold_governs_viscosity_blend_numpy_and_jax() -> None:

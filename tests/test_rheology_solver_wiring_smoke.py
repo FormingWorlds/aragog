@@ -551,7 +551,7 @@ def test_rhs_numpy_vs_jax_parity_100_cooling_states(closure_mode: str) -> None:
 
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
+def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     """NumPy and JAX right-hand sides agree to relative difference <= 1e-6 across
     100 cooling states on:
     1. the active-solid variant of abe_solid.toml (s_init=2500, kappah_floor=0,
@@ -567,11 +567,11 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
        8.1e-5 to 1.3e-3 across all 100 cooling states while preserving NumPy-vs-JAX parity
        to <= 1e-14."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    a2_2_block = data['a2_2_rhs_parity_and_activity']
-    var_rec = a2_2_block['abe_solid_kappah_floor_0']
-    yld_rec = a2_2_block['abe_solid_yield_active']
-    def_rec = a2_2_block['abe_solid_default']
-    flux_diag = a2_2_block['flux_vs_rhs_diagnostic']
+    parity_block = data['a2_2_rhs_parity_and_activity']
+    var_rec = parity_block['abe_solid_kappah_floor_0']
+    yld_rec = parity_block['abe_solid_yield_active']
+    def_rec = parity_block['abe_solid_default']
+    flux_diag = parity_block['flux_vs_rhs_diagnostic']
 
     # Verify recorded 100-state benchmark invariants for all 3 state sets
     rel_np_jax = np.asarray(var_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
@@ -792,7 +792,7 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         fig.tight_layout()
         return fig
 
-    validation_plot(figure, 'ssc_a2_2_rhs_parity')
+    validation_plot(figure, 'ssc_rhs_parity')
 
 
 def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None:
