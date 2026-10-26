@@ -302,6 +302,9 @@ def build_jax_rhs_and_jacobian(
             f'automatic FD-Jacobian fallback.'
         )
 
+    if getattr(boundary_params, 'outer_bc_type', None) == 5 and not phase_params.conduction:
+        raise ValueError('outer_bc_type 5 needs phase_params.conduction on')
+
     # NonDimScales enforces the internal nondim contract
     # rhs_scale = t_ref / state_scale in __post_init__. The factory
     # validates only the per-call shape compatibility with

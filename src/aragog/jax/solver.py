@@ -218,6 +218,8 @@ class BoundaryParams(eqx.Module):
                 'surf_dr_half > 0 m, all finite (EntropySolver.surface_temperature_bc), got '
                 f'{S_surf}, {outer_bc_value}, {surf_dr_half}'
             )
+        if outer_bc_type == 5 and param_utbl:
+            raise ValueError('param_utbl is a grey-body correction; set it false with type 5')
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.S_surf = jnp.asarray(0.0 if S_surf is None else S_surf, dtype=jnp.float64)

@@ -785,14 +785,17 @@ def _matched_surface_gradient(
     """dS/dr at the surface node from the half-cell temperature gradient (outer BC 5).
 
     Mirrors ``EntropyState._match_surface_gradient``: ``(Cp_safe / T) (dT/dr - dT/dP|_S dP/dr)``
-    with ``dT/dr = (T_surf - T_stag[-1]) / dr_half``.
+    with ``dT/dr = (T_node - T_stag[-1]) / dr_half``, ``T_node`` the temperature at ``S_surf``.
     """
-    _, t_surf, half_cell = surface_temperature
+    half_cell = surface_temperature[2]
     t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
+    t_node = phase_basic.temperature[
+        -1
+    ]  # the node at S_surf, so a stale outer_bc_value is unused
     cp = jnp.maximum(phase_basic.heat_capacity[-1], 100.0)
-    dtdr = (t_surf - t_top_cell) / half_cell
+    dtdr = (t_node - t_top_cell) / half_cell
     dtdr_ad = phase_basic.dTdPs[-1] * mesh.dP_dr_basic[-1]
-    return dSdr.at[-1].set(cp / phase_basic.temperature[-1] * (dtdr - dtdr_ad))
+    return dSdr.at[-1].set(cp / t_node * (dtdr - dtdr_ad))
 
 
 def compute_fluxes(
