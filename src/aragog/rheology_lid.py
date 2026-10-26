@@ -1065,6 +1065,52 @@ def compute_effective_viscosity(
     pass 2 scales the viscous velocity and eddy diffusivity by
     ``tau_buoy,1 / tau_y``; it is not a stress cap.
 
+    Parameters
+    ----------
+    eta_diff : FloatOrArray
+        Unyielded diffusion-creep dynamic viscosity [Pa s], strictly positive
+        and finite ``(0, +inf)``.
+    tau_d : FloatOrArray or None, default None
+        Convective driving shear stress [Pa] for ``stress_closure_mode='lid'``,
+        non-negative and finite ``[0, +inf)``. Must be ``None`` in ``'local'`` mode.
+    tau_y_lid : FloatOrArray or None, default None
+        Representative lid Byerlee yield stress [Pa] for
+        ``stress_closure_mode='lid'``, non-negative ``[0, +inf]`` (``+inf``
+        disables yielding). Must be ``None`` in ``'local'`` mode.
+    stress_closure_mode : str, default 'lid'
+        Plastic stress closure mode, either ``'lid'`` (boundary-layer stress
+        closure) or ``'local'`` (local strain-rate closure).
+    unyielded_velocity : FloatOrArray or None, default None
+        Unyielded pass-1 viscous convective velocity [m/s] for ``'local'`` mode
+        when ``strain_rate`` is not supplied directly; finite ``(-inf, +inf)``.
+    mixing_length : FloatOrArray or None, default None
+        Convective mixing length [m] for ``'local'`` mode when ``strain_rate`` is
+        not supplied directly; non-negative and finite ``[0, +inf)``.
+    tau_y_profile : FloatOrArray or None, default None
+        Alias for ``tau_y`` [Pa] in ``'local'`` mode, non-negative ``[0, +inf]``;
+        at most one of ``tau_y`` and ``tau_y_profile`` may be passed.
+    w_lid : FloatOrArray or None, default None
+        Dimensionless lid membership mask weight in ``[0, 1]`` for ``'lid'``
+        mode; when provided, log-blends the yielded viscosity on lid nodes with
+        ``eta_diff`` in the convecting interior.
+    strain_rate : FloatOrArray or None, default None
+        Local convective strain rate [1/s] for ``'local'`` mode, non-negative
+        and finite ``[0, +inf)``.
+    tau_y : FloatOrArray or None, default None
+        Local Byerlee yield stress [Pa] for ``'local'`` mode, non-negative
+        ``[0, +inf]`` (``+inf`` disables yielding).
+    eta_i : FloatOrArray or None, default None
+        Representative interior viscosity [Pa s] for ``'lid'`` mode, strictly
+        positive and finite ``(0, +inf)``. Must be ``None`` in ``'local'`` mode.
+    xp : module, default numpy
+        Array backend (``numpy`` or ``jax.numpy``).
+
+    Returns
+    -------
+    FloatOrArray
+        Effective dynamic viscosity ``eta_eff`` [Pa s], bounded in
+        ``(0, eta_diff]``.
+
     Raises
     ------
     ValueError
@@ -1202,7 +1248,40 @@ def stress_closure(
     eps: float = 1.0e-15,
     xp: Any = np,
 ) -> FloatOrArray:
-    r"""Calculate strain rate dispatching on stress closure mode."""
+    r"""Calculate strain rate dispatching on stress closure mode.
+
+    Parameters
+    ----------
+    mode : str
+        Stress closure mode; ``'local'`` evaluates local strain rate via
+        :func:`~aragog.rheology.compute_strain_rate_local`, while ``'lid'``
+        uses boundary-layer stress closure via :func:`compute_stagnant_lid_state`.
+    viscous_velocity : FloatOrArray
+        Viscous convective velocity [m/s], finite real scalar or array in
+        ``(-inf, +inf)``.
+    mixing_length : FloatOrArray or None, default None
+        Convective mixing length [m], non-negative and finite in ``[0, +inf)``;
+        required when ``mode='local'``.
+    eps : float, default 1.0e-15
+        Positive regularisation scale [m] for ``mixing_length`` in
+        ``(0, +inf)``.
+    xp : module, default numpy
+        Array backend (``numpy`` or ``jax.numpy``).
+
+    Returns
+    -------
+    FloatOrArray
+        Local convective strain rate [1/s], non-negative in ``[0, +inf)``.
+
+    Raises
+    ------
+    ValueError
+        If ``mode`` is ``'lid'`` (which uses :func:`compute_stagnant_lid_state`
+        instead of a local strain-rate dispatch), ``'global'`` (unsupported),
+        or any value other than ``'local'``, if ``mixing_length`` is ``None``
+        when ``mode='local'``, or if inputs violate the domain of
+        :func:`~aragog.rheology.compute_strain_rate_local`.
+    """
     _require_x64_if_jax(xp)
     if mode == 'local':
         if mixing_length is None:

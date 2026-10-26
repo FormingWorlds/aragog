@@ -270,6 +270,22 @@ def _install_benchmark_patches() -> None:
     lid_mod._compute_arrhenius_viscosity_core = _fk_viscosity_core
 
 
+def _restore_benchmark_patches() -> None:
+    _FK_STATE.clear()
+    es_mod.EntropySolver._solve_cvode = _orig_solve_cvode
+    estate_mod.EntropyState.update = _orig_state_update
+    es_mod.EntropySolver._check_rheology_invariants = _orig_check_rheo_inv
+    es_mod.EntropySolver._compute_step_energy_integrals = _orig_energy_integrals
+    rheo_mod._viscous_mixing_length_factor_core = _orig_vmlf_core
+    estate_mod._viscous_mixing_length_factor_core = _orig_vmlf_core
+    rheo_mod.compute_arrhenius_viscosity = _orig_arr_pub
+    rheo_mod._compute_arrhenius_viscosity_core = _orig_arr_core
+    ep_mod.compute_arrhenius_viscosity = _orig_arr_pub
+    ep_mod._compute_arrhenius_viscosity_core = _orig_arr_core
+    lid_mod.compute_arrhenius_viscosity = _orig_arr_pub
+    lid_mod._compute_arrhenius_viscosity_core = _orig_arr_core
+
+
 def get_git_commit() -> str:
     """Return current git HEAD SHA of the repository."""
     try:
@@ -437,44 +453,49 @@ def run_korenaga_row(
     """Run one Korenaga (2009, Table 1) row to steady state and return Nu and residual."""
     _install_benchmark_patches()
     _FK_STATE.clear()
-    t0 = time.time()
-    chunks = 8
-    for t_end in (4.0e10, 8.0e10, 1.6e11, 3.2e11):
-        p, meta = build_korenaga_params(row_name, n_nodes, s_top_inf, c_theta)
-        s = EntropySolver(p, entropy_eos=None)
-        s.initialize()
-        s.set_initial_entropy(3000.0)
-        edges = np.linspace(0.0, t_end, chunks + 1)
-        hist: list[tuple[float, float, float, float, int]] = []
-        for chunk_idx, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
-            p.solver.start_time, p.solver.end_time = float(lo), float(hi)
-            s.solve()
-            if chunk_idx < chunks - 2:
-                s.set_initial_entropy(np.asarray(s._solution.y[: s._n_stag, -1], dtype=float))
-                continue
-            st = s.get_state()
-            s.set_initial_entropy(st.S_final)
-            t_stag = np.asarray(st.T_stag, float)
-            rb, rs = np.asarray(st.r_basic, float), np.asarray(st.r_stag, float)
-            k_cond = 4.0 * meta['F']
-            f_top = k_cond * (t_stag[-1] - meta['T_s']) / (rb[-1] - rs[-1])
-            dth = 4000.0 * meta['H'] * meta['D'] ** 2 / k_cond
-            ti_val = korenaga_ti_fixed_point(
-                t_stag, (rb[-1] - rs) / meta['D'], meta['T_s'], dth, tol_k=1.0e-9
-            )
-            hist.append(
-                (
-                    float(hi),
-                    float(ti_val),
-                    float(dth / (ti_val - meta['T_s'])),
-                    float(f_top / (4000.0 * meta['H'] * meta['D'])),
-                    int(st.status),
+    try:
+        t0 = time.time()
+        chunks = 8
+        for t_end in (4.0e10, 8.0e10, 1.6e11, 3.2e11):
+            p, meta = build_korenaga_params(row_name, n_nodes, s_top_inf, c_theta)
+            s = EntropySolver(p, entropy_eos=None)
+            s.initialize()
+            s.set_initial_entropy(3000.0)
+            edges = np.linspace(0.0, t_end, chunks + 1)
+            hist: list[tuple[float, float, float, float, int]] = []
+            for chunk_idx, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+                p.solver.start_time, p.solver.end_time = float(lo), float(hi)
+                s.solve()
+                if chunk_idx < chunks - 2:
+                    s.set_initial_entropy(
+                        np.asarray(s._solution.y[: s._n_stag, -1], dtype=float)
+                    )
+                    continue
+                st = s.get_state()
+                s.set_initial_entropy(st.S_final)
+                t_stag = np.asarray(st.T_stag, float)
+                rb, rs = np.asarray(st.r_basic, float), np.asarray(st.r_stag, float)
+                k_cond = 4.0 * meta['F']
+                f_top = k_cond * (t_stag[-1] - meta['T_s']) / (rb[-1] - rs[-1])
+                dth = 4000.0 * meta['H'] * meta['D'] ** 2 / k_cond
+                ti_val = korenaga_ti_fixed_point(
+                    t_stag, (rb[-1] - rs) / meta['D'], meta['T_s'], dth, tol_k=1.0e-9
                 )
-            )
-        if abs(hist[-1][2] - hist[-2][2]) < 1.0e-5 * hist[-1][2]:
-            break
-    else:
-        raise RuntimeError(f'Korenaga (2009) row {row_name} did not reach steady state')
+                hist.append(
+                    (
+                        float(hi),
+                        float(ti_val),
+                        float(dth / (ti_val - meta['T_s'])),
+                        float(f_top / (4000.0 * meta['H'] * meta['D'])),
+                        int(st.status),
+                    )
+                )
+            if abs(hist[-1][2] - hist[-2][2]) < 1.0e-5 * hist[-1][2]:
+                break
+        else:
+            raise RuntimeError(f'Korenaga (2009) row {row_name} did not reach steady state')
+    finally:
+        _restore_benchmark_patches()
 
     wall_s = time.time() - t0
     nu_model = float(hist[-1][2])
@@ -625,24 +646,27 @@ def run_deschamps_vilella_row(
         solver=sv,
     )
     t0 = time.time()
-    s = EntropySolver(p, entropy_eos=None)
-    s.initialize()
-    s.set_initial_entropy(3000.0)
-    edges = np.linspace(0.0, t_end, chunks + 1)
-    for chunk_idx, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
-        p.solver.start_time, p.solver.end_time = float(lo), float(hi)
-        s.solve()
-        if chunk_idx < chunks - 1:
-            s.set_initial_entropy(np.asarray(s._solution.y[: s._n_stag, -1], dtype=float))
-        else:
-            st = s.get_state()
-            s.set_initial_entropy(st.S_final)
+    try:
+        s = EntropySolver(p, entropy_eos=None)
+        s.initialize()
+        s.set_initial_entropy(3000.0)
+        edges = np.linspace(0.0, t_end, chunks + 1)
+        for chunk_idx, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+            p.solver.start_time, p.solver.end_time = float(lo), float(hi)
+            s.solve()
+            if chunk_idx < chunks - 1:
+                s.set_initial_entropy(np.asarray(s._solution.y[: s._n_stag, -1], dtype=float))
+            else:
+                st = s.get_state()
+                s.set_initial_entropy(st.S_final)
 
-    t_stag = np.asarray(st.T_stag, float)
-    rb, rs = np.asarray(st.r_basic, float), np.asarray(st.r_stag, float)
-    f_top = k_cond * (t_stag[-1] - t_s) / (rb[-1] - rs[-1])
-    s.dSdt(float(t_end), np.asarray(st.S_final, float).ravel())
-    f_bot = float(np.asarray(s.state.heat_flux, float).ravel()[0])
+        t_stag = np.asarray(st.T_stag, float)
+        rb, rs = np.asarray(st.r_basic, float), np.asarray(st.r_stag, float)
+        f_top = k_cond * (t_stag[-1] - t_s) / (rb[-1] - rs[-1])
+        s.dSdt(float(t_end), np.asarray(st.S_final, float).ravel())
+        f_bot = float(np.asarray(s.state.heat_flux, float).ravel()[0])
+    finally:
+        _restore_benchmark_patches()
     z = (rb[-1] - rs) / d_shell
     vol = np.diff(rb**3)
     sel = (z > 0.5) & (z < 0.9)
@@ -655,7 +679,6 @@ def run_deschamps_vilella_row(
     order = np.argsort(zb)
     d_lid_val = lid_depth_tangent(jc[order], zb[order])
     wall_s = time.time() - t0
-    _FK_STATE.clear()
 
     d_tm = float(tm_val - tm_ref)
     r_tm = float(d_tm / DV2021_TM_ABS_TOL)
