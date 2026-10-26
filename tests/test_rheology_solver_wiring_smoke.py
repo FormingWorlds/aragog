@@ -565,7 +565,7 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     3. the default abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21),
        which remains an inert-path check with RHS_on == RHS_off."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    parity_block = data['a2_2_rhs_parity_and_activity']
+    parity_block = data['rhs_parity_and_activity']
     var_rec = parity_block['abe_solid_kappah_floor_0']
     yld_rec = parity_block['abe_solid_yield_active']
     def_rec = parity_block['abe_solid_default']

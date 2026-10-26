@@ -2727,7 +2727,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         assert float(st_sub['T_i']) == pytest.approx(exp_t_i, rel=1.0e-12)
         assert float(st_sub['mu_i']) == pytest.approx(exp_mu_i, rel=1.0e-12)
 
-    # 4. A3-2 check on checkpoint_profile_175kyr.npz across all 4 interior_flux_fraction values:
+    # 4. Outside-band check on checkpoint_profile_175kyr.npz across all 4 interior_flux_fraction values:
     # outside transition bands, outputs match hard reference to 1e-12.
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
     ckpt = np.load(ckpt_path)
