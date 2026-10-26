@@ -1,12 +1,7 @@
 {
   "metadata": {
-    "git_commit": "7247f727385426ec2bcf040e661d42e9559433de",
+    "git_commit": "f343d7bfb7a2b4f9fe9960c52375cc825a88e904",
     "config_file": "src/aragog/cfg/abe_solid.toml",
-    "eos_tables_release": "test-data-v1",
-    "eos_md5": {
-      "density_melt.dat": "5f1dafa207d677668e4bbdd977b350ed",
-      "density_solid.dat": "86fa3eb8ac074a5727be25ef4828fe1a"
-    },
     "tolerances": {
       "tol_rel_T_i": 0.05,
       "tol_rel_d_lid": 0.22,
@@ -49,7 +44,8 @@
       "yield_stress_max": 500000000.0,
       "yield_stress_floor": 1e-06,
       "yield_blend_ratio_width": 0.025
-    }
+    },
+    "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)"
   },
   "trajectory_calibrated_400Myr": {
     "s_top_inf": 0.25,

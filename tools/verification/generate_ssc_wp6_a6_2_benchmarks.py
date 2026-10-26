@@ -36,9 +36,7 @@ Execution modes and per-block coverage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import subprocess
 import sys
 import time
@@ -68,7 +66,9 @@ from aragog.solver import entropy_state as estate_mod  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
-TABLE_FILES = ('density_melt.dat', 'density_solid.dat', 'temperature_solid.dat')
+NO_TABLE_RECORD = (
+    'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
+)
 REQUIRED_SNAPSHOT_IDS = ('case_01', 'case_03', 'case_06', 'case_07', 'case_12')
 STEADY_RESIDUAL_BOUND = 1.0e-9
 
@@ -84,8 +84,7 @@ EXPECTED_TOP_KEYS = (
 EXPECTED_META_KEYS = (
     'git_commit',
     'branch',
-    'eos_tables_release',
-    'eos_md5',
+    'eos_tables',
     'rheology_calibration',
     'acceptance_window',
     'fixed_parameters',
@@ -103,17 +102,6 @@ EXPECTED_REALIZED_FIT_KEYS = (
     'all_12_nu_korenaga_on_realized_kor',
     'convecting_7_nu_korenaga_on_realized_kor',
 )
-
-
-def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
-    """Compute MD5 hashes of canonical equation of state table files."""
-    hashes: dict[str, str] = {}
-    for filename in TABLE_FILES:
-        filepath = eos_dir / filename
-        if not filepath.is_file():
-            raise FileNotFoundError(f'Missing required table file: {filepath}')
-        hashes[filename] = hashlib.md5(filepath.read_bytes()).hexdigest()
-    return hashes
 
 
 def korenaga_ti_fixed_point(
@@ -578,8 +566,8 @@ def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list[str]:
-    """Verify schema keys, table MD5s, and recompute the live fast subset across all blocks."""
+def verify_benchmarks(data: dict[str, Any]) -> list[str]:
+    """Verify schema keys, no-table metadata record, and recompute the live fast subset."""
     failures: list[str] = []
 
     if tuple(data.keys()) != EXPECTED_TOP_KEYS:
@@ -588,12 +576,10 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or tuple(meta.keys()) != EXPECTED_META_KEYS:
         failures.append(f'metadata keys {tuple(meta.keys())} != {EXPECTED_META_KEYS}')
-    elif eos_dir is not None and eos_dir.is_dir():
-        exp_hashes = meta.get('eos_md5', {})
-        act_hashes = compute_table_hashes(eos_dir)
-        for fname, exp_h in exp_hashes.items():
-            if act_hashes.get(fname) != exp_h:
-                failures.append(f'Table MD5 mismatch for {fname}')
+    elif meta.get('eos_tables') != NO_TABLE_RECORD:
+        failures.append(
+            f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r}"
+        )
 
     diag = data.get('diagnostic_fits', {})
     if not isinstance(diag, dict) or tuple(diag.keys()) != EXPECTED_DIAG_FIT_KEYS:
@@ -681,11 +667,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         description='Generate or check stagnant-lid scaling reference benchmarks.'
     )
     parser.add_argument('--output', type=Path, default=DEFAULT_BENCHMARK_PATH)
-    parser.add_argument(
-        '--eos-dir',
-        type=Path,
-        default=Path(os.environ.get('ARAGOG_TEST_EOS_DIR', '')),
-    )
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--full', action='store_true')
     return parser.parse_args(argv)
@@ -695,14 +676,13 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     args = parse_arguments(argv)
     output_path = args.output.resolve()
-    has_eos_dir = bool(str(args.eos_dir)) and args.eos_dir.is_dir()
 
     if args.check:
         if not output_path.is_file():
             sys.stderr.write(f'Benchmark file not found: {output_path}\n')
             return 1
         data = json.loads(output_path.read_text(encoding='utf-8'))
-        failures = verify_benchmarks(data, eos_dir=args.eos_dir if has_eos_dir else None)
+        failures = verify_benchmarks(data)
         if failures:
             sys.stderr.write(f'Verification failed with {len(failures)} issue(s):\n')
             for f in failures:
@@ -728,7 +708,17 @@ def main(argv: list[str] | None = None) -> int:
         data['steady_state_snapshots'] = new_snaps
 
     floor_info = compute_discrete_conduction_floor_n100()
-    fp = data.setdefault('metadata', {}).setdefault('fixed_parameters', {})
+    raw_meta = data.get('metadata', {})
+    head_sha = raw_meta.get('git_commit', '')
+    try:
+        sha_out = subprocess.check_output(
+            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
+        ).strip()
+        if sha_out:
+            head_sha = sha_out
+    except Exception:
+        pass
+    fp = dict(raw_meta.get('fixed_parameters', {}))
     fp['conduction_floor_Nu_analytic_peak'] = floor_info['Nu_analytic_parabola_peak']
     fp['conduction_floor_Nu_korenaga_analytic_planar'] = floor_info[
         'Nu_korenaga_analytic_planar'
@@ -740,20 +730,17 @@ def main(argv: list[str] | None = None) -> int:
         'Nu_korenaga_conduction_floor_spherical_N100'
     ]
     fp['steady_residual_bound_J_kg_K_yr'] = STEADY_RESIDUAL_BOUND
+    data['metadata'] = {
+        'git_commit': head_sha,
+        'branch': raw_meta.get('branch', 'tl/ssc-wp2-verification'),
+        'eos_tables': NO_TABLE_RECORD,
+        'rheology_calibration': raw_meta.get('rheology_calibration', {}),
+        'acceptance_window': raw_meta.get('acceptance_window', {}),
+        'fixed_parameters': fp,
+    }
     data['realized_state_fits'] = compute_realized_state_fits(data['cases_results'])
 
-    if has_eos_dir:
-        data['metadata']['eos_md5'] = compute_table_hashes(args.eos_dir)
-    try:
-        head_sha = subprocess.check_output(
-            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
-        ).strip()
-        if head_sha:
-            data['metadata']['git_commit'] = head_sha
-    except Exception:
-        pass
-
-    failures = verify_benchmarks(data, eos_dir=args.eos_dir if has_eos_dir else None)
+    failures = verify_benchmarks(data)
     if failures:
         sys.stderr.write(f'Generated benchmark failed verification ({len(failures)} issues):\n')
         for f in failures:
