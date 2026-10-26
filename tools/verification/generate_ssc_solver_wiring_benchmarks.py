@@ -4,7 +4,7 @@ Generates or checks the validation benchmarks in
 ``tests/reference/ssc_solver_wiring_benchmarks.json``.
 
 Execution modes and per-block coverage:
-- ``--full`` (~65 s on 1 CPU core; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR`` and a
+- ``--full`` (requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR`` and a
   clean git working tree whose ``HEAD`` is reachable from ``origin/*``): generates the
   entire benchmark JSON from scratch (works when the output file does not yet exist):
   1. ``canary``: records ``aragog_commit`` and ``table_md5`` for all 12 SPIDER P-S tables.
@@ -24,30 +24,33 @@ Execution modes and per-block coverage:
   Before writing the output JSON, ``main()`` runs ``verify_benchmarks`` on the generated
   payload and exits 1 if any check fails.
 - ``--parity-only``, ``--cost-only``, ``--starts-only``: regenerates the selected block(s) and
-  their per-block ``table_md5`` in an existing JSON file, verifies via ``verify_benchmarks``,
-  and writes the updated JSON.
-- ``--check`` (~2 s; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR``):
-  1. Verifies ``canary.aragog_commit`` is reachable from ``origin/*`` and checks all 12
-     SPIDER P-S table MD5 hashes in ``canary`` and in every block of ``rhs_parity_and_activity``, ``rhs_wall_time``,
-     and ``perturbed_starts``.
-  2. Recomputes from the stored 100-state arrays every summary statistic in
-     ``rhs_parity_and_activity`` (``max/median/min`` of ``rel_rhs_numpy_vs_jax``,
-     ``rel_rhs_numpy_vs_jax_eager``, ``rel_flux_numpy_vs_jax``, harmonised-alpha parity,
-     ``on_vs_off``, ``yield_on_vs_yield_off``, ``canary_jax_broken``,
-     ``canary_jax_yield_broken``, node-count spans, ``delta_s_min <= delta_s_max``, and
-     all ratios in ``flux_vs_rhs_diagnostic``).
-  3. Recomputes from ``rhs_wall_time.modes`` every ``per_rhs_us``, every ratio in
-     ``ratios``, every delta in ``six_row_call_count_table``, and checks positive
+  updates ``table_md5`` only on ``canary`` and on the regenerated block(s) in an existing JSON
+  file, verifies via ``verify_benchmarks``, and writes the updated JSON.
+- ``--check`` (requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR``):
+  1. Stored provenance and table hashes: verifies ``canary.aragog_commit`` is a valid 40-hex
+     commit SHA and checks all 12 SPIDER P-S table MD5 hashes in ``canary`` and in every block
+     of ``rhs_parity_and_activity``, ``rhs_wall_time``, and ``perturbed_starts``.
+  2. Stored-array consistency in ``rhs_parity_and_activity``: requires all per-state and
+     per-step arrays and recomputes from them every summary statistic (``max/median/min`` of
+     ``rel_rhs_numpy_vs_jax``, ``rel_rhs_numpy_vs_jax_eager``, ``rel_flux_numpy_vs_jax``,
+     harmonised-alpha JIT and eager parity, ``max_rel_rhs_jax_jit_vs_eager``,
+     ``on_vs_off``, ``max_rel_rhs_on_vs_off_integrated_trajectory``,
+     ``yield_on_vs_yield_off``, ``canary_jax_broken``, ``canary_jax_yield_broken``, all
+     four node-count min/max spans, ``delta_s_min <= delta_s_max``, and all ratios in
+     ``flux_vs_rhs_diagnostic``).
+  3. Stored-data consistency in ``rhs_wall_time``: recomputes from ``rhs_wall_time.modes``
+     every ``per_rhs_us``, every ratio in ``ratios``, every delta and zero
+     ``difference_from_expected`` in ``six_row_call_count_table``, and checks positive
      ``numpy_vs_jax_max_rel_diff <= 1e-6``.
-  4. Recomputes from ``perturbed_starts`` ``runs`` all radial peak-to-peak spread
-     profiles (``delta_T_basic_profile_K``, ``delta_T_stag_profile_K``,
+  4. Stored-data consistency in ``perturbed_starts``: recomputes from ``runs`` all radial
+     peak-to-peak spread profiles (``delta_T_basic_profile_K``, ``delta_T_stag_profile_K``,
      ``delta_S_final_profile``), all summary spread scalars (``spread_*_ptp``,
      ``spread_*_std``, ``mean_wall_time_s``, ``solve_wall_time_ratio_on_over_off``), and
      all ``on_vs_off_activity`` differences from the ``epsilon == 0`` run pair.
-  5. Recomputes live the 6-row per-evaluation call-count deltas in NumPy and JAX and
-     evaluates state 0 of ``abe_solid_kappah_floor_0`` on both the JIT CVODE path and the
-     eager JAX path, requiring relative agreement ``<= 1e-3`` with the stored state-0
-     values.
+  5. Live solver evaluation: recomputes live the 6-row per-evaluation call-count deltas in
+     NumPy and JAX across ``off``, ``on_lid``, and ``on_local`` modes and evaluates state 0 of
+     ``abe_solid_kappah_floor_0`` live on both the JIT CVODE path and the eager JAX path,
+     requiring relative agreement ``<= 1e-3`` with the stored state-0 values.
 """
 
 from __future__ import annotations
@@ -57,7 +60,6 @@ import hashlib
 import importlib.resources
 import json
 import os
-import subprocess
 import sys
 import time
 from contextlib import ExitStack
@@ -72,7 +74,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / 'src'))
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.verification._ssc_helpers import entropy_eos_copy, entropy_eos_jax  # noqa: E402
+from tools.verification._ssc_helpers import (  # noqa: E402
+    _is_commit_on_origin as _is_commit_on_origin,
+)
+from tools.verification._ssc_helpers import (
+    _is_valid_commit_sha,
+    _resolve_origin_head_commit,
+    entropy_eos_copy,
+    entropy_eos_jax,
+)
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_solver_wiring_benchmarks.json'
 TABLE_FILES = (
@@ -344,7 +354,7 @@ def build_six_row_call_count_table(call_counts: dict[str, dict]) -> list[dict[st
         (
             'viscous_mixing_length_factor',
             'viscous_mixing_length_factor',
-            1,
+            2,
             'Relative to rheology.enabled=False (0 calls), Pass 1 (theta=None) and Pass 2 (theta=lid_state["theta"] in lid mode, None in local mode) each invoke _viscous_mixing_length_factor_core once, giving +2 calls per RHS in both NumPy and JAX.',
         ),
     ]
@@ -740,14 +750,19 @@ def _evaluate_100_trajectory_states_parity(
         'n_nodes_kappah_on_ne_kappah_off_max': int(np.max(nodes_kappah_on_ne_off_list)),
         'state_times_yr': t_yr_list,
         'state_T_surf_K': t_surf_list,
+        'n_nodes_solid_weight_pos_per_state': nodes_solid_weight_list,
         'n_nodes_eta_eff_ne_eta_diff_per_state': nodes_eta_eff_ne_diff_list,
+        'n_nodes_visc_on_ne_visc_off_per_state': nodes_visc_on_ne_off_list,
+        'n_nodes_kappah_on_ne_kappah_off_per_state': nodes_kappah_on_ne_off_list,
         'rel_rhs_numpy_vs_jax_per_state': rel_rhs_np_jax_list,
         'rel_rhs_numpy_vs_jax_eager_per_state': rel_rhs_np_jax_eager_list,
+        'rel_rhs_jax_jit_vs_eager_per_state': rel_rhs_jit_vs_eager_list,
         'rel_flux_numpy_vs_jax_per_state': rel_flux_np_jax_list,
         'rel_rhs_numpy_vs_jax_harmonised_alpha_per_state': rel_rhs_np_jax_harm_list,
         'rel_rhs_numpy_vs_jax_harmonised_alpha_eager_per_state': rel_rhs_np_jax_harm_eager_list,
         'rel_flux_numpy_vs_jax_harmonised_alpha_per_state': rel_flux_np_jax_harm_list,
         'rel_rhs_on_vs_off_per_state': rel_rhs_on_off_list,
+        'rel_rhs_on_vs_off_integrated_trajectory_per_step': traj_rel_rhs_on_off,
         'rel_flux_on_vs_off_per_state': rel_flux_on_off_list,
         'rel_rhs_yield_on_vs_yield_off_per_state': rel_rhs_yield_on_off_list,
         'canary_jax_broken_rel_rhs_per_state': canary_rel_rhs_list,
@@ -1333,57 +1348,14 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
             f'Live state-0 JIT rel_rhs_numpy_vs_jax {rel_diff_0_jit:.6e} vs stored '
             f'{stored_0_jit:.6e} exceeds tolerance {tol_0_jit:.3e}'
         )
-    if 'rel_rhs_numpy_vs_jax_eager_per_state' in kappah_rec:
-        stored_0_eager = float(kappah_rec['rel_rhs_numpy_vs_jax_eager_per_state'][0])
-        tol_0_eager = max(1.0e-2 * stored_0_eager, 1.0e-15)
-        if abs(rel_diff_0_eager - stored_0_eager) > tol_0_eager:
-            failures.append(
-                f'Live state-0 eager rel_rhs_numpy_vs_jax {rel_diff_0_eager:.6e} vs stored '
-                f'{stored_0_eager:.6e} exceeds tolerance {tol_0_eager:.3e}'
-            )
+    stored_0_eager = float(kappah_rec['rel_rhs_numpy_vs_jax_eager_per_state'][0])
+    tol_0_eager = max(1.0e-3 * stored_0_eager, 1.0e-15)
+    if abs(rel_diff_0_eager - stored_0_eager) > tol_0_eager:
+        failures.append(
+            f'Live state-0 eager rel_rhs_numpy_vs_jax {rel_diff_0_eager:.6e} vs stored '
+            f'{stored_0_eager:.6e} exceeds tolerance {tol_0_eager:.3e}'
+        )
     return failures
-
-
-def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
-    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
-    if not isinstance(sha, str) or len(sha) != 40 or sha == 'uncommitted':
-        return False
-    try:
-        obj_type = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        if obj_type != 'commit':
-            return False
-        branches_out = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        return False
-    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
-
-
-def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
-    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
-    status_out = subprocess.check_output(
-        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
-        text=True,
-    ).strip()
-    if status_out:
-        raise RuntimeError(
-            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
-        )
-    head_sha = subprocess.check_output(
-        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
-    ).strip()
-    if not _is_commit_on_origin(head_sha, repo_root):
-        raise RuntimeError(
-            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
-        )
-    return head_sha
 
 
 def _check_scalar_match(
@@ -1469,6 +1441,18 @@ def _verify_parity_block(
                 ),
             ),
             (
+                'rel_rhs_numpy_vs_jax_eager_per_state',
+                (
+                    ('max_rel_rhs_numpy_vs_jax_eager', np.max),
+                    ('median_rel_rhs_numpy_vs_jax_eager', np.median),
+                    ('min_rel_rhs_numpy_vs_jax_eager', np.min),
+                ),
+            ),
+            (
+                'rel_rhs_jax_jit_vs_eager_per_state',
+                (('max_rel_rhs_jax_jit_vs_eager', np.max),),
+            ),
+            (
                 'rel_flux_numpy_vs_jax_per_state',
                 (
                     ('max_rel_flux_numpy_vs_jax', np.max),
@@ -1481,6 +1465,13 @@ def _verify_parity_block(
                     ('max_rel_rhs_numpy_vs_jax_harmonised_alpha', np.max),
                     ('median_rel_rhs_numpy_vs_jax_harmonised_alpha', np.median),
                     ('min_rel_rhs_numpy_vs_jax_harmonised_alpha', np.min),
+                ),
+            ),
+            (
+                'rel_rhs_numpy_vs_jax_harmonised_alpha_eager_per_state',
+                (
+                    ('max_rel_rhs_numpy_vs_jax_harmonised_alpha_eager', np.max),
+                    ('median_rel_rhs_numpy_vs_jax_harmonised_alpha_eager', np.median),
                 ),
             ),
             (
@@ -1547,40 +1538,59 @@ def _verify_parity_block(
                     float(stat_fn(arr_np)),
                 )
 
-        if 'rel_rhs_numpy_vs_jax_eager_per_state' in suite:
-            eager_arr = np.asarray(suite['rel_rhs_numpy_vs_jax_eager_per_state'], dtype=float)
-            if eager_arr.shape != (100,) or not np.all(np.isfinite(eager_arr)):
-                failures.append(f"'{suite_name}.rel_rhs_numpy_vs_jax_eager_per_state' invalid")
+        traj_arr = suite.get('rel_rhs_on_vs_off_integrated_trajectory_per_step')
+        if not isinstance(traj_arr, list) or len(traj_arr) == 0:
+            failures.append(
+                f"'{suite_name}.rel_rhs_on_vs_off_integrated_trajectory_per_step' missing or empty"
+            )
+        else:
+            traj_np = np.asarray(traj_arr, dtype=float)
+            if not np.all(np.isfinite(traj_np)) or np.any(traj_np < 0.0):
+                failures.append(
+                    f"'{suite_name}.rel_rhs_on_vs_off_integrated_trajectory_per_step' invalid"
+                )
             else:
                 _check_scalar_match(
                     failures,
-                    f'{suite_name}.max_rel_rhs_numpy_vs_jax_eager',
-                    suite.get('max_rel_rhs_numpy_vs_jax_eager'),
-                    float(np.max(eager_arr)),
-                )
-                _check_scalar_match(
-                    failures,
-                    f'{suite_name}.median_rel_rhs_numpy_vs_jax_eager',
-                    suite.get('median_rel_rhs_numpy_vs_jax_eager'),
-                    float(np.median(eager_arr)),
-                )
-                _check_scalar_match(
-                    failures,
-                    f'{suite_name}.min_rel_rhs_numpy_vs_jax_eager',
-                    suite.get('min_rel_rhs_numpy_vs_jax_eager'),
-                    float(np.min(eager_arr)),
+                    f'{suite_name}.max_rel_rhs_on_vs_off_integrated_trajectory',
+                    suite.get('max_rel_rhs_on_vs_off_integrated_trajectory'),
+                    float(np.max(traj_np)),
                 )
 
-        nodes_arr = suite.get('n_nodes_eta_eff_ne_eta_diff_per_state')
-        if not isinstance(nodes_arr, list) or len(nodes_arr) != 100:
-            failures.append(f"'{suite_name}.n_nodes_eta_eff_ne_eta_diff_per_state' invalid")
-        else:
-            if suite.get('n_states_eta_eff_ne_eta_diff_pos') != sum(x > 0 for x in nodes_arr):
-                failures.append(f"'{suite_name}.n_states_eta_eff_ne_eta_diff_pos' mismatch")
-            if suite.get('n_nodes_eta_eff_ne_eta_diff_min') != min(nodes_arr):
-                failures.append(f"'{suite_name}.n_nodes_eta_eff_ne_eta_diff_min' mismatch")
-            if suite.get('n_nodes_eta_eff_ne_eta_diff_max') != max(nodes_arr):
-                failures.append(f"'{suite_name}.n_nodes_eta_eff_ne_eta_diff_max' mismatch")
+        for node_arr_key, min_key, max_key in (
+            (
+                'n_nodes_solid_weight_pos_per_state',
+                'n_nodes_solid_weight_pos_min',
+                'n_nodes_solid_weight_pos_max',
+            ),
+            (
+                'n_nodes_eta_eff_ne_eta_diff_per_state',
+                'n_nodes_eta_eff_ne_eta_diff_min',
+                'n_nodes_eta_eff_ne_eta_diff_max',
+            ),
+            (
+                'n_nodes_visc_on_ne_visc_off_per_state',
+                'n_nodes_visc_on_ne_visc_off_min',
+                'n_nodes_visc_on_ne_visc_off_max',
+            ),
+            (
+                'n_nodes_kappah_on_ne_kappah_off_per_state',
+                'n_nodes_kappah_on_ne_kappah_off_min',
+                'n_nodes_kappah_on_ne_kappah_off_max',
+            ),
+        ):
+            nodes_arr = suite.get(node_arr_key)
+            if not isinstance(nodes_arr, list) or len(nodes_arr) != 100:
+                failures.append(f"'{suite_name}.{node_arr_key}' invalid")
+            else:
+                if suite.get(min_key) != min(nodes_arr):
+                    failures.append(f"'{suite_name}.{min_key}' mismatch")
+                if suite.get(max_key) != max(nodes_arr):
+                    failures.append(f"'{suite_name}.{max_key}' mismatch")
+                if node_arr_key == 'n_nodes_eta_eff_ne_eta_diff_per_state' and suite.get(
+                    'n_states_eta_eff_ne_eta_diff_pos'
+                ) != sum(x > 0 for x in nodes_arr):
+                    failures.append(f"'{suite_name}.n_states_eta_eff_ne_eta_diff_pos' mismatch")
 
         if float(suite.get('max_rel_rhs_numpy_vs_jax', 1.0)) > 1.0e-6:
             failures.append(
@@ -1789,6 +1799,11 @@ def _verify_cost_block(
         if len(call_counts) == 3:
             recomp_table = build_six_row_call_count_table(call_counts)
             for idx, (row, exp_row) in enumerate(zip(table, recomp_table)):
+                if row.get('difference_from_expected') != 0:
+                    failures.append(
+                        f'six_row_call_count_table[{idx}].difference_from_expected='
+                        f'{row.get("difference_from_expected")!r} != 0'
+                    )
                 for fld in (
                     'item',
                     'expected_call_delta',
@@ -2007,9 +2022,9 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
         commit_sha = canary.get('aragog_commit')
         if not commit_sha:
             failures.append("Missing 'aragog_commit' in canary")
-        elif not _is_commit_on_origin(str(commit_sha)):
+        elif not _is_valid_commit_sha(commit_sha):
             failures.append(
-                f"canary['aragog_commit'] {commit_sha!r} is not a commit reachable from origin/*"
+                f"canary['aragog_commit'] {commit_sha!r} is not a valid 40-hex commit SHA"
             )
         if eos_dir is None or not eos_dir.is_dir():
             failures.append(
@@ -2147,13 +2162,6 @@ def main(argv: list[str] | None = None) -> int:
             data['perturbed_starts'] = run_perturbed_starts_benchmarks(
                 cfg_path, args.eos_dir, table_hashes
             )
-        for m_rec in data.get('rhs_wall_time', {}).get('modes', {}).values():
-            if isinstance(m_rec, dict) and 'table_md5' not in m_rec:
-                m_rec['table_md5'] = table_hashes
-        for s_key in ('abe_solid_default', 'abe_solid_kappah_floor_0'):
-            s_rec = data.get('perturbed_starts', {}).get(s_key)
-            if isinstance(s_rec, dict) and 'table_md5' not in s_rec:
-                s_rec['table_md5'] = table_hashes
 
     failures = verify_benchmarks(data, eos_dir=args.eos_dir)
     if failures:

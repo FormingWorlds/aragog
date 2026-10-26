@@ -1959,6 +1959,8 @@ class EntropySolver:
         self,
         trace_y: npt.NDArray | None = None,
         trace_t: npt.NDArray | None = None,
+        *,
+        step_idx: int = 0,
     ) -> None:
         """Check solid rheology invariants on an accepted state when rheology is enabled."""
         params = getattr(self, 'parameters', None)
@@ -1978,13 +1980,13 @@ class EntropySolver:
             )
             counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
             try:
-                for step_idx in range(n_steps):
-                    self._dSdt_single(float(t_pts[step_idx]), y_pts[:, step_idx])
-                    self._check_rheology_step_invariants(rheo, step_idx=step_idx)
+                for k_idx in range(n_steps):
+                    self._dSdt_single(float(t_pts[k_idx]), y_pts[:, k_idx])
+                    self._check_rheology_step_invariants(rheo, step_idx=k_idx)
             finally:
                 self.state._pb_cache_hits, self.state._pb_cache_misses = counters
             return
-        self._check_rheology_step_invariants(rheo, step_idx=0)
+        self._check_rheology_step_invariants(rheo, step_idx=step_idx)
 
     def _check_rheology_step_invariants(self, rheo, step_idx: int = 0) -> None:
         """Check solid rheology invariants on ``self.state`` at step ``step_idx``."""
@@ -4738,7 +4740,7 @@ class EntropySolver:
                 finally:
                     self.state._pb_cache_hits, self.state._pb_cache_misses = counters
             if sol is not None:
-                self._check_rheology_invariants()
+                self._check_rheology_invariants(step_idx=max(int(sol.t.size - 1), 0))
             return dict(_ZERO_ENERGY_INTEGRALS)
 
         # On the scipy path solve_ivp returns its accepted steps as sol.t.

@@ -921,8 +921,10 @@ def test_rhs_call_counts_and_cost(validation_plot) -> None:
     ]
     assert measured_deltas_np == [0, 2, 2, 1, 1, 2]
     assert measured_deltas_jax == [0, 2, 2, 1, 1, 2]
+    assert [row['expected_call_delta'] for row in table] == [0, 2, 2, 1, 1, 2]
     assert [row['measured_numpy_delta'] for row in table] == [0, 2, 2, 1, 1, 2]
     assert [row['measured_jax_delta'] for row in table] == [0, 2, 2, 1, 1, 2]
+    assert [row['difference_from_expected'] for row in table] == [0, 0, 0, 0, 0, 0]
 
     counts_np_local = _measure_numpy_rhs_counts(
         SolidRheologyParams(enabled=True, stress_closure_mode='local')
@@ -1552,3 +1554,27 @@ def test_solve_core_module_refuses_unmodelled_regime_on_trace_y(
 
     solver.solve()
     assert solver._solution.energy_integrals is not None
+
+
+def test_compute_step_energy_integrals_early_return_reports_last_step_index(
+    monkeypatch,
+) -> None:
+    """When entropy_eos is None, _compute_step_energy_integrals reports the last step index."""
+    from types import SimpleNamespace
+
+    rheo = SolidRheologyParams(enabled=True)
+    params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver = _make_solver(params)
+    s_stag = _make_solid_profile(solver)
+    solver.entropy_eos = None
+    solver._solution = SimpleNamespace(
+        t=np.array([0.0, 5.0, 10.0, 15.0]),
+        y=np.tile(s_stag[:, None], (1, 4)),
+    )
+
+    def _corrupt_eta_eff(t_val, y_val):
+        solver.state._eta_eff_basic = np.full(20, -1.0)
+
+    monkeypatch.setattr(solver, '_dSdt_single', _corrupt_eta_eff)
+    with pytest.raises(RuntimeError, match='at step 3'):
+        solver._compute_step_energy_integrals()

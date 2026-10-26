@@ -373,13 +373,15 @@ def viscous_mixing_length_factor(
     *,
     xp: Any = np,
 ) -> Any:
-    r"""Factor on the viscous MLT velocity replacing the Abe length by the calibrated one.
+    r"""Factor ``(l_v / l)^4`` on the viscous MLT eddy diffusivity for the calibrated length.
 
-    The viscous eddy diffusivity scales as ``l^4``, so with
+    The viscous eddy diffusivity scales as ``l^4`` and the viscous convective
+    velocity scales as ``l^3``, so with
     ``l_v = min(bottom_slope (r - r_in), s_top(theta) (r_out - r))`` (Wagner et al.
-    2019, eq. 11, written with the two boundary slopes) it is multiplied by
-    ``(l_v / l)^4``; the inviscid branch keeps ``l``. When ``theta`` is provided,
-    the upper slope is evaluated via :func:`compute_mlt_top_slope`.
+    2019, eq. 11, written with the two boundary slopes) the diffusivity is
+    multiplied by ``(l_v / l)^4`` and the viscous velocity by ``(l_v / l)^3``;
+    the inviscid branch keeps ``l``. When ``theta`` is provided, the upper slope
+    is evaluated via :func:`compute_mlt_top_slope`.
 
     Parameters
     ----------

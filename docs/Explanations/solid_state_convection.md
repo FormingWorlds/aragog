@@ -67,7 +67,7 @@ $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
 $$
 
-with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, default $0.22$). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
+with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, default $0.22$). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$ and the viscous velocity scales as $l^3$, `viscous_mixing_length_factor` returns $(l_v / l)^4$, multiplying the viscous velocity by $(l_v / l)^3$ and the viscous eddy diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
 
 ## 2. Plastic Yielding Criterion
 
