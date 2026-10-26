@@ -1384,3 +1384,47 @@ def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos)
     assert atol_phys == pytest.approx(1.0e-8), (
         'Sub-solidus segment did not set physical atol to 1e-8'
     )
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_subsolidus_segment_never_loosens_tighter_caller_tolerances(shared_eos):
+    """Regime 4 segments never loosen caller tolerances tighter than rtol 1e-9 and atol 1e-8."""
+    s = _solver(shared_eos, 'rate', tol=1.0e-10, end_time=100.0)
+    s._atol_sf = 1.0e-3
+    S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
+    s.set_initial_entropy(S_sol - 10.0)
+    scales = s._build_nondim_scales()
+
+    recorded = []
+
+    def mock_solve_cvode(**kw):
+        t = kw['start_time']
+        rtol = kw.get('rtol')
+        atol = kw.get('atol')
+        y0 = kw.get('y0')
+        recorded.append({'t': t, 'rtol': rtol, 'atol': atol, 'y0': y0})
+        return OptimizeResult(
+            t=np.array([t, kw['end_time']]),
+            y=np.column_stack([y0, y0]),
+            status=0,
+            cvode_flag=0,
+            nfev=1,
+            cvode_nst=1,
+            cvode_nfe=1,
+        )
+
+    s._solve_cvode = mock_solve_cvode
+    s.solve()
+
+    assert len(recorded) == 1, 'Expected one segment'
+    assert recorded[0]['rtol'] == 1.0e-10, 'Regime 4 segment loosened caller rtol from 1e-10'
+    atol_phys = (
+        recorded[0]['atol'][0] * scales.state_scale[0]
+        if hasattr(recorded[0]['atol'], '__len__')
+        else recorded[0]['atol']
+    )
+    assert atol_phys == pytest.approx(1.0e-10), (
+        'Regime 4 segment loosened caller atol from 1e-10'
+    )
