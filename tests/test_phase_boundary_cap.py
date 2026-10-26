@@ -1332,9 +1332,15 @@ def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos)
     S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
 
-    s.set_initial_entropy(0.5 * (S_sol + S_liq))
+    # Segment 0: partially molten (one sub-solidus cell, one super-solidus cell).
+    S_part = 0.5 * (S_sol + S_liq)
+    S_part[0] = S_sol[0] - 10.0
+    s.set_initial_entropy(S_part)
     scales = s._build_nondim_scales()
-    y_sub_nd = (S_sol - 10.0 - scales.state_offset) / scales.state_scale
+    # Segment 1: exact solidus edge (cell 0 at exact solidus, cell 1 sub-solidus).
+    S_edge = S_sol.copy()
+    S_edge[1:] -= 10.0
+    y_sub_nd = (S_edge - scales.state_offset) / scales.state_scale
 
     recorded = []
 
