@@ -80,23 +80,15 @@ and all heat made in the shell leaves through the surface: the surface heat flux
     - Test id: `tests/test_entropy_bc5_validation.py::test_the_convecting_shell_converges_with_second_order`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k convecting` (add `--validation-plots` to write the plot pair)
 
-## Stagnant-lid benchmark states
+## Note: stagnant-lid benchmark states
 
-**Why this check exists.** The stagnant-lid scaling benchmarks hold the surface at 273 K, and their tools set the half-cell conduction through the surface outside the solver. This check shows that the boundary condition of the solver gives the same surface flux on their stored states.
+This comparison is not a test of this repository, so it is not one of the numbered cases above. The stagnant-lid scaling benchmarks hold the surface at 273 K, and their tools (`tools/verification/generate_ssc_wp6_a6_*_benchmarks.py` on the branch `tl/ssc-wp2-verification` of this repository) set the half-cell conduction $k (T_{N-1} - T_s) / (\Delta r / 2)$ through the surface outside the solver. Running those tools on their 8 stored states (5 of the internal-heating benchmark, 3 of the yield-stress benchmark) with `outer_boundary_condition = 5`, and with the eddy-diffusivity floor off as in the benchmarks, gives:
 
-**What it tests.** The 5 stored steady states of the internal-heating benchmark and the 3 stored states of the yield-stress benchmark, evaluated once with the flux of the benchmarks and once with `outer_boundary_condition = 5`, with the eddy-diffusivity floor off as in the benchmarks.
+- the same surface flux on all 8 states, to a relative $1.3 \times 10^{-16}$;
+- states that are not exactly steady with the surface node at 273 K: largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the tools;
+- steady runs of the internal-heating benchmark whose interior temperature moves by up to $2.5 \times 10^{-4}$ (relative).
 
-**How we know the right answer.** The benchmarks set the surface flux to $k (T_{N-1} - T_s) / (\Delta r / 2)$, the same half-cell conduction as the boundary condition, so the two fluxes must agree to round-off.
-
-**Why it matters.** The benchmarks can use the boundary condition of the solver for their surface.
-
-**Known limit.** No test in this repository runs this case: the stored states and the tools of the benchmarks belong to the stagnant-lid verification suite, and the numbers here come from running those tools with this boundary condition. The surface flux agrees on all 8 states to a relative $1.3 \times 10^{-16}$. The rates of the stored states do not: with the boundary condition the surface node is at 273 K, the stored states are not exactly steady (largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the benchmarks), and the steady runs of the internal-heating benchmark move its interior temperature by up to $2.5 \times 10^{-4}$ (relative). The checks of the rates ($10^{-10}$) and of the steady runs ($10^{-6}$) use benchmark references computed with this boundary condition.
-
-??? info "Test details"
-    - Reference: the stored states and surface fluxes of the stagnant-lid scaling benchmarks.
-    - Tolerance: surface flux $10^{-10}$ relative (measured $1.3 \times 10^{-16}$).
-    - Test id: none in this repository; the comparison runs with the tools of the stagnant-lid benchmarks.
-    - Command: none in this repository.
+The committed test of this comparison, with its plot pair and benchmark references computed with this boundary condition (rates to $10^{-10}$, steady runs to $10^{-6}$), follows once both branches are merged.
 
 ## References
 
