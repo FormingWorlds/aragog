@@ -388,9 +388,9 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
 
 @pytest.mark.unit
 def test_benchmark_generators_require_origin_commit_and_clean_tree(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Verify benchmark provenance format in --check and origin/clean-tree rules at generation time."""
+    """Verify benchmark provenance format, check-mode fingerprint warnings, and generation-mode failures."""
     import copy
     import json
     import subprocess
@@ -476,21 +476,70 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     assert _is_valid_commit_sha('uncommitted') is False
     assert _is_commit_on_origin('uncommitted', tmp_repo) is False
 
+    # (1) Unchanged inputs on mlt_mod -> no warning and 0 failures
+    capsys.readouterr()
     assert mlt_mod.verify_calibration_json(mlt_data, run_live_spot_check=False) == []
-    bad_mlt = copy.deepcopy(mlt_data)
-    bad_mlt['metadata']['generator_input_sha256'] = '0' * 64
-    mlt_failures = mlt_mod.verify_calibration_json(bad_mlt, run_live_spot_check=False)
-    assert any('sha256' in f for f in mlt_failures)
+    assert capsys.readouterr().err == ''
+
+    # (2) Changed input on mlt_mod in check mode -> warning with file list and regen cmd, 0 failures
+    changed_mlt = copy.deepcopy(mlt_data)
+    changed_mlt['metadata']['generator_input_sha256'] = '0' * 64
+    changed_mlt['metadata']['generator_input_files']['src/aragog/rheology.py'] = '0' * 64
+    assert mlt_mod.verify_calibration_json(changed_mlt, run_live_spot_check=False) == []
+    mlt_warn = capsys.readouterr().err
+    assert 'WARNING: Generator inputs changed' in mlt_warn
+    assert 'changed files: src/aragog/rheology.py' in mlt_warn
+    assert 'python tools/verification/evaluate_mlt_top_slope_calibration.py --full' in mlt_warn
+
+    # (3) Changed input on mlt_mod in strict/generation mode -> failure
+    mlt_strict_failures = mlt_mod.verify_calibration_json(
+        changed_mlt, run_live_spot_check=False, strict_fingerprint=True
+    )
+    assert any(
+        'changed files: src/aragog/rheology.py' in f
+        and 'python tools/verification/evaluate_mlt_top_slope_calibration.py --full' in f
+        for f in mlt_strict_failures
+    )
+    mlt_copy = tmp_path / 'mlt_copy.json'
+    mlt_orig_text = json.dumps(changed_mlt, indent=2) + '\n'
+    mlt_copy.write_text(mlt_orig_text, encoding='utf-8')
+    with monkeypatch.context() as mp:
+        mp.setattr(mlt_mod, 'REPO_ROOT', tmp_repo)
+        assert mlt_mod.main(['--full', '--output', str(mlt_copy)]) == 1
+        assert 'uncommitted' in capsys.readouterr().err
+        assert mlt_copy.read_text(encoding='utf-8') == mlt_orig_text
 
     specs = (
-        ('wiring', wiring_mod, wiring_data, ('canary', 'aragog_commit'), 'canary'),
-        ('ref0d', ref0d_mod, ref0d_data, ('metadata', 'git_commit'), 'metadata'),
-        ('scaling', scaling_mod, scaling_data, ('metadata', 'git_commit'), 'metadata'),
+        (
+            'wiring',
+            wiring_mod,
+            wiring_data,
+            ('canary', 'aragog_commit'),
+            'canary',
+            'python tools/verification/generate_ssc_solver_wiring_benchmarks.py --full',
+        ),
+        (
+            'ref0d',
+            ref0d_mod,
+            ref0d_data,
+            ('metadata', 'git_commit'),
+            'metadata',
+            'python tools/verification/generate_ssc_0d_reference_benchmarks.py --full',
+        ),
+        (
+            'scaling',
+            scaling_mod,
+            scaling_data,
+            ('metadata', 'git_commit'),
+            'metadata',
+            'python tools/verification/generate_ssc_scaling_exponents_benchmarks.py --full',
+        ),
     )
-    for label, mod, data, (sec_key, sha_key), fp_sec in specs:
+    for label, mod, data, (sec_key, sha_key), fp_sec, regen_cmd in specs:
         sha = str(data[sec_key][sha_key])
         assert _is_valid_commit_sha(sha) is True, f'{label} {sha} is not a 40-hex SHA'
 
+        # Malformed commit SHA -> hard failure
         bad_data = copy.deepcopy(data)
         bad_data[sec_key][sha_key] = 'not-a-valid-40-hex-sha'
         failures = (
@@ -502,20 +551,100 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
             f'{label} verify_benchmarks accepted malformed SHA'
         )
 
+        # (1) Unchanged inputs -> no fingerprint warning on stderr
+        capsys.readouterr()
+        if label == 'wiring':
+            unchanged_f = mod.verify_benchmarks(data, eos_dir=None)
+            assert not any('WARNING: Generator inputs changed' in f for f in unchanged_f)
+        else:
+            from tools.verification._ssc_helpers import _check_generator_input_fingerprint
+
+            input_paths = (
+                mod.SSC_0D_INPUT_PATHS if label == 'ref0d' else mod.SSC_SCALING_INPUT_PATHS
+            )
+            assert (
+                _check_generator_input_fingerprint(
+                    data[fp_sec]['git_commit'],
+                    data[fp_sec]['generator_input_sha256'],
+                    input_paths,
+                    recorded_files=data[fp_sec]['generator_input_files'],
+                    regenerate_cmd=regen_cmd,
+                    strict=False,
+                )
+                == []
+            )
+        assert capsys.readouterr().err == ''
+
+        # (2) Changed input in check mode (strict_fingerprint=False) -> warning on stderr, 0 fp errors
         bad_fp = copy.deepcopy(data)
         bad_fp[fp_sec]['generator_input_sha256'] = '0' * 64
-        fp_failures = (
-            mod.verify_benchmarks(bad_fp, eos_dir=None)
-            if label == 'wiring'
-            else mod.verify_benchmarks(bad_fp)
-        )
-        assert any('sha256' in f for f in fp_failures), (
-            f'{label} verify_benchmarks accepted mismatched generator_input_sha256'
-        )
+        bad_fp[fp_sec]['generator_input_files']['src/aragog/rheology.py'] = '0' * 64
+        if label == 'wiring':
+            fp_check_failures = mod.verify_benchmarks(bad_fp, eos_dir=None)
+            assert not any('Generator inputs changed' in f for f in fp_check_failures)
+        else:
+            from tools.verification._ssc_helpers import _check_generator_input_fingerprint
+
+            input_paths = (
+                mod.SSC_0D_INPUT_PATHS if label == 'ref0d' else mod.SSC_SCALING_INPUT_PATHS
+            )
+            assert (
+                _check_generator_input_fingerprint(
+                    bad_fp[fp_sec]['git_commit'],
+                    bad_fp[fp_sec]['generator_input_sha256'],
+                    input_paths,
+                    recorded_files=bad_fp[fp_sec]['generator_input_files'],
+                    regenerate_cmd=regen_cmd,
+                    strict=False,
+                )
+                == []
+            )
+        warn_err = capsys.readouterr().err
+        assert 'WARNING: Generator inputs changed' in warn_err
+        assert 'changed files: src/aragog/rheology.py' in warn_err
+        assert regen_cmd in warn_err
+
+        # (3) Generation mode with changed inputs (strict_fingerprint=True or partial main) and dirty tree -> failure
+        if label == 'wiring':
+            fp_strict_failures = mod.verify_benchmarks(
+                bad_fp, eos_dir=None, strict_fingerprint=True
+            )
+        else:
+            from tools.verification._ssc_helpers import _check_generator_input_fingerprint
+
+            input_paths = (
+                mod.SSC_0D_INPUT_PATHS if label == 'ref0d' else mod.SSC_SCALING_INPUT_PATHS
+            )
+            fp_strict_failures = _check_generator_input_fingerprint(
+                bad_fp[fp_sec]['git_commit'],
+                bad_fp[fp_sec]['generator_input_sha256'],
+                input_paths,
+                recorded_files=bad_fp[fp_sec]['generator_input_files'],
+                regenerate_cmd=regen_cmd,
+                strict=True,
+            )
+        assert any(
+            'changed files: src/aragog/rheology.py' in f and regen_cmd in f
+            for f in fp_strict_failures
+        ), f'{label} strict mode did not reject mismatched generator_input_sha256'
 
         out_copy = tmp_path / f'{label}_copy.json'
-        orig_text = json.dumps(data, indent=2) + '\n'
+        orig_text = json.dumps(bad_fp, indent=2) + '\n'
         out_copy.write_text(orig_text, encoding='utf-8')
+        with monkeypatch.context() as mp:
+            mp.setattr(mod, '_resolve_origin_head_commit', lambda *_a, **_kw: origin_sha)
+            argv_partial = ['--output', str(out_copy)]
+            if label == 'wiring':
+                eos_dir = tmp_path / 'dummy_eos'
+                eos_dir.mkdir(exist_ok=True)
+                mp.setattr(mod, 'compute_table_hashes', lambda _d: {})
+                argv_partial.extend(['--eos-dir', str(eos_dir)])
+            assert mod.main(argv_partial) == 1
+            partial_err = capsys.readouterr().err
+            assert 'changed files: src/aragog/rheology.py' in partial_err
+            assert regen_cmd in partial_err
+            assert out_copy.read_text(encoding='utf-8') == orig_text
+
         with monkeypatch.context() as mp:
             mp.setattr(
                 mod,
@@ -524,12 +653,13 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
                     RuntimeError('HEAD is not on origin or working tree is dirty')
                 ),
             )
-            argv = ['--output', str(out_copy)]
+            argv = ['--full', '--output', str(out_copy)]
             if label == 'wiring':
                 eos_dir = tmp_path / 'dummy_eos'
                 eos_dir.mkdir(exist_ok=True)
                 argv.extend(['--eos-dir', str(eos_dir)])
             assert mod.main(argv) == 1
+            assert 'dirty' in capsys.readouterr().err
             assert out_copy.read_text(encoding='utf-8') == orig_text
 
 

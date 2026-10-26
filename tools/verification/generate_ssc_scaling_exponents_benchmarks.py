@@ -772,7 +772,12 @@ def _compare_fit_bundle(
                         )
 
 
-def verify_benchmarks(data: dict[str, Any]) -> list[str]:
+def verify_benchmarks(
+    data: dict[str, Any],
+    *,
+    repo_root: Path = REPO_ROOT,
+    strict_fingerprint: bool = False,
+) -> list[str]:
     """Verify schema keys, no-table metadata record, and recompute every quoted field."""
     failures: list[str] = []
 
@@ -789,7 +794,11 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
                 meta.get('generator_input_sha256'),
                 SSC_SCALING_INPUT_PATHS,
                 recorded_files=meta.get('generator_input_files'),
-                repo_root=REPO_ROOT,
+                repo_root=repo_root,
+                regenerate_cmd=(
+                    'python tools/verification/generate_ssc_scaling_exponents_benchmarks.py --full'
+                ),
+                strict=strict_fingerprint,
             )
         )
         if meta.get('eos_tables') != NO_TABLE_RECORD:
@@ -1118,6 +1127,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     data = json.loads(output_path.read_text(encoding='utf-8'))
+    if not args.full:
+        existing_meta = data.get('metadata', {})
+        fp_errs = _check_generator_input_fingerprint(
+            existing_meta.get('git_commit'),
+            existing_meta.get('generator_input_sha256'),
+            SSC_SCALING_INPUT_PATHS,
+            recorded_files=existing_meta.get('generator_input_files'),
+            repo_root=REPO_ROOT,
+            regenerate_cmd=(
+                'python tools/verification/generate_ssc_scaling_exponents_benchmarks.py --full'
+            ),
+            strict=True,
+        )
+        if fp_errs:
+            for err in fp_errs:
+                sys.stderr.write(f'{err}\n')
+            return 1
     if isinstance(data.get('cases_spec'), list):
         data['cases_spec'] = [
             {k: s[k] for k in EXPECTED_SPEC_KEYS if k in s}
@@ -1171,7 +1197,7 @@ def main(argv: list[str] | None = None) -> int:
         data['cases_spec'], data['steady_state_snapshots']
     )
 
-    failures = verify_benchmarks(data)
+    failures = verify_benchmarks(data, strict_fingerprint=True)
     if failures:
         sys.stderr.write(f'Generated benchmark failed verification ({len(failures)} issues):\n')
         for f in failures:
