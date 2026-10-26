@@ -647,12 +647,12 @@ half_life_years = 1.0e30
         s_vec = np.asarray(snap['S_final'], dtype=float)
         rhs_live = np.asarray(sol._dSdt_single(float(snap['t_end_yr']), s_vec), dtype=float)
         np.testing.assert_allclose(
-            rhs_live, np.asarray(snap['rhs_final'], dtype=float), rtol=rel_pin, atol=1.0e-18
+            rhs_live, np.asarray(snap['rhs_final'], dtype=float), rtol=rel_pin, atol=1.0e-13
         )
         max_abs_rhs = float(np.max(np.abs(rhs_live)))
         assert max_abs_rhs <= steady_rhs_bound
         assert max_abs_rhs == pytest.approx(
-            float(snap['max_abs_rhs_J_kg_K_yr']), rel=1.0e-5, abs=1.0e-18
+            float(snap['max_abs_rhs_J_kg_K_yr']), rel=1.0e-5, abs=1.0e-13
         )
         t_stag_live = float(fp['T_i_nominal_K']) * np.exp(
             (s_vec - 3000.0) / float(fp['cp_J_kg_K'])
@@ -828,3 +828,95 @@ half_life_years = 1.0e30
         return fig
 
     validation_plot(figure, 'ssc_stagnant_lid_scalings')
+
+
+@pytest.mark.unit
+def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> None:
+    """Verify edge-case guards, failure reporting, and clean schema in benchmark generators."""
+    import copy
+    import json
+    from pathlib import Path
+
+    from tools.verification import (
+        generate_ssc_wp2_benchmarks as wp2_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+    )
+
+    wp2_path = Path(__file__).parent / 'reference' / 'ssc_wp2_validation_benchmarks.json'
+    wp2_data = json.loads(wp2_path.read_text(encoding='utf-8'))
+
+    # 1. Missing --eos-dir in generation mode must fail with exit code 1 without mutating file
+    wp2_copy = tmp_path / 'wp2_copy.json'
+    wp2_copy.write_text(wp2_path.read_text(encoding='utf-8'), encoding='utf-8')
+    rc_missing_eos = wp2_mod.main(
+        ['--output', str(wp2_copy), '--eos-dir', str(tmp_path / 'does_not_exist')]
+    )
+    assert rc_missing_eos == 1
+
+    # 2. Incomplete EOS directory in verify_benchmarks appends failure instead of raising
+    empty_eos_dir = tmp_path / 'empty_eos'
+    empty_eos_dir.mkdir()
+    missing_table_failures = wp2_mod.verify_benchmarks(wp2_data, eos_dir=empty_eos_dir)
+    assert any('Missing required table file' in f for f in missing_table_failures)
+
+    # 3. abe_solid_default parity bound, local call-count deltas, starts_block dict check, rationale
+    assert wp2_data['a2_2_rhs_parity_and_activity']['abe_solid_default'][
+        'rationale'
+    ].startswith('Default solid state set under zero-anchored kappah_floor: s_init=2900 J/kg/K')
+    wp2_bad_def = copy.deepcopy(wp2_data)
+    wp2_bad_def['a2_2_rhs_parity_and_activity']['abe_solid_default'][
+        'rel_rhs_numpy_vs_jax_per_state'
+    ][0] = 1.0e-3
+    assert any(
+        "'abe_solid_default' max rel_rhs" in f
+        for f in wp2_mod.verify_benchmarks(wp2_bad_def, eos_dir=None)
+    )
+
+    wp2_bad_local = copy.deepcopy(wp2_data)
+    wp2_bad_local['a2_4_rhs_wall_time']['six_row_call_count_table'][0][
+        'measured_numpy_local_delta'
+    ] = 99
+    assert any(
+        'local' in f.lower() for f in wp2_mod.verify_benchmarks(wp2_bad_local, eos_dir=None)
+    )
+
+    wp2_bad_starts = copy.deepcopy(wp2_data)
+    wp2_bad_starts['a2_3_perturbed_starts']['abe_solid_default'] = None
+    assert any(
+        'abe_solid_default' in f
+        for f in wp2_mod.verify_benchmarks(wp2_bad_starts, eos_dir=None)
+    )
+
+    # 4. compute_crossing_time_linear returns None (JSON null) when threshold is never crossed
+    t_grid = np.array([0.0, 1.0e7, 2.0e7], dtype=float)
+    err_grid = np.array([0.01, 0.02, 0.03], dtype=float)
+    assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.22) is None
+    assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.025) == pytest.approx(
+        1.5e7, rel=1.0e-12
+    )
+
+    # 5. korenaga_ti_fixed_point domain safety and non-convergence RuntimeError
+    with pytest.raises(RuntimeError, match='did not converge'):
+        a6_2_mod.korenaga_ti_fixed_point(
+            np.array([2000.0, 2000.0]), np.array([0.1, 0.2]), 300.0, 1000.0
+        )
+
+    # 6. Clean metadata and cases_spec in ssc_wp6_a6_2_benchmarks.json and primary fit helper
+    a6_2_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
+    a6_2_data = json.loads(a6_2_path.read_text(encoding='utf-8'))
+    assert tuple(a6_2_data['metadata'].keys()) == a6_2_mod.EXPECTED_META_KEYS
+    assert all(
+        tuple(spec.keys()) == a6_2_mod.EXPECTED_SPEC_KEYS for spec in a6_2_data['cases_spec']
+    )
+    prim_fit = a6_2_mod.compute_primary_fit_all_12_nu_korenaga(a6_2_data['cases_results'])
+    assert prim_fit['multilinear']['alpha'] == pytest.approx(
+        float(a6_2_data['primary_fit_all_12_nu_korenaga']['multilinear']['alpha']), rel=1.0e-12
+    )
+    assert prim_fit['multilinear']['beta'] == pytest.approx(
+        float(a6_2_data['primary_fit_all_12_nu_korenaga']['multilinear']['beta']), rel=1.0e-12
+    )

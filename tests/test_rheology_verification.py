@@ -4348,7 +4348,6 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         _Radionuclide,
         _SolverParameters,
     )
-    from aragog.solver import entropy_solver as es_mod
     from aragog.solver.entropy_solver import EntropySolver
     from tests.reference.stagnant_lid_0d import (
         evaluate_stagnant_lid_0d,
@@ -4575,10 +4574,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     sol_25m.set_initial_entropy(float(3000.0 + p0d.c_p * np.log(1800.0 / 3500.0)))
     orig_cv_25m = sol_25m._solve_cvode
     sol_25m._solve_cvode = lambda *a, **kw: orig_cv_25m(*a, **{**kw, 'max_step': np.inf})
-    sol_25m._compute_step_energy_integrals = lambda *a, **kw: dict(
-        es_mod._ZERO_ENERGY_INTEGRALS
-    )
     sol_25m.solve()
+    assert sol_25m.solution.energy_integrals is not None
     t_25m = np.asarray(sol_25m.solution.t, dtype=float)
     y_25m = np.asarray(sol_25m.solution.y, dtype=float)
     ti_25m, dlid_25m, ftop_25m = [], [], []
