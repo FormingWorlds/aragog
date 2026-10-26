@@ -1,12 +1,12 @@
-"""Evaluate independent stagnant-lid transition reference values from Section 1.1 formulas.
+"""Evaluate independent stagnant-lid transition reference values from geotherm formulas.
 
 This script evaluates interior temperature T_i, Arrhenius viscosity eta_i, and
 mixture viscosity mu_i at the 7 sub-threshold transition points where
-0 < w_weight < 1. It implements the closed-form physical formulas derived in
-Section 1.1 of the WP-4 derivation document (geotherm endpoint blending) using
-NumPy only, without importing any aragog modules for its reference computation.
-Physical constants and default parameters are parsed from the repository source
-via ast.parse.
+0 < w_weight < 1. It implements the closed-form physical formulas for geotherm
+endpoint blending documented in Section 3 of
+docs/Explanations/solid_state_convection.md using NumPy only, without importing
+any aragog modules for its reference computation. Physical constants and default
+parameters are parsed from the repository source via ast.parse.
 """
 
 from __future__ import annotations
@@ -194,7 +194,7 @@ def main() -> None:
     consts = load_rheology_constants(repo_root)
 
     results: dict[tuple[float, float], tuple[float, float, float]] = {}
-    print('Independent evaluation of Section 1.1 transition reference values (NumPy only):')
+    print('Independent evaluation of geotherm transition reference values (NumPy only):')
     print(f'{"(f0, f_test)":<22} {"T_i [K]":<26} {"eta_i [Pa s]":<28} {"mu_i [Pa s]":<28}')
     print('-' * 104)
 
