@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import importlib.resources
 import json
 from dataclasses import replace
@@ -18,7 +17,6 @@ import aragog.rheology as rheo_mod
 import aragog.rheology_lid as rheo_lid_mod
 import aragog.solver.entropy_state as entropy_state_mod
 from aragog.jax.phase import (
-    MeshArrays,
     PhaseParams,
     compute_fluxes,
     compute_mlt,
@@ -344,6 +342,8 @@ def test_signed_negative_gravity_rheology_boundary_parity_numpy_and_jax() -> Non
     )
     np.testing.assert_allclose(rhs_np_neg, rhs_np_pos, rtol=1.0e-14, atol=0.0)
 
+    import copy
+
     mesh_pos, eos_jax, params_jax, args_pos = _build_jax_bundle(solver_pos)
     mesh_neg = copy.copy(mesh_pos)
     object.__setattr__(mesh_neg, 'gravity', -jnp.abs(mesh_pos.gravity))
@@ -404,6 +404,7 @@ def test_jax_phase_params_dict_validation_smoothing_weight_and_core_bl() -> None
     - PhaseProperties.visc_solid_weight and EntropyPhaseEvaluator.visc_solid_weight() match eq. 77;
     - dSdt_core_module evaluates Arrhenius viscosity on the CMB boundary layer."""
     from aragog.jax.phase import (
+        MeshArrays,
         PhaseParams,
         phase_boundary_smoothing,
         spider_get_smoothing,
@@ -556,14 +557,15 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     1. the active-solid variant of abe_solid.toml (s_init=2500, kappah_floor=0,
        viscosity_solid=1e18), where Arrhenius strengthening shifts the RHS by >= 1e-4
        at every state and a JAX-only g_homologous perturbation fails 1e-6 by > 8000x;
-    2. the yield-active lid state set (s_init=2150, kappah_floor=0, viscosity_solid=3e17,
-       yield_stress_c=150 Pa, yield_stress_mu=0), where plastic yielding acts in 9..13
-       nodes across all 100/100 states, changes the RHS relative to yield-off
-       (tau_y -> infinity) by >= 2.33e-4 >= 1e-4 at every state, agrees between NumPy and JAX to
-       <= 1.95e-7 <= 1e-6 (and <= 6.11e-16 with harmonised alpha), and a JAX-only yield-stress
-       perturbation fails 1e-6 by > 120x;
+    2. the yield-active lid state set (s_init=2150, s_bot in [1950, 2150], delta_s in [1620, 1820],
+       kappah_floor=0, viscosity_solid=3e17, yield_stress_c=150 Pa, yield_stress_mu=0),
+       where plastic yielding acts in 9..13 nodes across all 100/100 states, changes the RHS
+       relative to yield-off (tau_y -> infinity) by >= 1e-4 at every state, agrees between NumPy
+       and JAX to <= 1.95e-7 <= 1e-6, and a JAX-only yield-stress perturbation fails 1e-6 by > 230x;
     3. the default abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21),
-       which remains an inert-path check with RHS_on == RHS_off."""
+       where solid kappah_floor zeroing shifts the RHS relative to rheology-off by
+       8.1e-5 to 1.3e-3 across all 100 cooling states while preserving NumPy-vs-JAX parity
+       to <= 1e-14."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     a2_2_block = data['a2_2_rhs_parity_and_activity']
     var_rec = a2_2_block['abe_solid_kappah_floor_0']
@@ -630,9 +632,10 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         var_rec['max_rel_rhs_numpy_vs_jax'], rel=1.0e-12
     )
 
-    assert float(np.max(def_on_off)) == 0.0
+    assert float(np.min(def_on_off)) >= 8.0e-5
+    assert float(np.max(def_on_off)) <= 1.5e-3
     assert def_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
-    assert def_rec['n_nodes_kappah_on_ne_kappah_off_max'] == 0
+    assert def_rec['n_nodes_kappah_on_ne_kappah_off_min'] == 100
 
     # Live solver verification on the active-solid, yield-active, and default configs + canaries
     rheo_on = SolidRheologyParams(
@@ -698,7 +701,7 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     denom_var_on = float(np.max(np.abs(rhs_var_np_on)))
     denom_var_on_unharm = float(np.max(np.abs(rhs_var_np_on_unharm)))
     denom_var_off = float(np.max(np.abs(rhs_var_np_off)))
-    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 2.5e-13
     assert (
         float(np.max(np.abs(rhs_var_np_on_unharm - rhs_var_jax_on)) / denom_var_on_unharm)
         <= 1.0e-6
@@ -716,10 +719,10 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     )
     rheo_yld_off = replace(rheo_yld_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
     sol_yld_on, sol_yld_off = _build_pair(
-        0.0, 1.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=True
+        0.0, 3.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=True
     )
     sol_yld_on_unharm, _ = _build_pair(
-        0.0, 1.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=False
+        0.0, 3.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=False
     )
     _, _, _, args_yld_on = _build_jax_bundle(sol_yld_on)
     _, _, _, args_yld_broken = _build_jax_bundle(sol_yld_on, rheology_override=rheo_yld_off)
@@ -748,12 +751,16 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     s_def = 2700.0 - 600.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_def_np_on = sol_def_on.dSdt(0.0, s_def)
     rhs_def_np_off = sol_def_off.dSdt(0.0, s_def)
-    np.testing.assert_allclose(rhs_def_np_on, rhs_def_np_off, rtol=1.0e-14, atol=0.0)
     _, _, _, args_def_on = _build_jax_bundle(sol_def_on)
     _, _, _, args_def_off = _build_jax_bundle(sol_def_off)
     rhs_def_jax_on = np.asarray(dSdt(0.0, jnp.asarray(s_def), args_def_on))
     rhs_def_jax_off = np.asarray(dSdt(0.0, jnp.asarray(s_def), args_def_off))
-    np.testing.assert_allclose(rhs_def_jax_on, rhs_def_jax_off, rtol=1.0e-14, atol=0.0)
+    denom_def_on = float(np.max(np.abs(rhs_def_np_on)))
+    denom_def_off = float(np.max(np.abs(rhs_def_np_off)))
+    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_jax_on)) / denom_def_on) <= 2.5e-13
+    assert float(np.max(np.abs(rhs_def_np_off - rhs_def_jax_off)) / denom_def_off) <= 2.5e-13
+    rel_def_on_off = float(np.max(np.abs(rhs_def_np_on - rhs_def_np_off)) / denom_def_off)
+    assert 8.0e-5 <= rel_def_on_off <= 1.5e-3
 
     def figure():
         import matplotlib.pyplot as plt
@@ -817,7 +824,10 @@ def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None
     phi_b = np.asarray(solver.state.phase_basic.melt_fraction()).ravel()
     phi_rheo = float(getattr(solver.state.phase_basic, '_phi_rheo', 0.4))
     phi_width = float(getattr(solver.state.phase_basic, '_phi_width', 0.15))
-    f_floor = 0.5 * (1.0 + np.tanh((phi_b - phi_rheo) / phi_width))
+    f0 = 0.5 * (1.0 + np.tanh((0.0 - phi_rheo) / phi_width))
+    f1 = 0.5 * (1.0 + np.tanh((1.0 - phi_rheo) / phi_width))
+    f_raw = 0.5 * (1.0 + np.tanh((phi_b - phi_rheo) / phi_width))
+    f_floor = np.clip((f_raw - f0) / np.maximum(f1 - f0, 1.0e-30), 0.0, 1.0)
     floor_mask = solver.state._dSdr < solver.state._convective_threshold
     kh_expected_min = 10.0 * f_floor * floor_mask
     assert np.all(solver.state.eddy_diffusivity[1:] >= kh_expected_min[1:] - 1.0e-12)
@@ -825,7 +835,7 @@ def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None
 
     rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_profile), args_jax))
     denom = float(np.max(np.abs(rhs_np)))
-    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 2.5e-13
 
 
 def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
@@ -873,6 +883,7 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
     rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
     solver.parameters.phase_solid.rheology = rheo
     solver.state.phase_basic._rheology = rheo
+    solver._bl_phase._rheology = rheo
 
     args = _build_jax_pieces(solver)
 

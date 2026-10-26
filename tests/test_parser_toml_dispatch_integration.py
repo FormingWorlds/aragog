@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-import dataclasses
 import importlib.resources
-import math
-from pathlib import Path
 
-import numpy as np
 import pytest
 
-from aragog.config import Config
-from aragog.parser import Parameters
-from aragog.rheology import SolidRheologyParams
-from aragog.solver.entropy_solver import EntropySolver, SolverOutput
 from tests.conftest import entropy_eos_copy, needs_eos
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
@@ -23,6 +15,16 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 @pytest.mark.parametrize('cfg_name', ['abe_solid.toml', 'abe_solid.cfg', 'abe_mixed.cfg'])
 def test_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
     """Verify bundled configs default to rheology.enabled=False and match explicit off bitwise."""
+    import dataclasses
+    import math
+    from pathlib import Path
+
+    import numpy as np
+
+    from aragog.config import Config
+    from aragog.parser import Parameters
+    from aragog.rheology import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver, SolverOutput
 
     with importlib.resources.as_file(
         importlib.resources.files('aragog').joinpath(f'cfg/{cfg_name}')
