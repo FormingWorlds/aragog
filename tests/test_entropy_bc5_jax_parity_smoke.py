@@ -72,6 +72,28 @@ def test_the_surface_entropy_gives_the_prescribed_temperature_at_the_surface_pre
     assert t_back == pytest.approx(T_SURF, rel=1e-9)
 
 
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('t_surf', [1000.0, 1500.0, 3000.0])
+def test_the_surface_node_holds_the_prescribed_temperature_in_every_phase(t_surf):
+    """Solid, mushy and liquid surface states: the phase evaluator at the surface node returns
+    the prescribed temperature, which the update asserts on every call."""
+    s = _bc5_solver('quasi_steady', t_surf=t_surf)
+    s.dSdt(0.0, np.asarray(s._S0, dtype=float))
+    phi = float(np.ravel(s.state.phase_basic.melt_fraction())[-1])
+    assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
+        t_surf, rel=1e-9
+    )
+    assert (phi == 0.0, 0.0 < phi < 1.0, phi == 1.0)[[1000.0, 1500.0, 3000.0].index(t_surf)]
+
+
+def test_the_update_stops_when_the_surface_node_leaves_the_prescribed_temperature():
+    """A surface entropy that no longer matches the prescribed temperature stops the run."""
+    s = _bc5_solver('quasi_steady')
+    s.state.set_surface_temperature(s._outer_bc_S_surf + 50.0, T_SURF, s._outer_bc_dr_half)
+    with pytest.raises(RuntimeError, match='prescribed 1500.0 K'):
+        s.dSdt(0.0, np.asarray(s._S0, dtype=float))
+
+
 @pytest.mark.parametrize('t_surf', [1.0e6, 1.0e-3])
 def test_a_surface_temperature_beyond_the_tables_is_refused(t_surf):
     """The inversion clamps to the table edge beyond the range; the setup refuses that value
