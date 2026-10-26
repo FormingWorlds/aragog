@@ -45,7 +45,6 @@ LID_BASE_TEMPERATURE_DEFAULT: float = 1400.0
 YIELD_STRESS_C_DEFAULT: float = 50.0e6
 YIELD_STRESS_MU_DEFAULT: float = 0.6
 YIELD_STRESS_MAX_DEFAULT: float = 500.0e6
-INTERIOR_FLUX_FRACTION_DEFAULT: float = 0.05
 
 
 _POSITIVE_PARAM_FIELDS: tuple[str, ...] = (
@@ -250,7 +249,6 @@ class StagnantLid0DParams:
 
 def load_aragog_0d_params(
     *,
-    rheology_py: Path,
     abe_solid_toml: Path,
     viscosity_solid: float,
     t_surf: float,
@@ -264,8 +262,6 @@ def load_aragog_0d_params(
 
     Parameters
     ----------
-    rheology_py : Path
-        Unused path kept for backwards compatibility with existing test signatures.
     abe_solid_toml : Path
         Path to ``src/aragog/cfg/abe_solid.toml`` read via ``tomllib``.
     viscosity_solid : float
@@ -288,7 +284,6 @@ def load_aragog_0d_params(
     StagnantLid0DParams
         Validated parameter bundle for the 0-D model.
     """
-    _ = rheology_py
     cfg = tomllib.loads(abe_solid_toml.read_text(encoding='utf-8'))
     rho = float(cfg['phase_solid']['density'])
     gravity = float(cfg['mesh']['gravitational_acceleration'])

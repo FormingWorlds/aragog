@@ -98,7 +98,6 @@ def _find_forbidden_aragog_imports(source_text: str) -> list[str]:
 def _cached_base_params() -> StagnantLid0DParams:
     """Parse and cache the default active-solid 0-D parameter bundle once per process."""
     return load_aragog_0d_params(
-        rheology_py=RHEOLOGY_PY,
         abe_solid_toml=ABE_SOLID_TOML,
         viscosity_solid=1.0e18,
         t_surf=300.0,
@@ -1008,10 +1007,15 @@ def test_stagnant_lid_0d_constants_parity_with_solver_defaults() -> None:
     assert ref_mod.ARRHENIUS_T_REF_DEFAULT == defaults.arrhenius_t_ref
     assert ref_mod.VISCOSITY_MAX_LOG10_DEFAULT == defaults.viscosity_max_log10
     assert ref_mod.WATER_PREFACTOR_DEFAULT == defaults.water_prefactor
+    assert ref_mod.ACTIVATION_ENERGY_DEFAULT == defaults.activation_energy
+    assert ref_mod.ACTIVATION_VOLUME_DEFAULT == defaults.activation_volume
+    assert (
+        ref_mod.ACTIVATION_VOLUME_DECAY_PRESSURE_DEFAULT
+        == defaults.activation_volume_decay_pressure
+    )
     assert ref_mod.YIELD_STRESS_C_DEFAULT == defaults.yield_stress_c
     assert ref_mod.YIELD_STRESS_MU_DEFAULT == defaults.yield_stress_mu
     assert ref_mod.YIELD_STRESS_MAX_DEFAULT == defaults.yield_stress_max
-    assert ref_mod.INTERIOR_FLUX_FRACTION_DEFAULT == defaults.interior_flux_fraction
     assert ref_mod.LID_BASE_MODE_DEFAULT == defaults.lid_base_mode
     assert ref_mod.LID_CONTRAST_COEFF_DEFAULT == defaults.lid_contrast_coeff
     assert ref_mod.LID_BASE_TEMPERATURE_DEFAULT == defaults.lid_base_temperature

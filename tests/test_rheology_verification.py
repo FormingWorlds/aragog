@@ -4382,7 +4382,6 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
 
     repo_root = Path(__file__).resolve().parents[1]
     p0d = load_aragog_0d_params(
-        rheology_py=repo_root / 'src' / 'aragog' / 'rheology.py',
         abe_solid_toml=repo_root / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml',
         viscosity_solid=1.0e18,
         t_surf=300.0,
