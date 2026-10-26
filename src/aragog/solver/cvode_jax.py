@@ -307,6 +307,8 @@ def build_jax_rhs_and_jacobian(
             raise ValueError('outer_bc_type 5 needs phase_params.conduction on')
         if float(mesh_arrays.mixing_length[-1]) != 0.0:  # 'constant' profile
             raise ValueError('outer_bc_type 5 needs mixing length 0 at the surface node')
+        if float(phase_params.eddy_diff_thermal) < 0.0:  # a constant eddy diffusivity
+            raise ValueError('outer_bc_type 5 needs eddy_diffusivity_thermal >= 0')
 
     # NonDimScales enforces the internal nondim contract
     # rhs_scale = t_ref / state_scale in __post_init__. The factory

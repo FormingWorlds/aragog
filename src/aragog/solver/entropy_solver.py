@@ -2021,6 +2021,8 @@ class EntropySolver:
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
+        if self._outer_bc_kind == 5:
+            self._check_surface_temperature_settings()
         self._refresh_surface_temperature()
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
@@ -2043,57 +2045,64 @@ class EntropySolver:
         ``outer_boundary_value``."""
         if self._outer_bc_kind != 5:
             return
-        bc = self.evaluator.boundary_conditions._settings
+        t_surf = self._surface_temperature_value()
         current = self.state._surface_temperature_bc
-        if current is None or bc.outer_boundary_value != current[1]:
-            s_surf, half_cell = self._invert_surface_temperature(bc)
-            self.state.set_surface_temperature(
-                s_surf, float(bc.outer_boundary_value), half_cell
-            )
+        if current is None or t_surf != current[1]:
+            s_surf, half_cell = self._invert_surface_temperature(t_surf)
+            self.state.set_surface_temperature(s_surf, t_surf, half_cell)
 
-    def _invert_surface_temperature(self, bc) -> tuple[float, float]:
-        """Surface entropy and face half cell of the prescribed surface temperature (BC 5).
-
-        Parameters
-        ----------
-        bc : BoundaryConditionsParameters
-            Boundary settings; ``outer_boundary_value`` is the surface temperature [K].
-
-        Returns
-        -------
-        tuple of float
-            Entropy where ``T(P_s, S) = T_surf`` at the surface pressure [J/kg/K], and the face
-            distance ``delta_mesh[-1] / dxidr[-1] / 2`` [m].
-
-        Raises
-        ------
-        ValueError
-            For a surface temperature that is not a positive finite number or lies outside the
-            entropy tables, and for ``param_utbl``, ``core_bc = 'gradient'``, conduction off or
-            ``mixing_length_profile = 'constant'``, which have no meaning with a prescribed
-            surface temperature.
-        """
-        t_surf = bc.outer_boundary_value
-        real = isinstance(t_surf, numbers.Real) and not isinstance(t_surf, bool)
-        if not (real and math.isfinite(float(t_surf)) and t_surf > 0.0):
+    def _surface_temperature_value(self) -> float:
+        """``outer_boundary_value`` as a positive finite float [K] (BC 5); ValueError if not."""
+        value = self.evaluator.boundary_conditions._settings.outer_boundary_value
+        t_surf = math.nan
+        if isinstance(value, numbers.Real) and not isinstance(value, bool):
+            try:
+                t_surf = float(value)
+            except OverflowError:
+                pass
+        if not (math.isfinite(t_surf) and t_surf > 0.0):
             raise ValueError(
                 'outer_boundary_value must be a positive finite surface temperature [K] '
-                f'with outer_boundary_condition = 5, got {t_surf!r}'
+                f'with outer_boundary_condition = 5, got {value!r}'
             )
+        return t_surf
+
+    def _check_surface_temperature_settings(self) -> None:
+        """Refuse the settings that have no meaning with BC 5: the UTBL correction, the
+        gradient core, conduction off, and any eddy flux through the surface face (a mixing
+        length that is not 0 at the surface node, or a constant eddy diffusivity)."""
+        bc, energy = self.evaluator.boundary_conditions._settings, self.parameters.energy
         if bc.param_utbl:
             raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
-        if not self.parameters.energy.conduction:
-            raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
-        if self.parameters.mesh.mixing_length_profile == 'constant':
-            raise ValueError(
-                "outer_boundary_condition = 5 needs mixing_length_profile = 'nearest_boundary': "
-                "with mixing_length_profile = 'constant' the surface face carries an eddy flux"
-            )
         if self._core_bc == 'gradient':
             raise ValueError(
                 "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
             )
-        t_surf, p_surf = float(t_surf), float(self._P_basic_flat[-1])
+        if not energy.conduction:
+            raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
+        surface_length = float(np.ravel(self.state._mixing_length)[-1])
+        if surface_length != 0.0:
+            raise ValueError(
+                'outer_boundary_condition = 5 needs the mixing length 0 at the surface node '
+                "(mixing_length_profile = 'nearest_boundary'); mixing_length_profile = "
+                f"'{self.parameters.mesh.mixing_length_profile}' gives {surface_length:.6g} m"
+            )
+        if getattr(energy, 'eddy_diffusivity_thermal', 1.0) < 0.0:
+            raise ValueError(
+                'outer_boundary_condition = 5 needs eddy_diffusivity_thermal >= 0: a negative '
+                'value sets the eddy diffusivity of the surface node too'
+            )
+
+    def _invert_surface_temperature(self, t_surf: float) -> tuple[float, float]:
+        """Surface entropy [J/kg/K] where ``T(P_s, S) = t_surf`` at the surface pressure, and
+        the face distance ``delta_mesh[-1] / dxidr[-1] / 2`` [m], for BC 5.
+
+        Raises
+        ------
+        ValueError
+            For a surface temperature outside the range of the phase evaluator.
+        """
+        p_surf = float(self._P_basic_flat[-1])
         if self.entropy_eos is None:
             pm = self.parameters.phase_mixed
             s_surf = pm.const_S_ref + pm.const_Cp * np.log(t_surf / pm.const_T_ref)
