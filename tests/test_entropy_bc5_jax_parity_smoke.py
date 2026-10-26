@@ -257,7 +257,7 @@ def test_a_temperature_below_the_smoothed_range_names_the_evaluator():
     """At a smoothing width of 0.5 the evaluator gives 363 K at the table minimum, above the
     320 K of the table; 340 K is refused with the range of the evaluator and the width."""
     with pytest.raises(
-        ValueError, match=r'phase evaluator .* 363\.\d+ .* matprop_smooth_width = 0\.5'
+        ValueError, match=r'phase evaluator .* 363\.\d+ to .* \(matprop_smooth_width = 0\.5\)'
     ):
         _bc5_solver('quasi_steady', t_surf=340.0, smooth=0.5)
 
