@@ -50,7 +50,7 @@ Execution modes and per-block coverage:
      ``EntropySolver._dSdt_single`` and ``korenaga_ti_fixed_point`` on the 5 stored
      steady-state snapshots (``case_01``, ``case_03``, ``case_06``, ``case_07``,
      ``case_12``), verifying ``max_abs_rhs_J_kg_K_yr <= 1e-9``, elementwise relative
-     agreement of ``rhs_final`` (``rtol=1e-4, atol=1e-18``) and ``T_stag_final``
+     agreement of ``rhs_final`` (``rtol=1e-4, atol=1e-15``, residuals below 1e-15 being round-off) and ``T_stag_final``
      (``rtol=1e-11``), and agreement of ``F_top_W_m2``, ``jconv_max_W_m2``,
      ``T_i_korenaga_K``, ``Nu_korenaga``, and ``_lid_state`` observables within ``1e-11``;
      for all 12 rows (including the 7 cases without stored profile snapshots), verifies
@@ -115,6 +115,9 @@ NO_TABLE_RECORD = (
 )
 REQUIRED_SNAPSHOT_IDS = ('case_01', 'case_03', 'case_06', 'case_07', 'case_12')
 STEADY_RESIDUAL_BOUND = 1.0e-9
+# Steady residuals at or below 1e-15 J/(kg K yr) are round-off (macOS and Linux differ by up to
+# 1.6e-17 on case_06, whose residual is 3.1e-16), so residuals are compared at this absolute bound.
+RESIDUAL_ROUNDOFF_ATOL = 1.0e-15
 
 EXPECTED_TOP_KEYS = (
     'metadata',
@@ -971,16 +974,25 @@ def verify_benchmarks(
             live_obs['max_abs_rhs_J_kg_K_yr'],
             float(snap['max_abs_rhs_J_kg_K_yr']),
             rtol=1.0e-4,
-            atol=1.0e-18,
+            atol=RESIDUAL_ROUNDOFF_ATOL,
         ):
-            failures.append(f'{cid} snapshot max_abs_rhs_J_kg_K_yr mismatch')
+            failures.append(
+                f'{cid} snapshot max_abs_rhs_J_kg_K_yr mismatch: '
+                f'{snap["max_abs_rhs_J_kg_K_yr"]} vs {live_obs["max_abs_rhs_J_kg_K_yr"]}'
+            )
+        rhs_diff = np.abs(
+            np.asarray(live_obs['rhs_final'], dtype=float)
+            - np.asarray(snap['rhs_final'], dtype=float)
+        )
         if not np.allclose(
             live_obs['rhs_final'],
             np.asarray(snap['rhs_final'], dtype=float),
             rtol=1.0e-4,
-            atol=1.0e-18,
+            atol=RESIDUAL_ROUNDOFF_ATOL,
         ):
-            failures.append(f'{cid} snapshot rhs_final live mismatch')
+            failures.append(
+                f'{cid} snapshot rhs_final live mismatch: max abs diff {rhs_diff.max():.3e}'
+            )
         if not np.allclose(
             live_obs['T_stag_final'],
             np.asarray(snap['T_stag_final'], dtype=float),

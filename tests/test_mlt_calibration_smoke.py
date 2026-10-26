@@ -317,11 +317,11 @@ half_life_years = 1.0e30
         sol.initialize()
         return sol
 
-    # Steady residuals are cancellation results; macOS and Linux differ by 5.5e-7 of the largest
-    # stored residual (case_01), so each case is compared at 1e-3 of its own largest residual.
+    # Steady residuals at or below 1e-15 are round-off: macOS and Linux differ by up to 1.6e-17
+    # (case_06, residual 3.1e-16); case_01 (7.2e-12) still fails if zeroed or scaled by 1.01.
+    rhs_atol = 1.0e-15
     for cid in ('case_01', 'case_03', 'case_06', 'case_07', 'case_12'):
         snap = snaps[cid]
-        rhs_atol = 1.0e-3 * float(np.max(np.abs(np.asarray(snap['rhs_final'], dtype=float))))
         sol = _build_case_solver(cid, s_top_inf_val=0.25)
         s_vec = np.asarray(snap['S_final'], dtype=float)
         rhs_live = np.asarray(sol._dSdt_single(float(snap['t_end_yr']), s_vec), dtype=float)
@@ -407,7 +407,7 @@ half_life_years = 1.0e30
             rhs_c03_pert,
             np.asarray(snaps['case_03']['rhs_final'], dtype=float),
             rtol=rel_pin,
-            atol=1.0e-3 * float(np.max(np.abs(np.asarray(snaps['case_03']['rhs_final'])))),
+            atol=rhs_atol,
         )
 
     def figure():
