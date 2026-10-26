@@ -26,6 +26,56 @@ def _is_valid_commit_sha(sha: object) -> bool:
     return isinstance(sha, str) and bool(_HEX40_RE.fullmatch(sha))
 
 
+def _check_commit_matches_generator_inputs(
+    commit_sha: object,
+    input_paths: tuple[str, ...] = ('src/aragog',),
+    repo_root: Path = REPO_ROOT,
+) -> list[str]:
+    """Verify ``commit_sha`` is a 40-hex SHA and, when in local git history, an ancestor of ``HEAD`` with unchanged ``input_paths``."""
+    if not _is_valid_commit_sha(commit_sha):
+        return [f'Recorded commit {commit_sha!r} is not a valid 40-hex commit SHA']
+    sha = str(commit_sha)
+    try:
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return []
+    if obj_type != 'commit':
+        return [f'Recorded commit {sha} is not a commit object ({obj_type!r})']
+    anc = subprocess.run(
+        ['git', '-C', str(repo_root), 'merge-base', '--is-ancestor', sha, 'HEAD'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if anc.returncode != 0:
+        return [f'Recorded commit {sha} is not an ancestor of HEAD']
+    if input_paths:
+        diff_out = subprocess.check_output(
+            [
+                'git',
+                '-C',
+                str(repo_root),
+                'diff',
+                '--name-only',
+                sha,
+                'HEAD',
+                '--',
+                *input_paths,
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if diff_out:
+            changed = ', '.join(diff_out.splitlines()[:5])
+            return [
+                f'Generator inputs changed between recorded commit {sha[:10]} and HEAD: {changed}'
+            ]
+    return []
+
+
 def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
     """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
     if not _is_valid_commit_sha(sha):

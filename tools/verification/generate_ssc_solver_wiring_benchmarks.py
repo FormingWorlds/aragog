@@ -75,7 +75,7 @@ sys.path.insert(0, str(REPO_ROOT / 'src'))
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.verification._ssc_helpers import (  # noqa: E402
-    _is_valid_commit_sha,
+    _check_commit_matches_generator_inputs,
     _resolve_origin_head_commit,
     entropy_eos_copy,
     entropy_eos_jax,
@@ -1352,6 +1352,97 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
             f'Live state-0 eager rel_rhs_numpy_vs_jax {rel_diff_0_eager:.6e} vs stored '
             f'{stored_0_eager:.6e} exceeds tolerance {tol_0_eager:.3e}'
         )
+
+    # Also evaluate state 0 of abe_solid_yield_active and abe_solid_default so a merge
+    # carrying another branch's JSON fails even when git history is unavailable.
+    s_profile_y = (2150.0 - 1820.0 * (0.2 * xi + 0.8 * xi**4)).copy()
+    cfg_y_on = Config.from_file(str(cfg_path))
+    cfg_y_on.boundary_conditions.inner_boundary_condition = 1
+    cfg_y_on.boundary_conditions.core_bc = 'quasi_steady'
+    cfg_y_on.energy.kappah_floor = 0.0
+    cfg_y_on.phase_solid.viscosity = 3.0e17
+    rheo_y_on = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=150.0,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e8,
+    )
+    cfg_y_on.phase_solid.rheology = rheo_y_on
+    solver_y_on = EntropySolver(cfg_y_on, entropy_eos=eos_np)
+    solver_y_on.initialize()
+
+    cfg_y_off = Config.from_file(str(cfg_path))
+    cfg_y_off.boundary_conditions.inner_boundary_condition = 1
+    cfg_y_off.boundary_conditions.core_bc = 'quasi_steady'
+    cfg_y_off.energy.kappah_floor = 0.0
+    cfg_y_off.phase_solid.viscosity = 3.0e17
+    cfg_y_off.phase_solid.rheology = replace(
+        rheo_y_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30
+    )
+    solver_y_off = EntropySolver(cfg_y_off, entropy_eos=eos_np)
+    solver_y_off.initialize()
+
+    rhs_y_on_0 = solver_y_on.dSdt(0.0, s_profile_y).copy()
+    rhs_y_off_0 = solver_y_off.dSdt(0.0, s_profile_y).copy()
+    live_y_on_off_0 = float(
+        np.max(np.abs(rhs_y_on_0 - rhs_y_off_0))
+        / max(float(np.max(np.abs(rhs_y_off_0))), 1.0e-30)
+    )
+    stored_y_on_off_0 = float(
+        data['rhs_parity_and_activity']['abe_solid_yield_active'][
+            'rel_rhs_yield_on_vs_yield_off_per_state'
+        ][0]
+    )
+    _check_scalar_match(
+        failures,
+        'abe_solid_yield_active.state_0_rel_rhs_yield_on_vs_yield_off',
+        stored_y_on_off_0,
+        live_y_on_off_0,
+        rtol=1.0e-6,
+    )
+
+    s_profile_d = (2900.0 - 450.0 * (0.2 * xi + 0.8 * xi**4)).copy()
+    cfg_d_on = Config.from_file(str(cfg_path))
+    cfg_d_on.boundary_conditions.inner_boundary_condition = 1
+    cfg_d_on.boundary_conditions.core_bc = 'quasi_steady'
+    cfg_d_on.energy.kappah_floor = 10.0
+    cfg_d_on.phase_solid.viscosity = 1.0e21
+    cfg_d_on.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=1.0e7,
+        yield_stress_mu=0.1,
+        yield_stress_max=1.0e8,
+    )
+    solver_d_on = EntropySolver(cfg_d_on, entropy_eos=eos_np)
+    solver_d_on.initialize()
+
+    cfg_d_off = Config.from_file(str(cfg_path))
+    cfg_d_off.boundary_conditions.inner_boundary_condition = 1
+    cfg_d_off.boundary_conditions.core_bc = 'quasi_steady'
+    cfg_d_off.energy.kappah_floor = 10.0
+    cfg_d_off.phase_solid.viscosity = 1.0e21
+    cfg_d_off.phase_solid.rheology = SolidRheologyParams(enabled=False)
+    solver_d_off = EntropySolver(cfg_d_off, entropy_eos=eos_np)
+    solver_d_off.initialize()
+
+    rhs_d_on_0 = solver_d_on.dSdt(0.0, s_profile_d).copy()
+    rhs_d_off_0 = solver_d_off.dSdt(0.0, s_profile_d).copy()
+    live_d_on_off_0 = float(
+        np.max(np.abs(rhs_d_on_0 - rhs_d_off_0))
+        / max(float(np.max(np.abs(rhs_d_off_0))), 1.0e-30)
+    )
+    stored_d_on_off_0 = float(
+        data['rhs_parity_and_activity']['abe_solid_default']['rel_rhs_on_vs_off_per_state'][0]
+    )
+    _check_scalar_match(
+        failures,
+        'abe_solid_default.state_0_rel_rhs_on_vs_off',
+        stored_d_on_off_0,
+        live_d_on_off_0,
+        rtol=1.0e-6,
+    )
     return failures
 
 
@@ -2019,9 +2110,9 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
         commit_sha = canary.get('aragog_commit')
         if not commit_sha:
             failures.append("Missing 'aragog_commit' in canary")
-        elif not _is_valid_commit_sha(commit_sha):
-            failures.append(
-                f"canary['aragog_commit'] {commit_sha!r} is not a valid 40-hex commit SHA"
+        else:
+            failures.extend(
+                _check_commit_matches_generator_inputs(commit_sha, ('src/aragog',), REPO_ROOT)
             )
         if eos_dir is None or not eos_dir.is_dir():
             failures.append(
