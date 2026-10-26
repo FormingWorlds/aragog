@@ -266,72 +266,74 @@ def test_solid_rheology_params_top_slope_defaults_and_bounds():
 
 
 def _korenaga_ti_fixed_point(
-    t_stag: np.ndarray, z_over_d: np.ndarray, t_surf: float, dth: float
+    t_stag: np.ndarray,
+    z_over_d: np.ndarray,
+    t_surf: float,
+    dth: float,
+    *,
+    max_iter: int = 100,
+    tol_k: float = 1.0e-9,
 ) -> float:
     """Evaluate the Korenaga (2009, eq. 20) iterative sub-lid interior temperature T_i."""
     order = np.argsort(z_over_d)
     z_s, t_s_arr = z_over_d[order], t_stag[order]
     ti = float(t_s_arr.max())
-    for _ in range(100):
+    for _ in range(max_iter):
         dl = (ti - t_surf) / dth
-        zz = np.concatenate([[dl], z_s[z_s > dl]])
+        sub_z = z_s[z_s > dl]
+        if sub_z.size == 0:
+            raise RuntimeError(
+                f'_korenaga_ti_fixed_point failed: conductive lid depth dl={dl} exceeds domain'
+            )
+        zz = np.concatenate([[dl], sub_z])
         tt = np.interp(zz, z_s, t_s_arr)
         ti_new = float(np.trapezoid(tt, zz) / (zz[-1] - dl))
-        if abs(ti_new - ti) < 1.0e-9:
-            ti = ti_new
-            break
+        if abs(ti_new - ti) < tol_k:
+            return ti_new
         ti = ti_new
-    return ti
+    raise RuntimeError(
+        f'_korenaga_ti_fixed_point did not converge within {tol_k} K after {max_iter} iterations'
+    )
 
 
-def _ols_multilinear(
-    ra_arr: np.ndarray, theta_arr: np.ndarray, nu_arr: np.ndarray
-) -> dict[str, float]:
-    """Fit ln(Nu) = ln(a) - alpha * ln(theta) + beta * ln(Ra_i) by ordinary least squares."""
-    n = len(nu_arr)
-    x_mat = np.column_stack([np.ones(n), -np.log(theta_arr), np.log(ra_arr)])
-    y_vec = np.log(nu_arr)
+def test_korenaga_ti_fixed_point_raises_on_non_convergence() -> None:
+    """Verify _korenaga_ti_fixed_point raises RuntimeError when iteration fails to converge."""
+    z_grid = np.linspace(0.01, 0.99, 50)
+    t_prof = 273.0 + 1500.0 * z_grid * (1.0 - 0.5 * z_grid)
+    with pytest.raises(RuntimeError, match='did not converge'):
+        _korenaga_ti_fixed_point(t_prof, z_grid, 273.0, 1500.0, max_iter=2, tol_k=1.0e-15)
+    with pytest.raises(RuntimeError, match='exceeds domain'):
+        _korenaga_ti_fixed_point(t_prof, z_grid, 273.0, 100.0)
+
+
+def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, float]:
+    """Fit ``y = c_0 + sum_j c_j x_j`` by ordinary least squares with standard errors."""
+    n = len(y_vec)
+    x_mat = np.column_stack([np.ones(n), *x_cols])
     coeffs, _, _, _ = np.linalg.lstsq(x_mat, y_vec, rcond=None)
-    ln_a, alpha, beta = float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
-    y_pred = x_mat @ coeffs
-    resid = y_vec - y_pred
+    resid = y_vec - x_mat @ coeffs
     ss_res = float(np.sum(resid**2))
     ss_tot = float(np.sum((y_vec - np.mean(y_vec)) ** 2))
     r2 = 1.0 - ss_res / max(ss_tot, 1.0e-30)
-    s2 = ss_res / max(n - 3, 1)
-    cov = s2 * np.linalg.inv(x_mat.T @ x_mat)
+    dof = max(n - x_mat.shape[1], 1)
+    cov = (ss_res / dof) * np.linalg.inv(x_mat.T @ x_mat)
     se = np.sqrt(np.diag(cov))
+    if len(x_cols) == 2:
+        ln_a, alpha, beta = float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
+        return {
+            'a': float(np.exp(ln_a)),
+            'ln_a': ln_a,
+            'alpha': alpha,
+            'beta': beta,
+            'std_err_ln_a': float(se[0]),
+            'std_err_alpha': float(se[1]),
+            'std_err_beta': float(se[2]),
+            'r_squared': r2,
+        }
     return {
-        'a': float(np.exp(ln_a)),
-        'ln_a': ln_a,
-        'alpha': alpha,
-        'beta': beta,
-        'std_err_ln_a': float(se[0]),
-        'std_err_alpha': float(se[1]),
-        'std_err_beta': float(se[2]),
-        'r_squared': r2,
-    }
-
-
-def _ols_1d_log10(x_arr: np.ndarray, y_arr: np.ndarray, sign: float = 1.0) -> dict[str, float]:
-    """Fit log10(y) = c0 + sign * slope * log10(x) by ordinary least squares."""
-    n = len(x_arr)
-    lx = np.log10(x_arr)
-    ly = np.log10(y_arr)
-    x_mat = np.column_stack([np.ones(n), sign * lx])
-    coeffs, _, _, _ = np.linalg.lstsq(x_mat, ly, rcond=None)
-    c0, slope = float(coeffs[0]), float(coeffs[1])
-    resid = ly - x_mat @ coeffs
-    ss_res = float(np.sum(resid**2))
-    ss_tot = float(np.sum((ly - np.mean(ly)) ** 2))
-    r2 = 1.0 - ss_res / max(ss_tot, 1.0e-30)
-    s2 = ss_res / max(n - 2, 1)
-    cov = s2 * np.linalg.inv(x_mat.T @ x_mat)
-    se = np.sqrt(np.diag(cov))
-    return {
-        'slope': slope,
+        'slope': float(coeffs[1]),
         'std_err_slope': float(se[1]),
-        'intercept_log10': c0,
+        'intercept_log10': float(coeffs[0]),
         'r_squared': r2,
     }
 
@@ -342,25 +344,31 @@ def _ols_1d_log10(x_arr: np.ndarray, y_arr: np.ndarray, sign: float = 1.0) -> di
 def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     """Compare 12-case internal-heating stagnant-lid scaling exponents against theory.
 
-    Across the 12-case planar internal-heating sweep (Ra_i in [1e6, 1e9] at theta = 15
-    and theta in [10, 25] at Ra_i = 1e7) at (s_top_inf, c_theta) = (0.25, 0.25), the
-    least-squares fit of Nu = a * theta**(-alpha) * Ra_i**beta gives
-    beta = 0.2820 +/- 0.0134 and alpha = 1.0371 +/- 0.0973 (a = 0.6411, R^2 = 0.9849;
-    1-D sweep slopes beta_sweep = 0.2785 +/- 0.0172 and alpha_sweep = 1.0109 +/- 0.0592),
-    falling below the Solomatov & Moresi (2000) internal-heating acceptance window
-    beta in [0.294, 0.350] and alpha in [1.294, 1.350]:
-    1. Two low-vigor cases sit at the pure-conduction floor Nu = 2.2500: a6_2_case_01
-       (Ra_i = 1e6, theta = 15, Nu = 2.2500) and a6_2_case_12 (Ra_i = 1e7, theta = 25,
-       Nu = 2.2509).
+    Across the 12-case planar internal-heating sweep (design Ra_i in [1e6, 1e9] at
+    theta = 15 and design theta in [10, 25] at Ra_i = 1e7) at (s_top_inf, c_theta) =
+    (0.25, 0.25), the least-squares fit of Nu = a * theta**(-alpha) * Ra_i**beta on
+    design parameters gives beta = 0.2820 +/- 0.0134 and alpha = 1.0371 +/- 0.0973
+    (a = 0.6411, R^2 = 0.9849; 1-D sweep slopes beta_sweep = 0.2785 +/- 0.0172 and
+    alpha_sweep = 1.0109 +/- 0.0592), and the fit on realized steady-state parameters
+    (Ra_i_realized_kor, theta_realized_kor) gives beta = 0.1129 +/- 0.0286 and
+    alpha = -0.0787 +/- 0.4406 (a = 0.6932, R^2 = 0.7744). Both fits fall below the
+    Solomatov & Moresi (2000) internal-heating acceptance window beta in [0.294, 0.350]
+    and alpha in [1.294, 1.350]:
+    1. Two low-vigor cases sit at the discrete N = 100 staggered-grid pure-conduction
+       floor Nu = 2.2472 (analytic Korenaga planar floor 1 + sqrt(6)/2 = 2.2247, peak Nu = 2.0):
+       case_01 (design Ra_i = 1e6, realized Ra_i = 244.3, theta = 15, Nu = 2.2500) and
+       case_12 (design Ra_i = 1e7, realized Ra_i = 227.9, theta = 25, Nu = 2.2509).
     2. Even on the 7-case convecting subset (Nu_est >= 2.8, a post-hoc diagnostic chosen
-       after the result), where beta = 0.3114 +/- 0.0026 enters [0.294, 0.350], the
-       Frank-Kamenetskii exponent is alpha = 1.1710 +/- 0.0288 (1-D sweep 1.1563 +/- 0.0119),
-       below [1.294, 1.350] because s_top(theta) = 0.25 + 0.75 * exp(-0.25 * theta)
-       converges to the constant asymptote s_top_inf = 0.25 for theta >= 15.
+       after the result), where design-parameter beta = 0.3114 +/- 0.0026 enters
+       [0.294, 0.350], the Frank-Kamenetskii exponent is alpha = 1.1710 +/- 0.0288
+       (1-D sweep 1.1563 +/- 0.0119 on 3 points, 1 degree of freedom), below
+       [1.294, 1.350] because s_top(theta) = 0.25 + 0.75 * exp(-0.25 * theta) converges
+       to the constant asymptote s_top_inf = 0.25 for theta >= 15.
 
-    This test pins the 12-case and 7-case fit parameters, uncertainties, per-case Nu
-    values, and live EntropySolver steady-state evaluations to round-off tolerance
-    (rel = 1e-7).
+    This test pins the 12-case and 7-case design and realized-state fit parameters,
+    uncertainties, discrete conduction floor, per-case Nu values, and live EntropySolver
+    steady-state RHS evaluations and residual bounds (|dS/dt| <= 1e-9 J/(kg K yr)) across
+    five snapshots (case_01, case_03, case_06, case_07, case_12).
     """
     import json
     from pathlib import Path
@@ -383,29 +391,57 @@ def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     assert float(cal['s_top_inf']) == pytest.approx(0.25, rel=1.0e-12)
     assert float(cal['c_theta']) == pytest.approx(0.25, rel=1.0e-12)
 
+    fp = data['metadata']['fixed_parameters']
+    steady_rhs_bound = float(fp['steady_residual_bound_J_kg_K_yr'])
+    assert steady_rhs_bound == pytest.approx(1.0e-9, rel=1.0e-12)
+
+    # Discrete N = 100 staggered-grid pure-conduction floor T(z)/dTH = z*(1 - z/2)
+    z_stag_99 = ((np.arange(99, dtype=float) + 0.5) / 99.0)[::-1]
+    t_cond_norm = z_stag_99 * (1.0 - 0.5 * z_stag_99)
+    ti_cond_norm = _korenaga_ti_fixed_point(t_cond_norm, z_stag_99, 0.0, 1.0, tol_k=1.0e-12)
+    nu_cond_floor_planar_n100 = 1.0 / ti_cond_norm
+    assert float(fp['conduction_floor_Nu_korenaga_analytic_planar']) == pytest.approx(
+        1.0 + 0.5 * np.sqrt(6.0), rel=1.0e-12
+    )
+    assert nu_cond_floor_planar_n100 == pytest.approx(2.227638239622486, rel=1.0e-11)
+    assert nu_cond_floor_planar_n100 == pytest.approx(
+        float(fp['conduction_floor_Nu_korenaga_planar_N100']), rel=1.0e-11
+    )
+    assert float(fp['conduction_floor_Nu_korenaga_spherical_N100']) == pytest.approx(
+        2.24715117664871, rel=1.0e-11
+    )
+
     # 1. Verify all 12 steady-state cases and the 2 conduction-floor cases
     cases = data['cases_results']
     assert len(cases) == 12
     by_id = {c['case_id']: c for c in cases}
-    assert float(by_id['a6_2_case_01']['Ra_i']) == pytest.approx(1.0e6, rel=1.0e-12)
-    assert float(by_id['a6_2_case_01']['theta']) == pytest.approx(15.0, rel=1.0e-12)
-    assert float(by_id['a6_2_case_01']['Nu_korenaga']) == pytest.approx(
+    assert float(by_id['case_01']['Ra_i']) == pytest.approx(1.0e6, rel=1.0e-12)
+    assert float(by_id['case_01']['Ra_i_realized_kor']) == pytest.approx(
+        244.29905754722245, rel=rel_pin
+    )
+    assert float(by_id['case_01']['theta']) == pytest.approx(15.0, rel=1.0e-12)
+    assert float(by_id['case_01']['Nu_korenaga']) == pytest.approx(
         2.249968281583638, rel=rel_pin
     )
-    assert float(by_id['a6_2_case_12']['Ra_i']) == pytest.approx(1.0e7, rel=1.0e-12)
-    assert float(by_id['a6_2_case_12']['theta']) == pytest.approx(25.0, rel=1.0e-12)
-    assert float(by_id['a6_2_case_12']['Nu_korenaga']) == pytest.approx(
+    assert float(by_id['case_12']['Ra_i']) == pytest.approx(1.0e7, rel=1.0e-12)
+    assert float(by_id['case_12']['Ra_i_realized_kor']) == pytest.approx(
+        227.89157411179806, rel=rel_pin
+    )
+    assert float(by_id['case_12']['theta']) == pytest.approx(25.0, rel=1.0e-12)
+    assert float(by_id['case_12']['Nu_korenaga']) == pytest.approx(
         2.2508789377583125, rel=rel_pin
     )
 
     ra_all = np.array([float(c['Ra_i']) for c in cases])
     theta_all = np.array([float(c['theta']) for c in cases])
+    ra_real_all = np.array([float(c['Ra_i_realized_kor']) for c in cases])
+    theta_real_all = np.array([float(c['theta_realized_kor']) for c in cases])
     nu_all = np.array([float(c['Nu_korenaga']) for c in cases])
     nu_est_all = np.array([float(c['Nu_est']) for c in cases])
     sweeps_all = [c['sweep'] for c in cases]
 
-    # 2. Recompute and verify the primary 12-case least-squares fit and 1-D sweeps
-    fit12_live = _ols_multilinear(ra_all, theta_all, nu_all)
+    # 2. Recompute and verify the primary 12-case design-parameter and realized-state OLS fits
+    fit12_live = _ols([-np.log(theta_all), np.log(ra_all)], np.log(nu_all))
     p12 = data['primary_fit_all_12_nu_korenaga']['multilinear']
     assert fit12_live['beta'] == pytest.approx(0.28199233476514773, rel=rel_pin)
     assert fit12_live['std_err_beta'] == pytest.approx(0.013368393573574713, rel=rel_pin)
@@ -427,10 +463,30 @@ def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     ):
         assert fit12_live[k] == pytest.approx(float(p12[k]), rel=rel_pin)
 
+    fit12_real_live = _ols([-np.log(theta_real_all), np.log(ra_real_all)], np.log(nu_all))
+    p12_real = data['realized_state_fits']['all_12_nu_korenaga_on_realized_kor']['multilinear']
+    assert fit12_real_live['beta'] == pytest.approx(0.11288990833184448, rel=rel_pin)
+    assert fit12_real_live['std_err_beta'] == pytest.approx(0.0286205953168069, rel=rel_pin)
+    assert fit12_real_live['alpha'] == pytest.approx(-0.07868422903802338, rel=rel_pin)
+    assert fit12_real_live['std_err_alpha'] == pytest.approx(0.44064050899447305, rel=rel_pin)
+    assert fit12_real_live['a'] == pytest.approx(0.6932068186285084, rel=rel_pin)
+    assert fit12_real_live['r_squared'] == pytest.approx(0.774431133990773, rel=rel_pin)
+    for k in (
+        'a',
+        'ln_a',
+        'alpha',
+        'beta',
+        'std_err_ln_a',
+        'std_err_alpha',
+        'std_err_beta',
+        'r_squared',
+    ):
+        assert fit12_real_live[k] == pytest.approx(float(p12_real[k]), rel=rel_pin)
+
     mask_ra_12 = np.array([s == 'Ra_i' for s in sweeps_all])
     mask_th_12 = np.array([s == 'theta' for s in sweeps_all])
-    b_sw12 = _ols_1d_log10(ra_all[mask_ra_12], nu_all[mask_ra_12], sign=1.0)
-    a_sw12 = _ols_1d_log10(theta_all[mask_th_12], nu_all[mask_th_12], sign=-1.0)
+    b_sw12 = _ols([np.log10(ra_all[mask_ra_12])], np.log10(nu_all[mask_ra_12]))
+    a_sw12 = _ols([-np.log10(theta_all[mask_th_12])], np.log10(nu_all[mask_th_12]))
     assert b_sw12['slope'] == pytest.approx(0.27846707421182404, rel=rel_pin)
     assert b_sw12['std_err_slope'] == pytest.approx(0.01723673778237447, rel=rel_pin)
     assert a_sw12['slope'] == pytest.approx(1.0108926163649687, rel=rel_pin)
@@ -439,7 +495,10 @@ def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     # 3. Recompute and verify the post-hoc 7-case convecting diagnostic subset (Nu_est >= 2.8)
     mask_conv7 = nu_est_all >= 2.8
     assert int(np.sum(mask_conv7)) == 7
-    fit7_live = _ols_multilinear(ra_all[mask_conv7], theta_all[mask_conv7], nu_all[mask_conv7])
+    fit7_live = _ols(
+        [-np.log(theta_all[mask_conv7]), np.log(ra_all[mask_conv7])],
+        np.log(nu_all[mask_conv7]),
+    )
     p7 = data['diagnostic_fits']['convecting_7_cases_nu_korenaga']['multilinear']
     assert fit7_live['beta'] == pytest.approx(0.31141624364043297, rel=rel_pin)
     assert fit7_live['std_err_beta'] == pytest.approx(0.0026400367811558407, rel=rel_pin)
@@ -450,19 +509,20 @@ def test_a6_2_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     for k in ('a', 'alpha', 'beta', 'std_err_alpha', 'std_err_beta', 'r_squared'):
         assert fit7_live[k] == pytest.approx(float(p7[k]), rel=rel_pin)
 
-    b_sw7 = _ols_1d_log10(
-        ra_all[mask_ra_12 & mask_conv7], nu_all[mask_ra_12 & mask_conv7], sign=1.0
+    b_sw7 = _ols(
+        [np.log10(ra_all[mask_ra_12 & mask_conv7])],
+        np.log10(nu_all[mask_ra_12 & mask_conv7]),
     )
-    a_sw7 = _ols_1d_log10(
-        theta_all[mask_th_12 & mask_conv7], nu_all[mask_th_12 & mask_conv7], sign=-1.0
+    a_sw7 = _ols(
+        [-np.log10(theta_all[mask_th_12 & mask_conv7])],
+        np.log10(nu_all[mask_th_12 & mask_conv7]),
     )
     assert b_sw7['slope'] == pytest.approx(0.3131675274330532, rel=rel_pin)
     assert b_sw7['std_err_slope'] == pytest.approx(0.003756369949778376, rel=rel_pin)
     assert a_sw7['slope'] == pytest.approx(1.1563304546538864, rel=rel_pin)
     assert a_sw7['std_err_slope'] == pytest.approx(0.011894069031624573, rel=rel_pin)
 
-    # 4. Live EntropySolver steady-state RHS and Korenaga Nu evaluation on case 01 and case 03
-    fp = data['metadata']['fixed_parameters']
+    # 4. Live EntropySolver steady-state RHS and residual bound across all 5 snapshots
     spec_by_id = {c['case_id']: c for c in data['cases_spec']}
     snaps = data['steady_state_snapshots']
 
@@ -581,13 +641,18 @@ half_life_years = 1.0e30
         sol.initialize()
         return sol
 
-    for cid in ('a6_2_case_01', 'a6_2_case_03'):
+    for cid in ('case_01', 'case_03', 'case_06', 'case_07', 'case_12'):
         snap = snaps[cid]
         sol = _build_case_solver(cid, s_top_inf_val=0.25)
         s_vec = np.asarray(snap['S_final'], dtype=float)
         rhs_live = np.asarray(sol._dSdt_single(float(snap['t_end_yr']), s_vec), dtype=float)
         np.testing.assert_allclose(
             rhs_live, np.asarray(snap['rhs_final'], dtype=float), rtol=rel_pin, atol=1.0e-18
+        )
+        max_abs_rhs = float(np.max(np.abs(rhs_live)))
+        assert max_abs_rhs <= steady_rhs_bound
+        assert max_abs_rhs == pytest.approx(
+            float(snap['max_abs_rhs_J_kg_K_yr']), rel=1.0e-5, abs=1.0e-18
         )
         t_stag_live = float(fp['T_i_nominal_K']) * np.exp(
             (s_vec - 3000.0) / float(fp['cp_J_kg_K'])
@@ -611,18 +676,24 @@ half_life_years = 1.0e30
         nu_kor_live = float(snap['dTH_K']) / (ti_kor_live - float(snap['T_surf_K']))
         assert ti_kor_live == pytest.approx(float(snap['T_i_korenaga_K']), rel=rel_pin)
         assert nu_kor_live == pytest.approx(float(snap['Nu_korenaga']), rel=rel_pin)
-        assert float(sol.state._heat_flux[-1]) == pytest.approx(
-            float(snap['F_top_W_m2']), rel=rel_pin
-        )
         assert float(np.max(sol.state._jconv)) == pytest.approx(
             float(snap['jconv_max_W_m2']), rel=rel_pin
         )
 
-    assert float(snaps['a6_2_case_01']['jconv_max_W_m2']) == pytest.approx(
+    assert float(snaps['case_01']['jconv_max_W_m2']) == pytest.approx(
         0.0062746085758870985, rel=rel_pin
     )
-    assert float(snaps['a6_2_case_03']['jconv_max_W_m2']) == pytest.approx(
+    assert float(snaps['case_03']['jconv_max_W_m2']) == pytest.approx(
         0.822944920830173, rel=rel_pin
+    )
+    assert float(snaps['case_06']['jconv_max_W_m2']) == pytest.approx(
+        7.06894591400015, rel=rel_pin
+    )
+    assert float(snaps['case_07']['jconv_max_W_m2']) == pytest.approx(
+        1.9547419248964315, rel=rel_pin
+    )
+    assert float(snaps['case_12']['jconv_max_W_m2']) == pytest.approx(
+        0.012250557884946865, rel=rel_pin
     )
 
     # 5. Canaries: asserting pre-run acceptance bounds or perturbing inputs fails
@@ -631,27 +702,31 @@ half_life_years = 1.0e30
     with pytest.raises(AssertionError):
         assert float(win['alpha_min']) <= fit12_live['alpha'] <= float(win['alpha_max'])
     with pytest.raises(AssertionError):
+        assert float(win['beta_min']) <= fit12_real_live['beta'] <= float(win['beta_max'])
+    with pytest.raises(AssertionError):
         assert float(win['alpha_min']) <= fit7_live['alpha'] <= float(win['alpha_max'])
 
     nu_perturbed = nu_all.copy()
     nu_perturbed[0] *= 1.01
-    fit_perturbed = _ols_multilinear(ra_all, theta_all, nu_perturbed)
+    fit_perturbed = _ols([-np.log(theta_all), np.log(ra_all)], np.log(nu_perturbed))
     with pytest.raises(AssertionError):
         assert fit_perturbed['beta'] == pytest.approx(fit12_live['beta'], rel=rel_pin)
 
-    sol_c03_pert = _build_case_solver('a6_2_case_03', s_top_inf_val=0.26)
-    s_c03 = np.asarray(snaps['a6_2_case_03']['S_final'], dtype=float)
+    sol_c03_pert = _build_case_solver('case_03', s_top_inf_val=0.26)
+    s_c03 = np.asarray(snaps['case_03']['S_final'], dtype=float)
     rhs_c03_pert = np.asarray(
-        sol_c03_pert._dSdt_single(float(snaps['a6_2_case_03']['t_end_yr']), s_c03), dtype=float
+        sol_c03_pert._dSdt_single(float(snaps['case_03']['t_end_yr']), s_c03), dtype=float
     )
     with pytest.raises(AssertionError):
         assert float(np.max(sol_c03_pert.state._jconv)) == pytest.approx(
-            float(snaps['a6_2_case_03']['jconv_max_W_m2']), rel=rel_pin
+            float(snaps['case_03']['jconv_max_W_m2']), rel=rel_pin
         )
+    with pytest.raises(AssertionError):
+        assert float(np.max(np.abs(rhs_c03_pert))) <= steady_rhs_bound
     with pytest.raises(AssertionError):
         np.testing.assert_allclose(
             rhs_c03_pert,
-            np.asarray(snaps['a6_2_case_03']['rhs_final'], dtype=float),
+            np.asarray(snaps['case_03']['rhs_final'], dtype=float),
             rtol=rel_pin,
             atol=1.0e-18,
         )
