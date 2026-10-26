@@ -512,6 +512,48 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     return failures
 
 
+def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
+    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
+    if not isinstance(sha, str) or len(sha) != 40 or sha == 'uncommitted':
+        return False
+    try:
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if obj_type != 'commit':
+            return False
+        branches_out = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
+
+
+def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
+    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
+    status_out = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
+        text=True,
+    ).strip()
+    if status_out:
+        raise RuntimeError(
+            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
+        )
+    head_sha = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    if not _is_commit_on_origin(head_sha, repo_root):
+        raise RuntimeError(
+            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
+        )
+    return head_sha
+
+
 def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list[str]:
     """Verify that benchmark data satisfy schema keys, invariants, and live fast checks."""
     failures: list[str] = []
@@ -523,8 +565,13 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
     if not isinstance(canary, dict):
         failures.append("Missing or invalid 'canary' section")
     else:
-        if not canary.get('aragog_commit'):
+        commit_sha = canary.get('aragog_commit')
+        if not commit_sha:
             failures.append("Missing 'aragog_commit' in canary")
+        elif not _is_commit_on_origin(str(commit_sha)):
+            failures.append(
+                f"canary['aragog_commit'] {commit_sha!r} is not a commit reachable from origin/*"
+            )
         if eos_dir is None or not str(eos_dir) or not eos_dir.is_dir():
             failures.append(
                 'Missing or invalid EOS table directory (--eos-dir or ARAGOG_TEST_EOS_DIR); '
@@ -694,6 +741,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    try:
+        head_sha = _resolve_origin_head_commit(REPO_ROOT)
+    except RuntimeError as exc:
+        sys.stderr.write(f'{exc}\n')
+        return 1
+
     data = json.loads(output_path.read_text(encoding='utf-8'))
     table_hashes = compute_table_hashes(args.eos_dir)
     data.setdefault('canary', {})['table_md5'] = table_hashes
@@ -704,14 +757,7 @@ def main(argv: list[str] | None = None) -> int:
         data['a2_4_rhs_wall_time'] = run_a2_4_rhs_benchmarks(
             cfg_path, entropy_eos_copy(args.eos_dir), entropy_eos_jax(args.eos_dir)
         )
-    try:
-        head_sha = subprocess.check_output(
-            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
-        ).strip()
-        if head_sha:
-            data.setdefault('canary', {})['aragog_commit'] = head_sha
-    except Exception:
-        pass
+    data.setdefault('canary', {})['aragog_commit'] = head_sha
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')

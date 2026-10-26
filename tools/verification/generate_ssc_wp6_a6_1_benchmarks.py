@@ -533,6 +533,48 @@ def evaluate_live_e300_steady_vector(
         estate_mod.EntropyState.update = orig_update
 
 
+def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
+    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
+    if not isinstance(sha, str) or len(sha) != 40 or sha == 'uncommitted':
+        return False
+    try:
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if obj_type != 'commit':
+            return False
+        branches_out = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
+
+
+def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
+    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
+    status_out = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
+        text=True,
+    ).strip()
+    if status_out:
+        raise RuntimeError(
+            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
+        )
+    head_sha = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    if not _is_commit_on_origin(head_sha, repo_root):
+        raise RuntimeError(
+            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
+        )
+    return head_sha
+
+
 def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     """Verify schema keys, no-table metadata record, and recompute the live fast subset."""
     failures: list[str] = []
@@ -543,6 +585,10 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or not meta.get('git_commit') or 'params_0d' not in meta:
         failures.append("Missing 'git_commit' or 'params_0d' in metadata")
+    elif not _is_commit_on_origin(str(meta.get('git_commit'))):
+        failures.append(
+            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a commit reachable from origin/*"
+        )
     elif meta.get('eos_tables') != NO_TABLE_RECORD or 'eos_md5' in meta:
         failures.append(
             f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r} or 'eos_md5' present"
@@ -890,6 +936,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f'Baseline benchmark file not found: {output_path}\n')
         return 1
 
+    try:
+        head_sha = _resolve_origin_head_commit(REPO_ROOT)
+    except RuntimeError as exc:
+        sys.stderr.write(f'{exc}\n')
+        return 1
+
     data = json.loads(output_path.read_text(encoding='utf-8'))
     p0d = build_default_0d_params()
     meta = data.setdefault('metadata', {})
@@ -897,14 +949,7 @@ def main(argv: list[str] | None = None) -> int:
     meta.pop('eos_md5', None)
     meta['eos_tables'] = NO_TABLE_RECORD
     meta['params_0d'] = asdict(p0d)
-    try:
-        head_sha = subprocess.check_output(
-            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
-        ).strip()
-        if head_sha:
-            meta['git_commit'] = head_sha
-    except Exception:
-        pass
+    meta['git_commit'] = head_sha
 
     if args.full:
         base_params = Parameters.from_file(

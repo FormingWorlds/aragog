@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "git_commit": "f343d7bfb7a2b4f9fe9960c52375cc825a88e904",
+    "git_commit": "428bfd3d41a4b4bfa33e8e7607c87e521c4dfa56",
     "config_file": "src/aragog/cfg/abe_solid.toml",
     "tolerances": {
       "tol_rel_T_i": 0.05,

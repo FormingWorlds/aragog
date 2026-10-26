@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "git_commit": "06846a9844568933e170ba562e1f935089fe4e01",
+    "git_commit": "428bfd3d41a4b4bfa33e8e7607c87e521c4dfa56",
     "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)",
     "rheology_calibration": {
       "enabled": true,

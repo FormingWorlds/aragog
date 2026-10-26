@@ -664,6 +664,48 @@ def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
+    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
+    if not isinstance(sha, str) or len(sha) != 40 or sha == 'uncommitted':
+        return False
+    try:
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if obj_type != 'commit':
+            return False
+        branches_out = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
+
+
+def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
+    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
+    status_out = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
+        text=True,
+    ).strip()
+    if status_out:
+        raise RuntimeError(
+            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
+        )
+    head_sha = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    if not _is_commit_on_origin(head_sha, repo_root):
+        raise RuntimeError(
+            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
+        )
+    return head_sha
+
+
 def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     """Verify schema keys, no-table metadata record, and recompute the live fast subset."""
     failures: list[str] = []
@@ -674,6 +716,10 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or tuple(meta.keys()) != EXPECTED_META_KEYS:
         failures.append(f'metadata keys {tuple(meta.keys())} != {EXPECTED_META_KEYS}')
+    elif not _is_commit_on_origin(str(meta.get('git_commit'))):
+        failures.append(
+            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a commit reachable from origin/*"
+        )
     elif meta.get('eos_tables') != NO_TABLE_RECORD:
         failures.append(
             f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r}"
@@ -817,6 +863,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f'Baseline benchmark file not found: {output_path}\n')
         return 1
 
+    try:
+        head_sha = _resolve_origin_head_commit(REPO_ROOT)
+    except RuntimeError as exc:
+        sys.stderr.write(f'{exc}\n')
+        return 1
+
     data = json.loads(output_path.read_text(encoding='utf-8'))
     if isinstance(data.get('cases_spec'), list):
         data['cases_spec'] = [
@@ -837,15 +889,6 @@ def main(argv: list[str] | None = None) -> int:
 
     floor_info = compute_discrete_conduction_floor_n100()
     raw_meta = data.get('metadata', {})
-    head_sha = raw_meta.get('git_commit', '')
-    try:
-        sha_out = subprocess.check_output(
-            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
-        ).strip()
-        if sha_out:
-            head_sha = sha_out
-    except Exception:
-        pass
     fp = dict(raw_meta.get('fixed_parameters', {}))
     fp['conduction_floor_Nu_analytic_peak'] = floor_info['Nu_analytic_parabola_peak']
     fp['conduction_floor_Nu_korenaga_analytic_planar'] = floor_info[

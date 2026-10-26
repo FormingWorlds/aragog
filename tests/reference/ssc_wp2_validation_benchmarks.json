@@ -1,6 +1,6 @@
 {
   "canary": {
-    "aragog_commit": "f343d7bfb7a2b4f9fe9960c52375cc825a88e904",
+    "aragog_commit": "428bfd3d41a4b4bfa33e8e7607c87e521c4dfa56",
     "table_md5": {
       "adiabat_temp_grad_melt.dat": "dc850e459bbae6bd0fdb8a3951652ee1",
       "adiabat_temp_grad_solid.dat": "6e04d383d2f9144de8a8b239ba7cfc9b",
