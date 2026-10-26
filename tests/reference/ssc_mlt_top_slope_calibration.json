@@ -8,41 +8,6 @@
       "c_theta": 0.15,
       "mlt_bottom_slope": 1.0
     },
-    "grid": {
-      "s_top_inf_grid": [
-        0.05,
-        0.1,
-        0.15,
-        0.2,
-        0.25,
-        0.3,
-        0.35,
-        0.4,
-        0.45,
-        0.5,
-        0.55,
-        0.6
-      ],
-      "c_theta_grid": [
-        0.0,
-        0.02,
-        0.05,
-        0.1,
-        0.15,
-        0.2,
-        0.25,
-        0.3,
-        0.4,
-        0.5,
-        0.7,
-        1.0
-      ],
-      "n_s_top_inf": 12,
-      "n_c_theta": 12,
-      "n_points": 144,
-      "minimax_s_top_inf": 0.25,
-      "minimax_c_theta": 0.25
-    },
     "tolerances": {
       "korenaga_2009_nu_rel_tol": 0.1,
       "korenaga_2009_nu_rel_tol_pct": 10.0,

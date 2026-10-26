@@ -14,17 +14,22 @@ used to assess the viscosity-contrast-dependent upper mixing-length slope
    normalised residuals, 84 normalised residuals in total across the 36 cases).
 
 In default / ``--full`` mode, the script runs all 36 steady-state solves at the
-144-point grid minimax calibration pair ``(s_top_inf, c_theta) = (0.25, 0.25)``
-and at the ``SolidRheologyParams`` default pair ``(0.22, 0.15)``, verifies the
-generated payload in memory, and writes
+planar-calibrated pair ``(s_top_inf, c_theta) = (0.25, 0.25)`` and at the
+``SolidRheologyParams`` default pair ``(0.22, 0.15)`` using
+``stress_closure_mode = 'local'``, ``s_top`` frozen at each table's nominal
+``theta`` via ``c_theta = 0.0``, and a Frank-Kamenetskii viscosity override
+during steady-state integration on the spherical cases, verifies the generated
+payload in memory, and writes
 ``tests/reference/ssc_mlt_top_slope_calibration.json``.
 
-In ``--check`` mode, the script recomputes every per-row normalised residual,
+In ``--check`` mode, the script validates the provenance commit format and
+tolerance/default metadata fields, recomputes every per-row normalised residual,
 top-slope evaluation, and summary statistic (maxima, worst-case row names,
-exceedance counts, and mean squared normalised residuals) from the stored row
-data for both parameter pairs, checks all tolerance and grid metadata fields,
-and runs live ``EntropySolver`` steady-state checks on the worst Korenaga (2009)
-case (``E340``) at both ``(0.25, 0.25)`` and ``(0.22, 0.15)``.
+exceedance counts, and mean-square normalised residuals) from the stored row
+data for both parameter pairs (34 of 36 cases verified from stored rows), and
+runs live ``EntropySolver`` steady-state checks on the worst Korenaga (2009)
+case (``E340``) and on a Deschamps and Vilella (2021) spherical case
+(``f60_H4``) at both ``(0.25, 0.25)`` and ``(0.22, 0.15)``.
 """
 
 from __future__ import annotations
@@ -33,7 +38,6 @@ import argparse
 import json
 import math
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -66,38 +70,13 @@ from aragog.rheology import R_GAS, SolidRheologyParams, compute_mlt_top_slope  #
 from aragog.solver import entropy_solver as es_mod  # noqa: E402
 from aragog.solver import entropy_state as estate_mod  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
-from tools.verification._ssc_helpers import korenaga_ti_fixed_point  # noqa: E402
+from tools.verification._ssc_helpers import (  # noqa: E402
+    _is_valid_commit_sha,
+    _resolve_origin_head_commit,
+    korenaga_ti_fixed_point,
+)
 
 DEFAULT_OUT = REPO_ROOT / 'tests' / 'reference' / 'ssc_mlt_top_slope_calibration.json'
-
-S_TOP_INF_GRID: list[float] = [
-    0.05,
-    0.10,
-    0.15,
-    0.20,
-    0.25,
-    0.30,
-    0.35,
-    0.40,
-    0.45,
-    0.50,
-    0.55,
-    0.60,
-]
-C_THETA_GRID: list[float] = [
-    0.0,
-    0.02,
-    0.05,
-    0.10,
-    0.15,
-    0.20,
-    0.25,
-    0.30,
-    0.40,
-    0.50,
-    0.70,
-    1.00,
-]
 
 KORENAGA_NU_REL_TOL = 0.10
 DV2021_TM_ABS_TOL = 0.03
@@ -175,18 +154,7 @@ def _patched_vmlf_core(
     *,
     xp: Any = np,
 ) -> Any:
-    if c_theta is not None and float(c_theta) == 0.0:
-        return _orig_vmlf_core(
-            radii,
-            r_in,
-            r_out,
-            mixing_length,
-            s_top_inf=s_top_inf,
-            bottom_slope=bottom_slope,
-            theta=None,
-            c_theta=0.0,
-            xp=xp,
-        )
+    zero_c = c_theta is not None and float(c_theta) == 0.0
     return _orig_vmlf_core(
         radii,
         r_in,
@@ -194,8 +162,8 @@ def _patched_vmlf_core(
         mixing_length,
         s_top_inf=s_top_inf,
         bottom_slope=bottom_slope,
-        theta=theta,
-        c_theta=c_theta,
+        theta=None if zero_c else theta,
+        c_theta=0.0 if zero_c else c_theta,
         xp=xp,
     )
 
@@ -231,26 +199,22 @@ def _fast_check_rheo_inv(self: Any, trace_y: Any = None, trace_t: Any = None) ->
     return _orig_check_rheo_inv(self, None, None)
 
 
-def _fk_viscosity_pub(temperature: Any, pressure: Any, *a: Any, xp: Any = np, **k: Any) -> Any:
-    if not _FK_STATE:
-        return _orig_arr_pub(temperature, pressure, *a, xp=xp, **k)
-    res = _FK_STATE['eta0'] * xp.exp(
-        -_FK_STATE['gamma'] * (xp.asarray(temperature, dtype=float) - _FK_STATE['T0'])
-    ) + 0.0 * xp.asarray(pressure, dtype=float)
-    if xp is np and np.ndim(temperature) == 0 and np.ndim(pressure) == 0:
-        return float(res)
-    return res
+def _make_fk_viscosity(orig_fn: Any) -> Any:
+    def _fk_viscosity(temperature: Any, pressure: Any, *a: Any, xp: Any = np, **k: Any) -> Any:
+        if not _FK_STATE:
+            return orig_fn(temperature, pressure, *a, xp=xp, **k)
+        res = _FK_STATE['eta0'] * xp.exp(
+            -_FK_STATE['gamma'] * (xp.asarray(temperature, dtype=float) - _FK_STATE['T0'])
+        ) + 0.0 * xp.asarray(pressure, dtype=float)
+        if xp is np and np.ndim(temperature) == 0 and np.ndim(pressure) == 0:
+            return float(res)
+        return res
+
+    return _fk_viscosity
 
 
-def _fk_viscosity_core(temperature: Any, pressure: Any, *a: Any, xp: Any = np, **k: Any) -> Any:
-    if not _FK_STATE:
-        return _orig_arr_core(temperature, pressure, *a, xp=xp, **k)
-    res = _FK_STATE['eta0'] * xp.exp(
-        -_FK_STATE['gamma'] * (xp.asarray(temperature, dtype=float) - _FK_STATE['T0'])
-    ) + 0.0 * xp.asarray(pressure, dtype=float)
-    if xp is np and np.ndim(temperature) == 0 and np.ndim(pressure) == 0:
-        return float(res)
-    return res
+_fk_viscosity_pub = _make_fk_viscosity(_orig_arr_pub)
+_fk_viscosity_core = _make_fk_viscosity(_orig_arr_core)
 
 
 def _install_benchmark_patches() -> None:
@@ -287,13 +251,8 @@ def _restore_benchmark_patches() -> None:
 
 
 def get_git_commit() -> str:
-    """Return current git HEAD SHA of the repository."""
-    try:
-        return subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'], cwd=REPO_ROOT, text=True
-        ).strip()
-    except Exception:
-        return 'unknown'
+    """Return current git HEAD SHA of the repository after checking clean tree and origin."""
+    return _resolve_origin_head_commit(REPO_ROOT)
 
 
 def lid_depth_tangent(jconv: np.ndarray, z: np.ndarray) -> float:
@@ -851,6 +810,8 @@ def verify_calibration_json(
     meta = data.get('metadata', {})
     if not isinstance(meta, dict):
         return ['Missing metadata block']
+    if not _is_valid_commit_sha(meta.get('git_commit')):
+        failures.append(f'Invalid metadata.git_commit format: {meta.get("git_commit")!r}')
 
     tols = meta.get('tolerances', {})
     expected_tols = {
@@ -870,14 +831,6 @@ def verify_calibration_json(
             failures.append(
                 f'metadata.tolerances.{k}: stored={tols.get(k)} != expected={exp_v}'
             )
-
-    grid_meta = meta.get('grid', {})
-    if int(grid_meta.get('n_points', -1)) != len(S_TOP_INF_GRID) * len(C_THETA_GRID):
-        failures.append(f'metadata.grid.n_points: {grid_meta.get("n_points")} != 144')
-    if grid_meta.get('s_top_inf_grid') != S_TOP_INF_GRID:
-        failures.append('metadata.grid.s_top_inf_grid mismatch')
-    if grid_meta.get('c_theta_grid') != C_THETA_GRID:
-        failures.append('metadata.grid.c_theta_grid mismatch')
 
     srp = SolidRheologyParams()
     defaults_meta = meta.get('parameter_defaults', {})
@@ -899,6 +852,8 @@ def verify_calibration_json(
         if not isinstance(pt, dict):
             failures.append(f'Missing evaluated_points.{pt_key}')
             continue
+        if not _is_valid_commit_sha(pt.get('git_commit')):
+            failures.append(f'{pt_key}.git_commit invalid format: {pt.get("git_commit")!r}')
         if not math.isclose(float(pt.get('s_top_inf', -1.0)), exp_s, rel_tol=1e-12):
             failures.append(f'{pt_key}.s_top_inf: {pt.get("s_top_inf")} != {exp_s}')
         if not math.isclose(float(pt.get('c_theta', -1.0)), exp_c, rel_tol=1e-12):
@@ -984,7 +939,8 @@ def verify_calibration_json(
                     failures.append(f'{pt_key}.summary.{sk}: stored={st_v} != {exp_sv}')
 
         if run_live_spot_check:
-            live_e340 = run_korenaga_row('E340', int(pt.get('n_nodes', 100)), exp_s, exp_c)
+            n_nodes_pt = int(pt.get('n_nodes', 100))
+            live_e340 = run_korenaga_row('E340', n_nodes_pt, exp_s, exp_c)
             st_e340 = k_rows['E340']
             if not math.isclose(float(st_e340['Nu']), float(live_e340['Nu']), rel_tol=1e-6):
                 failures.append(
@@ -996,6 +952,19 @@ def verify_calibration_json(
                 failures.append(
                     f'{pt_key}.E340 live r_norm mismatch: stored={st_e340["r_norm"]} vs live={live_e340["r_norm"]}'
                 )
+
+            live_dv = run_deschamps_vilella_row('f60_H4', n_nodes_pt, exp_s, exp_c)
+            st_dv = dv_rows['f60_H4']
+            for dv_fld in ('Tm', 'Phi_top', 'd_lid', 'r_Tm', 'r_Phi', 'r_d'):
+                if not math.isclose(
+                    float(st_dv[dv_fld]),
+                    float(live_dv[dv_fld]),
+                    rel_tol=1e-5,
+                    abs_tol=1e-7,
+                ):
+                    failures.append(
+                        f'{pt_key}.f60_H4 live {dv_fld} mismatch: stored={st_dv[dv_fld]} vs live={live_dv[dv_fld]}'
+                    )
 
     return failures
 
@@ -1023,15 +992,6 @@ def build_full_payload(n_nodes: int = 100) -> dict[str, Any]:
                 's_top_inf': float(srp.s_top_inf),
                 'c_theta': float(srp.c_theta),
                 'mlt_bottom_slope': float(srp.mlt_bottom_slope),
-            },
-            'grid': {
-                's_top_inf_grid': S_TOP_INF_GRID,
-                'c_theta_grid': C_THETA_GRID,
-                'n_s_top_inf': len(S_TOP_INF_GRID),
-                'n_c_theta': len(C_THETA_GRID),
-                'n_points': len(S_TOP_INF_GRID) * len(C_THETA_GRID),
-                'minimax_s_top_inf': 0.25,
-                'minimax_c_theta': 0.25,
             },
             'tolerances': {
                 'korenaga_2009_nu_rel_tol': KORENAGA_NU_REL_TOL,

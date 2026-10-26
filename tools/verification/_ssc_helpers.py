@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 import copy
 import functools
+import re
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,56 @@ import numpy as np
 from aragog.eos.entropy import EntropyEOS
 from aragog.solver import entropy_solver as es_mod
 from aragog.solver import entropy_state as estate_mod
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_HEX40_RE = re.compile(r'^[0-9a-f]{40}$')
+
+
+def _is_valid_commit_sha(sha: object) -> bool:
+    """Return True if ``sha`` is a 40-character lowercase hexadecimal commit SHA."""
+    return isinstance(sha, str) and bool(_HEX40_RE.fullmatch(sha))
+
+
+def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
+    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
+    if not _is_valid_commit_sha(sha):
+        return False
+    try:
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if obj_type != 'commit':
+            return False
+        branches_out = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
+
+
+def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
+    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
+    status_out = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
+        text=True,
+    ).strip()
+    if status_out:
+        raise RuntimeError(
+            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
+        )
+    head_sha = subprocess.check_output(
+        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    if not _is_commit_on_origin(head_sha, repo_root):
+        raise RuntimeError(
+            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
+        )
+    return head_sha
 
 
 @functools.cache
@@ -89,7 +141,7 @@ def unbounded_cvode_step() -> Iterator[None]:
 
 @contextlib.contextmanager
 def half_cell_surface_flux() -> Iterator[None]:
-    """Override ``EntropyState.update`` on NumPy const-property runs so BC 5 uses pure half-cell conduction."""
+    """Override ``EntropyState.update`` so every ``outer_boundary_condition == 5`` update sets ``_heat_flux[-1]`` by half-cell conduction."""
     orig_update = estate_mod.EntropyState.update
 
     def _half_cell_update(
@@ -173,7 +225,7 @@ def ols_fit(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
     return {
         'slope': float(coeffs[1]),
         'std_err_slope': float(se[1]),
-        'intercept_log10': float(coeffs[0]),
+        'intercept': float(coeffs[0]),
         'r_squared': r2,
         'n_cases': int(n),
         'dof': int(dof),

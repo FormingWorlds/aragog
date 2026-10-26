@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_rheology_solver_wiring.py::test_rhs_call_counts_and_cost; command: pytest tests/test_rheology_solver_wiring.py::test_rhs_call_counts_and_cost --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[6, -0.12, 4.88, 2.38, 1.1666666666666667, 0.0, 2.0, 1.1666666666666667, 0.0333333333333334], [6, 0.0, 5.0, 2.5, 1.166666666666667, 0.0, 2.0, 1.3333333333333333, 0.20000000000000007], [6, 0.12, 5.12, 2.62, 1.166666666666667, 0.0, 2.0, 1.3333333333333333, 0.20000000000000007]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}, {"scales": ["linear", "linear"], "categories": [null, null], "lines": [[2, 0.0, 1.0, 0.5, 0.5, 1.0205392043591444, 1.1148663082731143, 1.0677027563161294, -0.04716355195698499], [2, 2.0, 3.0, 2.5, 0.5, 1.187852389375815, 1.5745496673444654, 1.3812010283601404, -0.1933486389843252], [2, 0.0, 1.0, 0.5, 0.5, 1.25, 1.25, 1.25, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_rheology_solver_wiring.py::test_rhs_call_counts_and_cost; command: pytest tests/test_rheology_solver_wiring.py::test_rhs_call_counts_and_cost --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[6, -0.12, 4.88, 2.38, 1.1666666666666667, 0.0, 2.0, 1.3333333333333333, 0.20000000000000007], [6, 0.0, 5.0, 2.5, 1.166666666666667, 0.0, 2.0, 1.3333333333333333, 0.20000000000000007], [6, 0.12, 5.12, 2.62, 1.166666666666667, 0.0, 2.0, 1.3333333333333333, 0.20000000000000007]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}, {"scales": ["linear", "linear"], "categories": [null, null], "lines": [[2, 0.0, 1.0, 0.5, 0.5, 1.0205392043591444, 1.1148663082731143, 1.0677027563161294, -0.04716355195698499], [2, 2.0, 3.0, 2.5, 0.5, 1.187852389375815, 1.5745496673444654, 1.3812010283601404, -0.1933486389843252], [2, 0.0, 1.0, 0.5, 0.5, 1.25, 1.25, 1.25, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -756,7 +756,7 @@ z
      <use xlink:href="#m767fd6f28c" x="193.377394" y="14.2325" style="fill: #10151b; stroke: #10151b"/>
      <use xlink:href="#m767fd6f28c" x="249.050459" y="57.232458" style="fill: #10151b; stroke: #10151b"/>
      <use xlink:href="#m767fd6f28c" x="304.723524" y="57.232458" style="fill: #10151b; stroke: #10151b"/>
-     <use xlink:href="#m767fd6f28c" x="360.396589" y="57.232458" style="fill: #10151b; stroke: #10151b"/>
+     <use xlink:href="#m767fd6f28c" x="360.396589" y="14.2325" style="fill: #10151b; stroke: #10151b"/>
     </g>
    </g>
    <g id="line2d_20">
