@@ -1,14 +1,36 @@
 """Generate and verify reference benchmarks for internal-heating stagnant-lid scaling tests.
 
 Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
-Covers:
-- Repository commit SHA and equation of state table MD5 checksums.
-- Twelve-case planar internal-heating stagnant-lid sweep results and case specifications.
-- Ordinary least-squares scaling exponent fits on both design parameters ``(Ra_i, theta)``
-  and realized steady-state parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
-- Analytical and discrete N = 100 staggered-grid pure-conduction floor derivations.
-- Converged steady-state entropy profiles and live residual bounds for five benchmark
-  cases (``case_01``, ``case_03``, ``case_06``, ``case_07``, ``case_12``).
+
+Execution modes and per-block coverage:
+- ``--full`` (~50 s on 1 CPU core): recomputes all benchmark blocks from scratch
+  using ``EntropySolver``:
+  1. ``metadata.fixed_parameters`` (~0.01 s): derives the analytical and discrete
+     ``N = 100`` staggered-grid pure-conduction Nusselt floors (parabola peak ``2.0``,
+     analytical Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.224812``,
+     and spherical-shell ``r_in/r_out = 0.99``, ``N = 100`` ``2.203668``).
+  2. ``cases_results`` and ``steady_state_snapshots`` (~50 s): integrates all 12
+     internally heated stagnant-lid cases (``case_01``..``case_12``) to statistical
+     steady state in 8-chunk doublings (``t_end`` up to ``320 Gyr``) and extracts the
+     12 steady-state result rows and 5 full steady-state profile snapshots
+     (``case_01``, ``case_03``, ``case_06``, ``case_07``, ``case_12``).
+  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and
+     ``realized_state_fits`` (~0.01 s): computes the ordinary least-squares multilinear
+     and 1-D sweep power-law fits on both design parameters ``(Ra_i, theta)`` and
+     realized steady-state parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
+- ``--check`` (~0.25 s on 1 CPU core): verifies expected schema keys and table MD5
+  hashes, and recomputes a stated fast live subset across every block:
+  1. ``metadata.fixed_parameters``: recomputes ``compute_discrete_conduction_floor_n100()``
+     and verifies agreement within ``1e-12``.
+  2. ``cases_results`` and ``steady_state_snapshots``: evaluates live 1-D
+     ``EntropySolver._dSdt_single`` and ``korenaga_ti_fixed_point`` on all 5 stored
+     steady-state snapshots (``case_01``, ``case_03``, ``case_06``, ``case_07``,
+     ``case_12``), verifying ``max_abs_rhs_J_kg_K_yr <= 1e-9`` and agreement of
+     ``rhs_final``, ``F_top_W_m2``, ``jconv_max_W_m2``, ``T_i_korenaga_K``,
+     ``Nu_korenaga``, and ``_lid_state`` observables within ``1e-11``.
+  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and
+     ``realized_state_fits``: recomputes all design-parameter and realized-state OLS
+     fits from ``cases_results`` and verifies agreement within ``1e-12``.
 """
 
 from __future__ import annotations
@@ -17,9 +39,9 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,33 +51,62 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / 'src'))
 sys.path.insert(0, str(REPO_ROOT))
 
+from aragog.parser import (  # noqa: E402
+    Parameters,
+    _BoundaryConditionsParameters,
+    _EnergyParameters,
+    _InitialConditionParameters,
+    _MeshParameters,
+    _PhaseMixedParameters,
+    _PhaseParameters,
+    _Radionuclide,
+    _SolverParameters,
+)
+from aragog.rheology import R_GAS, SolidRheologyParams, compute_mlt_top_slope  # noqa: E402
+from aragog.solver import entropy_solver as es_mod  # noqa: E402
+from aragog.solver import entropy_state as estate_mod  # noqa: E402
+from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
+
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
 TABLE_FILES = ('density_melt.dat', 'density_solid.dat', 'temperature_solid.dat')
-FORBIDDEN_SUBSTRINGS = (
-    'ruling',
-    'plan_' + 'v2',
-    'work_' + 'package',
-    'work-' + 'package',
-    'a6_2_',
-    '/users/',
-)
 REQUIRED_SNAPSHOT_IDS = ('case_01', 'case_03', 'case_06', 'case_07', 'case_12')
 STEADY_RESIDUAL_BOUND = 1.0e-9
 
+EXPECTED_TOP_KEYS = (
+    'metadata',
+    'cases_spec',
+    'cases_results',
+    'primary_fit_all_12_nu_korenaga',
+    'diagnostic_fits',
+    'steady_state_snapshots',
+    'realized_state_fits',
+)
+EXPECTED_META_KEYS = (
+    'git_commit',
+    'branch',
+    'eos_tables_release',
+    'eos_md5',
+    'rheology_calibration',
+    'acceptance_window',
+    'fixed_parameters',
+)
+EXPECTED_DIAG_FIT_KEYS = (
+    'all_12_cases_nu_flux_kor',
+    'all_12_cases_nu_flux_tmax',
+    'all_12_cases_nu_dth_lid',
+    'convecting_7_cases_nu_korenaga',
+    'convecting_7_cases_nu_flux_tmax',
+    'convecting_7_cases_nu_dth_lid',
+)
+EXPECTED_REALIZED_FIT_KEYS = (
+    'regressor_definition',
+    'all_12_nu_korenaga_on_realized_kor',
+    'convecting_7_nu_korenaga_on_realized_kor',
+)
+
 
 def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
-    """Compute MD5 hashes of canonical equation of state table files.
-
-    Parameters
-    ----------
-    eos_dir : Path
-        Directory containing SPIDER equation of state tables.
-
-    Returns
-    -------
-    dict[str, str]
-        Mapping from table filename to hex MD5 digest.
-    """
+    """Compute MD5 hashes of canonical equation of state table files."""
     hashes: dict[str, str] = {}
     for filename in TABLE_FILES:
         filepath = eos_dir / filename
@@ -65,21 +116,26 @@ def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
     return hashes
 
 
+def korenaga_ti_fixed_point(
+    t_stag: np.ndarray, z_norm: np.ndarray, t_surf: float, dth: float
+) -> float:
+    """Solve Korenaga (2009) Eq. 20 fixed point for sub-lid interior temperature ``T_i``."""
+    order = np.argsort(z_norm)
+    z_s, t_s_arr = z_norm[order], t_stag[order]
+    ti = float(t_s_arr.max())
+    for _ in range(100):
+        dl = (ti - t_surf) / dth
+        zz = np.concatenate([[dl], z_s[z_s > dl]])
+        tt = np.interp(zz, z_s, t_s_arr)
+        ti_new = float(np.trapezoid(tt, zz) / (zz[-1] - dl))
+        if abs(ti_new - ti) < 1.0e-9:
+            break
+        ti = ti_new
+    return ti
+
+
 def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
-    """Fit ``y = c_0 + sum_j c_j x_j`` by ordinary least squares with standard errors.
-
-    Parameters
-    ----------
-    x_cols : list[np.ndarray]
-        Predictor columns (excluding the constant intercept column).
-    y_vec : np.ndarray
-        Response vector.
-
-    Returns
-    -------
-    dict[str, Any]
-        Fitted coefficients, standard errors, and coefficient of determination ``r_squared``.
-    """
+    """Fit ``y = c_0 + sum_j c_j x_j`` by ordinary least squares with standard errors."""
     n = len(y_vec)
     x_mat = np.column_stack([np.ones(n), *x_cols])
     coeffs, _, _, _ = np.linalg.lstsq(x_mat, y_vec, rcond=None)
@@ -115,7 +171,7 @@ def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
 
 
 def compute_discrete_conduction_floor_n100() -> dict[str, float]:
-    """Compute exact analytical, planar grid, and spherical-shell N=100 pure-conduction floors."""
+    """Compute analytical, planar grid, and spherical-shell N=100 pure-conduction floors."""
     n_stag = 99
     z_stag = (np.arange(n_stag, dtype=float) + 0.5) / float(n_stag)
     z_desc = z_stag[::-1]
@@ -161,146 +217,460 @@ def compute_discrete_conduction_floor_n100() -> dict[str, float]:
     }
 
 
-def _strip_prefix(val: str) -> str:
-    """Strip leading ``a6_2_`` prefix from case IDs and labels."""
-    return re.sub(r'^a6_2_', '', val)
+def build_scaling_case_params(spec: dict[str, Any]) -> Parameters:
+    """Construct ``Parameters`` for a single planar internal-heating scaling case."""
+    rho = float(spec.get('rho_kg_per_m3', 4000.0))
+    cp = float(spec.get('cp_J_per_kg_K', 100000.0))
+    k_cond = float(spec.get('k_thermal_W_per_m_K', 400.0))
+    alpha = float(spec.get('alpha_thermal_per_K', 3.0e-5))
+    grav = float(spec.get('g_m_per_s2', 10.0))
+    t_surf = float(spec['T_surf_K'])
+    t_i_nom = float(spec['T_i_nominal_K'])
+    eta_i = float(spec['eta_i_Pa_s'])
+    e_act = float(spec['E_activation_J_per_mol'])
+    h_heat = float(spec['H_W_per_kg'])
+    r_out = float(spec['R_out_m'])
+    r_in = float(spec['R_in_m'])
 
-
-def normalize_benchmark_schema(
-    data: dict[str, Any],
-    snapshots_path: Path | None = None,
-) -> dict[str, Any]:
-    """Normalize case identifiers, compute realized-state fits, and attach 5 snapshots."""
-    meta = data.setdefault('metadata', {})
-    win = meta.setdefault('acceptance_window', {})
-    win['source'] = (
-        'Solomatov & Moresi (2000), J. Geophys. Res., 105(B9), 21795-21817, '
-        'Tables 5-6 and Eq. (23)'
+    rheo = SolidRheologyParams(
+        enabled=True,
+        s_top_inf=0.25,
+        c_theta=0.25,
+        mlt_bottom_slope=1.0,
+        activation_energy=e_act,
+        activation_volume=0.0,
+        arrhenius_t_ref=t_i_nom,
+        yield_stress_c=1.0e30,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e30,
+        viscosity_max_log10=40.0,
+        stress_closure_mode='lid',
     )
-    fp = meta.setdefault('fixed_parameters', {})
-    floor_info = compute_discrete_conduction_floor_n100()
-    fp['conduction_floor_Nu_analytic_peak'] = floor_info['Nu_analytic_parabola_peak']
-    fp['conduction_floor_Nu_korenaga_analytic_planar'] = floor_info[
-        'Nu_korenaga_analytic_planar'
-    ]
-    fp['conduction_floor_Nu_korenaga_planar_N100'] = floor_info[
-        'Nu_korenaga_conduction_floor_planar_N100'
-    ]
-    fp['conduction_floor_Nu_korenaga_spherical_N100'] = floor_info[
-        'Nu_korenaga_conduction_floor_spherical_N100'
-    ]
-    fp.pop('conduction_floor_Nu_analytic', None)
-    fp.pop('conduction_floor_Nu_korenaga_N100', None)
-    fp['steady_residual_bound_J_kg_K_yr'] = STEADY_RESIDUAL_BOUND
+    common = dict(
+        density=rho, heat_capacity=cp, thermal_conductivity=k_cond, thermal_expansivity=alpha
+    )
+    return Parameters(
+        boundary_conditions=_BoundaryConditionsParameters(
+            outer_boundary_condition=5,
+            outer_boundary_value=t_surf,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            emissivity=1.0,
+            equilibrium_temperature=t_surf,
+            core_heat_capacity=880.0,
+            core_bc='quasi_steady',
+        ),
+        energy=_EnergyParameters(
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=True,
+            tidal=False,
+            solver_method='cvode',
+            use_jax_jacobian=False,
+            kappah_floor=0.0,
+        ),
+        initial_condition=_InitialConditionParameters(
+            initial_condition=1, surface_temperature=t_i_nom, basal_temperature=t_i_nom
+        ),
+        mesh=_MeshParameters(
+            outer_radius=r_out,
+            inner_radius=r_in,
+            number_of_nodes=100,
+            mixing_length_profile='nearest_boundary',
+            core_density=rho,
+            eos_method=1,
+            surface_density=rho,
+            gravitational_acceleration=grav,
+            mass_coordinates=False,
+        ),
+        phase_solid=_PhaseParameters(
+            melt_fraction=0.0, viscosity=eta_i, rheology=rheo, **common
+        ),
+        phase_liquid=_PhaseParameters(melt_fraction=1.0, viscosity=100.0, **common),
+        phase_mixed=_PhaseMixedParameters(
+            latent_heat_of_fusion=4.0e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='solidus.dat',
+            liquidus='liquidus.dat',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1.0e-3,
+            matprop_smooth_width=0.01,
+            const_properties=True,
+            const_rho=rho,
+            const_Cp=cp,
+            const_alpha=alpha,
+            const_cond=k_cond,
+            const_log10visc=float(np.log10(eta_i)),
+            const_T_ref=t_i_nom,
+            const_S_ref=3000.0,
+        ),
+        radionuclides=[
+            _Radionuclide(
+                name='const',
+                t0_years=0.0,
+                abundance=1.0,
+                concentration=1.0e6,
+                heat_production=h_heat,
+                half_life_years=1.0e30,
+            )
+        ],
+        solver=_SolverParameters(
+            start_time=0.0,
+            end_time=4.0e10,
+            atol=1.0e-6,
+            rtol=1.0e-6,
+            tsurf_poststep_change=30.0,
+        ),
+    )
 
-    for section_key in ('cases_spec', 'cases_results'):
-        rows = data.get(section_key, [])
-        for row in rows:
-            if isinstance(row, dict):
-                for fld in ('case_id', 'label', 'name'):
-                    if fld in row:
-                        row[fld] = _strip_prefix(str(row[fld]))
 
-    diag_fits = data.get('diagnostic_fits', {})
-    if isinstance(diag_fits, dict):
-        for df_val in diag_fits.values():
-            if isinstance(df_val, dict) and isinstance(df_val.get('case_ids'), list):
-                df_val['case_ids'] = [_strip_prefix(str(cid)) for cid in df_val['case_ids']]
+def evaluate_live_snapshot(
+    spec: dict[str, Any], s_final: np.ndarray, t_end_yr: float
+) -> dict[str, Any]:
+    """Evaluate 1-D ``EntropySolver._dSdt_single`` on a steady-state entropy profile."""
+    params = build_scaling_case_params(spec)
+    orig_update = estate_mod.EntropyState.update
 
-    cases = data.get('cases_results', [])
-    if len(cases) == 12:
-        ra_real = np.array([float(c['Ra_i_realized_kor']) for c in cases])
-        th_real = np.array([float(c['theta_realized_kor']) for c in cases])
-        nu_kor = np.array([float(c['Nu_korenaga']) for c in cases])
-        nu_est = np.array([float(c['Nu_est']) for c in cases])
-        mask_ra = np.array([c['sweep'] == 'Ra_i' for c in cases])
-        mask_th = np.array([c['sweep'] == 'theta' for c in cases])
-        mask_c7 = nu_est >= 2.8
+    def _half_cell_update(
+        self_st: Any, entropy: Any, time_val: Any, *a: Any, **kw: Any
+    ) -> None:
+        orig_update(self_st, entropy, time_val, *a, **kw)
+        bc_set = self_st._evaluator.boundary_conditions._settings
+        if int(bc_set.outer_boundary_condition) == 5:
+            k_surf = float(np.asarray(self_st.phase_basic.thermal_conductivity()).ravel()[-1])
+            t_cell = float(np.asarray(self_st.phase_staggered.temperature()).ravel()[-1])
+            r_b = np.asarray(self_st._evaluator.mesh.basic.radii).ravel()
+            dr_half = 0.5 * float(r_b[-1] - r_b[-2])
+            self_st._heat_flux[-1] = (
+                k_surf * (t_cell - float(bc_set.outer_boundary_value)) / dr_half
+            )
 
-        data['realized_state_fits'] = {
-            'regressor_definition': (
-                'Ra_i_realized_kor = rho * g * alpha * (T_i_korenaga - T_surf) * D^3 / '
-                '(kappa * eta(T_i_korenaga)); '
-                'theta_realized_kor = E_a * (T_i_korenaga - T_surf) / (R * T_i_korenaga^2)'
-            ),
-            'all_12_nu_korenaga_on_realized_kor': {
-                'multilinear': _ols([-np.log(th_real), np.log(ra_real)], np.log(nu_kor)),
-                'ra_sweep_1d': _ols([np.log10(ra_real[mask_ra])], np.log10(nu_kor[mask_ra])),
-                'theta_sweep_1d': _ols(
-                    [-np.log10(th_real[mask_th])], np.log10(nu_kor[mask_th])
-                ),
-            },
-            'convecting_7_nu_korenaga_on_realized_kor': {
-                'case_ids': [str(c['case_id']) for c, m in zip(cases, mask_c7) if m],
-                'multilinear': _ols(
-                    [-np.log(th_real[mask_c7]), np.log(ra_real[mask_c7])],
-                    np.log(nu_kor[mask_c7]),
-                ),
-                'ra_sweep_1d': _ols(
-                    [np.log10(ra_real[mask_ra & mask_c7])],
-                    np.log10(nu_kor[mask_ra & mask_c7]),
-                ),
-                'theta_sweep_1d': _ols(
-                    [-np.log10(th_real[mask_th & mask_c7])],
-                    np.log10(nu_kor[mask_th & mask_c7]),
-                ),
-            },
+    estate_mod.EntropyState.update = _half_cell_update
+    try:
+        solver = EntropySolver(params, entropy_eos=None)
+        solver.initialize()
+        rhs = np.asarray(solver._dSdt_single(float(t_end_yr), s_final), dtype=float)
+        t_stag = np.asarray(solver.state.phase_staggered.temperature(), dtype=float).ravel()
+        rb = np.asarray(solver.evaluator.mesh.basic.radii, dtype=float).ravel()
+        rs = np.asarray(solver.evaluator.mesh.staggered.radii, dtype=float).ravel()
+        k_cond = float(spec.get('k_thermal_W_per_m_K', 400.0))
+        rho = float(spec.get('rho_kg_per_m3', 4000.0))
+        d_m = float(spec['D_m'])
+        t_surf = float(spec['T_surf_K'])
+        h_heat = float(spec['H_W_per_kg'])
+        dth = rho * h_heat * d_m**2 / k_cond
+        f_top = float(k_cond * (t_stag[-1] - t_surf) / (rb[-1] - rs[-1]))
+        ti_kor = korenaga_ti_fixed_point(t_stag, (rb[-1] - rs) / d_m, t_surf, dth)
+        nu_kor = float(dth / (ti_kor - t_surf))
+        lid = solver.state._lid_state
+        return {
+            'rhs_final': rhs,
+            'max_abs_rhs_J_kg_K_yr': float(np.max(np.abs(rhs))),
+            'T_stag_final': t_stag,
+            'F_top_W_m2': f_top,
+            'jconv_max_W_m2': float(np.max(solver.state._jconv)),
+            'T_i_korenaga_K': ti_kor,
+            'Nu_korenaga': nu_kor,
+            'lid_state_T_i_K': float(lid['T_i']),
+            'lid_state_theta': float(lid['theta']),
+            'lid_state_d_lid_m': float(lid['d_lid']),
+            'lid_state_has_lid': bool(lid['has_lid']),
         }
+    finally:
+        estate_mod.EntropyState.update = orig_update
 
-    snaps_in = data.get('steady_state_snapshots', {})
-    if snapshots_path is not None and snapshots_path.is_file():
-        snaps_in = json.loads(snapshots_path.read_text(encoding='utf-8'))
 
-    snaps_clean: dict[str, Any] = {}
-    for k, snap in snaps_in.items():
-        clean_id = _strip_prefix(str(k))
-        snap_copy = dict(snap)
-        snap_copy['case_id'] = clean_id
-        rhs_arr = np.asarray(snap_copy['rhs_final'], dtype=float)
-        snap_copy['max_abs_rhs_J_kg_K_yr'] = float(np.max(np.abs(rhs_arr)))
-        snaps_clean[clean_id] = snap_copy
-    data['steady_state_snapshots'] = snaps_clean
+def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Integrate a single scaling case to statistical steady state in 8-chunk doublings."""
+    cid = str(spec['case_id'])
+    d_m = float(spec['D_m'])
+    k_cond = float(spec.get('k_thermal_W_per_m_K', 400.0))
+    rho = float(spec.get('rho_kg_per_m3', 4000.0))
+    cp = float(spec.get('cp_J_per_kg_K', 100000.0))
+    alpha = float(spec.get('alpha_thermal_per_K', 3.0e-5))
+    grav = float(spec.get('g_m_per_s2', 10.0))
+    h_heat = float(spec['H_W_per_kg'])
+    t_surf = float(spec['T_surf_K'])
+    t_ref = float(spec['T_i_nominal_K'])
+    e_act = float(spec['E_activation_J_per_mol'])
+    eta_ref = float(spec['eta_i_Pa_s'])
+    kappa = k_cond / (rho * cp)
+    dth = rho * h_heat * d_m**2 / k_cond
+    f_geom = float(spec['R_in_m']) / float(spec['R_out_m'])
+    f_top_expected = rho * h_heat * d_m * (1.0 + f_geom + f_geom**2) / 3.0
 
-    return data
+    orig_update = estate_mod.EntropyState.update
+    orig_cvode = es_mod.EntropySolver._solve_cvode
+
+    def _half_cell_update(
+        self_st: Any, entropy: Any, time_val: Any, *a: Any, **kw: Any
+    ) -> None:
+        orig_update(self_st, entropy, time_val, *a, **kw)
+        bc_set = self_st._evaluator.boundary_conditions._settings
+        if int(bc_set.outer_boundary_condition) == 5:
+            k_surf = float(np.asarray(self_st.phase_basic.thermal_conductivity()).ravel()[-1])
+            t_cell = float(np.asarray(self_st.phase_staggered.temperature()).ravel()[-1])
+            r_b = np.asarray(self_st._evaluator.mesh.basic.radii).ravel()
+            dr_half = 0.5 * float(r_b[-1] - r_b[-2])
+            self_st._heat_flux[-1] = (
+                k_surf * (t_cell - float(bc_set.outer_boundary_value)) / dr_half
+            )
+
+    def _unbounded_cvode(self_s: Any, *a: Any, **kw: Any) -> Any:
+        kw['max_step'] = np.inf
+        return orig_cvode(self_s, *a, **kw)
+
+    estate_mod.EntropyState.update = _half_cell_update
+    es_mod.EntropySolver._solve_cvode = _unbounded_cvode
+    t0 = time.perf_counter()
+    try:
+        chunks = 8
+        for t_end in (4.0e10, 8.0e10, 1.6e11, 3.2e11):
+            params = build_scaling_case_params(spec)
+            solver = EntropySolver(params, entropy_eos=None)
+            solver.initialize()
+            solver.set_initial_entropy(3000.0)
+            edges = np.linspace(0.0, t_end, chunks + 1)
+            hist: list[tuple[float, float, float]] = []
+            st = None
+            for chunk_idx, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+                params.solver.start_time = float(lo)
+                params.solver.end_time = float(hi)
+                solver.solve()
+                if chunk_idx < chunks - 2:
+                    solver.set_initial_entropy(
+                        np.asarray(solver._solution.y[: solver._n_stag, -1], dtype=float)
+                    )
+                    continue
+                st = solver.get_state()
+                solver.set_initial_entropy(st.S_final)
+                t_arr = np.asarray(st.T_stag, dtype=float).ravel()
+                rb = np.asarray(st.r_basic, dtype=float).ravel()
+                rs = np.asarray(st.r_stag, dtype=float).ravel()
+                ti_chunk = korenaga_ti_fixed_point(t_arr, (rb[-1] - rs) / d_m, t_surf, dth)
+                nu_chunk = dth / (ti_chunk - t_surf)
+                hist.append((float(hi), float(ti_chunk), float(nu_chunk)))
+            if abs(hist[-1][2] - hist[-2][2]) < 1.0e-5 * hist[-1][2]:
+                break
+        else:
+            raise RuntimeError(f'Case {cid} did not converge by t_end={t_end:.2e} yr')
+
+        wall_s = time.perf_counter() - t0
+        s_final = np.asarray(solver._S0, dtype=float).copy()
+        rhs_final = np.asarray(solver._dSdt_single(float(t_end), s_final), dtype=float)
+        lid = solver.state._lid_state
+        t_stag = np.asarray(st.T_stag, dtype=float).ravel()
+        rb = np.asarray(st.r_basic, dtype=float).ravel()
+        rs = np.asarray(st.r_stag, dtype=float).ravel()
+        f_top = float(k_cond * (t_stag[-1] - t_surf) / (rb[-1] - rs[-1]))
+        f_bot = float(solver.state._heat_flux[0])
+        ti_kor = float(hist[-1][1])
+        t_max = float(np.max(t_stag))
+        ti_lid = float(lid['T_i'])
+        theta_lid = float(lid['theta'])
+        d_lid_p1 = float(lid['d_lid'])
+        nu_kor = float(dth / (ti_kor - t_surf))
+        dt_real = ti_kor - t_surf
+        theta_real = float(e_act * dt_real / (R_GAS * ti_kor**2))
+        eta_real = float(eta_ref * np.exp((e_act / R_GAS) * (1.0 / ti_kor - 1.0 / t_ref)))
+        ra_real = float(alpha * rho * grav * dt_real * d_m**3 / (kappa * eta_real))
+
+        row = {
+            'case_id': cid,
+            'sweep': str(spec['sweep']),
+            'sweep_type': str(spec['sweep']),
+            'Ra_i': float(spec['target_Ra_i']),
+            'theta': float(spec['target_theta']),
+            'Nu': nu_kor,
+            'Nu_korenaga': nu_kor,
+            'Nu_flux_kor': float(f_top * d_m / (k_cond * (ti_kor - t_surf))),
+            'Nu_flux_tmax': float(f_top * d_m / (k_cond * (t_max - t_surf))),
+            'Nu_dth_lid': float(dth / (ti_lid - t_surf)),
+            'Nu_est': float(spec['Nu_estimated']),
+            'T_i_korenaga_K': ti_kor,
+            'T_max_K': t_max,
+            'T_i_lid_K': ti_lid,
+            'T_surf_K': t_surf,
+            'delta_T_korenaga_K': dt_real,
+            'theta_lid': theta_lid,
+            'theta_realized_kor': theta_real,
+            'Ra_i_realized_kor': ra_real,
+            'd_lid_pass1_m': d_lid_p1,
+            's_top_nominal': float(
+                compute_mlt_top_slope(float(spec['target_theta']), s_top_inf=0.25, c_theta=0.25)
+            ),
+            's_top_live': float(compute_mlt_top_slope(theta_lid, s_top_inf=0.25, c_theta=0.25)),
+            'F_top_W_m2': f_top,
+            'F_top_expected_W_m2': f_top_expected,
+            'F_bal': float(f_top / f_top_expected),
+            'F_bot_W_m2': f_bot,
+            'rel_dNu_last': float(abs(hist[-1][2] - hist[-2][2]) / hist[-1][2]),
+            'abs_dTi_last_K': float(abs(hist[-1][1] - hist[-2][1])),
+            't_end_yr': float(t_end),
+            'status': int(st.status),
+            'wall_time_s': wall_s,
+        }
+        snap = {
+            'case_id': cid,
+            'Ra_i': float(spec['target_Ra_i']),
+            'theta': float(spec['target_theta']),
+            'H_W_per_kg': h_heat,
+            'E_activation_J_per_mol': e_act,
+            'dTH_K': dth,
+            'T_surf_K': t_surf,
+            't_end_yr': float(t_end),
+            'S_final': s_final.tolist(),
+            'rhs_final': rhs_final.tolist(),
+            'T_stag_final': t_stag.tolist(),
+            'F_top_W_m2': f_top,
+            'jconv_max_W_m2': float(np.max(solver.state._jconv)),
+            'T_i_korenaga_K': ti_kor,
+            'Nu_korenaga': nu_kor,
+            'lid_state_T_i_K': ti_lid,
+            'lid_state_theta': theta_lid,
+            'lid_state_d_lid_m': d_lid_p1,
+            'lid_state_has_lid': bool(lid['has_lid']),
+            'max_abs_rhs_J_kg_K_yr': float(np.max(np.abs(rhs_final))),
+        }
+        return row, snap
+    finally:
+        estate_mod.EntropyState.update = orig_update
+        es_mod.EntropySolver._solve_cvode = orig_cvode
+
+
+def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute multilinear and 1-D OLS fits on realized Korenaga parameters."""
+    ra_real = np.array([float(c['Ra_i_realized_kor']) for c in cases])
+    th_real = np.array([float(c['theta_realized_kor']) for c in cases])
+    nu_kor = np.array([float(c['Nu_korenaga']) for c in cases])
+    nu_est = np.array([float(c['Nu_est']) for c in cases])
+    mask_ra = np.array([c['sweep'] == 'Ra_i' for c in cases])
+    mask_th = np.array([c['sweep'] == 'theta' for c in cases])
+    mask_c7 = nu_est >= 2.8
+
+    return {
+        'regressor_definition': (
+            'Ra_i_realized_kor = rho * g * alpha * (T_i_korenaga - T_surf) * D^3 / '
+            '(kappa * eta(T_i_korenaga)); '
+            'theta_realized_kor = E_a * (T_i_korenaga - T_surf) / (R * T_i_korenaga^2)'
+        ),
+        'all_12_nu_korenaga_on_realized_kor': {
+            'multilinear': _ols([-np.log(th_real), np.log(ra_real)], np.log(nu_kor)),
+            'ra_sweep_1d': _ols([np.log10(ra_real[mask_ra])], np.log10(nu_kor[mask_ra])),
+            'theta_sweep_1d': _ols([-np.log10(th_real[mask_th])], np.log10(nu_kor[mask_th])),
+        },
+        'convecting_7_nu_korenaga_on_realized_kor': {
+            'case_ids': [str(c['case_id']) for c, m in zip(cases, mask_c7) if m],
+            'multilinear': _ols(
+                [-np.log(th_real[mask_c7]), np.log(ra_real[mask_c7])], np.log(nu_kor[mask_c7])
+            ),
+            'ra_sweep_1d': _ols(
+                [np.log10(ra_real[mask_ra & mask_c7])], np.log10(nu_kor[mask_ra & mask_c7])
+            ),
+            'theta_sweep_1d': _ols(
+                [-np.log10(th_real[mask_th & mask_c7])], np.log10(nu_kor[mask_th & mask_c7])
+            ),
+        },
+    }
 
 
 def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list[str]:
-    """Verify benchmark JSON invariants, neutral naming, and table hashes."""
+    """Verify schema keys, table MD5s, and recompute the live fast subset across all blocks."""
     failures: list[str] = []
-    raw_lower = json.dumps(data).lower()
-    for token in FORBIDDEN_SUBSTRINGS:
-        if token in raw_lower:
-            failures.append(f'Forbidden label or local path token {token!r} found in JSON')
 
-    meta = data.get('metadata')
-    if not isinstance(meta, dict):
-        failures.append("Missing 'metadata' section")
-    else:
-        if not meta.get('git_commit'):
-            failures.append("Missing 'git_commit' in metadata")
-        if eos_dir is not None and eos_dir.is_dir():
-            expected_hashes = meta.get('eos_md5', {})
-            actual_hashes = compute_table_hashes(eos_dir)
-            for fname, exp_h in expected_hashes.items():
-                act_h = actual_hashes.get(fname)
-                if act_h != exp_h:
-                    failures.append(
-                        f'Table MD5 mismatch for {fname}: expected {exp_h}, got {act_h}'
-                    )
+    if tuple(data.keys()) != EXPECTED_TOP_KEYS:
+        failures.append(f'Top-level keys {tuple(data.keys())} != {EXPECTED_TOP_KEYS}')
 
-    if 'realized_state_fits' not in data:
-        failures.append("Missing 'realized_state_fits' section")
+    meta = data.get('metadata', {})
+    if not isinstance(meta, dict) or tuple(meta.keys()) != EXPECTED_META_KEYS:
+        failures.append(f'metadata keys {tuple(meta.keys())} != {EXPECTED_META_KEYS}')
+    elif eos_dir is not None and eos_dir.is_dir():
+        exp_hashes = meta.get('eos_md5', {})
+        act_hashes = compute_table_hashes(eos_dir)
+        for fname, exp_h in exp_hashes.items():
+            if act_hashes.get(fname) != exp_h:
+                failures.append(f'Table MD5 mismatch for {fname}')
+
+    diag = data.get('diagnostic_fits', {})
+    if not isinstance(diag, dict) or tuple(diag.keys()) != EXPECTED_DIAG_FIT_KEYS:
+        failures.append(f'diagnostic_fits keys != {EXPECTED_DIAG_FIT_KEYS}')
+
+    real_fits = data.get('realized_state_fits', {})
+    if not isinstance(real_fits, dict) or tuple(real_fits.keys()) != EXPECTED_REALIZED_FIT_KEYS:
+        failures.append(f'realized_state_fits keys != {EXPECTED_REALIZED_FIT_KEYS}')
 
     snaps = data.get('steady_state_snapshots', {})
+    if not isinstance(snaps, dict) or tuple(snaps.keys()) != REQUIRED_SNAPSHOT_IDS:
+        failures.append(f'steady_state_snapshots keys != {REQUIRED_SNAPSHOT_IDS}')
+    if failures:
+        return failures
+
+    # 1. Block 1 live check: pure-conduction floor derivations
+    floor_live = compute_discrete_conduction_floor_n100()
+    fp = meta['fixed_parameters']
+    if (
+        abs(
+            floor_live['Nu_korenaga_conduction_floor_planar_N100']
+            - float(fp['conduction_floor_Nu_korenaga_planar_N100'])
+        )
+        > 1.0e-12
+    ):
+        failures.append('conduction_floor_Nu_korenaga_planar_N100 mismatch')
+    if (
+        abs(
+            floor_live['Nu_korenaga_conduction_floor_spherical_N100']
+            - float(fp['conduction_floor_Nu_korenaga_spherical_N100'])
+        )
+        > 1.0e-12
+    ):
+        failures.append('conduction_floor_Nu_korenaga_spherical_N100 mismatch')
+
+    # 2. Block 2 live check: 5 steady-state snapshots through EntropySolver._dSdt_single
+    specs_by_id = {str(s['case_id']): s for s in data['cases_spec']}
+    results_by_id = {str(r['case_id']): r for r in data['cases_results']}
     for cid in REQUIRED_SNAPSHOT_IDS:
-        if cid not in snaps:
-            failures.append(f'Missing steady-state snapshot for {cid!r}')
-        else:
-            max_rhs = float(snaps[cid].get('max_abs_rhs_J_kg_K_yr', 1.0))
-            if max_rhs > STEADY_RESIDUAL_BOUND:
-                failures.append(
-                    f'Snapshot {cid} max_abs_rhs {max_rhs:.3e} exceeds {STEADY_RESIDUAL_BOUND:.1e}'
-                )
+        snap = snaps[cid]
+        row = results_by_id[cid]
+        live_obs = evaluate_live_snapshot(
+            specs_by_id[cid],
+            np.asarray(snap['S_final'], dtype=float),
+            float(snap['t_end_yr']),
+        )
+        if live_obs['max_abs_rhs_J_kg_K_yr'] > STEADY_RESIDUAL_BOUND:
+            failures.append(
+                f'{cid} live max_abs_rhs {live_obs["max_abs_rhs_J_kg_K_yr"]:.3e} > {STEADY_RESIDUAL_BOUND}'
+            )
+        for key in ('F_top_W_m2', 'T_i_korenaga_K', 'Nu_korenaga'):
+            if abs(live_obs[key] - float(snap[key])) / abs(float(snap[key])) > 1.0e-11:
+                failures.append(f'{cid} snapshot {key} live mismatch')
+            if abs(live_obs[key] - float(row[key])) / abs(float(row[key])) > 1.0e-11:
+                failures.append(f'{cid} cases_results {key} live mismatch')
+
+    # 3. Block 3 live check: design-parameter and realized-state OLS fits
+    cases = data['cases_results']
+    ra_des = np.array([float(c['Ra_i']) for c in cases])
+    th_des = np.array([float(c['theta']) for c in cases])
+    nu_kor = np.array([float(c['Nu_korenaga']) for c in cases])
+    ml_des = _ols([-np.log(th_des), np.log(ra_des)], np.log(nu_kor))
+    ml_stored = data['primary_fit_all_12_nu_korenaga']['multilinear']
+    for k_fit in ('alpha', 'beta', 'r_squared'):
+        if abs(ml_des[k_fit] - float(ml_stored[k_fit])) > 1.0e-12:
+            failures.append(f'primary_fit_all_12_nu_korenaga {k_fit} mismatch')
+
+    live_real = compute_realized_state_fits(cases)
+    for grp in (
+        'all_12_nu_korenaga_on_realized_kor',
+        'convecting_7_nu_korenaga_on_realized_kor',
+    ):
+        for sub in ('multilinear', 'ra_sweep_1d', 'theta_sweep_1d'):
+            for k_fit, val in live_real[grp][sub].items():
+                if isinstance(val, float):
+                    if abs(val - float(real_fits[grp][sub][k_fit])) > 1.0e-12:
+                        failures.append(f'realized_state_fits {grp}.{sub}.{k_fit} mismatch')
 
     return failures
 
@@ -310,29 +680,14 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Generate or check stagnant-lid scaling reference benchmarks.'
     )
-    parser.add_argument(
-        '--output',
-        type=Path,
-        default=DEFAULT_BENCHMARK_PATH,
-        help='Path to tests/reference/ssc_wp6_a6_2_benchmarks.json.',
-    )
+    parser.add_argument('--output', type=Path, default=DEFAULT_BENCHMARK_PATH)
     parser.add_argument(
         '--eos-dir',
         type=Path,
         default=Path(os.environ.get('ARAGOG_TEST_EOS_DIR', '')),
-        help='Directory containing SPIDER equation of state tables.',
     )
-    parser.add_argument(
-        '--snapshots-json',
-        type=Path,
-        default=None,
-        help='Optional path to JSON containing converged steady-state snapshots.',
-    )
-    parser.add_argument(
-        '--check',
-        action='store_true',
-        help='Verify existing benchmark JSON against schema and hash invariants.',
-    )
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--full', action='store_true')
     return parser.parse_args(argv)
 
 
@@ -361,15 +716,40 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     data = json.loads(output_path.read_text(encoding='utf-8'))
-    data = normalize_benchmark_schema(data, snapshots_path=args.snapshots_json)
+    if args.full:
+        new_rows = []
+        new_snaps: dict[str, Any] = {}
+        for spec in data['cases_spec']:
+            row, snap = run_single_steady_case(spec)
+            new_rows.append(row)
+            if row['case_id'] in REQUIRED_SNAPSHOT_IDS:
+                new_snaps[row['case_id']] = snap
+        data['cases_results'] = new_rows
+        data['steady_state_snapshots'] = new_snaps
+
+    floor_info = compute_discrete_conduction_floor_n100()
+    fp = data.setdefault('metadata', {}).setdefault('fixed_parameters', {})
+    fp['conduction_floor_Nu_analytic_peak'] = floor_info['Nu_analytic_parabola_peak']
+    fp['conduction_floor_Nu_korenaga_analytic_planar'] = floor_info[
+        'Nu_korenaga_analytic_planar'
+    ]
+    fp['conduction_floor_Nu_korenaga_planar_N100'] = floor_info[
+        'Nu_korenaga_conduction_floor_planar_N100'
+    ]
+    fp['conduction_floor_Nu_korenaga_spherical_N100'] = floor_info[
+        'Nu_korenaga_conduction_floor_spherical_N100'
+    ]
+    fp['steady_residual_bound_J_kg_K_yr'] = STEADY_RESIDUAL_BOUND
+    data['realized_state_fits'] = compute_realized_state_fits(data['cases_results'])
+
     if has_eos_dir:
-        data.setdefault('metadata', {})['eos_md5'] = compute_table_hashes(args.eos_dir)
+        data['metadata']['eos_md5'] = compute_table_hashes(args.eos_dir)
     try:
         head_sha = subprocess.check_output(
             ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
         ).strip()
         if head_sha:
-            data.setdefault('metadata', {})['git_commit'] = head_sha
+            data['metadata']['git_commit'] = head_sha
     except Exception:
         pass
 

@@ -4783,9 +4783,6 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
         float(live_vecs['matched_ti_below_0p5x_tau_d_lid']['F_top_W_m2']),
         live_vecs['matched_ti_below_0p5x_tau_d_lid']['S_steady_J_kg_K'],
     )
-    assert live_u['max_abs_rhs'] <= 1.0e-9
-    assert live_fh05['max_abs_rhs'] <= 1.0e-9
-    assert live_mt05['max_abs_rhs'] <= 1.0e-9
     assert live_u['n_yielding_basic_nodes'] == 0.0
     assert live_fh05['n_yielding_basic_nodes'] >= 40.0
     assert live_mt05['n_yielding_basic_nodes'] >= 30.0
@@ -4803,6 +4800,30 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
     )
     assert (live_mt05['d_lid_cond_lid_m'] / live_u['d_lid_cond_lid_m']) == pytest.approx(
         0.609581859649797, rel=rel_pin
+    )
+    # Single-RHS steady-state residual bound set at 100x the measured 5-start maximum
+    # (max_over_5starts = 2.595e-12, 5.754e-13, 2.225e-15 J/(kg K yr); <= 1.0e-9 J/(kg K yr)).
+    s5_e300 = steady_thinning['e300_n100_five_start_spread']['five_start_steady_spread']
+    assert (
+        live_u['max_abs_rhs']
+        <= 100.0 * float(s5_e300['unyielded_500MPa']['max_over_5starts_max_abs_rhs_J_kg_K_yr'])
+        <= 1.0e-9
+    )
+    assert (
+        live_fh05['max_abs_rhs']
+        <= 100.0
+        * float(
+            s5_e300['fixed_h_below_0p5x_tau_d_lid']['max_over_5starts_max_abs_rhs_J_kg_K_yr']
+        )
+        <= 1.0e-9
+    )
+    assert (
+        live_mt05['max_abs_rhs']
+        <= 100.0
+        * float(
+            s5_e300['matched_ti_below_0p5x_tau_d_lid']['max_over_5starts_max_abs_rhs_J_kg_K_yr']
+        )
+        <= 1.0e-9
     )
 
     # Also verify live spherical cooling state s_ref_51 (T_i = 1601.47 K) at 0.5 * tau_d_lid
