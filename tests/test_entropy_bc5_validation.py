@@ -29,14 +29,16 @@ def _temperature(s):
     return T_REF * np.exp((np.asarray(s) - S_REF) / CP)
 
 
-def _solver(n_cells, r_in, t_surf, heating=0.0):
-    """Conduction only, zero CMB flux, uniform radius mesh, uniform heating [W/kg]."""
+def _solver(n_cells, r_in, t_surf, heating=0.0, convection=False, profile='nearest_boundary'):
+    """Zero CMB flux, uniform radius mesh, uniform heating [W/kg], no kappa_h floor; with
+    convection the viscosity is 1e21 Pa s."""
     p = _build_const_properties_parameters(n_nodes=n_cells + 1)
     b = p.boundary_conditions
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
     b.inner_boundary_condition, b.inner_boundary_value = 2, 0.0
     p.mesh.inner_radius, p.mesh.outer_radius, p.mesh.mass_coordinates = r_in, R_OUT, False
-    p.energy.convection, p.energy.kappah_floor = False, 0.0
+    p.energy.convection, p.energy.kappah_floor = convection, 0.0
+    p.mesh.mixing_length_profile, p.phase_mixed.const_log10visc = profile, 21.0
     if heating:
         p.energy.tidal, p.energy.tidal_array = True, [heating]
     s = EntropySolver(p, entropy_eos=None)
@@ -168,3 +170,76 @@ def test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux(v
         return fig
 
     validation_plot(figure, 'bc5_half_space_cooling')
+
+
+# Case 3: the heated shell of case 1 with mixing-length convection, grid convergence.
+R_FIX = np.array([3.6e6, 4.5e6, 5.5e6, 6.2e6, 6.3e6])  # [m], radii of the compared temperatures
+
+
+def _steady_convecting_shell(n_cells, profile, guess):
+    """Steady state by BDF to 1e13 yr; convection with log10 viscosity 21 Pa s."""
+    s = _solver(n_cells, R_IN_1, T_S_1, heating=H_1, convection=True, profile=profile)
+    r = np.asarray(s._r_stag_flat)
+    band = diags([1.0, 1.0, 1.0], [-1, 0, 1], shape=(n_cells, n_cells))
+    sol = solve_ivp(
+        _rhs(s), (0.0, 1e13), guess(r), method='BDF', rtol=1e-10, atol=1e-10, jac_sparsity=band
+    )
+    assert sol.success, sol.message
+    y = sol.y[:, -1]
+    scale = H_1 / _shell_exact(r) * Julian_year
+    assert np.max(np.abs(_rhs(s)(0.0, y) / scale)) < 1e-6
+    return s, r, _temperature(y)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
+def test_the_convecting_shell_converges_with_second_order(validation_plot):
+    """With mixing-length convection (nearest_boundary and constant mixing length) the steady
+    surface flux still equals the total heating over the surface area; the mean temperature and
+    the temperature at 5 fixed radii converge with order 2.0 +- 0.4 between N = 100, 200 and 400,
+    and the N = 400 values lie within 1e-3 of the rise from their Richardson extrapolation. The
+    surface boundary layer (depth to 90 % of the mid-mantle rise) spans at least 8 cells."""
+    from scipy.interpolate import CubicSpline
+
+    f_exact = RHO * H_1 * (R_OUT**3 - R_IN_1**3) / (3 * R_OUT**2)
+    curves = {}
+    for profile in ('nearest_boundary', 'constant'):
+        guess, rows = (lambda r: _entropy(_shell_exact(r))), []
+        for n in (100, 200, 400):
+            s, r, t = _steady_convecting_shell(n, profile, guess)
+            assert float(np.ravel(s.state.heat_flux)[-1]) == pytest.approx(f_exact, rel=1e-8)
+            vol = np.ravel(s.evaluator.mesh.basic.volume)
+            rows.append(np.r_[np.sum(t * vol) / np.sum(vol), CubicSpline(r, t)(R_FIX)])
+            guess = lambda rr, r=r, t=t: np.interp(rr, r, _entropy(t))  # noqa: E731
+        mid = t[np.argmin(np.abs(r - 0.5 * (R_IN_1 + R_OUT)))]
+        rise = t.max() - T_S_1
+        depth = R_OUT - r
+        layer = depth[
+            (t - T_S_1 >= 0.9 * (mid - T_S_1)) & (depth < 0.5 * (R_OUT - R_IN_1))
+        ].min()
+        assert layer / ((R_OUT - R_IN_1) / 400) >= 8.0
+        c1, c2, c4 = rows
+        orders = np.log2(np.abs(c1 - c2) / np.abs(c2 - c4))
+        assert np.all(np.abs(orders - 2.0) <= 0.4), orders
+        assert np.max(np.abs(c4 - c2) / 3.0) / rise < 1e-3
+        curves[profile] = (
+            r,
+            t,
+            [abs(c[0] - (c4[0] + (c4[0] - c2[0]) / 3.0)) / rise for c in rows],
+        )
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (top, bottom) = plt.subplots(2, 1, figsize=(5.6, 4.8))
+        n = np.array([100, 200, 400])
+        for profile, (r, t, err) in curves.items():
+            (line,) = top.plot(r / 1e3, t, label=profile.replace('_', ' '))
+            bottom.plot(n, n**2 * np.asarray(err), 'o-', color=line.get_color())
+        top.set(xlabel='r [km]', ylabel='T [K]')
+        top.legend()
+        bottom.set(xlabel='N', ylabel='N$^2$ error', ylim=(0, None))
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'bc5_convecting_shell_convergence')
