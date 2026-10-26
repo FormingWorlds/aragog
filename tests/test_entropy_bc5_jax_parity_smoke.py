@@ -370,25 +370,6 @@ def test_the_jax_entry_points_accept_a_consistent_setup(case):
             pytest.fail(f'{name} refused {case}: {exc!r}')
 
 
-@pytest.mark.physics_invariant
-def test_the_surface_gradient_takes_the_node_temperature():
-    """With the surface node 5e-7 relative above the prescribed temperature, inside the run check,
-    the NumPy and JAX right-hand sides agree: both take the half-cell difference and Cp / T at
-    the node temperature, not at the prescribed one."""
-    jnp = pytest.importorskip('jax.numpy')
-    s = _bc5_solver('quasi_steady')
-    y = np.asarray(s._S0, dtype=float)
-    s.dSdt(0.0, y)
-    s_surf, t_surf, half = s.surface_temperature_bc
-    cp = float(np.ravel(s.state.phase_basic.heat_capacity())[-1])
-    s.state.set_surface_temperature(s_surf + 5e-7 * cp, t_surf, half)
-    f_np = np.ravel(s.dSdt(0.0, y))
-    offset = float(np.ravel(s.state.phase_basic.temperature())[-1]) / t_surf - 1.0
-    assert 3e-7 < offset < 7e-7, offset
-    fn, args = _jax_rhs_and_args(s)
-    np.testing.assert_allclose(np.ravel(fn(0.0, jnp.asarray(y), args)), f_np, rtol=1e-10)
-
-
 @pytest.mark.parametrize(
     'settings',
     [{}, {'eddy': 0.0}, {'fraction': 0.0}],

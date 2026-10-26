@@ -100,6 +100,23 @@ def test_the_surface_face_carries_the_half_cell_conduction(t_surf):
 
 
 @pytest.mark.physics_invariant
+def test_the_surface_conduction_takes_the_node_temperature():
+    """With the surface node 5e-7 relative above the prescribed temperature, inside the run
+    check, the face flux is the half-cell conduction from the node temperature, not from the
+    prescribed one."""
+    s = _solver(300.0)
+    _rhs(s)
+    s_surf, t_surf, half = s.surface_temperature_bc
+    s.state.set_surface_temperature(s_surf + 5e-7 * CP, t_surf, half)
+    _rhs(s)
+    t_node = float(np.ravel(s.state.phase_basic.temperature())[-1])
+    assert 3e-7 < t_node / t_surf - 1.0 < 7e-7, t_node
+    t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
+    expected = K_COND * (t_top_cell - t_node) / _half_cell(s)
+    assert _top(s, 'heat_flux') == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
 def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
     """On the mass-coordinate mesh the face distance is ``delta_mesh / dxidr / 2``, which
     differs from the geometric distance between the surface node and the top cell centre by
