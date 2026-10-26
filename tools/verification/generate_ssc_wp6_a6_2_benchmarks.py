@@ -3,10 +3,11 @@
 Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
-- The shipped ``EntropyState`` (``src/aragog/solver/entropy_state.py``) ignores
-  ``outer_boundary_condition = 5`` today: ``_BoundaryConditions.apply_entropy_boundary_conditions``
-  has no ``outer == 5`` branch, leaving ``_entropy_basic[-1] = _entropy_staggered[-1]`` and
-  ``dS/dr[-1] = 0`` at the surface node (only ``outer == 4`` overrides ``_heat_flux[-1]``).
+- The shipped entropy solver ignores ``outer_boundary_condition = 5`` today:
+  ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py:2907-2921``)
+  branches only on ``self._outer_bc_kind == 1`` and ``self._outer_bc_kind == 4``, and
+  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py:570-572``) copies the
+  surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
 - For the 12 internally heated steady-state stagnant-lid cases with prescribed surface
   temperature ``T_surf = 300 K``, this tool applies the verification-only context manager
   ``half_cell_surface_flux`` (``tools/verification/_ssc_helpers.py``), which sets the top
