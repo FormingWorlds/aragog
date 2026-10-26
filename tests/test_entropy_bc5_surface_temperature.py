@@ -208,3 +208,24 @@ def test_a_changed_surface_temperature_takes_effect_on_the_next_call():
     with pytest.raises(ValueError, match='outer_boundary_value'):
         s.evaluator.boundary_conditions._settings.outer_boundary_value = float('nan')
         _rhs(s)
+
+
+@pytest.mark.physics_invariant
+def test_the_surface_gradient_uses_the_heat_capacity_floor_of_the_conduction():
+    """Below the 100 J/kg/K floor of the conductive flux the matched gradient uses the same
+    floored heat capacity, so the face flux stays the half-cell conduction; the unfloored value
+    50 J/kg/K would double the face flux."""
+    p = _build_const_properties_parameters(n_nodes=20)
+    b = p.boundary_conditions
+    b.outer_boundary_condition, b.outer_boundary_value = 5, 300.0
+    p.phase_mixed.const_Cp = 50.0
+    p.energy.kappah_floor, p.energy.convection = 0.0, False
+    s = EntropySolver(p, entropy_eos=None)
+    s.initialize()
+    r = np.asarray(s._r_stag_flat)
+    s.set_initial_entropy(S_REF + 1.0 * (r[-1] - r) / (r[-1] - r[0]))
+    _rhs(s)
+    t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
+    expected = K_COND * (t_top_cell - 300.0) / _half_cell(s)
+    assert _top(s, 'heat_flux') == pytest.approx(expected, rel=1e-12)
+    assert _top(s, 'heat_flux') != pytest.approx(2.0 * expected, rel=1e-3)
