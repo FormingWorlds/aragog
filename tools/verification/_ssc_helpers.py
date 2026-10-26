@@ -352,7 +352,8 @@ def evaluate_bc5_surface_patch_state(
     params: Any, s_vec: np.ndarray, t_yr: float
 ) -> dict[str, Any]:
     """Compare stored half-cell-patched BC 5 state against unpatched BC 5 and consistent surface closure."""
-    from aragog.config.phases import _compute_stagnant_lid_state_core, compute_mlt_top_slope
+    from aragog.rheology import compute_mlt_top_slope
+    from aragog.rheology_lid import _compute_stagnant_lid_state_core
     from aragog.solver.entropy_solver import EntropySolver
 
     with half_cell_surface_flux():

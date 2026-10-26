@@ -15,7 +15,7 @@
       "thermal_exp_melt.dat": "a204e074ed7b1e908dbe98a7b6927120",
       "thermal_exp_solid.dat": "25d7694474bca8f893c9ff604c097a29"
     },
-    "generator_input_sha256": "7522d2d68c4977e856545ab7f459bf8df387fc6392d8c6aa21edd1ce059a2039",
+    "generator_input_sha256": "cfff3d842c334b00f368879ad6b3e53d195d52adf20345264082262eb4a8857b",
     "generator_input_files": [
       "src/aragog/__init__.py",
       "src/aragog/cfg/__init__.py",
