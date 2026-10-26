@@ -1106,6 +1106,16 @@ class EntropyState:
     def rho_basic_diag(self) -> npt.NDArray:
         return self._rho_basic_diag
 
+    @property
+    def eta_eff_basic(self) -> npt.NDArray:
+        """Solid effective viscosity at basic nodes [Pa s]."""
+        return self._eta_eff_basic
+
+    @property
+    def lid_state(self) -> dict | None:
+        """Stagnant-lid diagnostic state dictionary from the last update, or ``None``."""
+        return self._lid_state
+
     def capacitance_staggered(self) -> npt.NDArray:
         """Capacitance for entropy equation: rho * T [kg K / m^3].
 

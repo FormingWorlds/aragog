@@ -598,7 +598,8 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     assert rel_np_jax.shape == (100,)
     assert rel_np_jax_harm.shape == (100,)
     assert float(np.max(rel_np_jax)) <= 1.0e-6
-    # Two-phase alpha clamp cancellation at node 98 gives 4.584e-10 under JIT (~2x margin at 1e-9).
+    # At two-phase node 98 (rho_sol < rho_liq), a 1 ULP JIT division shift in unclamped alpha_mixed < 0
+    # is amplified by the smooth positivity clamp to 3.859e-7 in alpha and 4.584e-10 in dS/dt (2.18x / 2 ULP below 1e-9).
     assert float(np.max(rel_np_jax_harm)) <= 1.0e-9
     assert float(np.min(rel_on_off)) >= 100.0 * 1.0e-6
     assert float(np.min(rel_canary)) > 100.0 * 1.0e-6
