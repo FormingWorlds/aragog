@@ -148,7 +148,7 @@ Three outer BC modes are implemented in the entropy solver:
 |------|-------------|
 | 1 | Grey-body atmosphere: $F_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ with optional UTBL correction |
 | 4 | Prescribed flux, updated per coupling step from the helpfile |
-| 5 | Prescribed temperature |
+| 5 | Prescribed temperature: the surface node takes the entropy of $T_s$, and the face flux is the half-cell conduction ([Surface boundary conditions](surface_bc.md)) |
 
 ### Inner (CMB) boundary
 

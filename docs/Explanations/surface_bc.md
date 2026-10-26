@@ -1,0 +1,71 @@
+# Surface boundary conditions
+
+How does the entropy solver close the heat flow at the top of the mantle?
+
+The setting `outer_boundary_condition` in `[boundary_conditions]` picks one of 3 modes. Modes 1 and 4 set the heat flux through the surface. Mode 5 sets the temperature at the surface, and the heat flux then follows from the temperature difference between the surface and the top cell. The other surface values (`outer_boundary_value`, `emissivity`, `equilibrium_temperature`, `param_utbl`) are inputs of these modes.
+
+## The three modes
+
+| `outer_boundary_condition` | What it sets | `outer_boundary_value` | Typical use |
+|---|---|---|---|
+| 1 | Grey-body flux $F = \varepsilon \sigma (T_\mathrm{top}^4 - T_\mathrm{eq}^4)$ from the temperature of the surface node | not used | standalone runs with a simple atmosphere |
+| 4 | The surface flux itself | flux \[W/m²\] | PROTEUS coupling: the atmosphere module gives the flux |
+| 5 | The surface temperature | temperature \[K\] | benchmarks with a fixed surface temperature, such as stagnant-lid scaling cases |
+
+Here $\varepsilon$ is the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T_\mathrm{top}$ the temperature of the surface node and $T_\mathrm{eq}$ the equilibrium temperature. The [UTBL parameterisation](../How-to/utbl-parameterisation.md) only acts in mode 1. PROTEUS uses mode 4 (or mode 1); it does not use mode 5.
+
+## Prescribed surface temperature (mode 5)
+
+The solver works with the specific entropy $S$ \[J/kg/K\], not with the temperature $T$ \[K\]. Mode 5 must therefore turn a prescribed temperature into an entropy and an entropy gradient at the surface node.
+
+**Short answer.** At setup the solver finds the entropy $S_s$ at which the equation of state (EOS) gives the prescribed temperature $T_s$ at the surface pressure. At every call it gives the surface node this entropy, and it sets the entropy gradient at the node so that the temperature gradient is the difference between $T_s$ and the top cell temperature over half a cell. The conductive flux through the surface is then exactly the half-cell conduction, and the other fluxes use the same gradient.
+
+### The surface entropy
+
+The mantle grid has cell centres (the staggered nodes, where the solver keeps $S$) and cell faces (the basic nodes, where the fluxes are). The surface is the last basic node. Its pressure is $P_s$. The solver solves $T(P_s, S_s) = T_s$ for $S_s$:
+
+- with EOS tables, by a root search on the tables (`EntropyEOS.entropy_at_temperature`);
+- in the constant-properties mode, from the closed form $S_s = S_\mathrm{ref} + c_p \ln(T_s / T_\mathrm{ref})$.
+
+### The surface gradient
+
+The top cell centre has the temperature $T_{N-1}$. It lies half a cell below the surface. The temperature gradient across this half cell is
+
+$$\left.\frac{\partial T}{\partial r}\right|_s = \frac{T_s - T_{N-1}}{\Delta r / 2}.$$
+
+The solver needs an entropy gradient, not a temperature gradient. The two are related by the thermodynamic identity $(\partial T / \partial S)_P = T / c_p$, where $c_p$ is the heat capacity \[J/kg/K\]:
+
+$$\frac{\partial T}{\partial r} = \frac{T}{c_p}\frac{\partial S}{\partial r} + \left(\frac{\partial T}{\partial P}\right)_S \frac{\partial P}{\partial r}.$$
+
+So the solver sets the entropy gradient at the surface node to
+
+$$\left.\frac{\partial S}{\partial r}\right|_s = \frac{c_p}{T_s}\left\lbrack\left.\frac{\partial T}{\partial r}\right|_s - \left(\frac{\partial T}{\partial P}\right)_S \frac{\partial P}{\partial r}\right\rbrack.$$
+
+The second term is the adiabatic gradient. The heat capacity here has the same floor of 100 J/kg/K as the conductive flux, so the identity holds term by term.
+
+### The surface flux
+
+The conductive flux is $F_\mathrm{cond} = -k\,\partial T/\partial r$, with $k$ the thermal conductivity \[W/m/K\]. With the gradient above it becomes
+
+$$F_\mathrm{cond} = k\,\frac{T_{N-1} - T_s}{\Delta r / 2},$$
+
+positive outward when the mantle is warmer than the surface. The convective flux of the mixing-length theory, $\rho T \kappa_h (-\partial S / \partial r)$, uses the same entropy gradient. With `mixing_length_profile = 'nearest_boundary'` the mixing length is 0 at the surface, so the convective flux there is 0, unless the floor `kappah_floor` acts in a molten top cell. With `'constant'` the surface face also carries a convective flux.
+
+### Why the solver does not use an entropy difference
+
+A simpler rule would take the entropy gradient as $(S_s - S_{N-1}) / (\Delta r / 2)$. Entropy is not linear in temperature, so this rule gives the wrong flux. With constant $c_p$ it replaces $T_{N-1} - T_s$ by $T_s \ln(T_{N-1}/T_s)$. For a top cell at 380.46 K below a surface at 273 K that is 90.6 K instead of 107.5 K, a flux 16 % too low.
+
+### The half-cell distance
+
+The solver takes $\Delta r / 2 = \Delta\xi / (2\, \mathrm{d}\xi/\mathrm{d}r)$, where $\Delta\xi$ is the spacing of the top cell in the mesh coordinate $\xi$ and $\mathrm{d}\xi/\mathrm{d}r$ its derivative at the surface. On a mesh that is uniform in radius (`mass_coordinates = false`) this equals the distance from the top cell centre to the surface. On a mass-coordinate mesh the two differ: on a 19-cell Earth mantle the half cell is 91,797 m and the geometric distance 91,376 m, 0.46 % apart. The solver uses the first value on both meshes.
+
+### Limits
+
+- `outer_boundary_value` must be a positive finite number in kelvin. A string, a TOML `true`, NaN, an infinity, zero or a negative value stops the setup with a `ValueError`.
+- A temperature outside the EOS tables at the surface pressure stops the setup with a `ValueError`; the solver does not clamp it to the table edge.
+- `param_utbl = true` and `core_bc = 'gradient'` stop the setup with a `ValueError`: the UTBL correction belongs to the grey-body flux, and the gradient core keeps its own surface gradient.
+- A caller can change `outer_boundary_value` between calls; the next call inverts the surface entropy again.
+- Every call of the NumPy right-hand side checks that the surface node is at $T_s$ to a relative 10⁻⁶ and raises a `RuntimeError` if it is not.
+- The JAX right-hand side takes the surface entropy and the half cell as `S_surf` and `surf_dr_half` of `BoundaryParams` with `outer_bc_type = 5`, and applies the same gradient. `BoundaryParams` refuses type 5 when `surf_dr_half` is not a positive number.
+
+**Where this is checked.** [Surface boundary](../Validation/surface.md) compares mode 5 with a steady heated shell, a cooling half space and a grid-convergence study, and the [tutorial](../Tutorials/surface_temperature.md) repeats the half-space case step by step.
