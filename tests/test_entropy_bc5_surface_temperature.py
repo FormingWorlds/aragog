@@ -21,13 +21,7 @@ from tests.test_entropy_solver_const_properties_smoke import _build_const_proper
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-K_COND, CP, RHO, T_REF, S_REF = (
-    4.0,
-    1000.0,
-    4000.0,
-    3000.0,
-    3000.0,
-)  # the builder's const_properties
+K_COND, CP, RHO, T_REF, S_REF = 4.0, 1000.0, 4000.0, 3000.0, 3000.0  # builder values
 
 
 def _solver(
@@ -99,8 +93,6 @@ def test_the_surface_face_carries_the_half_cell_conduction(t_surf):
         t_surf, rel=1e-12
     )
     assert math.copysign(1.0, _top(s, 'heat_flux')) == math.copysign(1.0, t_top_cell - t_surf)
-    # A full cell or the geometric half cell gives another flux on this mass-coordinate mesh.
-    assert _top(s, 'heat_flux') != pytest.approx(expected / 2.0, rel=1e-3)
 
 
 @pytest.mark.physics_invariant
@@ -122,8 +114,8 @@ def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
 
 @pytest.mark.physics_invariant
 def test_the_convective_face_flux_uses_the_matched_gradient():
-    """With a constant mixing length and the kappa_h floor the surface face also carries a
-    convective flux, built from the same entropy gradient that gives the half-cell conduction:
+    """With a constant mixing length the surface face also carries a convective flux, built
+    from the same entropy gradient that gives the half-cell conduction:
     dS/dr = (Cp / T_surf) (dT/dr - dT/dP|_S dP/dr)."""
     s = _solver(300.0, profile='constant', floor=10.0)
     _rhs(s)
@@ -228,4 +220,110 @@ def test_the_surface_gradient_uses_the_heat_capacity_floor_of_the_conduction():
     t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
     expected = K_COND * (t_top_cell - 300.0) / _half_cell(s)
     assert _top(s, 'heat_flux') == pytest.approx(expected, rel=1e-12)
-    assert _top(s, 'heat_flux') != pytest.approx(2.0 * expected, rel=1e-3)
+    g_t = (300.0 - t_top_cell) / _half_cell(s)
+    assert float(s.state._dSdr[-1]) == pytest.approx(100.0 / 300.0 * g_t, rel=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_the_matched_gradient_carries_the_adiabatic_term():
+    """With a nonzero dP/dr the surface gradient subtracts dT/dP|_S dP/dr, so the conductive
+    face flux is still -k dT/dr; without that term the flux would differ by about 0.4 %."""
+    s = _solver(300.0)
+    s.state._dP_dr_basic = np.full(np.ravel(s.evaluator.mesh.basic.radii).size, -4.0e4)
+    _rhs(s)
+    t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
+    g_t = (300.0 - t_top_cell) / _half_cell(s)
+    dtdr_ad = float(np.ravel(s.state.phase_basic.dTdPs())[-1]) * -4.0e4
+    assert abs(dtdr_ad / g_t) > 1e-3
+    assert _top(s, '_jcond') == pytest.approx(-K_COND * g_t, rel=1e-12)
+    assert float(s.state._dSdr[-1]) == pytest.approx(CP / 300.0 * (g_t - dtdr_ad), rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_the_kappah_floor_does_not_act_at_the_prescribed_surface():
+    """The kappa_h floor lifts the eddy diffusivity of molten cells below the convective
+    threshold, but not at a surface held at a prescribed temperature: with mixing length 0
+    there, the face carries only the half-cell conduction, while the floor still acts below."""
+    s = _solver(300.0, floor=10.0)
+    _rhs(s)
+    t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
+    assert _top(s, '_jconv') == 0.0
+    assert _top(s, 'heat_flux') == pytest.approx(
+        K_COND * (t_top_cell - 300.0) / _half_cell(s), rel=1e-12
+    )
+    assert float(np.ravel(s.state._eddy_diffusivity)[-2]) > 1.0
+
+
+def test_bc5_refuses_conduction_off():
+    """Without conduction the prescribed temperature sets no face flux under nearest_boundary,
+    so the setup refuses the pair."""
+    p = _build_const_properties_parameters(n_nodes=20)
+    b = p.boundary_conditions
+    b.outer_boundary_condition, b.outer_boundary_value = 5, 300.0
+    p.energy.conduction = False
+    s = EntropySolver(p, entropy_eos=None)
+    with pytest.raises(ValueError, match='conduction'):
+        s.initialize()
+    assert getattr(s.state, '_surface_temperature_bc', None) is None
+
+
+def test_the_solver_gives_the_surface_entropy_and_half_cell():
+    """surface_temperature_bc returns the inverted surface entropy and the face half cell, and
+    follows a changed outer_boundary_value without a right-hand-side call."""
+    s = _solver(300.0)
+    s_surf, half = s.surface_temperature_bc
+    assert s_surf == pytest.approx(S_REF + CP * math.log(300.0 / T_REF), rel=1e-12)
+    assert half == pytest.approx(_half_cell(s), rel=1e-15)
+    s.evaluator.boundary_conditions._settings.outer_boundary_value = 2000.0
+    assert s.surface_temperature_bc[0] == pytest.approx(
+        S_REF + CP * math.log(2000.0 / T_REF), rel=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ('s_surf', 'half'),
+    [
+        (2000.0, 0.0),
+        (2000.0, -5.0),
+        (2000.0, float('nan')),
+        (2000.0, float('inf')),
+        (float('nan'), 100.0),
+    ],
+)
+def test_boundary_params_refuse_bc5_without_its_surface_values(s_surf, half):
+    """BoundaryParams of type 5 needs a finite surface entropy and a finite positive half cell;
+    the defaults would divide by zero or set the surface node to a meaningless entropy."""
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import BoundaryParams
+
+    kw = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
+    kw.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
+    with pytest.raises(ValueError, match='S_surf|surf_dr_half'):
+        BoundaryParams(
+            outer_bc_type=5, outer_bc_value=1500.0, S_surf=s_surf, surf_dr_half=half, **kw
+        )
+    assert float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **kw).surf_dr_half) == 0.0
+
+
+@pytest.mark.physics_invariant
+def test_the_jax_surface_gradient_uses_the_heat_capacity_floor(monkeypatch):
+    """The JAX matcher floors Cp at 100 J/kg/K as its conductive flux does; at Cp = 50 the
+    gradient is (100 / T) (dT/dr - dT/dP|_S dP/dr), twice the unfloored value."""
+    jnp = pytest.importorskip('jax.numpy')
+    from types import SimpleNamespace
+
+    import aragog.jax.phase as jp
+
+    monkeypatch.setattr(
+        jp, 'evaluate_phase', lambda *a: SimpleNamespace(temperature=jnp.array([400.0]))
+    )
+    pb = SimpleNamespace(
+        heat_capacity=jnp.array([50.0]), temperature=jnp.array([300.0]), dTdPs=jnp.array([1e-8])
+    )
+    mesh = SimpleNamespace(P_stag=jnp.zeros(3), dP_dr_basic=jnp.array([-4e4]))
+    out = jp._matched_surface_gradient(
+        jnp.zeros(4), (0.0, 300.0, 50.0), pb, None, None, mesh, jnp.zeros(3)
+    )
+    expected = 100.0 / 300.0 * ((300.0 - 400.0) / 50.0 - 1e-8 * -4e4)
+    assert float(out[-1]) == pytest.approx(expected, rel=1e-12)
+    assert float(out[0]) == 0.0

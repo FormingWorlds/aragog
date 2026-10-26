@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
 
 
-def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary'):
+def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0):
     eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
     s = _build(
         core_bc,
@@ -25,6 +25,7 @@ def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary'):
     b = s.parameters.boundary_conditions
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
     s.parameters.mesh.mixing_length_profile = profile
+    s.parameters.phase_mixed.matprop_smooth_width = smooth
     s.initialize()
     if core_bc != 'core_module':
         s.set_initial_entropy(2700.0)
@@ -133,17 +134,14 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
     assert abs(dtdr_ad / dtdr) > 0.01
 
 
-@pytest.mark.parametrize('half', [0.0, -5.0, float('nan')])
-def test_boundary_params_refuse_bc5_without_a_half_cell(half):
-    """BoundaryParams of type 5 needs the positive half cell of the solver; the default 0 would
-    divide the surface gradient by zero inside the JAX right-hand side."""
-    pytest.importorskip('equinox')
-    from aragog.jax.solver import BoundaryParams
-
-    kw = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
-    kw.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
-    with pytest.raises(ValueError, match='surf_dr_half'):
-        BoundaryParams(
-            outer_bc_type=5, outer_bc_value=1500.0, S_surf=2000.0, surf_dr_half=half, **kw
-        )
-    assert float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **kw).surf_dr_half) == 0.0
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('t_surf', [1434.23, 1445.0, 1830.0])
+def test_the_surface_node_holds_its_temperature_with_smoothed_properties(t_surf):
+    """With matprop_smooth_width = 0.01 the phase evaluator blends the properties within about
+    10 K of the solidus (1439 K at the surface) and the liquidus (1831 K); the surface entropy
+    is inverted through the same evaluator, so the node sits at the prescribed temperature."""
+    s = _bc5_solver('quasi_steady', t_surf=t_surf, smooth=0.01)
+    f = np.asarray(s.dSdt(0.0, np.asarray(s._S0, dtype=float))).ravel()
+    assert np.all(np.isfinite(f))
+    t_node = float(np.ravel(s.state.phase_basic.temperature())[-1])
+    assert t_node == pytest.approx(t_surf, rel=1e-9)
