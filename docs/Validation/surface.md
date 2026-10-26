@@ -82,13 +82,13 @@ and all heat made in the shell leaves through the surface: the surface heat flux
 
 ## Note: stagnant-lid benchmark states
 
-This comparison is not a test of this repository, so it is not one of the numbered cases above. Stagnant-lid scaling benchmarks hold the surface at 273 K, and the tools that make them set the half-cell conduction $k (T_{N-1} - T_s) / (\Delta r / 2)$ through the surface outside the solver. A run outside this repository on 8 stored benchmark states (5 of an internal-heating benchmark, 3 of a yield-stress benchmark), with `outer_boundary_condition = 5` and the eddy-diffusivity floor off as in the benchmarks, gives the numbers below; no test here asserts them:
+This comparison is not a test of this repository, so it is not one of the numbered cases above. Stagnant-lid scaling benchmarks hold the surface at 273 K, and the tools that make them set the half-cell conduction $k (T_{N-1} - T_s) / (\Delta r / 2)$ through the surface outside the solver. A run outside this repository on 8 stored benchmark states (5 of an internal-heating benchmark, 3 of a yield-stress benchmark), with `outer_boundary_condition = 5` and the eddy-diffusivity floor off as in the benchmarks, gives the numbers below:
 
 - the same surface flux on all 8 states, to a relative $1.3 \times 10^{-16}$;
 - states that are not exactly steady with the surface node at 273 K: largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the tools;
 - steady runs of the internal-heating benchmark whose interior temperature moves by up to $2.5 \times 10^{-4}$ (relative).
 
-A committed test of this comparison follows, with its plot pair and benchmark references computed with this boundary condition (rates to $10^{-10}$, steady runs to $10^{-6}$).
+No test in this repository asserts these numbers yet.
 
 ## References
 
