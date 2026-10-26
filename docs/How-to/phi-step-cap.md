@@ -85,17 +85,18 @@ params.energy = dataclasses.replace(
 
 solver = EntropySolver(params, entropy_eos=eos)
 solver.initialize()
-s_sol = np.asarray(eos.solidus_entropy(solver._P_stag_flat)).ravel()
+p_stag = np.asarray(solver.evaluator.mesh.staggered_pressure).ravel()
+s_sol = np.asarray(eos.solidus_entropy(p_stag)).ravel()
 solver.set_initial_entropy(np.full_like(s_sol, float(s_sol[-1] + 5.0)))
 solver.solve()
-sol = solver._solution
-s_end = np.asarray(sol.y[: solver._n_stag, -1], dtype=float)
-t_end = np.asarray(eos.temperature(solver._P_stag_flat, s_end)).ravel()
-print(f'status={sol.status}, steps={sol.get("cvode_nst")}, segments={len(sol.segments)}')
+state = solver.get_state()
+sol = solver.solution
+print(f'status={state.status}, steps={sol.get("cvode_nst")}, segments={len(sol.segments)}')
 print(f'first_cap={sol.segments[0][2]:.1f} yr, second_cap={sol.segments[1][2]:.2f} yr, final_cap={sol.segments[-1][2]}')
-print(f'S_end in [{s_end.min():.2f}, {s_end.max():.2f}] J/(kg K), T_end in [{t_end.min():.2f}, {t_end.max():.2f}] K')
+print(f'S_end in [{state.S_final.min():.2f}, {state.S_final.max():.2f}] J/(kg K), T_end in [{state.T_stag.min():.2f}, {state.T_stag.max():.2f}] K')
 ```
 
+The public `SolverOutput` returned by `solver.get_state()` exposes the final physical state (`status`, `S_final`, `T_stag`, `phi_stag`, `P_stag`), while no dedicated accessor exists on `SolverOutput` for the per-segment root records (`segments`) or cumulative CVODE step count (`cvode_nst`), which are read from the public `solver.solution` `OptimizeResult` property.
 Running this script prints `status=0, steps=1034, segments=12`, with `first_cap=100.0 yr` in the initial segment (while the top cell is still above its solidus, $\phi_{\max} = 0.000896$), `second_cap=163.77 yr` at $t = 1611.87\ \mathrm{yr}$ once the top cell crosses the solidus ($\phi_{\max} = 0.0$) and the $100\ \mathrm{yr}$ ceiling relaxes inside the solidus stiff zone, and `final_cap=inf` over the final 9 sub-solidus segments (ending with $S_{\mathrm{end}} \in [587.31,\; 880.39]\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $T_{\mathrm{end}} \in [1735.27,\; 3316.24]\ \mathrm{K}$).
 
 ## Cross-references
