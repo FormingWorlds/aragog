@@ -1679,3 +1679,48 @@ def test_compute_step_energy_integrals_early_return_reports_last_step_index(
     monkeypatch.setattr(solver, '_dSdt_single', _corrupt_eta_eff)
     with pytest.raises(RuntimeError, match='at step 3'):
         solver._compute_step_energy_integrals()
+
+
+def test_commit_matches_generator_inputs_guard(tmp_path) -> None:
+    """_check_commit_matches_generator_inputs rejects commits where src/aragog diverged."""
+    import subprocess
+
+    from tools.verification._ssc_helpers import _check_commit_matches_generator_inputs
+
+    repo = tmp_path / 'repo'
+    (repo / 'src' / 'aragog').mkdir(parents=True)
+    (repo / 'docs').mkdir(parents=True)
+    subprocess.run(['git', 'init', str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ['git', '-C', str(repo), 'config', 'user.email', 't@example.com'], check=True
+    )
+    subprocess.run(['git', '-C', str(repo), 'config', 'user.name', 'Test'], check=True)
+
+    (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 1\n', encoding='utf-8')
+    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
+    subprocess.run(
+        ['git', '-C', str(repo), 'commit', '-m', 'base'], check=True, capture_output=True
+    )
+    base_sha = subprocess.check_output(
+        ['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+
+    assert _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo) == []
+
+    # Docs-only commit keeps generator inputs ('src/aragog',) unchanged
+    (repo / 'docs' / 'note.md').write_text('doc\n', encoding='utf-8')
+    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
+    subprocess.run(
+        ['git', '-C', str(repo), 'commit', '-m', 'docs'], check=True, capture_output=True
+    )
+    assert _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo) == []
+
+    # Modifying src/aragog makes base_sha stale (as when merging another branch's JSON)
+    (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 2\n', encoding='utf-8')
+    subprocess.run(['git', '-C', str(repo), 'add', '.'], check=True)
+    subprocess.run(
+        ['git', '-C', str(repo), 'commit', '-m', 'src'], check=True, capture_output=True
+    )
+    errs = _check_commit_matches_generator_inputs(base_sha, ('src/aragog',), repo)
+    assert len(errs) == 1
+    assert 'Generator inputs changed' in errs[0]
