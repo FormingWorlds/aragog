@@ -73,7 +73,10 @@ def evaluate_lid_transition_state(
     visc_mix_val: float = 1.0e15,
     consts: dict[str, Any] | None = None,
 ) -> tuple[float, float, float]:
-    """Evaluate T_i, eta_i, and mu_i using Section 1.1 formulas with NumPy only.
+    """Evaluate T_i, eta_i, and mu_i from the transition formulas with NumPy only.
+
+    Follows 'Geotherm Endpoint Blending and Smooth Ramp Weighting' in
+    docs/Explanations/solid_state_convection.md.
 
     Parameters
     ----------
@@ -158,7 +161,7 @@ def evaluate_lid_transition_state(
     p_1 = float(np.sum(w_ti_tilde * p))
     t_i = float(np.sum(w_tilde * t))
 
-    # 5. Section 1.1 geotherm endpoint blend
+    # 5. Geotherm endpoint blend ('Geotherm Endpoint Blending and Smooth Ramp Weighting' in docs/Explanations/solid_state_convection.md)
     w_eff = float(np.clip((t_0 - t_i) / (t_0 - t_1), 0.0, 1.0))
 
     def arrhenius_viscosity(t_val: float, p_val: float) -> float:

@@ -1985,6 +1985,11 @@ class EntropySolver:
             try:
                 for step_idx in range(n_steps):
                     t_step = float(t_pts[step_idx]) if step_idx < t_pts.size else 0.0
+                    self._check_rheology_eos_range(
+                        self._stag_entropy(y_pts[:, step_idx]),
+                        step_idx=step_idx,
+                        time_yr=t_step,
+                    )
                     self._dSdt_single(t_step, y_pts[:, step_idx])
                     self._check_rheology_step_invariants(
                         rheo, step_idx=step_idx, time_yr=t_step
@@ -4851,12 +4856,23 @@ class EntropySolver:
             ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
+        rheo = getattr(
+            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
+        )
+        check_rheo = rheo is not None and rheo.enabled
         if self.entropy_eos is None or sol is None or sol.t.size < 2:
             if sol is not None and sol.t.size > 0 and sol.y.size > 0:
                 y_last = sol.y[:, -1] if sol.y.ndim == 2 else sol.y
+                t_last = float(sol.t[-1])
+                if check_rheo:
+                    self._check_rheology_eos_range(
+                        self._stag_entropy(y_last),
+                        step_idx=int(sol.t.size - 1),
+                        time_yr=t_last,
+                    )
                 counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
                 try:
-                    self._dSdt_single(float(sol.t[-1]), y_last)
+                    self._dSdt_single(t_last, y_last)
                 finally:
                     self.state._pb_cache_hits, self.state._pb_cache_misses = counters
             if sol is not None:
@@ -4890,10 +4906,6 @@ class EntropySolver:
                 )
                 P = None
 
-        rheo = getattr(
-            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
-        )
-        check_rheo = rheo is not None and rheo.enabled
         try:
             if P is not None:
                 self._batch_powers_calls += 1
@@ -4905,7 +4917,9 @@ class EntropySolver:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
                 if check_rheo:
-                    self._check_rheology_step_invariants(rheo, step_idx=int(t_pts.size - 1))
+                    self._check_rheology_step_invariants(
+                        rheo, step_idx=int(t_pts.size - 1), time_yr=float(t_pts[-1])
+                    )
             else:
                 logger.info(
                     'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
@@ -4913,6 +4927,10 @@ class EntropySolver:
                 )
                 rows = []
                 for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
+                    if check_rheo:
+                        self._check_rheology_eos_range(
+                            self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
+                        )
                     rows.append(self._step_powers(float(t), y))
                     if check_rheo:
                         self._check_rheology_step_invariants(
