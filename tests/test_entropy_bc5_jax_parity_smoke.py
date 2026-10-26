@@ -16,7 +16,9 @@ pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
 
 
-def _bc5_solver(core_bc, t_surf=T_SURF, smooth=0.0, strict=False, **build):
+def _bc5_solver(
+    core_bc, t_surf=T_SURF, smooth=0.0, strict=False, eddy=1.0, fraction=None, **build
+):
     """A 10-node table solver under BC 5; outside core_module the entropy falls from 2900 to
     2600 J/kg/K, so every interior face has a nonzero gradient."""
     eos = entropy_eos_copy(EOS_DIR, strict_range=strict, identity_alpha=True)
@@ -30,6 +32,10 @@ def _bc5_solver(core_bc, t_surf=T_SURF, smooth=0.0, strict=False, **build):
     b = s.parameters.boundary_conditions
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
     s.parameters.phase_mixed.matprop_smooth_width = smooth
+    s.parameters.energy.eddy_diffusivity_thermal = eddy
+    if fraction is not None:
+        s.parameters.mesh.mixing_length_profile = 'constant'
+        s.parameters.mesh.mixing_length_constant_fraction = fraction
     s.initialize()
     if core_bc != 'core_module':
         s.set_initial_entropy(np.linspace(2900.0, 2600.0, s._n_stag))
@@ -285,23 +291,30 @@ def test_the_jax_rhs_ignores_a_stale_outer_bc_value():
     np.testing.assert_allclose(f, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)
 
 
-def test_the_jax_factory_accepts_a_real_bc5_mesh_and_refuses_a_constant_one():
-    """The JAX CVODE factory builds the right-hand side and Jacobian for a BC 5 solver with the
-    nearest_boundary mixing length, and refuses type 5 on the mesh of a constant profile."""
+@pytest.mark.parametrize(
+    'settings',
+    [{}, {'eddy': 0.0}, {'fraction': 0.0}],
+    ids=['nearest-boundary', 'eddy-0', 'fraction-0'],
+)
+def test_the_jax_factory_builds_the_bc5_rhs_and_refuses_a_constant_mesh(settings):
+    """The JAX CVODE factory gives the NumPy right-hand side for a BC 5 solver without a surface
+    eddy flux (nearest_boundary, eddy_diffusivity_thermal 0, a constant mixing length of 0), and
+    refuses type 5 on the mesh of a constant profile with the default fraction."""
     pytest.importorskip('equinox')
     from aragog.jax.nondim import NonDimScales
+    from aragog.jax.phase import MeshArrays
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-    s = _bc5_solver('quasi_steady')
-    fn, args = _jax_rhs_and_args(s)
+    s = _bc5_solver('quasi_steady', **settings)
+    _, args = _jax_rhs_and_args(s)
     kw = dict(eos_jax=args[0], phase_params=args[1], heating_array=np.zeros(s._n_stag))
     scales = NonDimScales(state_scale=np.ones(s._n_stag), t_ref=1.0)
-    rhs, jac, _ = build_jax_rhs_and_jacobian(
+    rhs, _, _ = build_jax_rhs_and_jacobian(
         mesh_arrays=args[2], boundary_params=args[3], scales=scales, **kw
     )
-    assert callable(rhs) and callable(jac)
-    from aragog.jax.phase import MeshArrays
-
+    y, ydot = np.asarray(s._S0, dtype=float).ravel(), np.full(s._n_stag, np.nan)
+    assert rhs(0.0, y, ydot) == 0
+    np.testing.assert_allclose(ydot, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)
     c = _build('quasi_steady', entropy_eos_copy(EOS_DIR, identity_alpha=True), None)
     c.parameters.mesh.mixing_length_profile = 'constant'
     c.initialize()

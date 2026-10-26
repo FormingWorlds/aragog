@@ -9,6 +9,7 @@ entropy gradient is set so that the temperature gradient equals the half-cell di
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import numpy as np
 import pytest
@@ -28,6 +29,8 @@ def _solver(
     t_surf=300.0,
     *,
     profile='nearest_boundary',
+    fraction=0.25,
+    eddy=1.0,
     floor=0.0,
     mass_coordinates=True,
     utbl=False,
@@ -39,7 +42,8 @@ def _solver(
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
     b.param_utbl, b.core_bc = utbl, core_bc
     p.mesh.mixing_length_profile, p.mesh.mass_coordinates = profile, mass_coordinates
-    p.energy.kappah_floor = floor
+    p.mesh.mixing_length_constant_fraction = fraction
+    p.energy.kappah_floor, p.energy.eddy_diffusivity_thermal = floor, eddy
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
     r = np.asarray(s._r_stag_flat)
@@ -112,15 +116,30 @@ def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
         assert (abs(_half_cell(s) / geometric - 1.0) > 1e-3) is differs
 
 
-def test_bc5_refuses_a_constant_mixing_length():
-    """A constant mixing length puts an eddy flux on a surface face held at its temperature,
-    driven by the steep half-cell gradient; the setup refuses it with BC 5, and
+@pytest.mark.parametrize('fraction', [0.25, -0.1])
+def test_bc5_refuses_a_constant_mixing_length(fraction):
+    """A constant mixing length that is not 0 puts an eddy flux on a surface face held at its
+    temperature, driven by the steep half-cell gradient; the setup refuses it with BC 5, and
     nearest_boundary, mixing length 0 at the surface, is accepted."""
     with pytest.raises(Exception) as err:
-        _solver(300.0, profile='constant')
+        _solver(300.0, profile='constant', fraction=fraction)
     assert err.type is ValueError, repr(err.value)
     assert "mixing_length_profile = 'constant'" in str(err.value)
     assert _solver(300.0, profile='nearest_boundary').surface_temperature_bc[1] == 300.0
+
+
+@pytest.mark.parametrize(
+    'kw',
+    [{'profile': 'constant', 'fraction': 0.0}, {'eddy': 0.0}],
+    ids=['fraction-0', 'eddy-0'],
+)
+def test_bc5_accepts_the_settings_without_a_surface_eddy_flux(kw):
+    """A constant mixing length of 0 and eddy_diffusivity_thermal 0 leave no eddy flux at the
+    surface; the setup accepts both and the surface face carries no convective flux."""
+    s = _solver(300.0, **kw)
+    assert np.all(np.isfinite(_rhs(s)))
+    assert _top(s, '_jconv') == 0.0
+    assert _top(s, 'heat_flux') > 0.0
 
 
 @pytest.mark.parametrize(
@@ -357,18 +376,21 @@ def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
     [
         ({'conduction': 0.0}, None, 'conduction'),
         ({'conduction': 1.0}, np.array([0.0, 7.2e5, 7.2e5]), 'mixing length'),
-        (
-            {'conduction': 1.0, 'eddy_diff_thermal': -1e3},
-            np.zeros(3),
-            'eddy_diffusivity_thermal',
-        ),
+        *[
+            (
+                {'conduction': 1.0, 'eddy_diff_thermal': e},
+                np.zeros(3),
+                'eddy_diffusivity_thermal',
+            )
+            for e in (-1e3, math.nan, math.inf)
+        ],
     ],
-    ids=['no-conduction', 'surface-mixing-length', 'constant-eddy-diffusivity'],
+    ids=['no-conduction', 'surface-mixing-length', 'eddy-negative', 'eddy-nan', 'eddy-inf'],
 )
 def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing_length, match):
     """The JAX CVODE factory refuses type 5 without conduction, with a mixing length that is
-    not 0 at the surface node (as with 'constant'), or with a negative eddy_diffusivity_thermal,
-    which makes kappa_h a constant at every node; each leaves the surface face without the
+    not 0 at the surface node (as with 'constant'), or with a negative or non-finite
+    eddy_diffusivity_thermal, which gives the surface node a kappa_h; each leaves the surface face without the
     half-cell conduction it prescribes."""
     pytest.importorskip('equinox')
     from types import SimpleNamespace
@@ -390,23 +412,20 @@ def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing
     assert match in str(err.value)
 
 
-def test_bc5_refuses_a_negative_eddy_diffusivity_thermal():
+@pytest.mark.parametrize('eddy', [-1e3, math.nan, math.inf])
+def test_bc5_refuses_a_negative_or_non_finite_eddy_diffusivity_thermal(eddy):
     """A negative eddy_diffusivity_thermal sets kappa_h to its magnitude at every node, the
-    surface node too, whatever the mixing length; the setup refuses it with BC 5."""
-    p = _build_const_properties_parameters(n_nodes=20)
-    b = p.boundary_conditions
-    b.outer_boundary_condition, b.outer_boundary_value = 5, 300.0
-    p.energy.eddy_diffusivity_thermal = -1e3
-    s = EntropySolver(p, entropy_eos=None)
+    surface node too, and NaN or an infinity gives no finite kappa_h there; the setup refuses
+    each with BC 5."""
     with pytest.raises(Exception) as err:
-        s.initialize()
+        _solver(300.0, eddy=eddy)
     assert err.type is ValueError, repr(err.value)
     assert 'eddy_diffusivity_thermal' in str(err.value)
 
 
 @pytest.mark.parametrize(
     'value',
-    [10**400, __import__('fractions').Fraction(1, 10**400)],
+    [10**400, Fraction(1, 10**400)],
     ids=['int-1e400', 'fraction-1e-400'],
 )
 def test_bc5_refuses_a_real_value_that_is_not_a_finite_positive_float(value):
@@ -421,12 +440,10 @@ def test_bc5_refuses_a_real_value_that_is_not_a_finite_positive_float(value):
 def test_a_fraction_surface_temperature_is_inverted_once():
     """A non-dyadic Fraction compares unequal to its float; the surface entropy is still
     inverted once at setup and not again on each right-hand side."""
-    from fractions import Fraction
-
     calls = []
     s = _solver(Fraction(16001, 10))
     orig = s._invert_surface_temperature
-    s._invert_surface_temperature = lambda bc: calls.append(1) or orig(bc)
+    s._invert_surface_temperature = lambda t_surf: calls.append(1) or orig(t_surf)
     for _ in range(5):
         _rhs(s)
     assert calls == []
@@ -436,8 +453,6 @@ def test_a_fraction_surface_temperature_is_inverted_once():
 def test_bc5_takes_a_fraction_as_a_surface_temperature():
     """Any real number type is a valid surface temperature; a Fraction gives the same node
     temperature as the float, not a TypeError from the finiteness test."""
-    from fractions import Fraction
-
     s = _solver(Fraction(1600))
     _rhs(s)
     assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
