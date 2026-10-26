@@ -2040,7 +2040,8 @@ class EntropySolver:
         return self.state._surface_temperature_bc
 
     def _refresh_surface_temperature(self) -> None:
-        """Invert the BC 5 surface entropy at setup and whenever ``outer_boundary_value`` changed."""
+        """Invert the BC 5 surface entropy at setup and after a change of
+        ``outer_boundary_value``."""
         bc = self.evaluator.boundary_conditions._settings
         current = self.state._surface_temperature_bc
         if current is None or bc.outer_boundary_value != current[1]:
@@ -2100,12 +2101,11 @@ class EntropySolver:
 
     def _surface_entropy_on_evaluator(self, p_surf: float, t_surf: float) -> float:
         """Entropy [J/kg/K] where the basic-node phase evaluator, with its property smoothing,
-        gives ``t_surf`` at ``p_surf``: a Brent search in a bracket around the table inversion
-        that doubles from 20 J/kg/K up to the table range. The evaluator gets its profile back."""
+        gives ``t_surf`` at ``p_surf``: a Brent search over the table entropy range. The
+        evaluator gets its profile back."""
         eos, pb = self.entropy_eos, self.state.phase_basic
-        s_min, s_max = eos.S_min, eos.S_max
-        saved = getattr(pb, 'entropy', None)
-        saved = None if saved is None else np.array(saved, dtype=float)
+        saved = pb.entropy  # np.array([]) before the first update; set_entropy rebinds it
+        width = getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0)
 
         def miss(s):
             pb.set_entropy(np.full_like(self._P_basic_flat, s))
@@ -2113,29 +2113,26 @@ class EntropySolver:
             return float(np.ravel(pb.temperature())[-1]) - t_surf
 
         try:
-            if not miss(s_min) <= 0.0 <= miss(s_max):
+            lo, hi = miss(eos.S_min), miss(eos.S_max)
+            if not lo <= 0.0 <= hi:
                 raise ValueError(
-                    f'outer_boundary_value = {t_surf} K lies outside the entropy tables at '
-                    f'the surface pressure {p_surf:.6g} Pa'
+                    f'outer_boundary_value = {t_surf} K lies outside the range of the phase '
+                    f'evaluator at the surface pressure {p_surf:.6g} Pa, {t_surf + lo:.6g} to '
+                    f'{t_surf + hi:.6g} K (matprop_smooth_width = {width})'
                 )
-            s0 = float(np.clip(eos.entropy_at_temperature(p_surf, t_surf), s_min, s_max))
-            width = 20.0
-            while True:
-                lo, hi = max(s0 - width, s_min), min(s0 + width, s_max)
-                if miss(lo) <= 0.0 <= miss(hi):
-                    break
-                width *= 2.0
-            s_surf = brentq(miss, lo, hi, xtol=1e-12, rtol=4 * np.finfo(float).eps)
+            s_surf = brentq(
+                miss, eos.S_min, eos.S_max, xtol=1e-12, rtol=4 * np.finfo(float).eps
+            )
             if not abs(miss(s_surf)) <= 1e-9 * t_surf:
                 raise ValueError(
                     f'the phase evaluator has no entropy for outer_boundary_value = {t_surf} K '
-                    f'at the surface pressure {p_surf:.6g} Pa'
+                    f'at the surface pressure {p_surf:.6g} Pa: the temperature jumps there '
+                    f'(matprop_smooth_width = {width})'
                 )
         finally:
-            if saved is not None:
-                pb.set_entropy(saved)
-                if saved.size == self._P_basic_flat.size:  # empty before the first update
-                    pb.update()
+            pb.set_entropy(saved)
+            if saved.size == self._P_basic_flat.size:
+                pb.update()
         return s_surf
 
     def reset(self) -> None:
