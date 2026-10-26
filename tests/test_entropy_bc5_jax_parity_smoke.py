@@ -212,12 +212,13 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
         (1400.0, 0.1),
         (1445.0, 0.1),
         (1825.0, 0.2),
+        (1500.0, 0.2),
     ],
 )
 def test_the_surface_node_holds_its_temperature_with_smoothed_properties(t_surf, smooth):
     """matprop_smooth_width blends the properties near the solidus (1439 K at the surface) and
-    the liquidus (1831 K), and moves the entropy of a given temperature by up to about 80 J/kg/K
-    at a width of 0.2; the surface entropy is found on the same evaluator, so the node sits at
+    the liquidus (1831 K), and moves the entropy of a given temperature by up to 65 J/kg/K
+    at a width of 0.2 (1500 K); the surface entropy is found on the same evaluator, so the node sits at
     the prescribed temperature."""
     s = _bc5_solver('quasi_steady', t_surf=t_surf, smooth=smooth)
     f = np.asarray(s.dSdt(0.0, np.asarray(s._S0, dtype=float))).ravel()
