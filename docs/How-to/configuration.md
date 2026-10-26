@@ -242,7 +242,7 @@ In the production PROTEUS path the per-phase keys are not consumed for material 
 
 ### `[phase_solid.rheology]`
 
-Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid boundary layer stress closure, and mixing-length convection scaling. See [`docs/Explanations/solid_state_convection.md`](../Explanations/solid_state_convection.md) for theory and derivations.
+Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid boundary layer stress closure, and mixing-length convection scaling. The optional saturating integral activation law couples `activation_energy`, `activation_volume`, and `activation_volume_decay_pressure` through $H(P) = E_a + V_0 P_\text{decay} (1 - \exp(-P / P_\text{decay}))$, requiring both volume parameters when $E_a$ is set. See [`docs/Explanations/solid_state_convection.md`](../Explanations/solid_state_convection.md) for theory and derivations.
 
 <!-- rheology-config-reference:start -->
 | Key | Type | Unit | Default | Range | Effect |
@@ -258,16 +258,16 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `yield_stress_mu` | `float` | -- | `0.6` | [0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
 | `yield_stress_max` | `float` | Pa | `500000000.0` | (0, inf) | Maximum ductile yield stress ceiling capping frictional strength at depth |
 | `stress_closure_mode` | `str` | -- | `"lid"` | `"lid"` \| `"local"` | Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress |
-| `interior_flux_fraction` | `float` | -- | `0.05` | [0.05, 0.5] | Convective heat flux fraction carried across interior boundary layer under lid |
+| `interior_flux_fraction` | `float` | -- | `0.05` | [0.05, 0.5] | Convective velocity onset threshold ($w_\text{conv}$) for stagnant lid boundary layer |
 | `lid_base_mode` | `str` | -- | `"rheological"` | `"rheological"` \| `"fixed"` | Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm |
 | `lid_base_temperature` | `float` | K | `1400.0` | (0, inf) | Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed" |
-| `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Viscosity contrast exponent in rheological stagnant-lid thickness scaling |
+| `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
 | `lid_mask_width_cells` | `float` | cells | `1.0` | (0, inf) | Smoothing transition width at stagnant-lid base in cell units |
-| `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Critical melt fraction transition width for solid-liquid viscosity reduction |
+| `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
 | `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
 | `c_theta` | `float` | -- | `0.15` | [0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta |
-| `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) \| `null` | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
+| `activation_energy` | `float \| None` | J/mol | `null` | [0, inf) \| `null` | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
 | `activation_volume` | `float` | m³/mol | `0.0` | [0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
 | `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |
 <!-- rheology-config-reference:end -->

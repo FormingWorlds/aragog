@@ -72,7 +72,7 @@ RANGES: dict[str, str] = {
     'mlt_bottom_slope': '(0, 1]',
     's_top_inf': '(0, 1]',
     'c_theta': '[0, inf)',
-    'activation_energy': '(0, inf) \\| `null`',
+    'activation_energy': '[0, inf) \\| `null`',
     'activation_volume': '[0, inf)',
     'activation_volume_decay_pressure': '(0, inf]',
 }
@@ -89,12 +89,12 @@ EFFECTS: dict[str, str] = {
     'yield_stress_mu': 'Friction coefficient in Byerlee brittle frictional yielding criterion',
     'yield_stress_max': 'Maximum ductile yield stress ceiling capping frictional strength at depth',
     'stress_closure_mode': 'Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress',
-    'interior_flux_fraction': 'Convective heat flux fraction carried across interior boundary layer under lid',
+    'interior_flux_fraction': 'Convective velocity onset threshold ($w_\\text{conv}$) for stagnant lid boundary layer',
     'lid_base_mode': 'Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm',
     'lid_base_temperature': 'Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed"',
-    'lid_contrast_coeff': 'Viscosity contrast exponent in rheological stagnant-lid thickness scaling',
+    'lid_contrast_coeff': 'Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\\text{lid,iso} = T_i - c \\, \\Delta T_\\text{rh}$',
     'lid_mask_width_cells': 'Smoothing transition width at stagnant-lid base in cell units',
-    'phi_visc_single': 'Critical melt fraction transition width for solid-liquid viscosity reduction',
+    'phi_visc_single': 'Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`)',
     'mlt_bottom_slope': 'Mixing-length boundary slope factor at core-mantle boundary (bottom boundary)',
     's_top_inf': 'Asymptotic top mixing-length slope at infinite viscosity contrast',
     'c_theta': 'Sensitivity of top mixing-length slope to rheological temperature contrast scale theta',
@@ -176,7 +176,7 @@ def update_doc(path: Path, write: bool = False, check: bool = False) -> int:
         print(f'Error: Markers not found in {path}', file=sys.stderr)
         return 1
 
-    new_content = _SECTION_PATTERN.sub(block, content)
+    new_content = _SECTION_PATTERN.sub(lambda _: block, content)
 
     if check:
         if not check_table_fields(content):
