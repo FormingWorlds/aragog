@@ -131,3 +131,19 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
     assert float(np.ravel(st_._jcond)[-1]) == pytest.approx(-k_surf * dtdr, rel=1e-10)
     dtdr_ad = float(np.ravel(st_.phase_basic.dTdPs())[-1]) * float(st_._dP_dr_basic[-1])
     assert abs(dtdr_ad / dtdr) > 0.01
+
+
+@pytest.mark.parametrize('half', [0.0, -5.0, float('nan')])
+def test_boundary_params_refuse_bc5_without_a_half_cell(half):
+    """BoundaryParams of type 5 needs the positive half cell of the solver; the default 0 would
+    divide the surface gradient by zero inside the JAX right-hand side."""
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import BoundaryParams
+
+    kw = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
+    kw.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
+    with pytest.raises(ValueError, match='surf_dr_half'):
+        BoundaryParams(
+            outer_bc_type=5, outer_bc_value=1500.0, S_surf=2000.0, surf_dr_half=half, **kw
+        )
+    assert float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **kw).surf_dr_half) == 0.0
