@@ -567,7 +567,7 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
        8.1e-5 to 1.3e-3 across all 100 cooling states while preserving NumPy-vs-JAX parity
        to <= 1e-14."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    parity_block = data['a2_2_rhs_parity_and_activity']
+    parity_block = data['rhs_parity_and_activity']
     var_rec = parity_block['abe_solid_kappah_floor_0']
     yld_rec = parity_block['abe_solid_yield_active']
     def_rec = parity_block['abe_solid_default']

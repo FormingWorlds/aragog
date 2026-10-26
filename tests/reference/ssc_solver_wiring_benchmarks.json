@@ -16,7 +16,7 @@
       "thermal_exp_solid.dat": "25d7694474bca8f893c9ff604c097a29"
     }
   },
-  "a2_2_rhs_parity_and_activity": {
+  "rhs_parity_and_activity": {
     "abe_solid_kappah_floor_0": {
       "case_name": "abe_solid_kappah_floor_0",
       "rationale": "Active-solid Arrhenius state set on the CI SPIDER EOS tables: s_init=2500 J/kg/K, kappah_floor=0, viscosity_solid=1e18 Pa s, yield_stress_c=1e7 Pa. Exercises Arrhenius homologous strengthening across all 100 states while F_conv < 0.5 F_tot in Pass 1 so has_lid=False and n_nodes(eta_eff != eta_diff) = 0.",
@@ -4560,7 +4560,7 @@
       }
     }
   },
-  "a2_4_rhs_wall_time": {
+  "rhs_wall_time": {
     "modes": {
       "off": {
         "n_eval": 1000,
@@ -4698,67 +4698,67 @@
     "six_row_call_count_table": [
       {
         "item": "EOS lookups (solidus temperature)",
-        "plan_a2_4_delta": 0,
+        "expected_call_delta": 0,
         "measured_numpy_delta": 0,
         "measured_jax_delta": 0,
         "measured_numpy_local_delta": 0,
         "measured_jax_local_delta": 0,
-        "difference_from_plan": 0,
+        "difference_from_expected": 0,
         "reason": "Solidus temperature T_sol(P) is cached on basic nodes during phase evaluation and reused without extra EOS table lookups."
       },
       {
         "item": "compute_arrhenius_viscosity",
-        "plan_a2_4_delta": 2,
+        "expected_call_delta": 2,
         "measured_numpy_delta": 2,
         "measured_jax_delta": 2,
         "measured_numpy_local_delta": 1,
         "measured_jax_local_delta": 1,
-        "difference_from_plan": 0,
+        "difference_from_expected": 0,
         "reason": "In lid mode: 1 vector call on N_b basic nodes in phase evaluation plus 1 scalar call at (T_i, P_i) inside _compute_stagnant_lid_state_core (+2). In local mode: 1 vector call on N_b basic nodes (+1)."
       },
       {
         "item": "compute_yield_stress",
-        "plan_a2_4_delta": 2,
+        "expected_call_delta": 2,
         "measured_numpy_delta": 2,
         "measured_jax_delta": 2,
         "measured_numpy_local_delta": 1,
         "measured_jax_local_delta": 1,
-        "difference_from_plan": 0,
+        "difference_from_expected": 0,
         "reason": "In lid mode: 1 vector call on N_b basic nodes in phase evaluation plus 1 scalar call at P_lid_base inside _compute_stagnant_lid_state_core (+2). In local mode: 1 vector call on N_b basic nodes (+1)."
       },
       {
         "item": "compute_stagnant_lid_state",
-        "plan_a2_4_delta": 1,
+        "expected_call_delta": 1,
         "measured_numpy_delta": 1,
         "measured_jax_delta": 1,
         "measured_numpy_local_delta": 0,
         "measured_jax_local_delta": 0,
-        "difference_from_plan": 0,
+        "difference_from_expected": 0,
         "reason": "In lid mode: 1 call per RHS between Pass 1 and Pass 2 (+1). In local mode: only active when stress_closure_mode == \"lid\" (+0)."
       },
       {
         "item": "compute_effective_viscosity",
-        "plan_a2_4_delta": 1,
+        "expected_call_delta": 1,
         "measured_numpy_delta": 1,
         "measured_jax_delta": 1,
         "measured_numpy_local_delta": 1,
         "measured_jax_local_delta": 1,
-        "difference_from_plan": 0,
+        "difference_from_expected": 0,
         "reason": "1 vector call on N_b basic nodes in Pass 2 (+1 in both lid and local modes)."
       },
       {
         "item": "viscous_mixing_length_factor",
-        "plan_a2_4_delta": 1,
+        "expected_call_delta": 1,
         "measured_numpy_delta": 2,
         "measured_jax_delta": 2,
         "measured_numpy_local_delta": 2,
         "measured_jax_local_delta": 2,
-        "difference_from_plan": 1,
+        "difference_from_expected": 1,
         "reason": "Relative to rheology.enabled=False (0 calls), Pass 1 (theta=None) and Pass 2 (theta=lid_state[\"theta\"] in lid mode, None in local mode) each invoke _viscous_mixing_length_factor_core once, giving +2 calls per RHS in both NumPy and JAX."
       }
     ]
   },
-  "a2_3_perturbed_starts": {
+  "perturbed_starts": {
     "epsilons": [
       -2e-12,
       -1e-12,

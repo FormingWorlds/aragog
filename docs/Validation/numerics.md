@@ -140,7 +140,7 @@ When single-phase thermal expansivity $\alpha$ is harmonised between both paths 
 **How to read the plot.** The left panels show end-time radial temperature profiles for rheology on and off. The right panels show radial perturbation spreads $\Delta T(r)$. A pass means the solid curve (rheology on) remains below the dashed ceiling line and does not diverge from the baseline (rheology off).
 
 ??? info "Test details"
-    - Reference: 5 perturbed trajectories with `rheology.enabled = false` on the active-solid variant and default `cfg/abe_solid.toml` (`tests/reference/ssc_wp2_validation_benchmarks.json`).
+    - Reference: 5 perturbed trajectories with `rheology.enabled = false` on the active-solid variant and default `cfg/abe_solid.toml` (`tests/reference/ssc_solver_wiring_benchmarks.json`).
     - Tolerance: $\Delta T_\text{on}(r) \le \max\big(2\,\Delta T_\text{off}(r), \; 0.05\text{ K}\big)$ over the entire radial grid $r$, requiring that $\Delta T_\text{on}(r)$ does not exceed twice the rheology-off spread of the same 5 perturbed starts unless bounded by the $0.05\text{ K}$ absolute floor (measured ratio 5.090), with active-solid on-vs-off relative difference $\ge 10^{-4}$.
     - Test id: `tests/test_rheology_solver_wiring.py::test_perturbed_starts_spread`
     - Command: `pytest tests/test_rheology_solver_wiring.py -k test_perturbed_starts_spread` (add `--validation-plots` to write the plot pair)
@@ -160,7 +160,7 @@ When single-phase thermal expansivity $\alpha$ is harmonised between both paths 
 | `compute_effective_viscosity` | `+1` | `+1 / +1` | `+1 / +1` | `0` | `1` vector call on $N_b$ basic nodes in Pass 2 (`+1` in both `'lid'` and `'local'` modes). |
 | `viscous_mixing_length_factor` | `+2` | `+2 / +2` | `+2 / +2` | `0` | Relative to `rheology.enabled = false` (`0` calls), Pass 1 (`theta = None`) and Pass 2 (`theta = lid_state['theta']` in `'lid'` mode, `None` in `'local'` mode) each invoke `_viscous_mixing_length_factor_core` once, giving `+2` calls per RHS in both NumPy and JAX. |
 
-Over 1000 RHS evaluations on the 100-basic-node `cfg/abe_solid.toml` mesh (`tests/reference/ssc_wp2_validation_benchmarks.json`), the JIT-compiled JAX RHS wall-time ratio is $1.115\times$ in `'lid'` mode ($530.07\,\mu\text{s}$ vs $475.45\,\mu\text{s}$ per call) and $1.021\times$ in `'local'` mode ($485.22\,\mu\text{s}$ vs $475.45\,\mu\text{s}$ per call), both inside the $1.25\times$ ceiling; on the eager NumPy path, the two-pass RHS wall-time ratio is $1.575\times$ in `'lid'` mode ($2131.63\,\mu\text{s}$ vs $1353.80\,\mu\text{s}$) and $1.188\times$ in `'local'` mode ($1608.12\,\mu\text{s}$ vs $1353.80\,\mu\text{s}$).
+Over 1000 RHS evaluations on the 100-basic-node `cfg/abe_solid.toml` mesh (`tests/reference/ssc_solver_wiring_benchmarks.json`), the JIT-compiled JAX RHS wall-time ratio is $1.115\times$ in `'lid'` mode ($530.07\,\mu\text{s}$ vs $475.45\,\mu\text{s}$ per call) and $1.021\times$ in `'local'` mode ($485.22\,\mu\text{s}$ vs $475.45\,\mu\text{s}$ per call), both inside the $1.25\times$ ceiling; on the eager NumPy path, the two-pass RHS wall-time ratio is $1.575\times$ in `'lid'` mode ($2131.63\,\mu\text{s}$ vs $1353.80\,\mu\text{s}$) and $1.188\times$ in `'local'` mode ($1608.12\,\mu\text{s}$ vs $1353.80\,\mu\text{s}$).
 
 **How we know the right answer.** The expected call numbers come directly from code design: Pass 1 calculates unyielded convection and Pass 2 applies lid geometry and yielding. Wall times are measured directly against identical runs with rheology disabled.
 

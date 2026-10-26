@@ -1,45 +1,45 @@
 """Generate and verify reference benchmarks for solid rheology solver wiring.
 
 Generates or checks the validation benchmarks in
-``tests/reference/ssc_wp2_validation_benchmarks.json``.
+``tests/reference/ssc_solver_wiring_benchmarks.json``.
 
 Execution modes and per-block coverage:
 - ``--full`` (~65 s on 1 CPU core; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR`` and a
   clean git working tree whose ``HEAD`` is reachable from ``origin/*``): generates the
   entire benchmark JSON from scratch (works when the output file does not yet exist):
   1. ``canary``: records ``aragog_commit`` and ``table_md5`` for all 12 SPIDER P-S tables.
-  2. ``a2_2_rhs_parity_and_activity``: evaluates 100 boundary-layer cooling states and an
+  2. ``rhs_parity_and_activity``: evaluates 100 boundary-layer cooling states and an
      integrated cooling trajectory on ``abe_solid_kappah_floor_0``, ``abe_solid_yield_active``,
      and ``abe_solid_default`` using the JIT-compiled JAX right-hand side path that CVODE
      calls (``_make_jitted_rhs_and_jacobian`` and ``build_jax_rhs_and_jacobian`` in
      ``src/aragog/solver/cvode_jax.py``), records the eager JAX right-hand
      side path beside it, and computes ``flux_vs_rhs_diagnostic`` at the worst state/node.
-  3. ``a2_4_rhs_wall_time``: instruments NumPy and JAX right-hand side kernels to count
+  3. ``rhs_wall_time``: instruments NumPy and JAX right-hand side kernels to count
      per-evaluation function calls across ``off``, ``on_lid``, and ``on_local`` modes and
      measures the median wall time of 3 repeats of 1000 right-hand side evaluations per
      backend while recording ``load_average_1m`` and live ``numpy_vs_jax_max_rel_diff``.
-  4. ``a2_3_perturbed_starts``: runs the 1% cost probe and 5 round-off perturbed starts
+  4. ``perturbed_starts``: runs the 1% cost probe and 5 round-off perturbed starts
      (``eps in [-2e-12, -1e-12, 0, 1e-12, 2e-12]``) for ``off`` and ``on`` on
      ``abe_solid_default`` and ``abe_solid_kappah_floor_0``.
   Before writing the output JSON, ``main()`` runs ``verify_benchmarks`` on the generated
   payload and exits 1 if any check fails.
-- ``--a2-2-only``, ``--a2-4-only``, ``--a2-3-only``: regenerates the selected block(s) and
+- ``--parity-only``, ``--cost-only``, ``--starts-only``: regenerates the selected block(s) and
   their per-block ``table_md5`` in an existing JSON file, verifies via ``verify_benchmarks``,
   and writes the updated JSON.
 - ``--check`` (~2 s; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR``):
   1. Verifies ``canary.aragog_commit`` is reachable from ``origin/*`` and checks all 12
-     SPIDER P-S table MD5 hashes in ``canary`` and in every block of ``a2_2``, ``a2_4``,
-     and ``a2_3``.
+     SPIDER P-S table MD5 hashes in ``canary`` and in every block of ``rhs_parity_and_activity``, ``rhs_wall_time``,
+     and ``perturbed_starts``.
   2. Recomputes from the stored 100-state arrays every summary statistic in
-     ``a2_2_rhs_parity_and_activity`` (``max/median/min`` of ``rel_rhs_numpy_vs_jax``,
+     ``rhs_parity_and_activity`` (``max/median/min`` of ``rel_rhs_numpy_vs_jax``,
      ``rel_rhs_numpy_vs_jax_eager``, ``rel_flux_numpy_vs_jax``, harmonised-alpha parity,
      ``on_vs_off``, ``yield_on_vs_yield_off``, ``canary_jax_broken``,
      ``canary_jax_yield_broken``, node-count spans, ``delta_s_min <= delta_s_max``, and
      all ratios in ``flux_vs_rhs_diagnostic``).
-  3. Recomputes from ``a2_4_rhs_wall_time.modes`` every ``per_rhs_us``, every ratio in
+  3. Recomputes from ``rhs_wall_time.modes`` every ``per_rhs_us``, every ratio in
      ``ratios``, every delta in ``six_row_call_count_table``, and checks positive
      ``numpy_vs_jax_max_rel_diff <= 1e-6``.
-  4. Recomputes from ``a2_3_perturbed_starts`` ``runs`` all radial peak-to-peak spread
+  4. Recomputes from ``perturbed_starts`` ``runs`` all radial peak-to-peak spread
      profiles (``delta_T_basic_profile_K``, ``delta_T_stag_profile_K``,
      ``delta_S_final_profile``), all summary spread scalars (``spread_*_ptp``,
      ``spread_*_std``, ``mean_wall_time_s``, ``solve_wall_time_ratio_on_over_off``), and
@@ -74,9 +74,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.verification._ssc_helpers import entropy_eos_copy, entropy_eos_jax  # noqa: E402
 
-DEFAULT_BENCHMARK_PATH = (
-    REPO_ROOT / 'tests' / 'reference' / 'ssc_wp2_validation_benchmarks.json'
-)
+DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_solver_wiring_benchmarks.json'
 TABLE_FILES = (
     'adiabat_temp_grad_melt.dat',
     'adiabat_temp_grad_solid.dat',
@@ -94,9 +92,9 @@ TABLE_FILES = (
 
 EXPECTED_TOP_KEYS = (
     'canary',
-    'a2_2_rhs_parity_and_activity',
-    'a2_4_rhs_wall_time',
-    'a2_3_perturbed_starts',
+    'rhs_parity_and_activity',
+    'rhs_wall_time',
+    'perturbed_starts',
 )
 EXPECTED_PARITY_KEYS = (
     'abe_solid_kappah_floor_0',
@@ -351,24 +349,24 @@ def build_six_row_call_count_table(call_counts: dict[str, dict]) -> list[dict[st
         ),
     ]
     rows = []
-    for label, key, plan_delta, reason in spec:
+    for label, key, expected_delta, reason in spec:
         d_np_lid = np_lid[key] - np_off[key]
         rows.append(
             {
                 'item': label,
-                'plan_a2_4_delta': plan_delta,
+                'expected_call_delta': expected_delta,
                 'measured_numpy_delta': d_np_lid,
                 'measured_jax_delta': jax_lid[key] - jax_off[key],
                 'measured_numpy_local_delta': np_loc[key] - np_off[key],
                 'measured_jax_local_delta': jax_loc[key] - jax_off[key],
-                'difference_from_plan': d_np_lid - plan_delta,
+                'difference_from_expected': d_np_lid - expected_delta,
                 'reason': reason,
             }
         )
     return rows
 
 
-def run_a2_4_rhs_benchmarks(
+def run_rhs_cost_benchmarks(
     cfg_path: Path,
     eos_np: Any,
     eos_jax: Any,
@@ -465,7 +463,7 @@ def run_a2_4_rhs_benchmarks(
     }
 
 
-def _evaluate_100_trajectory_states_a2_2(
+def _evaluate_100_trajectory_states_parity(
     cfg_path: Path,
     eos_np: Any,
     eos_np_identity_alpha: Any,
@@ -920,15 +918,15 @@ def _diagnose_flux_vs_rhs(
     return diag
 
 
-def run_a2_2_benchmarks(
+def run_rhs_parity_benchmarks(
     cfg_path: Path, eos_dir: Path, table_hashes: dict[str, str]
 ) -> dict[str, Any]:
-    """Generate the full a2_2_rhs_parity_and_activity block on the specified EOS tables."""
+    """Generate the full rhs_parity_and_activity block on the specified EOS tables."""
     eos_np = entropy_eos_copy(eos_dir)
     eos_np_harm = entropy_eos_copy(eos_dir, identity_alpha=True)
     eos_jax = entropy_eos_jax(eos_dir)
 
-    a2_2_active_solid = _evaluate_100_trajectory_states_a2_2(
+    parity_active_solid = _evaluate_100_trajectory_states_parity(
         cfg_path,
         eos_np,
         eos_np_harm,
@@ -952,7 +950,7 @@ def run_a2_2_benchmarks(
         ),
         table_hashes=table_hashes,
     )
-    a2_2_yield_active = _evaluate_100_trajectory_states_a2_2(
+    parity_yield_active = _evaluate_100_trajectory_states_parity(
         cfg_path,
         eos_np,
         eos_np_harm,
@@ -980,7 +978,7 @@ def run_a2_2_benchmarks(
         ),
         table_hashes=table_hashes,
     )
-    a2_2_default = _evaluate_100_trajectory_states_a2_2(
+    parity_default = _evaluate_100_trajectory_states_parity(
         cfg_path,
         eos_np,
         eos_np_harm,
@@ -1003,12 +1001,12 @@ def run_a2_2_benchmarks(
         table_hashes=table_hashes,
     )
     flux_diag = _diagnose_flux_vs_rhs(
-        cfg_path, eos_np, eos_jax, a2_2_active_solid, table_hashes=table_hashes
+        cfg_path, eos_np, eos_jax, parity_active_solid, table_hashes=table_hashes
     )
     return {
-        'abe_solid_kappah_floor_0': a2_2_active_solid,
-        'abe_solid_yield_active': a2_2_yield_active,
-        'abe_solid_default': a2_2_default,
+        'abe_solid_kappah_floor_0': parity_active_solid,
+        'abe_solid_yield_active': parity_yield_active,
+        'abe_solid_default': parity_default,
         'flux_vs_rhs_diagnostic': flux_diag,
     }
 
@@ -1232,13 +1230,13 @@ def _run_perturbed_suite(
     return suite_out
 
 
-def run_a2_3_benchmarks(
+def run_perturbed_starts_benchmarks(
     cfg_path: Path, eos_dir: Path, table_hashes: dict[str, str]
 ) -> dict[str, Any]:
-    """Generate the full a2_3_perturbed_starts block on the specified EOS tables."""
+    """Generate the full perturbed_starts block on the specified EOS tables."""
     eos_np = entropy_eos_copy(eos_dir)
     epsilons = [-2.0e-12, -1.0e-12, 0.0, 1.0e-12, 2.0e-12]
-    a2_3_default = _run_perturbed_suite(
+    starts_default = _run_perturbed_suite(
         cfg_path,
         eos_np,
         s_init=2900.0,
@@ -1248,7 +1246,7 @@ def run_a2_3_benchmarks(
         epsilons=epsilons,
         table_hashes=table_hashes,
     )
-    a2_3_active_solid = _run_perturbed_suite(
+    starts_active_solid = _run_perturbed_suite(
         cfg_path,
         eos_np,
         s_init=2500.0,
@@ -1260,8 +1258,8 @@ def run_a2_3_benchmarks(
     )
     return {
         'epsilons': epsilons,
-        'abe_solid_default': a2_3_default,
-        'abe_solid_kappah_floor_0': a2_3_active_solid,
+        'abe_solid_default': starts_default,
+        'abe_solid_kappah_floor_0': starts_active_solid,
     }
 
 
@@ -1327,7 +1325,7 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     rel_diff_0_jit = float(np.max(np.abs(rhs_np - rhs_jax_jit)) / denom)
     rel_diff_0_eager = float(np.max(np.abs(rhs_np - rhs_jax_eager)) / denom)
 
-    kappah_rec = data['a2_2_rhs_parity_and_activity']['abe_solid_kappah_floor_0']
+    kappah_rec = data['rhs_parity_and_activity']['abe_solid_kappah_floor_0']
     stored_0_jit = float(kappah_rec['rel_rhs_numpy_vs_jax_per_state'][0])
     tol_0_jit = 1.0e-3 * max(stored_0_jit, 1.0e-16)
     if rel_diff_0_jit > 1.0e-6 or abs(rel_diff_0_jit - stored_0_jit) > tol_0_jit:
@@ -1429,7 +1427,7 @@ def _check_table_md5_dict(
 def _verify_parity_block(
     parity_block: dict[str, Any], actual_hashes: dict[str, str] | None
 ) -> list[str]:
-    """Recompute and verify all summary statistics and invariants in ``a2_2``."""
+    """Recompute and verify all summary statistics and invariants in ``rhs_parity_and_activity``."""
     failures: list[str] = []
     for req_key in EXPECTED_PARITY_KEYS:
         if not isinstance(parity_block.get(req_key), dict):
@@ -1670,7 +1668,7 @@ def _verify_parity_block(
 def _verify_cost_block(
     cost_block: dict[str, Any], actual_hashes: dict[str, str] | None
 ) -> list[str]:
-    """Recompute and verify all fields in ``a2_4_rhs_wall_time``."""
+    """Recompute and verify all fields in ``rhs_wall_time``."""
     failures: list[str] = []
     for req_key in EXPECTED_COST_KEYS:
         if req_key not in cost_block:
@@ -1793,12 +1791,12 @@ def _verify_cost_block(
             for idx, (row, exp_row) in enumerate(zip(table, recomp_table)):
                 for fld in (
                     'item',
-                    'plan_a2_4_delta',
+                    'expected_call_delta',
                     'measured_numpy_delta',
                     'measured_jax_delta',
                     'measured_numpy_local_delta',
                     'measured_jax_local_delta',
-                    'difference_from_plan',
+                    'difference_from_expected',
                 ):
                     if row.get(fld) != exp_row[fld]:
                         failures.append(
@@ -1810,7 +1808,7 @@ def _verify_cost_block(
 def _verify_starts_block(
     starts_block: dict[str, Any], actual_hashes: dict[str, str] | None
 ) -> list[str]:
-    """Recompute and verify all profiles, spread scalars, and activity metrics in ``a2_3``."""
+    """Recompute and verify all profiles, spread scalars, and activity metrics in ``perturbed_starts``."""
     failures: list[str] = []
     for req_key in EXPECTED_STARTS_KEYS:
         if req_key not in starts_block:
@@ -2028,21 +2026,21 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
                     failures, "canary['table_md5']", canary.get('table_md5'), actual_hashes
                 )
 
-    parity_block = data.get('a2_2_rhs_parity_and_activity')
+    parity_block = data.get('rhs_parity_and_activity')
     if not isinstance(parity_block, dict):
-        failures.append("Missing 'a2_2_rhs_parity_and_activity' section")
+        failures.append("Missing 'rhs_parity_and_activity' section")
     else:
         failures.extend(_verify_parity_block(parity_block, actual_hashes))
 
-    cost_block = data.get('a2_4_rhs_wall_time')
+    cost_block = data.get('rhs_wall_time')
     if not isinstance(cost_block, dict):
-        failures.append("Missing 'a2_4_rhs_wall_time' section")
+        failures.append("Missing 'rhs_wall_time' section")
     else:
         failures.extend(_verify_cost_block(cost_block, actual_hashes))
 
-    starts_block = data.get('a2_3_perturbed_starts')
+    starts_block = data.get('perturbed_starts')
     if not isinstance(starts_block, dict):
-        failures.append("Missing 'a2_3_perturbed_starts' section")
+        failures.append("Missing 'perturbed_starts' section")
     else:
         failures.extend(_verify_starts_block(starts_block, actual_hashes))
 
@@ -2066,9 +2064,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--full', action='store_true')
-    parser.add_argument('--a2-2-only', action='store_true')
-    parser.add_argument('--a2-4-only', action='store_true')
-    parser.add_argument('--a2-3-only', action='store_true')
+    parser.add_argument('--parity-only', action='store_true')
+    parser.add_argument('--cost-only', action='store_true')
+    parser.add_argument('--starts-only', action='store_true')
     return parser.parse_args(argv)
 
 
@@ -2117,41 +2115,43 @@ def main(argv: list[str] | None = None) -> int:
                 'aragog_commit': head_sha,
                 'table_md5': table_hashes,
             },
-            'a2_2_rhs_parity_and_activity': run_a2_2_benchmarks(
+            'rhs_parity_and_activity': run_rhs_parity_benchmarks(
                 cfg_path, args.eos_dir, table_hashes
             ),
-            'a2_4_rhs_wall_time': run_a2_4_rhs_benchmarks(
+            'rhs_wall_time': run_rhs_cost_benchmarks(
                 cfg_path,
                 entropy_eos_copy(args.eos_dir),
                 entropy_eos_jax(args.eos_dir),
                 table_hashes=table_hashes,
             ),
-            'a2_3_perturbed_starts': run_a2_3_benchmarks(cfg_path, args.eos_dir, table_hashes),
+            'perturbed_starts': run_perturbed_starts_benchmarks(
+                cfg_path, args.eos_dir, table_hashes
+            ),
         }
     else:
         data = json.loads(output_path.read_text(encoding='utf-8'))
         data.setdefault('canary', {})['table_md5'] = table_hashes
         data.setdefault('canary', {})['aragog_commit'] = head_sha
-        if args.a2_2_only:
-            data['a2_2_rhs_parity_and_activity'] = run_a2_2_benchmarks(
+        if args.parity_only:
+            data['rhs_parity_and_activity'] = run_rhs_parity_benchmarks(
                 cfg_path, args.eos_dir, table_hashes
             )
-        if args.a2_4_only:
-            data['a2_4_rhs_wall_time'] = run_a2_4_rhs_benchmarks(
+        if args.cost_only:
+            data['rhs_wall_time'] = run_rhs_cost_benchmarks(
                 cfg_path,
                 entropy_eos_copy(args.eos_dir),
                 entropy_eos_jax(args.eos_dir),
                 table_hashes=table_hashes,
             )
-        if args.a2_3_only:
-            data['a2_3_perturbed_starts'] = run_a2_3_benchmarks(
+        if args.starts_only:
+            data['perturbed_starts'] = run_perturbed_starts_benchmarks(
                 cfg_path, args.eos_dir, table_hashes
             )
-        for m_rec in data.get('a2_4_rhs_wall_time', {}).get('modes', {}).values():
+        for m_rec in data.get('rhs_wall_time', {}).get('modes', {}).values():
             if isinstance(m_rec, dict) and 'table_md5' not in m_rec:
                 m_rec['table_md5'] = table_hashes
         for s_key in ('abe_solid_default', 'abe_solid_kappah_floor_0'):
-            s_rec = data.get('a2_3_perturbed_starts', {}).get(s_key)
+            s_rec = data.get('perturbed_starts', {}).get(s_key)
             if isinstance(s_rec, dict) and 'table_md5' not in s_rec:
                 s_rec['table_md5'] = table_hashes
 
