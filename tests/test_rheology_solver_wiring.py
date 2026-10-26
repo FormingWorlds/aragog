@@ -1712,3 +1712,36 @@ def test_generator_input_fingerprint_guard(
     dirty_err = capsys.readouterr().err
     assert rc_dirty == 1
     assert 'uncommitted tracked changes' in dirty_err
+
+
+def test_generator_input_fingerprint_ignores_generated_and_untracked_files(
+    tmp_path: Path,
+) -> None:
+    """Verify an install-generated ``_version.py`` or an untracked file leaves the fingerprint unchanged."""
+    import subprocess as sp
+
+    from tools.verification._ssc_helpers import compute_generator_input_fingerprint
+
+    repo = tmp_path / 'repo'
+    (repo / 'src' / 'aragog').mkdir(parents=True)
+    (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 1\n', encoding='utf-8')
+    sp.run(['git', 'init', str(repo)], check=True, capture_output=True)
+    sp.run(['git', '-C', str(repo), 'config', 'user.email', 't@t.org'], check=True)
+    sp.run(['git', '-C', str(repo), 'config', 'user.name', 'T'], check=True)
+    sp.run(['git', '-C', str(repo), 'add', '.'], check=True)
+    sp.run(['git', '-C', str(repo), 'commit', '-m', 'init'], check=True, capture_output=True)
+    sha_clean, files_clean = compute_generator_input_fingerprint(
+        ('src/aragog',), repo_root=repo
+    )
+
+    (repo / 'src' / 'aragog' / '_version.py').write_text("version = '1.0'\n", encoding='utf-8')
+    (repo / 'src' / 'aragog' / 'scratch_probe.py').write_text('z = 3\n', encoding='utf-8')
+    sha_extra, files_extra = compute_generator_input_fingerprint(
+        ('src/aragog',), repo_root=repo
+    )
+    assert sha_extra == sha_clean
+    assert files_extra == files_clean
+
+    (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 2\n', encoding='utf-8')
+    sha_edit, _ = compute_generator_input_fingerprint(('src/aragog',), repo_root=repo)
+    assert sha_edit != sha_clean
