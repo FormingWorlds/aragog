@@ -2597,7 +2597,8 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
 
     The 13 unchanged points are pinned to merge-base c8f0b6cd literals at rel=1e-12.
     The 7 transition points (0 < w_weight < 1) are pinned to the independent evaluation
-    of the Section 1.1 geotherm endpoint-blended formulas produced by
+    of the 'Geotherm Endpoint Blending and Smooth Ramp Weighting' formulas in
+    docs/Explanations/solid_state_convection.md produced by
     tools/verification/evaluate_lid_transition_reference.py
     (command: python tools/verification/evaluate_lid_transition_reference.py)
     at rel=1e-12 (just above the measured kernel difference of <= 1e-15), with merge-base
@@ -2744,8 +2745,8 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
     }
 
-    # 7 transition points (0 < w_weight < 1) evaluated independently by
-    # tools/verification/evaluate_lid_transition_reference.py from Section 1.1 formulas:
+    # 7 transition points evaluated by tools/verification/evaluate_lid_transition_reference.py
+    # from 'Geotherm Endpoint Blending and Smooth Ramp Weighting' in solid_state_convection.md:
     transition_derivation_literals = {
         (0.05, 6.00843e-5): (
             2.3060133389415036e20,
@@ -4295,3 +4296,105 @@ def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
         return fig
 
     validation_plot(figure, 'ssc_wp4_activation_law_limits')
+
+
+@pytest.mark.unit
+def test_check_rheology_invariants_and_energy_loop_nan_entropy_time_yr() -> None:
+    """Verify _check_rheology_invariants and _compute_step_energy_integrals report step and time_yr on NaN entropy."""
+    from types import SimpleNamespace
+
+    from aragog import CFG_DATA
+    from aragog.config import Config
+    from aragog.solver.entropy_solver import EntropySolver
+
+    class _StubEOS:
+        S_min = 400.0
+        S_max = 4500.0
+
+        def _check_entropy_range(
+            self, S: np.ndarray, S_min: float, S_max: float, label: str
+        ) -> None:
+            if not np.all((S >= S_min) & (S <= S_max)):
+                raise RuntimeError(f'Entropy out of EOS table domain at 1 nodes in {label}.')
+
+        def density(self, P: np.ndarray, S: np.ndarray) -> np.ndarray:
+            self._check_entropy_range(S, self.S_min, self.S_max, 'density')
+            return np.full_like(np.asarray(S, dtype=float), 4000.0)
+
+    cfg = Config.from_file(CFG_DATA / 'abe_solid.toml')
+    cfg.mesh.number_of_nodes = 10
+    cfg.boundary_conditions.inner_boundary_condition = 1
+    cfg.boundary_conditions.core_bc = 'quasi_steady'
+    cfg.phase_mixed.const_properties = True
+    cfg.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    solver = EntropySolver(cfg)
+    solver.initialize()
+    stub_eos = _StubEOS()
+    solver.entropy_eos = stub_eos
+    solver.parameters.phase_mixed.const_properties = False
+    orig_update = solver.state.phase_staggered.update
+
+    def _update_checking_eos() -> None:
+        stub_eos._check_entropy_range(
+            solver.state.phase_staggered.entropy,
+            stub_eos.S_min,
+            stub_eos.S_max,
+            'entropy_phase (composite domain)',
+        )
+        orig_update()
+
+    solver.state.phase_staggered.update = _update_checking_eos
+
+    n_stag = solver._n_stag
+    s_ok = np.linspace(2600.0, 2200.0, n_stag)
+    s_nan = s_ok.copy()
+    s_nan[3] = np.nan
+    trace_ok = np.column_stack([s_ok, s_ok])
+    trace_y = np.column_stack([s_ok, s_nan])
+    trace_t = np.array([0.0, 42.0])
+
+    solver._check_rheology_invariants(trace_y=trace_ok, trace_t=trace_t)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r'rheology invariant violated at step 1, t=4\.200000e\+01 yr, node 3: entropy S=nan',
+    ):
+        solver._check_rheology_invariants(trace_y=trace_y, trace_t=trace_t)
+
+    solver._cvode_step_powers_batch = None
+    solver._solution = SimpleNamespace(
+        t=trace_t,
+        y=trace_y,
+        status=0,
+        message='ok',
+        get=lambda key, default=None: (trace_t, trace_y) if key == 'energy_trace' else default,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match=r'rheology invariant violated at step 1, t=4\.200000e\+01 yr, node 3: entropy S=nan',
+    ):
+        solver._compute_step_energy_integrals()
+
+    trace_t_single = np.array([15.0])
+    trace_y_single = s_nan.reshape(-1, 1)
+    solver._solution = SimpleNamespace(
+        t=trace_t_single,
+        y=trace_y_single,
+        status=0,
+        message='ok',
+        get=lambda key, default=None: default,
+    )
+    with pytest.raises(
+        RuntimeError,
+        match=r'rheology invariant violated at step 0, t=1\.500000e\+01 yr, node 3: entropy S=nan',
+    ):
+        solver._compute_step_energy_integrals()
+
+    s_oob = s_ok.copy()
+    s_oob[2] = 100.0
+    trace_oob = np.column_stack([s_ok, s_oob])
+    with pytest.raises(
+        RuntimeError,
+        match=r'rheology invariant violated at step 1, t=4\.200000e\+01 yr, node 2: entropy S=100\.000000',
+    ):
+        solver._check_rheology_invariants(trace_y=trace_oob, trace_t=trace_t)

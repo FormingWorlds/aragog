@@ -138,8 +138,6 @@ The secant-form parameter sets of Tackley et al. (2013, Table 2) for $E_0 + P V_
 
 ### Viscosity-Contrast-Dependent Mixing-Length Slope
 
-#### How well does the contrast-dependent mixing-length slope match published 2-D convection benchmark grids?
-
 In the viscous mixing-length formulation, the effective mixing length $l_v(r)$ near the mantle boundaries is given by:
 
 $$
@@ -152,22 +150,15 @@ $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
 $$
 
-with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, default $0.22$). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
+with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, default $0.22$). Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
 
-Viscous mixing-length theory uses an exponential slope $s_\text{top}(\theta)$ to model how stagnant lids thin convective boundary layers.
-We calibrate parameters $(s_{\text{top},\infty}, c_\theta)$ against 36 published numerical benchmark cases in planar and spherical geometry.
-The calibration grid evaluates 144 parameter pairs to determine the minimum worst-case error.
+#### How well does the contrast-dependent mixing-length slope match published 2-D convection benchmark grids?
 
-The benchmark evaluation covers:
-- 144 parameter pairs on a two-dimensional grid of $(s_{\text{top},\infty}, c_\theta)$.
-- 36 total benchmark cases: 12 planar internally heated Newtonian rows from Korenaga (2009, Table 1, benchmark B1), and 24 spherical internally heated rows from Reese et al. (2005) as tabulated by Deschamps and Vilella (2021, Table 1, benchmark B3).
-- The evaluation tests cases against a $0.03$ absolute interior-temperature tolerance, a $15\%$ top-heat-flow tolerance, and a $20\%$ lid-thickness tolerance.
-- These tolerances give 84 normalised residuals in total across the benchmark cases.
-- The joint minimax residual achieves $\min \max |r| = 2.1909$ at $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$.
-- In planar benchmark B1, all 12 rows lie within the $10\%$ tolerance ($\max |r| = 0.9839$ on row `E340`, with mean squared normalised residual $J_\text{B1} = 0.8923$).
-- In spherical benchmark B3, the closure misses reference values by up to $\max |r| = 2.1909$ times the tolerance ($r_\Phi = -2.1909$ on row `f70_1e7_H2`, $r_{T_m} = -1.9421$ on row `f80_H2`, and $r_d = -1.3195$ on row `f80_10_1e6_H10`).
-- Across benchmark B3, 34 of 72 residuals and 24 of 24 rows have at least one normalised residual above 1, with $J_\text{B3} = 1.0570$ and combined $J_\text{mean,sq} = 1.0334$.
-- Aragog retains the default calibration $(0.22, 0.15)$ because $(0.25, 0.25)$ offers only marginal improvement in spherical geometry.
+Viscous mixing-length theory uses the exponential slope $s_\text{top}(\theta)$ to represent how a cold, high-viscosity surface lid reduces the convective mixing length near the upper boundary. In `SolidRheologyParams`, `compute_mlt_top_slope`, and `tests/test_mlt_calibration.py`, the default parameters $s_{\text{top},\infty} = 0.22$ (`s_top_inf`) and $c_\theta = 0.15$ (`c_theta`) are checked against the exact isoviscous limit $s_\text{top}(\theta \le 0) = 1.0$, the intermediate evaluation $s_\text{top}(15) = 0.22 + 0.78 \exp(-2.25) = 0.3022113951582542$, and the asymptotic stagnant-lid limit $s_\text{top}(\theta \to \infty) \to 0.22$ (entered in the strong stagnant-lid regime $\theta \gg 8$).
+
+The default pair $(s_{\text{top},\infty}, c_\theta) = (0.22, 0.15)$ was selected by comparing the 1-D mixing-length closure against published 2-D stagnant-lid convection tables across planar internally heated Newtonian cases from Korenaga (2009, Table 1, evaluated against a $10\%$ relative tolerance on Nusselt number $\mathrm{Nu}$) and spherical cases from Reese et al. (2005) and Deschamps and Vilella (2021, Tables 1-2, evaluated against Aragog calibration tolerances of $0.03$ absolute on interior temperature $T_m$, $15\%$ relative on top heat flow $\Phi_\text{top}$, and $20\%$ relative on lid thickness $d_\text{lid}$).
+
+**Known limit.** While the 1-D mixing-length closure with $(s_{\text{top},\infty}, c_\theta) = (0.22, 0.15)$ reproduces the planar internally heated scaling of Korenaga (2009, Table 1) within the $10\%$ $\mathrm{Nu}$ tolerance, a single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spherical-curvature geometry factor does not simultaneously satisfy the spherical calibration tolerances on $T_m$ ($0.03$ absolute), $\Phi_\text{top}$ ($15\%$), and $d_\text{lid}$ ($20\%$) across the spherical cases of Reese et al. (2005) and Deschamps and Vilella (2021, Tables 1-2).
 
 ## 2. Plastic Yielding Criterion
 
@@ -231,6 +222,8 @@ The shallowest convection-dominated node from the surface is isolated by the sur
 $$
 T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
 $$
+
+#### Geotherm Endpoint Blending and Smooth Ramp Weighting
 
 When $w_\text{weight} < 1$ on a strictly decreasing radial temperature profile ($T_{k+1} < T_k - 10^{-12}\text{ K}$), $P_{T_i}$ and $r_i$ are evaluated along the monotone geotherm $(T(r), P(r), r)$ at $T_i$ with endpoint-consistent correction $w_\text{eff} = \mathrm{clip}((T_0 - T_i) / (T_0 - T_1), 0, 1)$ between $(T_0, P_0, r_0) = (T_2, P_2, r_2)$ and $(T_1, P_1, r_1) = \sum_k \tilde{W}_{T_i, k} (T_k, P_k, r_k)$, and $\Delta T_\text{rh}$, $\theta$, and $\log_{10}\eta_\text{arr}$ blend with $w_\text{eff}$ between $(T_0, P_0)$ and $(T_1, P_1)$ so the sub-threshold state stays on the geotherm rather than linearly blending off it (`P_T_i` and `r_i` are diagnostics that no solver term reads, evaluated on the geotherm for a monotone $T$ profile and as the $\tilde{W}_k$ mean otherwise, and the two can differ by tens of GPa across the monotonicity switch). Because the selector places $T_i$ at the node under the lid, its accuracy is bounded by the radial mesh resolution across the thermal boundary layer: when the lid is one cell thick (for example on a 100-node post-magma-ocean profile where $T_i = 1423.0\text{ K}$ against $1788.6\text{ K}$ one node deeper), $T_i$ lies in the rheological sublayer.
 
