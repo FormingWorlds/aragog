@@ -55,23 +55,90 @@ The table below reports the solidus temperature $T_\text{sol}(P) = 0.8\,T_\text{
 
 ### Optional Saturating Integral Activation Law
 
-When `activation_energy` ($E_a$, default `None`) is set on `SolidRheologyParams`, `compute_arrhenius_enthalpy`, or `compute_arrhenius_viscosity`, activation enthalpy is evaluated from the saturating integral law rather than the homologous law:
+#### How does activation enthalpy change with pressure in deep planetary mantles, and when does it reach a constant ceiling?
+
+In shallow mantles, pressure increases the energy that mantle rock requires to deform by solid-state diffusion creep.
+At high pressures inside massive rocky planets, mineral physics experiments show that this pressure sensitivity decreases.
+Aragog provides an optional saturating integral law that smoothly caps the activation enthalpy at deep mantle pressures.
+
+A user activates this formulation when they set `activation_energy` ($E_a$) on `SolidRheologyParams`, `compute_arrhenius_enthalpy`, or `compute_arrhenius_viscosity`.
+When set, the solver evaluates activation enthalpy from pressure rather than the homologous melting curve.
+
+Here:
+- $P$ is the hydrostatic pressure in pascals ($\text{Pa}$).
+- $H(P)$ is the activation enthalpy in joules per mole ($\text{J mol}^{-1}$).
+- $E_a$ is the zero-pressure activation energy in joules per mole ($\text{J mol}^{-1}$, code parameter `activation_energy`).
+- $V_0$ is the zero-pressure activation volume in cubic metres per mole ($\text{m}^3\text{ mol}^{-1}$, code parameter `activation_volume`, default $0.0\text{ m}^3\text{ mol}^{-1}$).
+- $P_\text{decay}$ is the decay pressure in pascals ($\text{Pa}$, code parameter `activation_volume_decay_pressure`, default $+\infty$).
+- $p'$ is the dummy pressure integration variable in pascals ($\text{Pa}$).
+
+The integral activation law integrates an exponential decay of activation volume over pressure:
 
 $$
 H(P) = E_a + \int_0^P V_0 \exp\left(-\frac{p'}{P_\text{decay}}\right) dp' = E_a + V_0 P_\text{decay} \left(1 - \exp\left(-\frac{P}{P_\text{decay}}\right)\right)
 $$
 
-with zero-pressure activation energy $E_a \ge 0$ (`activation_energy`, strictly positive when `enabled = True`), zero-pressure activation volume $V_0 \ge 0$ (`activation_volume`, default $0.0\text{ m}^3\text{ mol}^{-1}$), and decay pressure $P_\text{decay} > 0$ (`activation_volume_decay_pressure`, default $+\infty$). For $P / P_\text{decay} < 10^{-8}$, the effective pressure term is evaluated via the second-order Taylor series $P (1 - \tfrac{1}{2} P / P_\text{decay})$ so that $P_\text{decay} = +\infty$ recovers the linear activation-volume law $H(P) = E_a + V_0 P$ (Karato and Wu, 1993; Armann and Tackley, 2012) to `0` ulp and $V_0 = 0$ recovers the isobaric Arrhenius law $H(P) = E_a$ (Korenaga, 2009, Table 1) to `0` ulp without floating-point cancellation. The local differential activation volume $\partial H / \partial P = V_0 \exp(-P / P_\text{decay}) \ge 0$ remains non-negative at all pressures, $H(P)$ saturates monotonically toward $E_a + V_0 P_\text{decay}$ as $P \to \infty$, and for finite $P_\text{decay} > 0$ the Lagrange remainder bounds the departure from the linear law by $0 \le \mathrm{d}H(P) = H_\text{lin}(P) - H(P) \le \text{Bound}(P) = V_0 P^2 / (2 P_\text{decay})$ (at $E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 6.0\text{ cm}^3\text{ mol}^{-1}$, $P_\text{decay} = 200\text{ GPa}$, and $P = 135\text{ GPa}$, $H_\text{lin} = 1110.0\text{ kJ mol}^{-1}$ and $H = 889.012\text{ kJ mol}^{-1}$, giving a difference of $220.988\text{ kJ mol}^{-1} \le 273.375\text{ kJ mol}^{-1}$; for the Tackley et al. 2013 Table 2 upper-mantle parameters $E_0 = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, $P_\text{decay} = \infty$, $H(135\text{ GPa}) = 975.0\text{ kJ mol}^{-1}$). In the validation figure below, panel (a) shows $H(P)$ over $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$ ($P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$, compared with the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit), and panel (b) evaluates $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange upper bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$ at Earth core-mantle boundary pressure $P = 135\text{ GPa}$ ($E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, where $V_0 P^2 / 2 = 45562.5\text{ kJ mol}^{-1}\text{ GPa}$) over $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$; note that the finite-$P_\text{decay}$ secant-form parameter sets of Tackley et al. (2013, Table 2) for $E_0 + P V_0 \exp(-P / P_\text{decay})$ are not parameter sets of the integral law.
+At low pressures where the pressure ratio satisfies $P / P_\text{decay} < 10^{-8}$, Aragog computes the effective pressure term with a second-order Taylor series:
+
+$$
+P \left(1 - \frac{P}{2 P_\text{decay}}\right)
+$$
+
+This Taylor series avoids catastrophic loss of precision from floating-point subtraction in floating-point arithmetic.
+
+The formulation satisfies five physical and mathematical limits:
+
+- When $P_\text{decay} = +\infty$, the formula recovers the linear activation volume law $H(P) = E_a + V_0 P$ (Karato and Wu, 1993; Armann and Tackley, 2012) to 0 units in the last place (ulp).
+- When $V_0 = 0$, the formula recovers the isobaric Arrhenius law $H(P) = E_a$ (Korenaga, 2009, Table 1) to 0 ulp.
+- The local differential activation volume $\partial H / \partial P = V_0 \exp(-P / P_\text{decay}) \ge 0$ is non-negative at all pressures.
+- As pressure approaches infinity ($P \to \infty$), $H(P)$ increases monotonically toward the constant ceiling $E_a + V_0 P_\text{decay}$.
+- For finite positive decay pressure $P_\text{decay} > 0$, the Lagrange remainder theorem bounds the departure from the linear law:
+
+$$
+0 \le \mathrm{d}H(P) = H_\text{lin}(P) - H(P) \le \text{Bound}(P) = \frac{V_0 P^2}{2 P_\text{decay}}
+$$
+
+#### Worked examples with real numbers
+
+Consider the core-mantle boundary (CMB) of Earth at pressure $P = 135\text{ GPa}$.
+Assume $E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 6.0\text{ cm}^3\text{ mol}^{-1}$, and $P_\text{decay} = 200\text{ GPa}$.
+Under these parameters:
+- The linear activation volume law gives $H_\text{lin} = 1110.0\text{ kJ mol}^{-1}$.
+- The saturating integral law gives $H = 889.012\text{ kJ mol}^{-1}$.
+- The reduction in activation enthalpy is $\mathrm{d}H = 220.988\text{ kJ mol}^{-1}$.
+- This reduction satisfies the theoretical Lagrange remainder bound $\text{Bound} = 273.375\text{ kJ mol}^{-1}$.
+
+For comparison, the upper-mantle parameter set from Tackley et al. (2013, Table 2) specifies $E_0 = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, and $P_\text{decay} = \infty$.
+At Earth core-mantle boundary pressure $P = 135\text{ GPa}$, that linear reference gives $H(135\text{ GPa}) = 975.0\text{ kJ mol}^{-1}$.
 
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_wp4_activation_law_limits.svg#only-light){ width="80%" }
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_wp4_activation_law_limits_dark.svg#only-dark){ width="80%" }
 
-- Reference: Linear activation-volume law $H_\text{lin}(P) = E_a + V_0 P$ of Karato and Wu (1993, p. 772, eq. 1), Armann and Tackley (2012, p. 4, eq. 1: $E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 6.0\text{ cm}^3\text{ mol}^{-1}$), and Tackley et al. (2013, p. 4, eqs. 2-3; p. 19, Table 2 upper-mantle row: $E_0 = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, $p_\text{decay} = \infty$), and isobaric limit $H(P) = E_a$ at $V_0 = 0$.
-- Tolerance: Bitwise equality (`0.0` relative, `0` ulp) for both `compute_arrhenius_enthalpy` and `compute_arrhenius_viscosity` at $P_\text{decay} = \infty$ and at $V_0 = 0$ over $P \in [0, 1000]\text{ GPa}$ in both NumPy and JAX; `jax.grad` derivative $\partial H / \partial P = V_0 \exp(-P / P_\text{decay})$ to $10^{-12}$ relative; for finite $P_\text{decay} > 0$, analytical Lagrange remainder bound $0 \le \mathrm{d}H(P) = H_\text{lin}(P) - H(P) \le \text{Bound}(P) = V_0 P^2 / (2 P_\text{decay})$ (evaluated over $P \in [0, 1000]\text{ GPa}$ in panel a and at $P = 135\text{ GPa}$ over $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$ in panel b).
-- Test id: `tests/test_rheology_verification.py::test_saturating_activation_enthalpy_limits`
-- Command: `pytest tests/test_rheology_verification.py -k test_saturating_activation_enthalpy_limits` (add `--validation-plots` to write the plot pair)
+**How to read the plot.**
+Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$.
+It compares curves for $P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$ against the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit.
+Panel (b) plots the enthalpy difference $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$.
+The calculation evaluates Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over decay pressures $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$ ($E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, where $V_0 P^2 / 2 = 45562.5\text{ kJ mol}^{-1}\text{ GPa}$).
+The secant-form parameter sets of Tackley et al. (2013, Table 2) for $E_0 + P V_0 \exp(-P / P_\text{decay})$ are not valid parameter sets of this integral law.
+
+#### Bounds and parameter validation
+
+- `activation_energy` ($E_a$): must be non-negative ($E_a \ge 0\text{ J mol}^{-1}$); configuration validation raises `ValueError` if negative, and requires $E_a > 0$ when `rheology.enabled = True`.
+- `activation_volume` ($V_0$): must be non-negative ($V_0 \ge 0\text{ m}^3\text{ mol}^{-1}$, default $0.0\text{ m}^3\text{ mol}^{-1}$); configuration validation raises `ValueError` if negative.
+- `activation_volume_decay_pressure` ($P_\text{decay}$): must be strictly positive ($P_\text{decay} > 0\text{ Pa}$, default $+\infty$); configuration validation raises `ValueError` if zero or negative.
+- Low-pressure series: When $P / P_\text{decay} < 10^{-8}$, the code switches to the second-order Taylor series.
+
+**Where this is checked.** This activation law is checked in `tests/test_rheology_verification.py::test_saturating_activation_enthalpy_limits`.
+
+??? info "Test details"
+    - Reference: Linear activation-volume law $H_\text{lin}(P) = E_a + V_0 P$ of Karato and Wu (1993, p. 772, eq. 1), Armann and Tackley (2012, p. 4, eq. 1: $E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 6.0\text{ cm}^3\text{ mol}^{-1}$), and Tackley et al. (2013, p. 4, eqs. 2-3; p. 19, Table 2 upper-mantle row: $E_0 = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, $p_\text{decay} = \infty$), and isobaric limit $H(P) = E_a$ at $V_0 = 0$.
+    - Tolerance: Bitwise equality (`0.0` relative, `0` ulp) for both `compute_arrhenius_enthalpy` and `compute_arrhenius_viscosity` at $P_\text{decay} = \infty$ and at $V_0 = 0$ over $P \in [0, 1000]\text{ GPa}$ in both NumPy and JAX; `jax.grad` derivative $\partial H / \partial P = V_0 \exp(-P / P_\text{decay})$ to $10^{-12}$ relative; for finite $P_\text{decay} > 0$, analytical Lagrange remainder bound $0 \le \mathrm{d}H(P) = H_\text{lin}(P) - H(P) \le \text{Bound}(P) = V_0 P^2 / (2 P_\text{decay})$ (evaluated over $P \in [0, 1000]\text{ GPa}$ in panel a and at $P = 135\text{ GPa}$ over $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$ in panel b).
+    - Test id: `tests/test_rheology_verification.py::test_saturating_activation_enthalpy_limits`
+    - Command: `pytest tests/test_rheology_verification.py -k test_saturating_activation_enthalpy_limits` (add `--validation-plots` to write the plot pair)
 
 ### Viscosity-Contrast-Dependent Mixing-Length Slope
+
+#### How well does the contrast-dependent mixing-length slope match published 2-D convection benchmark grids?
 
 In the viscous mixing-length formulation, the effective mixing length $l_v(r)$ near the mantle boundaries is given by:
 
@@ -87,7 +154,20 @@ $$
 
 with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, default $0.22$). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
 
-On the 144-point calibration grid over the 36 benchmark rows (the 12 planar internally heated Newtonian rows of Korenaga, 2009, Table 1, evaluated against the $10\%$ Nusselt-number tolerance, and the 24 energy-consistent spherical internally and mixed heated rows of Deschamps and Vilella, 2021, Table 1, evaluated against the $0.03$ absolute interior-temperature tolerance, $15\%$ top-heat-flow tolerance, and $20\%$ lid-thickness tolerance, giving 84 normalised residuals in total), the all-84 minimax calibration point is $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ (not set as the default; the `SolidRheologyParams` defaults $s_{\text{top},\infty} = 0.22$ and $c_\theta = 0.15$ remain unchanged). At $(0.25, 0.25)$, all $12$ of $12$ Korenaga (2009) B1 rows lie within the $10\%$ tolerance ($\max |r| = 0.9839$ on row `E340`, with mean squared normalised residual $J_{\text{B1}} = 0.8923$), whereas across the $24$ Deschamps and Vilella (2021) B3 rows the closure misses the reference values by up to $\max |r| = 2.1909$ times the tolerance ($r_\Phi = -2.1909$ on row `f70_1e7_H2`, with worst interior-temperature residual $r_{T_m} = -1.9421$ on row `f80_H2` and worst lid-thickness residual $r_d = -1.3195$ on row `f80_10_1e6_H10`; $34$ of $72$ B3 residuals and $24$ of $24$ B3 rows have at least one normalised residual above $1$, with $J_{\text{B3}} = 1.0570$ and combined $J_{\text{mean,sq}} = 1.0334$).
+Viscous mixing-length theory uses an exponential slope $s_\text{top}(\theta)$ to model how stagnant lids thin convective boundary layers.
+We calibrate parameters $(s_{\text{top},\infty}, c_\theta)$ against 36 published numerical benchmark cases in planar and spherical geometry.
+The calibration grid evaluates 144 parameter pairs to determine the minimum worst-case error.
+
+The benchmark evaluation covers:
+- 144 parameter pairs on a two-dimensional grid of $(s_{\text{top},\infty}, c_\theta)$.
+- 36 total benchmark cases: 12 planar internally heated Newtonian rows from Korenaga (2009, Table 1, benchmark B1), and 24 spherical internally heated rows from Reese et al. (2005) as tabulated by Deschamps and Vilella (2021, Table 1, benchmark B3).
+- The evaluation tests cases against a $0.03$ absolute interior-temperature tolerance, a $15\%$ top-heat-flow tolerance, and a $20\%$ lid-thickness tolerance.
+- These tolerances give 84 normalised residuals in total across the benchmark cases.
+- The joint minimax residual achieves $\min \max |r| = 2.1909$ at $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$.
+- In planar benchmark B1, all 12 rows lie within the $10\%$ tolerance ($\max |r| = 0.9839$ on row `E340`, with mean squared normalised residual $J_\text{B1} = 0.8923$).
+- In spherical benchmark B3, the closure misses reference values by up to $\max |r| = 2.1909$ times the tolerance ($r_\Phi = -2.1909$ on row `f70_1e7_H2`, $r_{T_m} = -1.9421$ on row `f80_H2`, and $r_d = -1.3195$ on row `f80_10_1e6_H10`).
+- Across benchmark B3, 34 of 72 residuals and 24 of 24 rows have at least one normalised residual above 1, with $J_\text{B3} = 1.0570$ and combined $J_\text{mean,sq} = 1.0334$.
+- Aragog retains the default calibration $(0.22, 0.15)$ because $(0.25, 0.25)$ offers only marginal improvement in spherical geometry.
 
 ## 2. Plastic Yielding Criterion
 
