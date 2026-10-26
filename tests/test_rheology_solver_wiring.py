@@ -806,13 +806,12 @@ def test_public_effective_viscosity_local_delegates_to_compute_strain_rate_local
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_perturbed_starts_spread(validation_plot) -> None:
-    """Five runs of abe_solid.toml from perturbed initial entropy profiles
-    S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
-    Delta T_on(r) <= max(2 * Delta T_off(r), 0.05 K) across the full radial profile
-    on both the active-solid variant (s_init=2500, kappah_floor=0, viscosity_solid=1e18)
-    and the default inert configuration (s_init=2900, kappah_floor=10, viscosity_solid=1e21)."""
+    """Verify stored-data consistency of five runs of abe_solid.toml from perturbed initial entropy profiles
+    S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr, checking that stored trajectories satisfy
+    Delta T_on(r) <= max(2 * Delta T_off(r), 0.05 K) on both the active-solid variant (s_init=2500,
+    kappah_floor=0, viscosity_solid=1e18) and the default inert configuration (s_init=2900, kappah_floor=10,
+    viscosity_solid=1e21) (asserts consistency of stored benchmark data, not live reference_pinned solver integration)."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     epsilons = data['a2_3_perturbed_starts']['epsilons']
     assert epsilons == [-2.0e-12, -1.0e-12, 0.0, 1.0e-12, 2.0e-12]
@@ -874,12 +873,12 @@ def test_perturbed_starts_spread(validation_plot) -> None:
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_rhs_call_counts_and_cost(validation_plot) -> None:
     """Enabling two-pass solid rheology adds 0 extra EOS solidus lookups,
     +2 Arrhenius viscosity calls, +2 yield stress calls, +1 stagnant-lid state call,
     +1 effective viscosity call, and +2 viscous MLT factor calls per RHS on both
-    NumPy and JAX, with JIT-compiled JAX per-RHS wall-time ratio <= 1.25."""
+    NumPy and JAX (measured live), while asserting stored-data consistency for the
+    JIT-compiled JAX per-RHS wall-time ratio <= 1.25."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     cost_block = data['a2_4_rhs_wall_time']
     ratios = cost_block['ratios']
@@ -1394,12 +1393,16 @@ def test_mesh_arrays_rejects_negative_staggered_pressure() -> None:
 
 
 def test_check_jax_factory_rheology_returns_when_solver_rheo_is_none() -> None:
-    """_check_jax_factory_rheology returns immediately when solver has no phase_solid rheology."""
+    """_check_jax_factory_rheology returns cleanly when solver has no phase_solid rheology."""
     rheo = SolidRheologyParams(enabled=False)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
+    bad_cand = type('Cand', (), {'rheology': SolidRheologyParams(enabled=True)})()
+    with pytest.raises(ValueError, match='does not match parameters.phase_solid.rheology'):
+        solver._check_jax_factory_rheology(candidate=bad_cand)
     solver.parameters.phase_solid = None
-    solver._check_jax_factory_rheology(candidate=None)
+    res = solver._check_jax_factory_rheology(candidate=bad_cand)
+    assert res is None
 
 
 def test_check_jax_factory_rheology_rejects_mismatched_candidate_rheology() -> None:
@@ -1435,12 +1438,17 @@ def test_validate_rheology_setup_rejects_fewer_than_three_basic_nodes() -> None:
 
 
 def test_check_rheology_invariants_1d_trace_y_reshapes_and_returns() -> None:
-    """_check_rheology_invariants reshapes 1-D trace_y and checks invariants without raising."""
+    """_check_rheology_invariants reshapes 1-D trace_y and updates state invariants."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
     s_profile = _make_solid_profile(solver)
+    solver.state._lid_state = None
     solver._check_rheology_invariants(trace_t=0.0, trace_y=s_profile)
+    assert solver.state._lid_state is not None
+    assert 'w_lid' in solver.state._lid_state
+    w_lid = np.asarray(solver.state._lid_state['w_lid'])
+    assert np.all((w_lid >= 0.0) & (w_lid <= 1.0))
 
 
 def test_check_rheology_step_invariants_raises_on_out_of_bounds_w_lid() -> None:
@@ -1465,64 +1473,88 @@ def test_check_rheology_eos_range_const_properties_bypasses_bounds() -> None:
     const_properties is True and a valid EOS is loaded."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    params = replace(
+    solver_normal = _make_solver(params)
+    assert solver_normal.entropy_eos is not None
+    s_min = float(solver_normal.entropy_eos.S_min)
+    s_below = np.full(solver_normal._n_stag, s_min - 500.0, dtype=float)
+
+    # When const_properties is False, entropy below S_min raises RuntimeError:
+    with pytest.raises(RuntimeError, match='outside EOS table'):
+        solver_normal._check_rheology_eos_range(s_below)
+
+    # When const_properties is True, the check is bypassed and returns None:
+    params_const = replace(
         params,
         phase_mixed=replace(params.phase_mixed, const_properties=True),
     )
-    solver = _make_solver(params)
-    assert solver.entropy_eos is not None
-    s_min = float(solver.entropy_eos.S_min)
-
-    s_below = np.full(solver._n_stag, s_min - 500.0, dtype=float)
-
-    try:
-        solver._check_rheology_eos_range(s_below)
-    except RuntimeError as err:
-        pytest.fail(f'const_properties=True must bypass EOS range check, but raised: {err}')
+    solver_const = _make_solver(params_const)
+    assert solver_const._check_rheology_eos_range(s_below) is None
 
 
 def test_check_viscosity_ceiling_handles_boolean() -> None:
     """check_viscosity_ceiling returns immediately when viscosity is a boolean."""
     from aragog.rheology import check_viscosity_ceiling
 
-    check_viscosity_ceiling(True, SolidRheologyParams())
-    check_viscosity_ceiling(np.bool_(False), SolidRheologyParams())
+    p = SolidRheologyParams(viscosity_max_log10=22.0)
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        check_viscosity_ceiling(10**23, p)
+    assert check_viscosity_ceiling(True, p) is None
+    assert check_viscosity_ceiling(np.bool_(False), p) is None
 
 
 def test_check_rheology_eos_range_returns_when_s_bounds_none() -> None:
-    """_check_rheology_eos_range returns immediately when S_min or S_max is None."""
+    """_check_rheology_eos_range returns cleanly on out-of-bounds input when S_min or S_max is None."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
+    out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
+    with pytest.raises(RuntimeError, match='outside EOS table'):
+        solver._check_rheology_eos_range(out_of_bounds_s)
     solver.entropy_eos.S_min = None
-    solver._check_rheology_eos_range(np.array([2000.0] * 19))
+    res = solver._check_rheology_eos_range(out_of_bounds_s)
+    assert res is None
 
 
 def test_check_rheology_eos_trace_returns_when_const_properties() -> None:
-    """_check_rheology_eos_trace returns immediately when const_properties is True."""
+    """_check_rheology_eos_trace returns cleanly on out-of-bounds input when const_properties is True."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
+    out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
+    with pytest.raises(RuntimeError, match='outside EOS table'):
+        solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
     solver.parameters.phase_mixed.const_properties = True
-    solver._check_rheology_eos_trace(np.array([0.0]), np.array([2000.0] * 19))
+    res = solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
+    assert res is None
 
 
 def test_check_rheology_eos_trace_returns_when_s_min_is_none() -> None:
-    """_check_rheology_eos_trace returns immediately when EOS has no S_min."""
+    """_check_rheology_eos_trace returns cleanly on out-of-bounds input when EOS has no S_min."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
+    out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
+    with pytest.raises(RuntimeError, match='outside EOS table'):
+        solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
     solver.entropy_eos.S_min = None
-    solver._check_rheology_eos_trace(np.array([0.0]), np.array([2000.0] * 19))
+    res = solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
+    assert res is None
 
 
 def test_check_rheology_eos_trace_reshapes_1d_y_arr() -> None:
-    """_check_rheology_eos_trace reshapes 1-D y_arr and evaluates steps without raising."""
+    """_check_rheology_eos_trace reshapes 1-D y_arr and validates each element against EOS bounds."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
     s_profile = _make_solid_profile(solver)
-    solver._check_rheology_eos_trace(np.array([0.0]), s_profile)
+    assert s_profile.ndim == 1
+    assert solver._check_rheology_eos_trace(np.array([0.0]), s_profile) is None
+    bad_profile = s_profile.copy()
+    bad_profile[3] = -9999.0
+    with pytest.raises(
+        RuntimeError, match=r'node 3: entropy S=-9999\.000000 .*outside EOS table'
+    ):
+        solver._check_rheology_eos_trace(np.array([0.0]), bad_profile)
 
 
 def test_solve_core_module_refuses_unmodelled_regime_on_trace_y(
