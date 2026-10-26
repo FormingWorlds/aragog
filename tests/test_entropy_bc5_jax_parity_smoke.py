@@ -93,3 +93,19 @@ def test_the_jax_rhs_matches_numpy_under_bc5(core_bc, profile):
     f_jax = _jax_rhs(s, y)
     np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
     assert float(np.ravel(s.state.heat_flux)[-1]) != pytest.approx(T_SURF, rel=1e-3)
+
+
+@pytest.mark.physics_invariant
+def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
+    """On the tables the adiabatic term dT/dP|_S dP/dr is about a fifth of the half-cell
+    gradient at the surface; the entropy gradient still gives k (T_stag - T_surf) / (dr / 2)
+    from the first call, and dropping the adiabatic term would miss it by more than 1 %."""
+    s = _bc5_solver('quasi_steady')
+    s.dSdt(0.0, np.asarray(s._S0, dtype=float))
+    st_ = s.state
+    t_top_cell = float(np.ravel(st_.phase_staggered.temperature())[-1])
+    k_surf = float(np.ravel(st_.phase_basic.thermal_conductivity())[-1])
+    dtdr = (T_SURF - t_top_cell) / s._outer_bc_dr_half
+    assert float(np.ravel(st_._jcond)[-1]) == pytest.approx(-k_surf * dtdr, rel=1e-10)
+    dtdr_ad = float(np.ravel(st_.phase_basic.dTdPs())[-1]) * float(st_._dP_dr_basic[-1])
+    assert abs(dtdr_ad / dtdr) > 0.01

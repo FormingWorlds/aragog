@@ -14,13 +14,20 @@ import numpy as np
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from scipy.constants import Julian_year
 
 from aragog.solver.entropy_solver import EntropySolver
 from tests.test_entropy_solver_const_properties_smoke import _build_const_properties_parameters
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-K_COND, CP, T_REF, S_REF = 4.0, 1000.0, 3000.0, 3000.0  # const_properties of the builder
+K_COND, CP, RHO, T_REF, S_REF = (
+    4.0,
+    1000.0,
+    4000.0,
+    3000.0,
+    3000.0,
+)  # the builder's const_properties
 
 
 def _solver(
@@ -60,11 +67,19 @@ def _top(s, name):
     return float(np.ravel(getattr(s.state, name))[-1])
 
 
+@pytest.mark.physics_invariant
 def test_the_prescribed_temperature_changes_the_rhs():
-    """Two surface temperatures give two different rates in the top cell and the same rates
-    in the cells that do not see the surface face."""
-    f_cold, f_hot = _rhs(_solver(300.0)), _rhs(_solver(2000.0))
-    assert f_cold[-1] != pytest.approx(f_hot[-1], rel=1e-3)
+    """A hotter surface lowers the face flux; only the top cell rate changes, by the face flux
+    change over the cell heat capacity: d(dS/dt) = A dF / (rho T V) per Julian year."""
+    cold, hot = _solver(300.0), _solver(2000.0)
+    f_cold, f_hot = _rhs(cold), _rhs(hot)
+    flux_cold, flux_hot = _top(cold, 'heat_flux'), _top(hot, 'heat_flux')
+    assert flux_hot < flux_cold
+    m = cold.evaluator.mesh
+    area, vol = float(np.ravel(m.basic.area)[-1]), float(np.ravel(m.basic.volume)[-1])
+    t_top_cell = float(np.ravel(cold.state.phase_staggered.temperature())[-1])
+    expected = area * (flux_cold - flux_hot) / (RHO * t_top_cell * vol) * Julian_year
+    assert f_hot[-1] - f_cold[-1] == pytest.approx(expected, rel=1e-5)
     np.testing.assert_array_equal(f_cold[:-1], f_hot[:-1])
 
 
