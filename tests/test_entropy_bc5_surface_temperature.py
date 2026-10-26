@@ -189,3 +189,22 @@ def test_bc5_inside_its_domain_gives_a_finite_rhs_at_the_prescribed_node(t_surf)
     assert float(np.ravel(s.state._entropy_basic)[-1]) == pytest.approx(
         s_surf, rel=1e-12, abs=1e-9
     )
+
+
+@pytest.mark.physics_invariant
+def test_a_changed_surface_temperature_takes_effect_on_the_next_call():
+    """A caller that changes outer_boundary_value between calls, as the prescribed-flux mode
+    allows, gets the new surface temperature at the node and in the face flux."""
+    s = _solver(300.0)
+    _rhs(s)
+    s.evaluator.boundary_conditions._settings.outer_boundary_value = 2000.0
+    _rhs(s)
+    t_top_cell = float(np.ravel(s.state.phase_staggered.temperature())[-1])
+    assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
+        2000.0, rel=1e-12
+    )
+    expected = K_COND * (t_top_cell - 2000.0) / _half_cell(s)
+    assert _top(s, 'heat_flux') == pytest.approx(expected, rel=1e-12)
+    with pytest.raises(ValueError, match='outer_boundary_value'):
+        s.evaluator.boundary_conditions._settings.outer_boundary_value = float('nan')
+        _rhs(s)
