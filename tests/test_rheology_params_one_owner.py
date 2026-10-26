@@ -59,6 +59,64 @@ def test_solid_rheology_params_has_expected_fields():
     assert not hasattr(rheo_mod, 'eta_diff')
 
 
+def test_rheology_config_reference_table_matches_solid_rheology_params():
+    """Verify docs/How-to/configuration.md rheology reference table matches SolidRheologyParams.
+
+    Runs tools/generate_rheology_config_reference.py --check on the committed
+    documentation page to ensure every parameter is documented with its type,
+    unit, default, range, and effect.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    tool_path = repo_root / 'tools' / 'generate_rheology_config_reference.py'
+    doc_path = repo_root / 'docs' / 'How-to' / 'configuration.md'
+
+    assert tool_path.is_file(), f'Tool not found at {tool_path}'
+    assert doc_path.is_file(), f'Document not found at {doc_path}'
+
+    result = subprocess.run(
+        [sys.executable, str(tool_path), '--check', '--doc', str(doc_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f'Config reference check failed:\n{result.stderr}\n{result.stdout}'
+    )
+    assert f'all {len(dataclasses.fields(SolidRheologyParams))} fields' in result.stdout
+
+
+def test_rheology_config_reference_check_fails_on_missing_field(tmp_path):
+    """Canary test: verify --check fails when a field is removed from the table."""
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    tool_path = repo_root / 'tools' / 'generate_rheology_config_reference.py'
+    doc_path = repo_root / 'docs' / 'How-to' / 'configuration.md'
+
+    content = doc_path.read_text(encoding='utf-8')
+    mutated = re.sub(r'\|\s*`activation_energy`\s*\|.*?\n', '', content)
+    assert mutated != content, 'Failed to mutate document for canary test'
+
+    temp_doc = tmp_path / 'configuration.md'
+    temp_doc.write_text(mutated, encoding='utf-8')
+
+    result = subprocess.run(
+        [sys.executable, str(tool_path), '--check', '--doc', str(temp_doc)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, 'Check unexpectedly passed with missing field'
+    assert 'activation_energy' in result.stderr
+
+
 def test_phase_config_rheology_defaults_match():
     """Verify PhaseConfig defaults match SolidRheologyParams field-by-field and reflect overrides."""
     default_rheo = SolidRheologyParams()
