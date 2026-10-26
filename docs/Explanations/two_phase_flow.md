@@ -46,8 +46,9 @@ The single-pass evaluation lives in `EntropyPhaseEvaluator._update_eos` (file `s
 The phase-boundary lookups happen exactly once per call, and all derived quantities are computed from the cached intermediates rather than via repeated table calls.
 
 The viscosity blend deserves special note.
-Costa et al. (2009) Figure 2 shows the relative viscosity of crystal-bearing magmas rising by $\sim 10^{10}$ across the rheological transition near the critical melt fraction $\phi_c$, while Aragog's solid/liquid end-member viscosities are $\eta_\mathrm{sol} \sim 10^{21}$ Pa s and $\eta_\mathrm{liq} \sim 10^{-1}$ Pa s by default, giving an end-member contrast of $\sim 10^{22}$ across $\phi$.
+Costa et al. (2009) Figure 2 shows the relative viscosity of crystal-bearing magmas rising by $\sim 10^{10}$ through the rheological transition near the critical melt fraction $\phi_c$, while Aragog's solid/liquid end-member viscosities are $\eta_\mathrm{sol} \sim 10^{21}$ Pa s and $\eta_\mathrm{liq} \sim 10^{-1}$ Pa s by default, giving an end-member contrast of $\sim 10^{22}$ over $\phi$.
 This is what makes the partial-melt regime numerically stiff and motivates Aragog's smooth tanh blend over a hard if/else.
+When solid mantle rheology is enabled (`[phase_solid.rheology]`), $\eta_\mathrm{sol}$ varies with temperature, pressure, and stress rather than staying constant. See [Solid-state convection](solid_state_convection.md) for the variable solid viscosity laws and melt-fraction blending.
 
 ## Two-phase flow contributions
 

@@ -62,6 +62,8 @@ with $\mathrm{Re} = v_\mathrm{visc}\,l / \nu$ and a narrow blend width $\Delta =
 | `"nearest_boundary"` | $l(r) = \min(r_\mathrm{top} - r,\ r - r_\mathrm{cmb})$ |
 | `"constant"` | $l$ = configured fraction of mantle thickness |
 
+When solid-state mantle rheology is enabled (`[phase_solid.rheology]`), the top boundary mixing-length slope $s_\mathrm{top}$ scales with the viscosity contrast in the upper thermal boundary layer, and a stagnant lid can suppress convective transport near the surface. See [Solid-state convection](solid_state_convection.md) for rheology laws, stagnant-lid stress closures, and boundary slope scalings.
+
 ### Phase-modulated floor
 
 A phase-aware floor on $\kappa_h$ is set by `kappah_floor`:

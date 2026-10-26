@@ -23,6 +23,7 @@ This page summarises the points of agreement and divergence and gives guidance o
 | Mass-coordinate option | `MASS_COORDINATES` flag (`mesh.c`) | `mass_coordinates = true` |
 | Output format | JSON timesteps via cJSON (`monitor.c`) | NetCDF via xarray (PROTEUS-side writer in `proteus/interior_energetics/aragog.py`) |
 | Restart from checkpoint | `IC_INTERIOR = 2`, `restart.json` | `EntropySolver.set_initial_entropy`, NetCDF reload via the wrapper |
+| Solid mantle rheology | Constant solid end-member viscosity | Arrhenius creep, Byerlee yielding, stagnant lid (`[phase_solid.rheology]`) |
 
 ## Numerical differences that matter
 
@@ -93,6 +94,10 @@ Aragog's JAX path enables an analytic Jacobian for production runs without givin
 
 SPIDER writes one JSON file per output time via cJSON (`monitor.c`); Aragog writes a single NetCDF per call via the PROTEUS-side wrapper (`proteus.interior_energetics.aragog.write_netcdf`).
 The downstream PROTEUS plotting and analysis tooling consumes NetCDF.
+
+### Solid mantle rheology and stagnant lids
+
+SPIDER models mantle viscosity using a constant solid end-member viscosity. Aragog provides an optional solid-state convection module (`[phase_solid.rheology]`) with Arrhenius temperature-dependent creep, Byerlee brittle yielding, stagnant-lid boundary layer stress closures, and viscosity-contrast mixing-length slope scaling. See [Solid-state convection](solid_state_convection.md) for the formulation and benchmark verification.
 
 For the configuration details that map between the two codes, see [Configuration](../How-to/configuration.md) and [Standalone vs PROTEUS-integrated](../How-to/usage-paths.md).
 

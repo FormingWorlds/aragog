@@ -52,6 +52,8 @@ The initial entropy IC is set from `hf_row['ini_entropy']` on the first call, an
 
 It then re-loads the previous S-field, calls `solver.solve()`, and packs the achieved `dt_actual = sol.t[-1] - sol.t[0]` plus surface fluxes back into the wrapper's `Interior_t` state. The achieved `dt` may be shorter than the requested window when the SUNDIALS root function fires for `phi_step_cap`; PROTEUS's outer loop then advances `Time` by the achieved value rather than the requested one.
 
+When solid-state mantle rheology is enabled (`[phase_solid.rheology]`), stagnant-lid growth and temperature-dependent viscosity regulate the mantle heat flux that couples into the atmosphere. See [Solid-state convection](solid_state_convection.md) for stagnant-lid boundary layer physics.
+
 ### 3. Retry ladder
 
 A non-converged `solver.solve()` (status $\ne 0$, T_core jump $> 1500$ K, or NaN propagation) routes through a retry ladder that progressively perturbs the entropy gradient at the CMB (`set_initial_dSdr_cmb`) and loosens tolerances within a bounded window. After eight consecutive failures (`_ARAGOG_MAX_CONSECUTIVE_FAILS`) the run aborts. On first success the streak resets to zero and is logged for post-hoc analysis.
