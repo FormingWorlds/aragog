@@ -8,7 +8,7 @@ import pytest
 
 from tests.conftest import needs_eos
 
-pytestmark = [pytest.mark.unit, needs_eos, pytest.mark.timeout(120)]
+pytestmark = [pytest.mark.unit, needs_eos, pytest.mark.timeout(30)]
 
 
 @pytest.mark.physics_invariant

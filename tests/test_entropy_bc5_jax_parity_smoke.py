@@ -275,3 +275,18 @@ def test_a_temperature_in_the_mid_melt_jump_is_refused(t_surf):
         assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
             t_ok, rel=1e-9
         )
+
+
+@pytest.mark.physics_invariant
+def test_the_jax_rhs_ignores_a_stale_outer_bc_value():
+    """For type 5 the surface entropy S_surf sets the surface temperature; a BoundaryParams
+    whose outer_bc_value no longer matches it gives the same JAX right-hand side, equal to the
+    NumPy one of S_surf."""
+    jnp = pytest.importorskip('jax.numpy')
+    s = _bc5_solver('quasi_steady')
+    y = np.asarray(s._S0, dtype=float)
+    fn, args = _jax_rhs_and_args(s)
+    stale = (*args[:3], dataclasses.replace(args[3], outer_bc_value=1600.0), *args[4:])
+    f = np.asarray(fn(0.0, jnp.asarray(y), args)).ravel()
+    np.testing.assert_array_equal(np.asarray(fn(0.0, jnp.asarray(y), stale)).ravel(), f)
+    np.testing.assert_allclose(f, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)

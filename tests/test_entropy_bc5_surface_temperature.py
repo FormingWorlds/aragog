@@ -305,11 +305,13 @@ def test_solve_checks_a_changed_surface_temperature_before_the_first_rhs():
             'outer_bc_value',
         ),
         ({'S_surf': 2000.0, 'surf_dr_half': 100.0, 'outer_bc_value': -5.0}, 'outer_bc_value'),
+        ({'S_surf': 2000.0, 'surf_dr_half': 100.0, 'param_utbl': True}, 'param_utbl'),
     ],
 )
 def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
     """BoundaryParams of type 5 needs a finite surface entropy, a positive finite surface
-    temperature and a finite positive half cell; a default or a broken value is refused."""
+    temperature and a finite positive half cell, and refuses the UTBL correction of the
+    grey-body flux; a default or a broken value is refused."""
     pytest.importorskip('equinox')
     from aragog.jax.solver import BoundaryParams
 
@@ -325,9 +327,15 @@ def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
 
 
 @pytest.mark.physics_invariant
-def test_the_jax_surface_gradient_uses_the_heat_capacity_floor():
-    """The JAX matcher floors Cp at 100 J/kg/K as its conductive flux does; at Cp = 50 the
-    gradient is (100 / T) (dT/dr - dT/dP|_S dP/dr), twice the unfloored value."""
+@pytest.mark.parametrize(
+    ('cp', 't_node', 't_top', 'dtdps', 'dp_dr'),
+    [(50.0, 300.0, 400.0, 1e-8, -4e4), (1000.0, 1500.0, 2000.0, 0.0, 0.0)],
+    ids=['heat-capacity-floor', 'node-temperature'],
+)
+def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
+    """The JAX matcher gives (Cp_safe / T_node) ((T_node - T_top) / dr_half - dT/dP|_S dP/dr),
+    with Cp floored at 100 J/kg/K as in its conductive flux (at Cp = 50 the gradient doubles)
+    and the node temperature at S_surf in place of a prescribed value."""
     jnp = pytest.importorskip('jax.numpy')
     pytest.importorskip('equinox')
     from types import SimpleNamespace
@@ -335,53 +343,13 @@ def test_the_jax_surface_gradient_uses_the_heat_capacity_floor():
     import aragog.jax.phase as jp
 
     pb = SimpleNamespace(
-        heat_capacity=jnp.array([50.0]), temperature=jnp.array([300.0]), dTdPs=jnp.array([1e-8])
+        heat_capacity=jnp.array([cp]), temperature=jnp.array([t_node]), dTdPs=jnp.array([dtdps])
     )
-    mesh = SimpleNamespace(dP_dr_basic=jnp.array([-4e4]))
-    out = jp._matched_surface_gradient(jnp.zeros(4), 50.0, 400.0, pb, mesh)
-    expected = 100.0 / 300.0 * ((300.0 - 400.0) / 50.0 - 1e-8 * -4e4)
+    mesh = SimpleNamespace(dP_dr_basic=jnp.array([dp_dr]))
+    out = jp._matched_surface_gradient(jnp.zeros(4), 50.0, t_top, pb, mesh)
+    expected = max(cp, 100.0) / t_node * ((t_node - t_top) / 50.0 - dtdps * dp_dr)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-12)
     assert float(out[0]) == 0.0
-
-
-@pytest.mark.physics_invariant
-def test_the_jax_surface_gradient_takes_the_node_temperature():
-    """The JAX matcher builds dT/dr from the temperature of the surface node at S_surf, so a
-    BoundaryParams whose outer_bc_value no longer matches S_surf still gives a face flux that
-    agrees with the node; here the node is at 1500 K, a stale value would say 1600 K."""
-    jnp = pytest.importorskip('jax.numpy')
-    pytest.importorskip('equinox')
-    from types import SimpleNamespace
-
-    import aragog.jax.phase as jp
-
-    pb = SimpleNamespace(
-        heat_capacity=jnp.array([1000.0]),
-        temperature=jnp.array([1500.0]),
-        dTdPs=jnp.array([0.0]),
-    )
-    mesh = SimpleNamespace(dP_dr_basic=jnp.array([0.0]))
-    out = jp._matched_surface_gradient(jnp.zeros(4), 50.0, 2000.0, pb, mesh)
-    assert float(out[-1]) == pytest.approx(
-        1000.0 / 1500.0 * (1500.0 - 2000.0) / 50.0, rel=1e-12
-    )
-    assert float(out[-1]) != pytest.approx(1000.0 / 1500.0 * (1600.0 - 2000.0) / 50.0, rel=1e-3)
-
-
-def test_boundary_params_refuse_bc5_with_the_utbl_correction():
-    """The UTBL correction belongs to the grey-body flux; BoundaryParams refuses it with type 5,
-    as the NumPy setup does, instead of ignoring it."""
-    pytest.importorskip('equinox')
-    from aragog.jax.solver import BoundaryParams
-
-    base = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
-    base.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
-    kw = dict(outer_bc_value=1500.0, S_surf=2000.0, surf_dr_half=100.0)
-    with pytest.raises(Exception) as err:
-        BoundaryParams(outer_bc_type=5, param_utbl=True, param_utbl_const=1e-7, **kw, **base)
-    assert err.type is ValueError, repr(err.value)
-    assert 'param_utbl' in str(err.value)
-    assert BoundaryParams(outer_bc_type=5, **kw, **base).param_utbl is False
 
 
 def test_the_jax_factory_refuses_bc5_without_conduction():
@@ -428,3 +396,16 @@ def test_the_jax_factory_refuses_bc5_with_a_surface_mixing_length():
         )
     assert err.type is ValueError, repr(err.value)
     assert 'mixing length' in str(err.value)
+
+
+def test_bc5_takes_a_fraction_as_a_surface_temperature():
+    """Any real number type is a valid surface temperature; a Fraction gives the same node
+    temperature as the float, not a TypeError from the finiteness test."""
+    from fractions import Fraction
+
+    s = _solver(Fraction(1600))
+    _rhs(s)
+    assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
+        1600.0, rel=1e-12
+    )
+    assert s.surface_temperature_bc[1] == 1600.0
