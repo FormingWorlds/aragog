@@ -207,6 +207,8 @@ class BoundaryParams(eqx.Module):
         S_surf=0.0,
         surf_dr_half=0.0,
     ):
+        if outer_bc_type == 5 and not float(surf_dr_half) > 0.0:
+            raise ValueError(f'outer_bc_type 5 needs surf_dr_half > 0 m, got {surf_dr_half}')
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.S_surf = jnp.asarray(S_surf, dtype=jnp.float64)
