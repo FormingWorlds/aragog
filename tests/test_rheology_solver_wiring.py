@@ -54,7 +54,7 @@ jax.config.update('jax_enable_x64', True)
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-_BENCHMARK_JSON = Path(__file__).parent / 'reference' / 'ssc_wp2_validation_benchmarks.json'
+_BENCHMARK_JSON = Path(__file__).parent / 'reference' / 'ssc_solver_wiring_benchmarks.json'
 
 
 @functools.cache
@@ -813,11 +813,11 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     kappah_floor=0, viscosity_solid=1e18) and the default inert configuration (s_init=2900, kappah_floor=10,
     viscosity_solid=1e21) (asserts consistency of stored benchmark data, not live reference_pinned solver integration)."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    epsilons = data['a2_3_perturbed_starts']['epsilons']
+    epsilons = data['perturbed_starts']['epsilons']
     assert epsilons == [-2.0e-12, -1.0e-12, 0.0, 1.0e-12, 2.0e-12]
 
-    var_suite = data['a2_3_perturbed_starts']['abe_solid_kappah_floor_0']
-    def_suite = data['a2_3_perturbed_starts']['abe_solid_default']
+    var_suite = data['perturbed_starts']['abe_solid_kappah_floor_0']
+    def_suite = data['perturbed_starts']['abe_solid_default']
 
     r_km = np.asarray(var_suite['on']['r_basic_m'], dtype=float) / 1.0e3
     dt_var_on = np.asarray(var_suite['on']['delta_T_basic_profile_K'], dtype=float)
@@ -880,7 +880,7 @@ def test_rhs_call_counts_and_cost(validation_plot) -> None:
     NumPy and JAX (measured live), while asserting stored-data consistency for the
     JIT-compiled JAX per-RHS wall-time ratio <= 1.25."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    cost_block = data['a2_4_rhs_wall_time']
+    cost_block = data['rhs_wall_time']
     ratios = cost_block['ratios']
     table = cost_block['six_row_call_count_table']
 
@@ -945,12 +945,12 @@ def test_rhs_call_counts_and_cost(validation_plot) -> None:
         import matplotlib.pyplot as plt
 
         x_idx = np.arange(6, dtype=float)
-        plan_deltas = np.array([row['plan_a2_4_delta'] for row in table], dtype=float)
+        expected_deltas = np.array([row['expected_call_delta'] for row in table], dtype=float)
         meas_np = np.array(measured_deltas_np, dtype=float)
         meas_jax = np.array(measured_deltas_jax, dtype=float)
 
         fig, (top, bottom) = plt.subplots(2, 1, figsize=(5.6, 4.8))
-        top.plot(x_idx - 0.12, plan_deltas, 'o', ms=4, label='plan')
+        top.plot(x_idx - 0.12, expected_deltas, 'o', ms=4, label='expected')
         top.plot(x_idx, meas_np, 'o', ms=4, label='NumPy')
         top.plot(x_idx + 0.12, meas_jax, 'o', ms=4, label='JAX')
         top.set(xlabel='Item index [-]', ylabel='Calls [-]')

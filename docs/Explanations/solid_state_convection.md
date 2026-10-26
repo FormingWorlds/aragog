@@ -111,8 +111,8 @@ Under these parameters:
 For comparison, the upper-mantle parameter set from Tackley et al. (2013, Table 2) specifies $E_0 = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, and $P_\text{decay} = \infty$.
 At Earth core-mantle boundary pressure $P = 135\text{ GPa}$, that linear reference gives $H(135\text{ GPa}) = 975.0\text{ kJ mol}^{-1}$.
 
-![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_wp4_activation_law_limits.svg#only-light){ width="80%" }
-![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_wp4_activation_law_limits_dark.svg#only-dark){ width="80%" }
+![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits.svg#only-light){ width="80%" }
+![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits_dark.svg#only-dark){ width="80%" }
 
 **How to read the plot.**
 Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$.
