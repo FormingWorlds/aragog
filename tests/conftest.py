@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-import functools
 import importlib.resources
 import os
 import warnings
@@ -16,6 +14,18 @@ import pytest
 
 from aragog import CFG_DATA
 from aragog.eos.entropy import EntropyEOS
+from tools.verification._ssc_helpers import (
+    _parse,
+    _parsed,
+)
+from tools.verification._ssc_helpers import (
+    entropy_eos_copy as _entropy_eos_copy,
+)
+from tools.verification._ssc_helpers import (
+    entropy_eos_jax as _entropy_eos_jax,
+)
+
+__all__ = ['_parse', '_parsed', 'entropy_eos_copy', 'entropy_eos_jax']
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -34,51 +44,21 @@ needs_eos = pytest.mark.skipif(
 )
 
 
-@functools.cache
-def _parse(eos_class: type, eos_dir: str):
-    try:
-        return eos_class(eos_dir), None, None
-    except Exception as exc:
-        return None, exc, exc.__traceback__
-
-
-def _parsed(eos_class: type, eos_dir: str):
-    """Return the cached parse of ``eos_dir``; a failed parse re-raises without a retry."""
-    eos, exc, traceback = _parse(eos_class, eos_dir)
-    if exc is not None:
-        raise exc.with_traceback(traceback)
-    return eos
-
-
 def entropy_eos_copy(
     eos_dir: Path | str = EOS_DIR, strict_range: bool = False, identity_alpha: bool = False
 ) -> EntropyEOS:
-    """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
-
-    The tables are parsed once per process and each call returns a deep copy,
-    which starts in the state of a fresh build; only the read-only solidus and
-    liquidus interpolation functions are shared. Tests of the constructor
-    itself build ``EntropyEOS`` directly. ``identity_alpha`` drops the
-    ``thermal_exp`` tables, so the expansivity comes from the identity
-    ``rho cp |dT/dP_S| / T`` that the JAX EOS uses.
-    """
-    eos = copy.deepcopy(_parsed(EntropyEOS, str(eos_dir)))
-    eos.strict_range = strict_range
-    if identity_alpha:
-        for name in ('thermal_exp_solid', 'thermal_exp_melt'):
-            eos._tables.pop(name, None)
-        eos._has_alpha_tables = False
-    return eos
+    """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``."""
+    return _entropy_eos_copy(
+        eos_dir=eos_dir,
+        strict_range=strict_range,
+        identity_alpha=identity_alpha,
+        eos_class=EntropyEOS,
+    )
 
 
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
-    """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process.
-
-    The instance is a frozen equinox module of JAX arrays, so callers share it.
-    """
-    from aragog.jax.eos import EntropyEOS_JAX
-
-    return _parsed(EntropyEOS_JAX, str(eos_dir))
+    """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
+    return _entropy_eos_jax(eos_dir=eos_dir)
 
 
 def make_mesh(N: int = 10, scale_p: float = 1.0):
