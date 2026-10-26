@@ -385,10 +385,17 @@ def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
                 np.zeros(3),
                 'eddy_diffusivity_thermal',
             )
-            for e in (-1e3, math.nan, math.inf)
+            for e in (-1e3, -1e-12, math.nan, math.inf)
         ],
     ],
-    ids=['no-conduction', 'surface-mixing-length', 'eddy-negative', 'eddy-nan', 'eddy-inf'],
+    ids=[
+        'no-conduction',
+        'surface-mixing-length',
+        'eddy-negative',
+        'eddy-tiny-negative',
+        'eddy-nan',
+        'eddy-inf',
+    ],
 )
 def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing_length, match):
     """The JAX CVODE factory refuses type 5 without conduction, with a mixing length that is
@@ -415,7 +422,29 @@ def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing
     assert match in str(err.value)
 
 
-@pytest.mark.parametrize('eddy', [-1e3, math.nan, math.inf])
+def test_the_jax_factory_applies_the_bc5_refusals_only_to_type_5():
+    """With outer_bc_type 4 the factory builds without conduction, with a mixing length that is
+    not 0 at the surface node and with a negative eddy_diffusivity_thermal."""
+    pytest.importorskip('equinox')
+    from types import SimpleNamespace
+
+    from aragog.jax.nondim import NonDimScales
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    try:
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=SimpleNamespace(conduction=0.0, eddy_diff_thermal=-1e3),
+            mesh_arrays=SimpleNamespace(mixing_length=np.array([0.0, 7.2e5, 7.2e5])),
+            boundary_params=SimpleNamespace(outer_bc_type=4),
+            heating_array=np.zeros(4),
+            scales=NonDimScales(state_scale=np.ones(4), t_ref=1.0),
+        )
+    except Exception as exc:
+        pytest.fail(f'type 4 refused: {exc!r}')
+
+
+@pytest.mark.parametrize('eddy', [-1e3, -1e-12, math.nan, math.inf])
 def test_bc5_refuses_a_negative_or_non_finite_eddy_diffusivity_thermal(eddy):
     """A negative eddy_diffusivity_thermal sets kappa_h to its magnitude at every node, the
     surface node too, and NaN or an infinity gives no finite kappa_h there; the setup refuses

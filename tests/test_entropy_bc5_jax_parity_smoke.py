@@ -291,6 +291,104 @@ def test_the_jax_rhs_ignores_a_stale_outer_bc_value():
     np.testing.assert_allclose(f, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)
 
 
+def _entry_point_calls(s, eos, params, mesh, bc, heating):
+    """solve_entropy over a short interval and the JAX CVODE factory on the same setup."""
+    from aragog.jax.nondim import NonDimScales
+    from aragog.jax.solver import solve_entropy
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    y = np.asarray(s._S0, dtype=float).ravel()
+    scales = NonDimScales(state_scale=np.ones(s._n_stag), t_ref=1.0)
+    return {
+        'solve_entropy': lambda: solve_entropy(
+            y, 0.0, 1e-9, eos, params, mesh, bc, heating, max_steps=1000
+        ),
+        'factory': lambda: build_jax_rhs_and_jacobian(
+            eos_jax=eos,
+            phase_params=params,
+            mesh_arrays=mesh,
+            boundary_params=bc,
+            heating_array=np.zeros(s._n_stag),
+            scales=scales,
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    'case', ['conduction-off', 'eddy-negative', 'constant-mixing-length', 'stale-2e-6']
+)
+def test_the_jax_entry_points_refuse_a_bc5_setup_without_the_prescribed_surface(case):
+    """solve_entropy and the JAX CVODE factory refuse type 5 without conduction, with a surface
+    eddy flux (a negative eddy_diffusivity_thermal, a constant mixing length), or with an
+    outer_bc_value 2e-6 relative off the temperature that S_surf gives at the surface pressure
+    (the run check of the NumPy path allows 1e-6)."""
+    eqx = pytest.importorskip('equinox')
+    pytest.importorskip('diffrax')
+    from aragog.jax.phase import MeshArrays
+
+    s = _bc5_solver('quasi_steady')
+    _, (eos, params, mesh, bc, heating, *_) = _jax_rhs_and_args(s)
+    if case == 'conduction-off':
+        params, match = eqx.tree_at(lambda p: p.conduction, params, 0.0), 'conduction'
+    elif case == 'eddy-negative':
+        params = eqx.tree_at(lambda p: p.eddy_diff_thermal, params, -1.0)
+        match = 'eddy_diffusivity_thermal'
+    elif case == 'constant-mixing-length':
+        c = _build('quasi_steady', entropy_eos_copy(EOS_DIR, identity_alpha=True), None)
+        c.parameters.mesh.mixing_length_profile = 'constant'
+        c.initialize()
+        mesh, match = MeshArrays.from_numpy_mesh(c.evaluator.mesh), 'mixing length'
+    else:
+        bc = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + 2e-6))
+        match = 'S_surf'
+    for name, call in _entry_point_calls(s, eos, params, mesh, bc, heating).items():
+        with pytest.raises(Exception) as err:
+            call()
+        assert err.type is ValueError, (name, repr(err.value))
+        assert match in str(err.value), (name, str(err.value))
+
+
+@pytest.mark.parametrize('case', ['smooth-0.2', 'offset-5e-7', 'type-4-eddy-negative'])
+def test_the_jax_entry_points_accept_a_consistent_setup(case):
+    """solve_entropy and the JAX CVODE factory accept the surface values of
+    EntropySolver.surface_temperature_bc with a smoothing width of 0.2, an outer_bc_value 5e-7
+    relative off (inside the 1e-6 check), and a type 4 surface with a negative
+    eddy_diffusivity_thermal, which the type 5 checks do not concern."""
+    eqx = pytest.importorskip('equinox')
+    pytest.importorskip('diffrax')
+    s = _bc5_solver('quasi_steady', smooth=0.2 if case == 'smooth-0.2' else 0.0)
+    _, (eos, params, mesh, bc, heating, *_) = _jax_rhs_and_args(s)
+    if case == 'offset-5e-7':
+        bc = dataclasses.replace(bc, outer_bc_value=T_SURF * (1.0 + 5e-7))
+    elif case == 'type-4-eddy-negative':
+        params = eqx.tree_at(lambda p: p.eddy_diff_thermal, params, -1.0)
+        bc = dataclasses.replace(bc, outer_bc_type=4, outer_bc_value=100.0)
+    for name, call in _entry_point_calls(s, eos, params, mesh, bc, heating).items():
+        try:
+            call()
+        except Exception as exc:
+            pytest.fail(f'{name} refused {case}: {exc!r}')
+
+
+@pytest.mark.physics_invariant
+def test_the_surface_gradient_takes_the_node_temperature():
+    """With the surface node 5e-7 relative above the prescribed temperature, inside the run check,
+    the NumPy and JAX right-hand sides agree: both take the half-cell difference and Cp / T at
+    the node temperature, not at the prescribed one."""
+    jnp = pytest.importorskip('jax.numpy')
+    s = _bc5_solver('quasi_steady')
+    y = np.asarray(s._S0, dtype=float)
+    s.dSdt(0.0, y)
+    s_surf, t_surf, half = s.surface_temperature_bc
+    cp = float(np.ravel(s.state.phase_basic.heat_capacity())[-1])
+    s.state.set_surface_temperature(s_surf + 5e-7 * cp, t_surf, half)
+    f_np = np.ravel(s.dSdt(0.0, y))
+    offset = float(np.ravel(s.state.phase_basic.temperature())[-1]) / t_surf - 1.0
+    assert 3e-7 < offset < 7e-7, offset
+    fn, args = _jax_rhs_and_args(s)
+    np.testing.assert_allclose(np.ravel(fn(0.0, jnp.asarray(y), args)), f_np, rtol=1e-10)
+
+
 @pytest.mark.parametrize(
     'settings',
     [{}, {'eddy': 0.0}, {'fraction': 0.0}],
