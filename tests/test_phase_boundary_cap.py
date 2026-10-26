@@ -124,6 +124,9 @@ def test_rate_cap_relaxes_upper_bound_when_all_cells_are_subsolidus():
         )
     )
     assert _cap([995.0], [-1e-3], fraction=0.1, bounds=(1.0, 100.0)) == pytest.approx(500.0)
+    assert _cap(
+        [950.0, 1000.0], [-1e-4, -1e-4], fraction=0.1, bounds=(1.0, 100.0)
+    ) == pytest.approx(5000.0)
     assert _cap([950.0, 1200.0], [-0.01, -1e-4], bounds=(1.0, 100.0)) == 100.0
 
 
