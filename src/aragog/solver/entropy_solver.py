@@ -2019,12 +2019,72 @@ class EntropySolver:
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
+        self._outer_bc_S_surf = self._outer_bc_dr_half = None
+        if self._outer_bc_kind == 5:
+            self._outer_bc_S_surf, self._outer_bc_dr_half = self._surface_temperature_bc(bc)
+            self.state.set_surface_temperature(
+                self._outer_bc_S_surf, float(bc.outer_boundary_value), self._outer_bc_dr_half
+            )
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
         self._outer_bc_utbl = bool(bc.param_utbl)
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
+
+    def _surface_temperature_bc(self, bc) -> tuple[float, float]:
+        """Surface entropy and face half cell of the prescribed surface temperature (BC 5).
+
+        Parameters
+        ----------
+        bc : BoundaryConditionsParameters
+            Boundary settings; ``outer_boundary_value`` is the surface temperature [K], read
+            here at setup.
+
+        Returns
+        -------
+        tuple of float
+            Entropy where ``T(P_s, S) = T_surf`` at the surface pressure [J/kg/K], and the face
+            distance ``delta_mesh[-1] / dxidr[-1] / 2`` [m].
+
+        Raises
+        ------
+        ValueError
+            For a surface temperature that is not a positive finite number or lies outside the
+            entropy tables, and for ``param_utbl`` or ``core_bc = 'gradient'``, which have no
+            meaning with a prescribed surface temperature.
+        """
+        t_surf = bc.outer_boundary_value
+        if (
+            isinstance(t_surf, (bool, np.bool_))
+            or not isinstance(t_surf, (int, float, np.integer, np.floating))
+            or not (np.isfinite(t_surf) and t_surf > 0.0)
+        ):
+            raise ValueError(
+                'outer_boundary_value must be a positive finite surface temperature [K] '
+                f'with outer_boundary_condition = 5, got {t_surf!r}'
+            )
+        if bc.param_utbl:
+            raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
+        if self._core_bc == 'gradient':
+            raise ValueError(
+                "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
+            )
+        t_surf, p_surf = float(t_surf), float(self._P_basic_flat[-1])
+        if self.entropy_eos is None:
+            pm = self.parameters.phase_mixed
+            s_surf = pm.const_S_ref + pm.const_Cp * np.log(t_surf / pm.const_T_ref)
+        else:
+            s_surf = float(self.entropy_eos.entropy_at_temperature(p_surf, t_surf))
+            t_back = float(np.ravel(self.entropy_eos.temperature(p_surf, s_surf))[0])
+            if not abs(t_back - t_surf) <= 1e-9 * t_surf:
+                raise ValueError(
+                    f'outer_boundary_value = {t_surf} K lies outside the entropy tables at '
+                    f'the surface pressure {p_surf:.6g} Pa'
+                )
+        mesh = self.evaluator.mesh
+        half_cell = float(np.ravel(mesh.basic.delta_mesh)[-1] / np.ravel(mesh.dxidr)[-1]) / 2.0
+        return float(s_surf), half_cell
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).

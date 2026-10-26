@@ -220,6 +220,7 @@ class EntropyState:
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
+        self._surface_temperature_bc: tuple[float, float, float] | None = None
         check_convective_threshold(convective_threshold)
         self._convective_threshold = float(convective_threshold)
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
@@ -473,6 +474,28 @@ class EntropyState:
             setattr(self, flag_name, True)
         return np.where(below_floor, floor, Cp)
 
+    def set_surface_temperature(
+        self, entropy: float, temperature: float, half_cell: float
+    ) -> None:
+        """Prescribe the surface temperature (outer boundary condition 5).
+
+        Each update then sets the surface basic node to ``entropy`` and its entropy gradient to
+        ``(Cp / T) (dT/dr - dT/dP|_S dP/dr)`` with ``dT/dr = (temperature - T_stag[-1]) /
+        half_cell``, so the conductive face flux is ``k (T_stag[-1] - temperature) / half_cell``
+        and the convective, separation and mixing fluxes use the same gradient.
+
+        Parameters
+        ----------
+        entropy : float
+            Entropy where ``T(P_s, S)`` is the prescribed temperature [J/kg/K].
+        temperature : float
+            Prescribed surface temperature [K].
+        half_cell : float
+            Distance of the surface face from the top cell, ``delta_mesh[-1] / dxidr[-1] / 2``
+            [m].
+        """
+        self._surface_temperature_bc = (float(entropy), float(temperature), float(half_cell))
+
     def update(
         self,
         entropy: npt.NDArray,
@@ -568,11 +591,16 @@ class EntropyState:
             self._dSdr[0] = float(dSdr_cmb)
             self._entropy_basic[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
 
+        if self._surface_temperature_bc is not None:
+            self._entropy_basic[-1] = self._surface_temperature_bc[0]
+
         # Update phase evaluators with current (P, S)
         self.phase_staggered.set_entropy(S)
         self.phase_staggered.update()
         self.phase_basic.set_entropy(self._entropy_basic)
         self.phase_basic.update()
+        if self._surface_temperature_bc is not None:
+            self._match_surface_gradient()
 
         # Melt-fraction gradient for gravitational separation and mixing.
         #
@@ -1022,6 +1050,18 @@ class EntropyState:
     def temperature_basic(self) -> npt.NDArray:
         """Temperature at basic nodes (derived from S via EOS)."""
         return self.phase_basic.temperature()
+
+    def _match_surface_gradient(self) -> None:
+        """Set dS/dr at the surface node from the half-cell temperature gradient (BC 5)."""
+        _, t_surf, half_cell = self._surface_temperature_bc
+        self._ensure_basic_phase_boundary_cache()  # fills _dP_dr_basic
+        pb = self.phase_basic
+        t_top_cell = float(np.ravel(self.phase_staggered.temperature())[-1])
+        cp = float(np.ravel(pb.heat_capacity())[-1])
+        cp = cp if cp >= 100.0 else 100.0  # the Cp_safe floor of the conductive flux
+        dtdr = (t_surf - t_top_cell) / half_cell
+        dtdr_ad = float(np.ravel(pb.dTdPs())[-1]) * float(self._dP_dr_basic[-1])
+        self._dSdr[-1] = cp / float(np.ravel(pb.temperature())[-1]) * (dtdr - dtdr_ad)
 
     @property
     def top_temperature(self) -> npt.NDArray:

@@ -134,6 +134,9 @@ class BoundaryParams(eqx.Module):
     Surface BC types:
         1 = grey-body (F = emissivity * sigma * (T^4 - T_eq^4))
         4 = prescribed flux (from atmosphere module)
+        5 = prescribed temperature ``outer_bc_value`` [K]: the surface node takes the entropy
+            ``S_surf`` and the face flux is the kernel flux at the half-cell gradient over
+            ``surf_dr_half`` (``EntropySolver._surface_temperature_bc``)
 
     CMB BC types:
         0 = insulating (F = 0)
@@ -153,7 +156,9 @@ class BoundaryParams(eqx.Module):
 
     # Surface
     outer_bc_type: int = eqx.field(static=True)
-    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4)
+    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4) or temperature [K] (type 5)
+    S_surf: jax.Array  # [J/kg/K], entropy of the prescribed temperature (type 5)
+    surf_dr_half: jax.Array  # [m], surface face to top cell, delta_mesh / dxidr / 2 (type 5)
     emissivity: jax.Array
     T_eq: jax.Array  # equilibrium temperature [K] (type 1)
     # UTBL (ultra-thin thermal boundary layer) Cardano correction
@@ -199,9 +204,13 @@ class BoundaryParams(eqx.Module):
         cmb_dr_cmb=0.0,
         param_utbl=False,
         param_utbl_const=0.0,
+        S_surf=0.0,
+        surf_dr_half=0.0,
     ):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
+        self.S_surf = jnp.asarray(S_surf, dtype=jnp.float64)
+        self.surf_dr_half = jnp.asarray(surf_dr_half, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
         self.T_eq = jnp.asarray(T_eq, dtype=jnp.float64)
         self.inner_bc_type = inner_bc_type
@@ -319,12 +328,21 @@ def _apply_surface_bc(
     F_prescribed = bc.outer_bc_value
 
     # Select based on BC type (static, so this traces correctly)
+    if bc.outer_bc_type == 5:  # the kernel flux at the matched surface gradient
+        return heat_flux
     if bc.outer_bc_type == 1:
         F_surf = F_grey
     else:  # type 4 (prescribed)
         F_surf = F_prescribed
 
     return heat_flux.at[-1].set(F_surf)
+
+
+def _surface_overrides(bc: BoundaryParams) -> dict:
+    """``compute_fluxes`` arguments of a prescribed surface temperature (type 5), else none."""
+    if bc.outer_bc_type != 5:
+        return {}
+    return {'surface_temperature': (bc.S_surf, bc.outer_bc_value, bc.surf_dr_half)}
 
 
 def _apply_cmb_bc(
@@ -403,7 +421,7 @@ def _dSdt_parts(
     heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
-    flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
+    flux_out = compute_fluxes(S, t, eos, params, mesh, heating, **_surface_overrides(bc))
     heat_flux = flux_out.heat_flux
 
     # Phase properties needed for BCs
@@ -541,6 +559,7 @@ def _dSdt_energy_balance_parts(
         heating,
         S_basic_cmb_override=S_basic_cmb,
         dSdr_cmb_override=dSdr_cmb,
+        **_surface_overrides(bc),
     )
     heat_flux = flux_out.heat_flux
 
@@ -798,6 +817,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
         heating,
         S_basic_cmb_override=S_basic_cmb,
         dSdr_cmb_override=dSdr_cmb,
+        **_surface_overrides(bc),
     )
     heat_flux = flux_out.heat_flux
 
