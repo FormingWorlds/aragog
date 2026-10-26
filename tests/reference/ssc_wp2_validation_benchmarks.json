@@ -1,10 +1,19 @@
 {
   "canary": {
-    "aragog_commit": "7247f727385426ec2bcf040e661d42e9559433de",
+    "aragog_commit": "c7c58d76ac6df4efb708de2926b984c18a0965af",
     "table_md5": {
+      "adiabat_temp_grad_melt.dat": "dc850e459bbae6bd0fdb8a3951652ee1",
+      "adiabat_temp_grad_solid.dat": "6e04d383d2f9144de8a8b239ba7cfc9b",
       "density_melt.dat": "5f1dafa207d677668e4bbdd977b350ed",
       "density_solid.dat": "d54cb60d201e1713c5dfef290e53acda",
-      "temperature_solid.dat": "061842ae7c7a2c031e31bbc043959666"
+      "heat_capacity_melt.dat": "199d53d83cb94a412ca70928c73e13ca",
+      "heat_capacity_solid.dat": "199acbd567bd103af7036ebc25dd400b",
+      "liquidus_P-S.dat": "726cb75653133cbc117d0278267e81e9",
+      "solidus_P-S.dat": "6d24ab7ab4d3054038102ee9b2ef499b",
+      "temperature_melt.dat": "9f3bc5f156467e139398b5416fc4146b",
+      "temperature_solid.dat": "061842ae7c7a2c031e31bbc043959666",
+      "thermal_exp_melt.dat": "a204e074ed7b1e908dbe98a7b6927120",
+      "thermal_exp_solid.dat": "25d7694474bca8f893c9ff604c097a29"
     }
   },
   "a2_2_rhs_parity_and_activity": {
