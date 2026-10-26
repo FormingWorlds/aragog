@@ -24,7 +24,7 @@ The solver works with the specific entropy $S$ \[J/kg/K\], not with the temperat
 
 The mantle grid has cell centres (the staggered nodes, where the solver keeps $S$) and cell faces (the basic nodes, where the fluxes are). The surface is the last basic node. Its pressure is $P_s$. The solver solves $T(P_s, S_s) = T_s$ for $S_s$:
 
-- with EOS tables, by a root search on the phase evaluator of the surface node, so that the value includes the property smoothing near the solidus and liquidus (`matprop_smooth_width`). The search starts 20 J/kg/K around the table value (`EntropyEOS.entropy_at_temperature`) and widens inside the table range; a smoothing width of 0.2 moves the root by up to 65 J/kg/K on the test tables;
+- with EOS tables, by a root search over the entropy range of the tables on the phase evaluator of the surface node, so that the value includes the property smoothing near the solidus and liquidus (`matprop_smooth_width`). On the test tables a smoothing width of 0.2 moves the root by up to 72 J/kg/K from the unsmoothed table value (at 1130 K, scanned from 330 to 2999 K);
 - in the constant-properties mode, from the closed form $S_s = S_\mathrm{ref} + c_p \ln(T_s / T_\mathrm{ref})$.
 
 ### The surface gradient
@@ -62,7 +62,8 @@ The solver takes $\Delta r / 2 = \Delta\xi / (2\, \mathrm{d}\xi/\mathrm{d}r)$, w
 ### Limits
 
 - `outer_boundary_value` must be a positive finite number in kelvin. A string, a TOML `true`, NaN, an infinity, zero or a negative value stops the setup with a `ValueError`.
-- A temperature outside the EOS tables at the surface pressure stops the setup with a `ValueError`; the solver does not clamp it to the table edge.
+- A temperature outside the range the phase evaluator reaches at the surface pressure stops the setup with a `ValueError` that gives the range and the smoothing width; the solver does not clamp it to the table edge. With smoothing this range can be narrower than the tables: at a width of 0.5 the test tables start at 363 K instead of 320 K.
+- A smoothing width of 0.1 or more makes the smoothed temperature jump where the melt fraction is 0.5: on the test tables by 0.02 K at a width of 0.1, 0.5 K at 0.15 and 2.6 K at 0.2 (from 1633.8 to 1636.4 K). No entropy gives a temperature inside the jump, so such a surface temperature stops the setup with a `ValueError`.
 - `param_utbl = true`, `core_bc = 'gradient'` and `energy.conduction = false` stop the setup with a `ValueError`: the UTBL correction belongs to the grey-body flux, the gradient core keeps its own surface gradient, and without conduction the prescribed temperature would set no flux under `nearest_boundary`.
 - A caller can change `outer_boundary_value` between calls; the next call of the NumPy right-hand side, and the next `solve`, invert the surface entropy again.
 - Every call of the NumPy right-hand side checks that the surface node is at $T_s$ to a relative 10⁻⁶ and raises a `RuntimeError` if it is not.
