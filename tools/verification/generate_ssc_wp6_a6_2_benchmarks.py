@@ -9,10 +9,27 @@ Prescribed surface temperature boundary condition (``outer_boundary_condition = 
   ``EntropyState.update`` (``src/aragog/solver/entropy_state.py:570-572``) copies the
   surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
 - For the 12 internally heated steady-state stagnant-lid cases with prescribed surface
-  temperature ``T_surf = 300 K``, this tool applies the verification-only context manager
+  temperature ``T_surf = 273.0 K``, this tool applies the verification-only context manager
   ``half_cell_surface_flux`` (``tools/verification/_ssc_helpers.py``), which sets the top
   conductive heat flux to the temperature-solver BC 5 half-cell formula
   ``F_top = k * (T_cell - T_surf) / (dr / 2)``.
+- Because ``half_cell_surface_flux`` sets only ``_heat_flux[-1]`` after ``EntropyState.update``
+  returns, the stagnant-lid closure inside ``EntropyState.update``
+  (``src/aragog/solver/entropy_state.py:825-844``) reads the extrapolated surface
+  temperature ``T_basic[-1]`` (273.67 to 304.23 K across the 5 snapshots) and
+  unpatched surface flux (0.78 to 5.39 W/m^2 vs patched 0.85 to
+  8.51 W/m^2), so the stored states are steady for a closure fed the extrapolated
+  surface temperature and flux. Recomputing the closure with ``T_surf = 273.0 K`` and the
+  patched flux leaves ``T_i`` unchanged (0.0), shifts the isotherm ``d_lid`` by 0.0 to
+  3.8e-5 (-3.816e-05 on ``case_06``, -1.667e-12 on ``case_07``, and 0.0
+  on ``case_01``, ``case_03``, ``case_12``), shifts the conductive-equivalent lid thickness by
+  +8.5e-5 to +3.7e-3 (+8.505e-05 on ``case_01`` and +5.470e-05 on
+  ``case_12`` up to +3.726e-03 on ``case_06``), shifts ``theta`` by
+  +6.572e-04 up to +2.3e-2 (+2.282e-02 on ``case_06``), and yields a
+  residual under a consistent evaluation of up to 3.4e-5 J/(kg K yr)
+  (2.186e-10 on ``case_12`` and 1.146e-09 on ``case_01`` up to
+  3.426e-05 J/(kg K yr) on ``case_06``, vs stored 3.100e-16 to
+  3.370e-11 J/(kg K yr)).
 
 Execution modes and per-block coverage:
 - ``--full`` (~50 s on 1 CPU core): recomputes the steady-state trajectories, snapshots,

@@ -9,12 +9,28 @@ Prescribed surface temperature boundary condition (``outer_boundary_condition = 
   ``EntropyState.update`` (``src/aragog/solver/entropy_state.py:570-572``) copies the
   surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
 - For steady-state internally heated benchmarks with prescribed surface temperature
-  ``T_surf`` (Korenaga 2009 Table 1 ``E300`` steady states), this tool applies the
+  ``T_surf = 273.0 K`` (Korenaga 2009 Table 1 ``E300`` steady states), this tool applies the
   verification-only context manager ``half_cell_surface_flux``
   (``tools/verification/_ssc_helpers.py``), which sets the top conductive heat flux to the
   temperature-solver BC 5 half-cell formula ``F_top = k * (T_cell - T_surf) / (dr / 2)``
   (whereas the 400 Myr and 4.5 Gyr secular-cooling trajectories use ``outer_boundary_condition = 4``
   with the 0-D surface heat flux updated between segments).
+- Because ``half_cell_surface_flux`` sets only ``_heat_flux[-1]`` after ``EntropyState.update``
+  returns, the stagnant-lid closure inside ``EntropyState.update``
+  (``src/aragog/solver/entropy_state.py:825-844``) reads the extrapolated surface
+  temperature ``T_basic[-1]`` (276.20 to 280.41 K on the 3 ``E300`` states) and
+  unpatched surface flux (1.75 to 2.66 W/m^2 vs patched 2.08 to
+  3.41 W/m^2), so the stored ``E300`` states are steady for a closure fed the
+  extrapolated surface temperature and flux. Recomputing the closure with ``T_surf = 273.0 K``
+  and the patched flux leaves ``T_i`` unchanged (0.0), leaves the isotherm ``d_lid``
+  unchanged (0.0 to -1.412e-12 relative; up to 3.8e-5 / -3.816e-05 on
+  internal-heating scaling ``case_06``), shifts the conductive-equivalent lid thickness by
+  +3.185e-04 to +7.401e-04 (+8.5e-5 to +3.7e-3 / +8.505e-05 to
+  +3.726e-03 on the scaling snapshots, +5.470e-05 on ``case_12``),
+  shifts ``theta`` by +2.302e-03 to +5.347e-03 (up to +2.3e-2 /
+  +2.282e-02 on ``case_06``), and gives a consistent-evaluation residual
+  ``max|dS/dt|`` of 2.265e-07 to 9.609e-07 J/(kg K yr) (up to 3.4e-5 /
+  3.426e-05 J/(kg K yr) on ``case_06``).
 
 Execution modes and per-block coverage:
 - ``--full`` (~45 s on 1 CPU core): recomputes the secular-cooling trajectories and 0-D
