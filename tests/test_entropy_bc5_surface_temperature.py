@@ -97,9 +97,9 @@ def test_the_surface_face_carries_the_half_cell_conduction(t_surf):
 
 @pytest.mark.physics_invariant
 def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
-    """On the mass-coordinate mesh the face distance is ``delta_mesh / dxidr / 2``, which differs
-    from the geometric distance between the surface node and the top cell centre by more than
-    0.1 %; on a radius mesh the two agree to round-off."""
+    """On the mass-coordinate mesh the face distance is ``delta_mesh / dxidr / 2``, which
+    differs from the geometric distance between the surface node and the top cell centre by
+    more than 0.1 %; on a radius mesh the two agree to round-off."""
     for mass, differs in ((True, True), (False, False)):
         s = _solver(300.0, mass_coordinates=mass)
         _rhs(s)

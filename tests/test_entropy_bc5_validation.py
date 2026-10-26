@@ -77,9 +77,10 @@ def _steady_shell(n_cells):
 def test_the_steady_heated_shell_matches_the_closed_form(validation_plot):
     """Uniform heating, zero flux at r_in and T_s at r_out: T(r) = T_s + rho H (r_out^2 - r^2)
     / (6k) + rho H r_in^3 (1/r_out - 1/r) / (3k) (Turcotte and Schubert 2014, eq. 4.40 with
-    dT/dr = 0 at r_in). At steady state the surface flux is rho H (r_out^3 - r_in^3) / (3 r_out^2)
-    for every N, since the cell volumes are exact shell volumes, so the flux checks the energy
-    balance; the temperature error falls as N^-2, and a full-cell face drops the order to 1."""
+    dT/dr = 0 at r_in). At steady state the surface flux is rho H (r_out^3 - r_in^3) / (3
+    r_out^2) for every N, since the cell volumes are exact shell volumes, so the flux checks
+    the energy balance; the temperature error falls as N^-2, and a full-cell face drops the
+    order to 1."""
     f_exact = RHO * H_1 * (R_OUT**3 - R_IN_1**3) / (3 * R_OUT**2)
     rise = _shell_exact(R_IN_1) - T_S_1
     errors, runs = [], {}
@@ -196,10 +197,11 @@ def _steady_convecting_shell(n_cells, profile, guess):
 @pytest.mark.reference_pinned
 def test_the_convecting_shell_converges_with_second_order(validation_plot):
     """With mixing-length convection (nearest_boundary and constant mixing length) the steady
-    surface flux still equals the total heating over the surface area; the mean temperature and
-    the temperature at 5 fixed radii converge with order 2.0 +- 0.4 between N = 100, 200 and 400,
-    and the N = 400 values lie within 1e-3 of the rise from their Richardson extrapolation. The
-    surface boundary layer (depth to 90 % of the mid-mantle rise) spans at least 8 cells."""
+    surface flux still equals the total heating over the surface area; the mean temperature
+    and the temperature at 5 fixed radii converge with order 2.0 +- 0.4 between N = 100, 200
+    and 400, and the N = 400 values lie within 1e-3 of the rise from their Richardson
+    extrapolation. The surface boundary layer (depth to 90 % of the mid-mantle rise) spans
+    at least 8 cells."""
     from scipy.interpolate import CubicSpline
 
     f_exact = RHO * H_1 * (R_OUT**3 - R_IN_1**3) / (3 * R_OUT**2)

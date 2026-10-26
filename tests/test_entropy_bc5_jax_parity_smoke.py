@@ -107,7 +107,7 @@ def test_the_update_stops_when_the_surface_node_leaves_the_prescribed_temperatur
 def test_a_surface_temperature_beyond_the_tables_is_refused(t_surf):
     """The inversion clamps to the table edge beyond the range; the setup refuses that value
     instead of running at another temperature."""
-    with pytest.raises(ValueError, match='outside the entropy tables'):
+    with pytest.raises(ValueError, match='outside the range of the phase evaluator'):
         _bc5_solver('quasi_steady', t_surf=t_surf)
 
 
@@ -213,13 +213,14 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
         (1445.0, 0.1),
         (1825.0, 0.2),
         (1500.0, 0.2),
+        (1130.0, 0.2),
     ],
 )
 def test_the_surface_node_holds_its_temperature_with_smoothed_properties(t_surf, smooth):
     """matprop_smooth_width blends the properties near the solidus (1439 K at the surface) and
-    the liquidus (1831 K), and moves the entropy of a given temperature by up to 65 J/kg/K
-    at a width of 0.2 (1500 K); the surface entropy is found on the same evaluator, so the node sits at
-    the prescribed temperature."""
+    the liquidus (1831 K); at a width of 0.2 it moves the entropy of 1130 K by 72 J/kg/K, the
+    largest shift from 330 to 2999 K. The surface entropy is found on the same evaluator, so
+    the node sits at the prescribed temperature."""
     s = _bc5_solver('quasi_steady', t_surf=t_surf, smooth=smooth)
     f = np.asarray(s.dSdt(0.0, np.asarray(s._S0, dtype=float))).ravel()
     assert np.all(np.isfinite(f))
@@ -247,6 +248,30 @@ def test_the_surface_entropy_stays_inside_the_table(strict):
     p_s = float(s._P_basic_flat[-1])
     t_min = float(np.ravel(s.entropy_eos.temperature(p_s, s.entropy_eos.S_min))[0])
     edge = _bc5_solver('quasi_steady', t_surf=t_min, strict=strict)
-    assert edge.surface_temperature_bc[0] >= edge.entropy_eos.S_min
-    with pytest.raises(ValueError, match='outside the entropy tables'):
+    assert edge.surface_temperature_bc[0] == pytest.approx(edge.entropy_eos.S_min, abs=1e-9)
+    with pytest.raises(ValueError, match='outside the range of the phase evaluator'):
         _bc5_solver('quasi_steady', t_surf=t_min - 20.0, strict=strict)
+
+
+def test_a_temperature_below_the_smoothed_range_names_the_evaluator():
+    """At a smoothing width of 0.5 the evaluator gives 363 K at the table minimum, above the
+    320 K of the table; 340 K is refused with the range of the evaluator and the width."""
+    with pytest.raises(
+        ValueError, match=r'phase evaluator .* 363\.\d+ .* matprop_smooth_width = 0\.5'
+    ):
+        _bc5_solver('quasi_steady', t_surf=340.0, smooth=0.5)
+
+
+@pytest.mark.parametrize('t_surf', [1634.0, 1635.0, 1636.0])
+def test_a_temperature_in_the_mid_melt_jump_is_refused(t_surf):
+    """At a smoothing width of 0.2 the smoothed temperature jumps by 2.6 K where the melt
+    fraction is 0.5 (1633.8 to 1636.4 K at the surface); no entropy gives a temperature inside
+    the jump, and the setup says so; 1633 and 1637 K have an entropy."""
+    with pytest.raises(ValueError, match='no entropy'):
+        _bc5_solver('quasi_steady', t_surf=t_surf, smooth=0.2)
+    for t_ok in (1633.0, 1637.0):
+        s = _bc5_solver('quasi_steady', t_surf=t_ok, smooth=0.2)
+        s.dSdt(0.0, np.asarray(s._S0, dtype=float))
+        assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
+            t_ok, rel=1e-9
+        )
