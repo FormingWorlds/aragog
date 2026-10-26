@@ -5,10 +5,13 @@ Generates or checks ``tests/reference/ssc_wp6_a6_1_benchmarks.json``.
 Execution modes and per-block coverage:
 - ``--full`` (~120 s on 1 CPU core): recomputes all benchmark blocks from scratch
   using the standalone 0-D stagnant-lid model (``tests.reference.stagnant_lid_0d``)
-  and the 1-D ``EntropySolver``:
+  and the 1-D ``EntropySolver`` (temporarily replacing ``EntropySolver._solve_cvode``
+  with an unbounded-step wrapper ``max_step = np.inf`` to integrate the multi-Gyr
+  secular-cooling and steady-state runs without hitting the 100 yr phase-boundary step
+  cap; this override is removed once the step-cap fix lands on ``main``):
   1. ``a_nu_provenance`` (~0.02 s): computes empirical ``a_nu = Nu * theta**(4/3) * Ra_i**(-1/3)``
      across all 12 Newtonian Arrhenius rows of Korenaga (2009) Table 1 (mean ``0.5954``,
-     sample standard deviation ``0.0155``) and integrates the 4.5 Gyr 0-D ODE across
+     sample standard deviation ``0.0651``) and integrates the 4.5 Gyr 0-D ODE across
      ``a_nu in {0.5954, 0.57, 0.53}``.
   2. ``trajectory_calibrated_400Myr``, ``trajectory_default_400Myr``, and
      ``segment_25Myr_spread_5starts`` (~18 s): integrates the 400 Myr 1-D ``EntropySolver``
@@ -28,8 +31,9 @@ Execution modes and per-block coverage:
      ``E300``, ``E340``, and ``E270`` (``N=100`` and ``N=50``), records the 5-start
      steady-state residual spread on ``E300``, and computes the 0-D fixed-``T_i`` and
      fixed-``H`` steady-state predictions.
-- ``--check`` (~1.8 s on 1 CPU core): verifies expected schema keys and table MD5
-  hashes, and recomputes a stated fast live subset across every block:
+- ``--check`` (~1.8 s on 1 CPU core): verifies expected schema keys and the no-table
+  constant-property record (``eos_tables``), and recomputes a stated fast live subset
+  across every block:
   1. ``a_nu_provenance``: recomputes all 12 Korenaga (2009) Table 1 ``a_nu`` values,
      mean, standard deviation, and all three 4.5 Gyr 0-D ODE trajectories within ``1e-12``.
   2. ``trajectory_calibrated_400Myr`` and ``segment_25Myr_spread_5starts``: integrates

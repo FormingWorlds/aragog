@@ -4,11 +4,14 @@ Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
 
 Execution modes and per-block coverage:
 - ``--full`` (~50 s on 1 CPU core): recomputes all benchmark blocks from scratch
-  using ``EntropySolver``:
+  using ``EntropySolver`` (temporarily replacing ``EntropySolver._solve_cvode`` with an
+  unbounded-step wrapper ``max_step = np.inf`` to integrate to the multi-Gyr steady
+  states without hitting the 100 yr phase-boundary step cap; this override is removed
+  once the step-cap fix lands on ``main``):
   1. ``metadata.fixed_parameters`` (~0.01 s): derives the analytical and discrete
      ``N = 100`` staggered-grid pure-conduction Nusselt floors (parabola peak ``2.0``,
-     analytical Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.224812``,
-     and spherical-shell ``r_in/r_out = 0.99``, ``N = 100`` ``2.203668``).
+     analytical Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.227638``,
+     and spherical-shell ``r_in/r_out = 0.99``, ``N = 100`` ``2.247151``).
   2. ``cases_results`` and ``steady_state_snapshots`` (~50 s): integrates all 12
      internally heated stagnant-lid cases (``case_01``..``case_12``) to statistical
      steady state in 8-chunk doublings (``t_end`` up to ``320 Gyr``) and extracts the
@@ -18,8 +21,9 @@ Execution modes and per-block coverage:
      ``realized_state_fits`` (~0.01 s): computes the ordinary least-squares multilinear
      and 1-D sweep power-law fits on both design parameters ``(Ra_i, theta)`` and
      realized steady-state parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
-- ``--check`` (~0.25 s on 1 CPU core): verifies expected schema keys and table MD5
-  hashes, and recomputes a stated fast live subset across every block:
+- ``--check`` (~0.25 s on 1 CPU core): verifies expected schema keys and the no-table
+  constant-property record (``eos_tables``), and recomputes a stated fast live subset
+  across every block:
   1. ``metadata.fixed_parameters``: recomputes ``compute_discrete_conduction_floor_n100()``
      and verifies agreement within ``1e-12``.
   2. ``cases_results`` and ``steady_state_snapshots``: evaluates live 1-D
