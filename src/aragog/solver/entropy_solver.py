@@ -2019,7 +2019,6 @@ class EntropySolver:
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
-        self._outer_bc_S_surf = self._outer_bc_dr_half = None
         if self._outer_bc_kind == 5:
             self._refresh_surface_temperature()
         self._outer_bc_value = float(bc.outer_boundary_value)
@@ -2030,25 +2029,27 @@ class EntropySolver:
         self._inner_bc_value = float(bc.inner_boundary_value)
 
     @property
-    def surface_temperature_bc(self) -> tuple[float, float] | None:
-        """Surface entropy [J/kg/K] and face half cell [m] of BC 5, the ``S_surf`` and
-        ``surf_dr_half`` of a JAX ``BoundaryParams``; None for the other outer modes."""
+    def surface_temperature_bc(self) -> tuple[float, float, float] | None:
+        """Surface entropy [J/kg/K], surface temperature [K] and face half cell [m] of BC 5,
+        the ``S_surf``, ``outer_bc_value`` and ``surf_dr_half`` of a JAX ``BoundaryParams``;
+        None for the other outer modes. A changed ``outer_boundary_value`` is inverted first,
+        and an invalid one raises ``ValueError``."""
         if self._outer_bc_kind != 5:
             return None
         self._refresh_surface_temperature()
-        return self._outer_bc_S_surf, self._outer_bc_dr_half
+        return self.state._surface_temperature_bc
 
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and whenever ``outer_boundary_value`` changed."""
         bc = self.evaluator.boundary_conditions._settings
         current = self.state._surface_temperature_bc
         if current is None or bc.outer_boundary_value != current[1]:
-            self._outer_bc_S_surf, self._outer_bc_dr_half = self._surface_temperature_bc(bc)
+            s_surf, half_cell = self._invert_surface_temperature(bc)
             self.state.set_surface_temperature(
-                self._outer_bc_S_surf, float(bc.outer_boundary_value), self._outer_bc_dr_half
+                s_surf, float(bc.outer_boundary_value), half_cell
             )
 
-    def _surface_temperature_bc(self, bc) -> tuple[float, float]:
+    def _invert_surface_temperature(self, bc) -> tuple[float, float]:
         """Surface entropy and face half cell of the prescribed surface temperature (BC 5).
 
         Parameters
@@ -2099,27 +2100,42 @@ class EntropySolver:
 
     def _surface_entropy_on_evaluator(self, p_surf: float, t_surf: float) -> float:
         """Entropy [J/kg/K] where the basic-node phase evaluator, with its property smoothing,
-        gives ``t_surf`` at ``p_surf``: a Brent search 20 J/kg/K around the table inversion."""
-        outside = ValueError(
-            f'outer_boundary_value = {t_surf} K lies outside the entropy tables at the surface '
-            f'pressure {p_surf:.6g} Pa'
-        )
-        s0 = float(self.entropy_eos.entropy_at_temperature(p_surf, t_surf))
-        if not np.isfinite(s0):
-            raise outside
-        pb, n_basic = self.state.phase_basic, np.ravel(self._P_basic_flat).size
+        gives ``t_surf`` at ``p_surf``: a Brent search in a bracket around the table inversion
+        that doubles from 20 J/kg/K up to the table range. The evaluator gets its profile back."""
+        eos, pb = self.entropy_eos, self.state.phase_basic
+        s_min, s_max = eos.S_min, eos.S_max
+        saved = getattr(pb, 'entropy', None)
+        saved = None if saved is None else np.array(saved, dtype=float)
 
         def miss(s):
-            pb.set_entropy(np.full(n_basic, s))
+            pb.set_entropy(np.full_like(self._P_basic_flat, s))
             pb.update()
             return float(np.ravel(pb.temperature())[-1]) - t_surf
 
-        lo, hi = s0 - 20.0, s0 + 20.0
-        if not miss(lo) <= 0.0 <= miss(hi):
-            raise outside
-        s_surf = brentq(miss, lo, hi, xtol=1e-12, rtol=4 * np.finfo(float).eps)
-        if not abs(miss(s_surf)) <= 1e-9 * t_surf:
-            raise outside
+        try:
+            if not miss(s_min) <= 0.0 <= miss(s_max):
+                raise ValueError(
+                    f'outer_boundary_value = {t_surf} K lies outside the entropy tables at '
+                    f'the surface pressure {p_surf:.6g} Pa'
+                )
+            s0 = float(np.clip(eos.entropy_at_temperature(p_surf, t_surf), s_min, s_max))
+            width = 20.0
+            while True:
+                lo, hi = max(s0 - width, s_min), min(s0 + width, s_max)
+                if miss(lo) <= 0.0 <= miss(hi):
+                    break
+                width *= 2.0
+            s_surf = brentq(miss, lo, hi, xtol=1e-12, rtol=4 * np.finfo(float).eps)
+            if not abs(miss(s_surf)) <= 1e-9 * t_surf:
+                raise ValueError(
+                    f'the phase evaluator has no entropy for outer_boundary_value = {t_surf} K '
+                    f'at the surface pressure {p_surf:.6g} Pa'
+                )
+        finally:
+            if saved is not None:
+                pb.set_entropy(saved)
+                if saved.size == self._P_basic_flat.size:  # empty before the first update
+                    pb.update()
         return s_surf
 
     def reset(self) -> None:

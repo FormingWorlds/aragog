@@ -136,7 +136,7 @@ class BoundaryParams(eqx.Module):
         4 = prescribed flux (from atmosphere module)
         5 = prescribed temperature ``outer_bc_value`` [K]: the surface node takes the entropy
             ``S_surf`` and the face flux is the kernel flux at the half-cell gradient over
-            ``surf_dr_half`` (``EntropySolver._surface_temperature_bc``)
+            ``surf_dr_half`` (``EntropySolver.surface_temperature_bc``)
 
     CMB BC types:
         0 = insulating (F = 0)
@@ -210,12 +210,13 @@ class BoundaryParams(eqx.Module):
         if outer_bc_type == 5 and not (
             S_surf is not None
             and np.isfinite(float(S_surf))
-            and np.isfinite(float(surf_dr_half))
-            and float(surf_dr_half) > 0.0
+            and 0.0 < float(outer_bc_value) < np.inf
+            and 0.0 < float(surf_dr_half) < np.inf
         ):
             raise ValueError(
-                'outer_bc_type 5 needs a finite S_surf and a finite surf_dr_half > 0 m '
-                f'(EntropySolver.surface_temperature_bc), got {S_surf}, {surf_dr_half}'
+                'outer_bc_type 5 needs a finite S_surf, an outer_bc_value > 0 K and a '
+                'surf_dr_half > 0 m, all finite (EntropySolver.surface_temperature_bc), got '
+                f'{S_surf}, {outer_bc_value}, {surf_dr_half}'
             )
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
