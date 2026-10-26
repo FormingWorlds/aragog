@@ -18,7 +18,7 @@
       "deschamps_vilella_2021_d_lid_rel_tol_pct": 20.0,
       "normalised_residual_threshold": 1.0
     },
-    "generator_input_sha256": "4a924b1e2d4f6ec053b1fc2d107a20daac3172011c1dd936f97c99ec19140ab5",
+    "generator_input_sha256": "e61cf67a6cf5464dddef7d8f902e65588203c29de3219852cc60b10fa5aba51a",
     "generator_input_files": [
       "src/aragog/__init__.py",
       "src/aragog/cfg/__init__.py",
