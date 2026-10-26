@@ -105,9 +105,9 @@ def test_the_update_stops_when_the_surface_node_leaves_the_prescribed_temperatur
 
 @pytest.mark.parametrize('t_surf', [1.0e6, 1.0e-3])
 def test_a_surface_temperature_beyond_the_tables_is_refused(t_surf):
-    """The inversion clamps to the table edge beyond the range; the setup refuses that value
-    instead of running at another temperature."""
-    with pytest.raises(ValueError, match='outside the range of the phase evaluator'):
+    """A temperature beyond the range the evaluator reaches is refused, and the message names
+    the surface pressure (0 Pa here, not the pressure of the core-mantle boundary)."""
+    with pytest.raises(ValueError, match='phase evaluator at the surface pressure 0 Pa'):
         _bc5_solver('quasi_steady', t_surf=t_surf)
 
 

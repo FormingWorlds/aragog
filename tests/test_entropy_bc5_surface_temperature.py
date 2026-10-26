@@ -324,8 +324,10 @@ def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
 
     base = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
     base.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(Exception) as err:
         BoundaryParams(outer_bc_type=5, **{'outer_bc_value': 1500.0, **kw}, **base)
+    assert err.type is ValueError, repr(err.value)
+    assert match in str(err.value)
     assert (
         float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **base).surf_dr_half) == 0.0
     )
