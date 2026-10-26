@@ -62,21 +62,21 @@ and all heat made in the shell leaves through the surface: the surface heat flux
 
 **Why this check exists.** With convection on, the entropy gradient at the surface node also enters the mixing-length flux. This check shows that the steady solution with convection converges at the rate of the scheme and keeps the energy balance. It does not separate the wrong surface rules of the first case, which keep order 2 here too; the first case catches them.
 
-**What it tests.** The heated shell of the first case, now with mixing-length convection at a viscosity of 10²¹ Pa s, once with the mixing length 0 at both boundaries (`nearest_boundary`) and once with a constant mixing length (`constant`). The test runs each to steady state on 100, 200 and 400 cells. It compares the mean temperature and the temperature at 5 fixed radii between the grids.
+**What it tests.** The heated shell of the first case, now with mixing-length convection at a viscosity of 10²¹ Pa s and the mixing length 0 at both boundaries (`nearest_boundary`, the profile mode 5 accepts). The test runs it to steady state on 100, 200 and 400 cells. It compares the mean temperature and the temperature at 5 fixed radii between the grids.
 
 **How we know the right answer.** For a second-order scheme the difference between two grids falls by a factor of 4 each time the cells are halved. From 3 grids, Richardson extrapolation estimates the value on an infinitely fine grid. The surface flux needs no extrapolation: in steady state it equals the total heating divided by the surface area on every grid. Before the check the test asserts that the surface boundary layer (the depth where the temperature reaches 90 % of its rise at mid-mantle) spans at least 8 cells, so that the finest grid resolves it.
 
 **Why it matters.** Most runs use convection; this check covers the part of the surface flux that conduction alone does not test.
 
-![Steady temperature of the convecting shell for two mixing-length profiles, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence.svg#only-light){ width="80%" }
-![Steady temperature of the convecting shell for two mixing-length profiles, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence_dark.svg#only-dark){ width="80%" }
+![Steady temperature of the convecting shell, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence.svg#only-light){ width="80%" }
+![Steady temperature of the convecting shell, and N squared times the error of the mean temperature](../assets/validation/bc5_convecting_shell_convergence_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** Top: the steady temperature against radius for the two mixing-length profiles on 400 cells. Bottom: $N^2$ times the error of the mean temperature against its Richardson value, divided by the temperature rise; horizontal lines mean second-order convergence.
+**How to read the plot.** Top: the steady temperature against radius on 400 cells. Bottom: $N^2$ times the error of the mean temperature against its Richardson value, divided by the temperature rise; a horizontal line means second-order convergence.
 
 ??? info "Test details"
     - Reference: the convergence order of the scheme and Richardson extrapolation; the steady surface flux from the energy balance.
     - Tolerance: order 2.0 ± 0.4 for the mean temperature and the 5 fixed-radius temperatures; the 400-cell values within 10⁻³ of the temperature rise from their extrapolation; surface flux to a relative 10⁻⁸; boundary layer at least 8 cells wide on 400 cells.
-    - Discrimination: a wrong face makes the order or the extrapolation fail only when it breaks the convergence; the wrong rules of the first case do not.
+    - Discrimination: none for the face rule. The entropy difference over the half cell and $c_p/T$ of the top cell pass this case (measured); the first case catches them.
     - Test id: `tests/test_entropy_bc5_validation.py::test_the_convecting_shell_converges_with_second_order`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k convecting` (add `--validation-plots` to write the plot pair)
 

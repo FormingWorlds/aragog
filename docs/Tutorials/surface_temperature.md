@@ -142,7 +142,7 @@ print(f'half-space F(t)  = {f_exact:.6f} W/m^2')
 print(f'relative difference = {f_top / f_exact - 1:+.2e}')
 ```
 
-The two agree to 7.5 × 10⁻⁴: the grid error (+1.25 × 10⁻³) minus the curvature effect (4.9 × 10⁻⁴). The top cell is $h$ = 250 m thick, and the grid error of the flux is about 0.063 $(h/\delta)^2$ with $\delta = \sqrt{\kappa t}$; the shell, unlike a half space, is curved, and that lowers the flux by about $\sqrt{\pi \kappa t} / r_\mathrm{out}$, with $r_\mathrm{out}$ = 6371 km the outer radius.
+The two agree to 7.52 × 10⁻⁴. The estimate is the grid error (+1.248 × 10⁻³) minus the curvature effect (4.94 × 10⁻⁴), 7.54 × 10⁻⁴. The top cell is $h$ = 250 m thick, and the grid error of the flux is about 0.063 $(h/\delta)^2$ with $\delta = \sqrt{\kappa t}$; the shell, unlike a half space, is curved, and that lowers the flux by about $\sqrt{\pi \kappa t} / r_\mathrm{out}$, with $r_\mathrm{out}$ = 6371 km the outer radius.
 
 ## 4. Compare the temperature profile
 

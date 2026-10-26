@@ -165,7 +165,7 @@ Spatial discretisation and pressure-density profile.
 | `outer_radius` | m | Planet (mantle top) radius |
 | `inner_radius` | m | CMB radius |
 | `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
-| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
+| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below); `"constant"` is refused with `outer_boundary_condition = 5` |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
