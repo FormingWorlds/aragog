@@ -330,12 +330,12 @@ def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
 @pytest.mark.parametrize(
     ('cp', 't_node', 't_top', 'dtdps', 'dp_dr'),
     [(50.0, 300.0, 400.0, 1e-8, -4e4), (1000.0, 1500.0, 2000.0, 0.0, 0.0)],
-    ids=['heat-capacity-floor', 'node-temperature'],
+    ids=['heat-capacity-floor', 'no-floor'],
 )
 def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
     """The JAX matcher gives (Cp_safe / T_node) ((T_node - T_top) / dr_half - dT/dP|_S dP/dr),
-    with Cp floored at 100 J/kg/K as in its conductive flux (at Cp = 50 the gradient doubles)
-    and the node temperature at S_surf in place of a prescribed value."""
+    with Cp floored at 100 J/kg/K as in its conductive flux (at Cp = 50 the gradient doubles);
+    T_node is the temperature of the surface node, the matcher takes no prescribed value."""
     jnp = pytest.importorskip('jax.numpy')
     pytest.importorskip('equinox')
     from types import SimpleNamespace
@@ -352,9 +352,24 @@ def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
     assert float(out[0]) == 0.0
 
 
-def test_the_jax_factory_refuses_bc5_without_conduction():
-    """Without conduction a prescribed surface temperature sets no face flux under
-    nearest_boundary; the JAX CVODE factory refuses the pair before it builds anything."""
+@pytest.mark.parametrize(
+    ('params', 'mixing_length', 'match'),
+    [
+        ({'conduction': 0.0}, None, 'conduction'),
+        ({'conduction': 1.0}, np.array([0.0, 7.2e5, 7.2e5]), 'mixing length'),
+        (
+            {'conduction': 1.0, 'eddy_diff_thermal': -1e3},
+            np.zeros(3),
+            'eddy_diffusivity_thermal',
+        ),
+    ],
+    ids=['no-conduction', 'surface-mixing-length', 'constant-eddy-diffusivity'],
+)
+def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing_length, match):
+    """The JAX CVODE factory refuses type 5 without conduction, with a mixing length that is
+    not 0 at the surface node (as with 'constant'), or with a negative eddy_diffusivity_thermal,
+    which makes kappa_h a constant at every node; each leaves the surface face without the
+    half-cell conduction it prescribes."""
     pytest.importorskip('equinox')
     from types import SimpleNamespace
 
@@ -365,37 +380,57 @@ def test_the_jax_factory_refuses_bc5_without_conduction():
     with pytest.raises(Exception) as err:
         build_jax_rhs_and_jacobian(
             eos_jax=None,
-            phase_params=SimpleNamespace(conduction=0.0),
-            mesh_arrays=None,
+            phase_params=SimpleNamespace(**params),
+            mesh_arrays=SimpleNamespace(mixing_length=mixing_length),
             boundary_params=SimpleNamespace(outer_bc_type=5),
             heating_array=np.zeros(4),
             scales=scales,
         )
     assert err.type is ValueError, repr(err.value)
-    assert 'conduction' in str(err.value)
+    assert match in str(err.value)
 
 
-def test_the_jax_factory_refuses_bc5_with_a_surface_mixing_length():
-    """The JAX CVODE factory sees the mixing length of the mesh, not the profile name; it
-    refuses type 5 when the mixing length at the surface node is not 0, as with 'constant'."""
-    pytest.importorskip('equinox')
-    from types import SimpleNamespace
-
-    from aragog.jax.nondim import NonDimScales
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
-
-    scales = NonDimScales(state_scale=np.ones(4), t_ref=1.0)
+def test_bc5_refuses_a_negative_eddy_diffusivity_thermal():
+    """A negative eddy_diffusivity_thermal sets kappa_h to its magnitude at every node, the
+    surface node too, whatever the mixing length; the setup refuses it with BC 5."""
+    p = _build_const_properties_parameters(n_nodes=20)
+    b = p.boundary_conditions
+    b.outer_boundary_condition, b.outer_boundary_value = 5, 300.0
+    p.energy.eddy_diffusivity_thermal = -1e3
+    s = EntropySolver(p, entropy_eos=None)
     with pytest.raises(Exception) as err:
-        build_jax_rhs_and_jacobian(
-            eos_jax=None,
-            phase_params=SimpleNamespace(conduction=1.0),
-            mesh_arrays=SimpleNamespace(mixing_length=np.array([0.0, 7.2e5, 7.2e5])),
-            boundary_params=SimpleNamespace(outer_bc_type=5),
-            heating_array=np.zeros(4),
-            scales=scales,
-        )
+        s.initialize()
     assert err.type is ValueError, repr(err.value)
-    assert 'mixing length' in str(err.value)
+    assert 'eddy_diffusivity_thermal' in str(err.value)
+
+
+@pytest.mark.parametrize(
+    'value',
+    [10**400, __import__('fractions').Fraction(1, 10**400)],
+    ids=['int-1e400', 'fraction-1e-400'],
+)
+def test_bc5_refuses_a_real_value_that_is_not_a_finite_positive_float(value):
+    """An integer too large for a float and a Fraction that rounds to 0 K are refused with the
+    ValueError of the setting, not an OverflowError or a log of zero."""
+    with pytest.raises(Exception) as err:
+        _solver(value)
+    assert err.type is ValueError, repr(err.value)
+    assert 'outer_boundary_value' in str(err.value)
+
+
+def test_a_fraction_surface_temperature_is_inverted_once():
+    """A non-dyadic Fraction compares unequal to its float; the surface entropy is still
+    inverted once at setup and not again on each right-hand side."""
+    from fractions import Fraction
+
+    calls = []
+    s = _solver(Fraction(16001, 10))
+    orig = s._invert_surface_temperature
+    s._invert_surface_temperature = lambda bc: calls.append(1) or orig(bc)
+    for _ in range(5):
+        _rhs(s)
+    assert calls == []
+    assert s.surface_temperature_bc[1] == pytest.approx(1600.1, rel=1e-15)
 
 
 def test_bc5_takes_a_fraction_as_a_surface_temperature():

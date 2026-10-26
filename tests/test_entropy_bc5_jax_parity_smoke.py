@@ -16,9 +16,7 @@ pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
 
 
-def _bc5_solver(
-    core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0, strict=False, **build
-):
+def _bc5_solver(core_bc, t_surf=T_SURF, smooth=0.0, strict=False, **build):
     """A 10-node table solver under BC 5; outside core_module the entropy falls from 2900 to
     2600 J/kg/K, so every interior face has a nonzero gradient."""
     eos = entropy_eos_copy(EOS_DIR, strict_range=strict, identity_alpha=True)
@@ -31,7 +29,6 @@ def _bc5_solver(
     )
     b = s.parameters.boundary_conditions
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
-    s.parameters.mesh.mixing_length_profile = profile
     s.parameters.phase_mixed.matprop_smooth_width = smooth
     s.initialize()
     if core_bc != 'core_module':
@@ -112,24 +109,20 @@ def test_a_surface_temperature_beyond_the_tables_is_refused(t_surf):
 
 
 _PARITY = [
-    *[
-        (core_bc, profile, {})
-        for core_bc in ('quasi_steady', 'energy_balance', 'core_module')
-        for profile in ('nearest_boundary',)
-    ],
-    ('quasi_steady', 'nearest_boundary', {'t_surf': 1000.0}),
-    ('quasi_steady', 'nearest_boundary', {'t_surf': 3000.0}),
-    ('quasi_steady', 'nearest_boundary', {'t_surf': 1445.0, 'smooth': 0.01}),
+    *[(core_bc, {}) for core_bc in ('quasi_steady', 'energy_balance', 'core_module')],
+    ('quasi_steady', {'t_surf': 1000.0}),
+    ('quasi_steady', {'t_surf': 3000.0}),
+    ('quasi_steady', {'t_surf': 1445.0, 'smooth': 0.01}),
 ]
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize(('core_bc', 'profile', 'kw'), _PARITY)
-def test_the_jax_rhs_matches_numpy_under_bc5(core_bc, profile, kw):
+@pytest.mark.parametrize(('core_bc', 'kw'), _PARITY)
+def test_the_jax_rhs_matches_numpy_under_bc5(core_bc, kw):
     """The JAX right-hand side of each core mode matches the NumPy one in every state slot, on
     a graded entropy profile, for solid, mushy and liquid surface nodes and with smoothed
     properties."""
-    s = _bc5_solver(core_bc, profile=profile, **kw)
+    s = _bc5_solver(core_bc, **kw)
     y = np.asarray(s._S0, dtype=float)
     f_np = np.asarray(s.dSdt(0.0, y)).ravel()
     f_jax = _jax_rhs(s, y)
@@ -290,3 +283,33 @@ def test_the_jax_rhs_ignores_a_stale_outer_bc_value():
     f = np.asarray(fn(0.0, jnp.asarray(y), args)).ravel()
     np.testing.assert_array_equal(np.asarray(fn(0.0, jnp.asarray(y), stale)).ravel(), f)
     np.testing.assert_allclose(f, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)
+
+
+def test_the_jax_factory_accepts_a_real_bc5_mesh_and_refuses_a_constant_one():
+    """The JAX CVODE factory builds the right-hand side and Jacobian for a BC 5 solver with the
+    nearest_boundary mixing length, and refuses type 5 on the mesh of a constant profile."""
+    pytest.importorskip('equinox')
+    from aragog.jax.nondim import NonDimScales
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    s = _bc5_solver('quasi_steady')
+    fn, args = _jax_rhs_and_args(s)
+    kw = dict(eos_jax=args[0], phase_params=args[1], heating_array=np.zeros(s._n_stag))
+    scales = NonDimScales(state_scale=np.ones(s._n_stag), t_ref=1.0)
+    rhs, jac, _ = build_jax_rhs_and_jacobian(
+        mesh_arrays=args[2], boundary_params=args[3], scales=scales, **kw
+    )
+    assert callable(rhs) and callable(jac)
+    from aragog.jax.phase import MeshArrays
+
+    c = _build('quasi_steady', entropy_eos_copy(EOS_DIR, identity_alpha=True), None)
+    c.parameters.mesh.mixing_length_profile = 'constant'
+    c.initialize()
+    mesh_c = MeshArrays.from_numpy_mesh(c.evaluator.mesh)
+    assert float(mesh_c.mixing_length[-1]) > 0.0
+    with pytest.raises(Exception) as err:
+        build_jax_rhs_and_jacobian(
+            mesh_arrays=mesh_c, boundary_params=args[3], scales=scales, **kw
+        )
+    assert err.type is ValueError, repr(err.value)
+    assert 'mixing length' in str(err.value)
