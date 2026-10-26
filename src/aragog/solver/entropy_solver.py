@@ -3675,9 +3675,10 @@ class EntropySolver:
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
         ends the call. The segments' trajectories and energy traces are joined. Segments
         starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
-        ``rtol = 1e-9`` and physical ``atol = 1e-8`` J/(kg K) so that removing the 100 yr
-        ``max_step`` ceiling keeps the 1.3e-4 K accuracy; other segments keep the caller's
-        ``rtol`` and ``atol``.
+        ``rtol`` at most ``1e-9`` and physical ``atol`` at most ``1e-8`` J/(kg K) so that
+        removing the 100 yr ``max_step`` ceiling keeps the 1.3e-4 K accuracy without
+        loosening tighter caller tolerances; other segments keep the caller's ``rtol`` and
+        ``atol``.
 
         Parameters
         ----------
@@ -3728,8 +3729,10 @@ class EntropySolver:
             seg_kw = (
                 {
                     **cvode_kw,
-                    'rtol': 1.0e-9,
-                    'atol': 1.0e-8 / self._build_nondim_scales().state_scale,
+                    'rtol': min(cvode_kw['rtol'], 1.0e-9),
+                    'atol': np.minimum(
+                        cvode_kw['atol'], 1.0e-8 / self._build_nondim_scales().state_scale
+                    ),
                 }
                 if isinstance(roots, _PhaseBoundarySegmentRoot)
                 and np.all(roots.S0 <= roots.S_sol)
