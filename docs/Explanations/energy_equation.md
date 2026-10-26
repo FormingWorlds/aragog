@@ -71,7 +71,7 @@ The right-hand side function `EntropySolver.dSdt(time, state_vec)` computes:
 
 1. Phase, density, $T$, $c_p$, $\alpha$, $k$, $\partial T/\partial P|_S$, and the smoothing weight $\mathrm{smth}(\phi)$ at every node from the EOS lookup at $(P, S)$.
 2. The entropy gradient $\partial S/\partial r$ at basic nodes (centred difference in uniform $\xi$, plus the override at the CMB in the `energy_balance` and `core_module` modes).
-3. The four flux contributions $F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$ (see [Heat transport](heat_transport.md)).
+3. The four flux contributions $F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$ (see [Heat transport](heat_transport.md)). When solid mantle rheology is enabled (`[phase_solid.rheology]`), $F_\mathrm{conv}$ accounts for variable viscosity and stagnant-lid suppression (see [Solid-state convection](solid_state_convection.md)).
 4. The internal heating $H = H_\mathrm{radio} + H_\mathrm{tidal}$ at staggered nodes.
 5. The flux divergence $\partial S/\partial t = (\rho T V)^{-1}[-(F\,A)_{i+1/2} + (F\,A)_{i-1/2}] + H/T$, returned in $\mathrm{J\,kg^{-1}\,K^{-1}\,yr^{-1}}$.
 6. For extended-state modes, the additional ODE for the boundary state (the SPIDER `bc.c:76-131` formula in `energy_balance`, the surface-entropy ODE in `gradient`, the core temperature in `bower2018`, or the boundary gradient, the core temperature and the shell temperatures of a stratified core in `core_module`).
