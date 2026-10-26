@@ -78,8 +78,8 @@ def test_the_steady_heated_shell_matches_the_closed_form(validation_plot):
     """Uniform heating, zero flux at r_in and T_s at r_out: T(r) = T_s + rho H (r_out^2 - r^2)
     / (6k) + rho H r_in^3 (1/r_out - 1/r) / (3k) (Turcotte and Schubert 2014, eq. 4.40 with
     dT/dr = 0 at r_in). At steady state the surface flux is rho H (r_out^3 - r_in^3) / (3 r_out^2)
-    for every N, since the cell volumes are exact shell volumes; the temperature error falls as
-    N^-2."""
+    for every N, since the cell volumes are exact shell volumes, so the flux checks the energy
+    balance; the temperature error falls as N^-2, and a full-cell face drops the order to 1."""
     f_exact = RHO * H_1 * (R_OUT**3 - R_IN_1**3) / (3 * R_OUT**2)
     rise = _shell_exact(R_IN_1) - T_S_1
     errors, runs = [], {}
@@ -87,8 +87,6 @@ def test_the_steady_heated_shell_matches_the_closed_form(validation_plot):
         s, r, t = _steady_shell(n)
         f_top = float(np.ravel(s.state.heat_flux)[-1])
         assert f_top == pytest.approx(f_exact, rel=1e-8)
-        # discrimination: the full-cell face would carry half the conduction of the top cell
-        assert f_top != pytest.approx(0.5 * f_exact, rel=1e-2)
         errors.append(np.max(np.abs(t - _shell_exact(r))) / rise)
         runs[n] = (r, t)
     orders = np.log2(np.asarray(errors[:-1]) / np.asarray(errors[1:]))
@@ -125,7 +123,7 @@ def test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux(v
     Schubert 2014, eq. 4.116) to 1 % over 2.2 decades: the half-cell error 0.063 (h/delta)^2 is
     4.7e-3 at the window start (delta = sqrt(kappa t) = 3.7 h), the curvature of the shell
     lowers the flux by sqrt(pi kappa t) / r_out, at most 7.6e-4, and the bottom at 9 delta stays
-    unseen."""
+    unseen. The signed error follows the sum of the two estimates to 5e-4."""
     s = _solver(N_2, R_OUT - D_2, T_S_2)
     y0 = np.full(N_2, _entropy(T_I_2))
     band = diags([1.0, 1.0, 1.0], [-1, 0, 1], shape=(N_2, N_2))
@@ -149,8 +147,11 @@ def test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux(v
     exact = K * (T_I_2 - T_S_2) / np.sqrt(np.pi * KAPPA * seconds)
     error = flux / exact - 1.0
     assert np.max(np.abs(error)) < 1e-2, error
-    # discrimination: a full-cell face halves the flux at late times
-    assert np.max(np.abs(0.5 * flux / exact - 1.0)) > 0.4
+    # the error follows the estimate 0.063 (h/delta)^2 - sqrt(pi kappa t)/r_out to 6.7e-5; a
+    # full-cell face misses it by 9e-3
+    h = D_2 / N_2
+    estimate = 0.063 * h**2 / (KAPPA * seconds) - np.sqrt(np.pi * KAPPA * seconds) / R_OUT
+    assert np.max(np.abs(error - estimate)) < 5e-4
 
     def figure():
         import matplotlib.pyplot as plt

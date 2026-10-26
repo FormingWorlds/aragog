@@ -3,6 +3,8 @@ NumPy-JAX parity of the right-hand side."""
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -14,13 +16,16 @@ pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
 
 
-def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0):
+def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0, **build):
+    """A 10-node table solver under BC 5; outside core_module the entropy falls from 2900 to
+    2600 J/kg/K, so every interior face has a nonzero gradient."""
     eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
     s = _build(
         core_bc,
         eos,
         CORE_MODULE_PARAMS if core_bc == 'core_module' else None,
         s_init='driven' if core_bc == 'core_module' else None,
+        **build,
     )
     b = s.parameters.boundary_conditions
     b.outer_boundary_condition, b.outer_boundary_value = 5, t_surf
@@ -28,40 +33,38 @@ def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0):
     s.parameters.phase_mixed.matprop_smooth_width = smooth
     s.initialize()
     if core_bc != 'core_module':
-        s.set_initial_entropy(2700.0)
+        s.set_initial_entropy(np.linspace(2900.0, 2600.0, s._n_stag))
     return s
 
 
 def _jax_rhs(s, y):
     jnp = pytest.importorskip('jax.numpy')
     pytest.importorskip('equinox')
-    from aragog.jax.solver import BoundaryParams, dSdt, dSdt_core_module, dSdt_energy_balance
+    fn, args = _jax_rhs_and_args(s)
+    return np.asarray(fn(0.0, jnp.asarray(y), args)).ravel()
+
+
+def _jax_rhs_and_args(s, outer_bc_type=5):
+    """The JAX right-hand side of the solver's core mode and its arguments under BC 5."""
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import dSdt, dSdt_core_module, dSdt_energy_balance
     from tests.test_jax_dsdt_core_module import _build_jax_pieces
 
     if s._core_bc != 'core_module':
         s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
     args = list(_build_jax_pieces(s))
-    old = args[3]
-    args[3] = BoundaryParams(
-        outer_bc_type=5,
+    s_surf, half = s.surface_temperature_bc
+    args[3] = dataclasses.replace(
+        args[3],
+        outer_bc_type=outer_bc_type,
         outer_bc_value=float(s.parameters.boundary_conditions.outer_boundary_value),
-        emissivity=old.emissivity,
-        T_eq=old.T_eq,
-        inner_bc_type=old.inner_bc_type,
-        inner_bc_value=old.inner_bc_value,
-        core_density=old.core_density,
-        core_heat_capacity=old.core_heat_capacity,
-        tfac_core_avg=old.tfac_core_avg,
-        cmb_area=old.cmb_area,
-        core_M=old.core_M,
-        cmb_dr_cmb=old.cmb_dr_cmb,
-        S_surf=float(s._outer_bc_S_surf),
-        surf_dr_half=float(s._outer_bc_dr_half),
+        S_surf=s_surf,
+        surf_dr_half=half,
     )
     if s._core_bc == 'core_module':
-        return np.asarray(dSdt_core_module(0.0, jnp.asarray(y), tuple(args))).ravel()
+        return dSdt_core_module, tuple(args)
     fn = dSdt_energy_balance if s._core_bc == 'energy_balance' else dSdt
-    return np.asarray(fn(0.0, jnp.asarray(y), tuple(args[:6]))).ravel()
+    return fn, tuple(args[:6])
 
 
 @pytest.mark.physics_invariant
@@ -69,13 +72,15 @@ def test_the_surface_entropy_gives_the_prescribed_temperature_at_the_surface_pre
     """The setup inverts T(P_s, S) = T_surf on the tables; the forward lookup returns T_surf."""
     s = _bc5_solver('quasi_steady')
     p_s = float(s._P_basic_flat[-1])
-    t_back = float(np.ravel(s.entropy_eos.temperature(p_s, s._outer_bc_S_surf))[0])
+    t_back = float(np.ravel(s.entropy_eos.temperature(p_s, s.surface_temperature_bc[0]))[0])
     assert t_back == pytest.approx(T_SURF, rel=1e-9)
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('t_surf', [1000.0, 1500.0, 3000.0])
-def test_the_surface_node_holds_the_prescribed_temperature_in_every_phase(t_surf):
+@pytest.mark.parametrize(
+    ('t_surf', 'phi_range'), [(1000.0, (0, 0)), (1500.0, (0.01, 0.99)), (3000.0, (1, 1))]
+)
+def test_the_surface_node_holds_the_prescribed_temperature_in_every_phase(t_surf, phi_range):
     """Solid, mushy and liquid surface states: the phase evaluator at the surface node returns
     the prescribed temperature, which the update asserts on every call."""
     s = _bc5_solver('quasi_steady', t_surf=t_surf)
@@ -84,13 +89,14 @@ def test_the_surface_node_holds_the_prescribed_temperature_in_every_phase(t_surf
     assert float(np.ravel(s.state.phase_basic.temperature())[-1]) == pytest.approx(
         t_surf, rel=1e-9
     )
-    assert (phi == 0.0, 0.0 < phi < 1.0, phi == 1.0)[[1000.0, 1500.0, 3000.0].index(t_surf)]
+    assert phi_range[0] <= phi <= phi_range[1]
 
 
 def test_the_update_stops_when_the_surface_node_leaves_the_prescribed_temperature():
     """A surface entropy that no longer matches the prescribed temperature stops the run."""
     s = _bc5_solver('quasi_steady')
-    s.state.set_surface_temperature(s._outer_bc_S_surf + 50.0, T_SURF, s._outer_bc_dr_half)
+    s_surf, half = s.surface_temperature_bc
+    s.state.set_surface_temperature(s_surf + 50.0, T_SURF, half)
     with pytest.raises(RuntimeError, match='prescribed 1500.0 K'):
         s.dSdt(0.0, np.asarray(s._S0, dtype=float))
 
@@ -103,19 +109,79 @@ def test_a_surface_temperature_beyond_the_tables_is_refused(t_surf):
         _bc5_solver('quasi_steady', t_surf=t_surf)
 
 
+_PARITY = [
+    *[
+        (core_bc, profile, {})
+        for core_bc in ('quasi_steady', 'energy_balance', 'core_module')
+        for profile in ('nearest_boundary', 'constant')
+    ],
+    ('quasi_steady', 'nearest_boundary', {'t_surf': 1000.0}),
+    ('quasi_steady', 'constant', {'t_surf': 3000.0}),
+    ('quasi_steady', 'nearest_boundary', {'t_surf': 1445.0, 'smooth': 0.01}),
+]
+
+
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('profile', ['nearest_boundary', 'constant'])
-@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'core_module'])
-def test_the_jax_rhs_matches_numpy_under_bc5(core_bc, profile):
-    """The JAX right-hand side of each core mode matches the NumPy one in every mantle cell,
-    and the surface face is not the prescribed value read as a flux."""
-    s = _bc5_solver(core_bc, profile=profile)
+@pytest.mark.parametrize(('core_bc', 'profile', 'kw'), _PARITY)
+def test_the_jax_rhs_matches_numpy_under_bc5(core_bc, profile, kw):
+    """The JAX right-hand side of each core mode matches the NumPy one in every state slot, on
+    a graded entropy profile, for solid, mushy and liquid surface nodes and with smoothed
+    properties."""
+    s = _bc5_solver(core_bc, profile=profile, **kw)
     y = np.asarray(s._S0, dtype=float)
-    n = s._n_stag
     f_np = np.asarray(s.dSdt(0.0, y)).ravel()
     f_jax = _jax_rhs(s, y)
-    np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
-    assert float(np.ravel(s.state.heat_flux)[-1]) != pytest.approx(T_SURF, rel=1e-3)
+    assert f_jax.shape == f_np.shape
+    np.testing.assert_allclose(f_jax[: s._n_stag], f_np[: s._n_stag], rtol=1e-10)
+    slots = f_np[s._n_stag :]
+    atol = 1e-8 * np.max(np.abs(slots), initial=0.0)
+    np.testing.assert_allclose(f_jax[s._n_stag :], slots, rtol=1e-8, atol=atol)
+
+
+@pytest.mark.physics_invariant
+def test_the_jax_rhs_matches_numpy_with_separation_and_mixing():
+    """With gravitational separation and chemical mixing on, both of which are zero at the
+    surface face, the two right-hand sides still agree in every cell."""
+    s = _bc5_solver('quasi_steady', t_surf=1445.0)
+    s.parameters.energy.gravitational_separation = s.parameters.energy.mixing = True
+    s.initialize()
+    s.set_initial_entropy(np.linspace(2900.0, 2600.0, s._n_stag))
+    y = np.asarray(s._S0, dtype=float)
+    f_np = np.asarray(s.dSdt(0.0, y)).ravel()
+    assert float(np.ravel(s.state._mass_flux)[-1]) == 0.0
+    np.testing.assert_allclose(_jax_rhs(s, y), f_np, rtol=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_the_jax_jacobian_matches_a_finite_difference_of_the_numpy_rhs():
+    """jax.jacrev of the BC 5 right-hand side equals a central difference of the NumPy one on
+    the graded profile; the surface row differs from that of the prescribed-flux mode."""
+    jax = pytest.importorskip('jax')
+    s = _bc5_solver('quasi_steady', profile='constant')
+    y = np.asarray(s._S0, dtype=float)
+    fn, args = _jax_rhs_and_args(s)
+    jac = np.asarray(jax.jacrev(lambda v: fn(0.0, v, args))(jax.numpy.asarray(y)))
+    fd = np.empty_like(jac)
+    for i in range(y.size):
+        h = 1e-6 * abs(y[i])
+        up, dn = y.copy(), y.copy()
+        up[i] += h
+        dn[i] -= h
+        fd[:, i] = (np.ravel(s.dSdt(0.0, up)) - np.ravel(s.dSdt(0.0, dn))) / (2 * h)
+    np.testing.assert_allclose(jac, fd, rtol=0, atol=1e-5 * np.max(np.abs(fd)))
+    fn4, args4 = _jax_rhs_and_args(s, outer_bc_type=4)
+    jac4 = np.asarray(jax.jacrev(lambda v: fn4(0.0, v, args4))(jax.numpy.asarray(y)))
+    assert abs(jac4[-1, -1] - jac[-1, -1]) > 1e-3 * abs(jac[-1, -1])
+
+
+@pytest.mark.parametrize('method', ['radau', 'bdf'])
+def test_a_bc5_solve_finishes_with_the_surface_at_its_temperature(method):
+    """A one-year solve under BC 5 finishes with status 0 and the surface node at T_surf."""
+    s = _bc5_solver('quasi_steady', solver_method=method)
+    s.solve()
+    out = s.get_state()
+    assert out.status == 0
+    assert float(np.ravel(out.T_basic)[-1]) == pytest.approx(T_SURF, rel=1e-9)
 
 
 @pytest.mark.physics_invariant
@@ -128,7 +194,7 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
     st_ = s.state
     t_top_cell = float(np.ravel(st_.phase_staggered.temperature())[-1])
     k_surf = float(np.ravel(st_.phase_basic.thermal_conductivity())[-1])
-    dtdr = (T_SURF - t_top_cell) / s._outer_bc_dr_half
+    dtdr = (T_SURF - t_top_cell) / s.surface_temperature_bc[1]
     assert float(np.ravel(st_._jcond)[-1]) == pytest.approx(-k_surf * dtdr, rel=1e-10)
     dtdr_ad = float(np.ravel(st_.phase_basic.dTdPs())[-1]) * float(st_._dP_dr_basic[-1])
     assert abs(dtdr_ad / dtdr) > 0.01
