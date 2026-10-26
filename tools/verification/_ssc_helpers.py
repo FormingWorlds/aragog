@@ -92,15 +92,17 @@ def half_cell_surface_flux() -> Iterator[None]:
     """Override ``EntropyState.update`` on NumPy const-property runs so BC 5 uses pure half-cell conduction.
 
     Sets ``self_st._heat_flux[-1] = k_surf * (t_cell - T_surf) / (dr / 2)`` after
-    ``orig_update`` returns. Because the stagnant-lid closure inside ``orig_update``
-    (``src/aragog/solver/entropy_state.py:825-844``) runs before this assignment, the
-    closure reads the extrapolated surface temperature ``T_basic[-1]`` and unpatched
-    flux ``_jcond[-1] + _jconv[-1]``; stored yield-thinning and internal-heating scaling
-    steady states are therefore steady for a closure fed the extrapolated surface
-    temperature and flux (recomputing the closure with ``T_surf = 273.0 K`` and the
-    patched flux shifts isotherm ``d_lid`` by 0.0 to 3.8e-5, conductive-equivalent lid
-    thickness by +8.5e-5 to +3.7e-3, ``theta`` up to +2.3e-2, and the consistent-evaluation
-    residual up to 3.4e-5 J/(kg K yr)).
+    ``orig_update`` returns. Because the stagnant-lid closure
+    (``_compute_stagnant_lid_state_core`` in ``src/aragog/rheology_lid.py``, called
+    inside ``EntropyState.update`` in ``src/aragog/solver/entropy_state.py``) runs
+    before this assignment, the closure reads the extrapolated surface temperature
+    ``T_basic[-1]`` and unpatched flux ``_jcond[-1] + _jconv[-1]``; stored
+    yield-thinning and internal-heating scaling steady states are therefore steady
+    for a closure fed the extrapolated surface temperature and flux (recomputing
+    the closure with ``T_surf = 273.0 K`` and the patched flux shifts isotherm ``d_lid``
+    by 0.0 to 3.8e-5, conductive-equivalent lid thickness by +8.5e-5 to +3.7e-3,
+    ``theta`` up to +2.3e-2, and the consistent-evaluation residual up to 3.4e-5
+    J/(kg K yr)).
     """
     orig_update = estate_mod.EntropyState.update
 

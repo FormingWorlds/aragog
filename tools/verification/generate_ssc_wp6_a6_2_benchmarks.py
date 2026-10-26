@@ -4,9 +4,9 @@ Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
 - The shipped entropy solver ignores ``outer_boundary_condition = 5`` today:
-  ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py:2907-2921``)
+  ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py``)
   branches only on ``self._outer_bc_kind == 1`` and ``self._outer_bc_kind == 4``, and
-  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py:570-572``) copies the
+  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py``) copies the
   surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
 - For the 12 internally heated steady-state stagnant-lid cases with prescribed surface
   temperature ``T_surf = 273.0 K``, this tool applies the verification-only context manager
@@ -14,8 +14,9 @@ Prescribed surface temperature boundary condition (``outer_boundary_condition = 
   conductive heat flux to the temperature-solver BC 5 half-cell formula
   ``F_top = k * (T_cell - T_surf) / (dr / 2)``.
 - Because ``half_cell_surface_flux`` sets only ``_heat_flux[-1]`` after ``EntropyState.update``
-  returns, the stagnant-lid closure inside ``EntropyState.update``
-  (``src/aragog/solver/entropy_state.py:825-844``) reads the extrapolated surface
+  returns, the stagnant-lid closure (``_compute_stagnant_lid_state_core`` in
+  ``src/aragog/rheology_lid.py``, called inside ``EntropyState.update`` in
+  ``src/aragog/solver/entropy_state.py``) reads the extrapolated surface
   temperature ``T_basic[-1]`` (273.67 to 304.23 K across the 5 snapshots) and
   unpatched surface flux (0.78 to 5.39 W/m^2 vs patched 0.85 to
   8.51 W/m^2), so the stored states are steady for a closure fed the extrapolated
