@@ -920,3 +920,114 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
     assert prim_fit['multilinear']['beta'] == pytest.approx(
         float(a6_2_data['primary_fit_all_12_nu_korenaga']['multilinear']['beta']), rel=1.0e-12
     )
+
+
+@pytest.mark.unit
+def test_benchmark_generators_require_origin_commit_and_clean_tree(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify all 3 benchmark generators record and check origin-reachable commits only."""
+    import copy
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from tools.verification import (
+        generate_ssc_wp2_benchmarks as wp2_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+
+    ref_dir = Path(__file__).parent / 'reference'
+    wp2_data = json.loads((ref_dir / 'ssc_wp2_validation_benchmarks.json').read_text('utf-8'))
+    a6_1_data = json.loads((ref_dir / 'ssc_wp6_a6_1_benchmarks.json').read_text('utf-8'))
+    a6_2_data = json.loads((ref_dir / 'ssc_wp6_a6_2_benchmarks.json').read_text('utf-8'))
+
+    specs = (
+        ('wp2', wp2_mod, wp2_data, ('canary', 'aragog_commit')),
+        ('a6_1', a6_1_mod, a6_1_data, ('metadata', 'git_commit')),
+        ('a6_2', a6_2_mod, a6_2_data, ('metadata', 'git_commit')),
+    )
+    for label, mod, data, (sec_key, sha_key) in specs:
+        sha = str(data[sec_key][sha_key])
+        obj_type = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'cat-file', '-t', sha], text=True
+        ).strip()
+        assert obj_type == 'commit', f'{label} {sha} is not a git commit object'
+        branches_out = subprocess.check_output(
+            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha], text=True
+        )
+        origin_branches = [
+            b.strip() for b in branches_out.splitlines() if b.strip().startswith('origin/')
+        ]
+        assert origin_branches, f'{label} recorded commit {sha} is not on any origin/* branch'
+        assert mod._is_commit_on_origin(sha, repo_root) is True
+        assert (
+            mod._is_commit_on_origin('06846a9844568933e170ba562e1f935089fe4e01', repo_root)
+            is False
+        )
+        assert (
+            mod._is_commit_on_origin('f343d7bfb7a2b4f9fe9960c52375cc825a88e904', repo_root)
+            is False
+        )
+        assert mod._is_commit_on_origin('uncommitted', repo_root) is False
+
+        bad_data = copy.deepcopy(data)
+        bad_data[sec_key][sha_key] = '06846a9844568933e170ba562e1f935089fe4e01'
+        failures = (
+            mod.verify_benchmarks(bad_data, eos_dir=None)
+            if label == 'wp2'
+            else mod.verify_benchmarks(bad_data)
+        )
+        assert any('origin' in f for f in failures), (
+            f'{label} verify_benchmarks accepted non-origin SHA'
+        )
+
+        out_copy = tmp_path / f'{label}_copy.json'
+        orig_text = json.dumps(data, indent=2) + '\n'
+        out_copy.write_text(orig_text, encoding='utf-8')
+        with monkeypatch.context() as mp:
+            mp.setattr(
+                mod,
+                '_resolve_origin_head_commit',
+                lambda *_a, **_kw: (_ for _ in ()).throw(
+                    RuntimeError('HEAD is not on origin or working tree is dirty')
+                ),
+            )
+            argv = ['--output', str(out_copy)]
+            if label == 'wp2':
+                eos_dir = tmp_path / 'dummy_eos'
+                eos_dir.mkdir(exist_ok=True)
+                argv.extend(['--eos-dir', str(eos_dir)])
+            assert mod.main(argv) == 1
+            assert out_copy.read_text(encoding='utf-8') == orig_text
+
+        with monkeypatch.context() as mp:
+            mp.setattr(
+                subprocess,
+                'check_output',
+                lambda cmd, *a, **kw: (
+                    ' M src/aragog/rheology.py\n'
+                    if 'status' in cmd
+                    else '06846a9844568933e170ba562e1f935089fe4e01\n'
+                ),
+            )
+            with pytest.raises(RuntimeError, match='uncommitted'):
+                mod._resolve_origin_head_commit(repo_root)
+
+        with monkeypatch.context() as mp:
+            mp.setattr(
+                subprocess,
+                'check_output',
+                lambda cmd, *a, **kw: (
+                    '' if 'status' in cmd else '06846a9844568933e170ba562e1f935089fe4e01\n'
+                ),
+            )
+            with pytest.raises(RuntimeError, match='origin'):
+                mod._resolve_origin_head_commit(repo_root)
