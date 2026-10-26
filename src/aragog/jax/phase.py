@@ -779,19 +779,14 @@ def compute_mlt(
 # ---------------------------------------------------------------------------
 
 
-def _matched_surface_gradient(
-    dSdr, surface_temperature, phase_basic, eos, params, mesh, S_stag
-):
+def _matched_surface_gradient(dSdr, half_cell, t_top_cell, phase_basic, mesh):
     """dS/dr at the surface node from the half-cell temperature gradient (outer BC 5).
 
     Mirrors ``EntropyState._match_surface_gradient``: ``(Cp_safe / T) (dT/dr - dT/dP|_S dP/dr)``
-    with ``dT/dr = (T_node - T_stag[-1]) / dr_half``, ``T_node`` the temperature at ``S_surf``.
+    with ``dT/dr = (T_node - t_top_cell) / half_cell``. ``T_node``, the temperature at
+    ``S_surf``, stands for the surface temperature, so a stale ``outer_bc_value`` is unused.
     """
-    half_cell = surface_temperature[2]
-    t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
-    t_node = phase_basic.temperature[
-        -1
-    ]  # the node at S_surf, so a stale outer_bc_value is unused
+    t_node = phase_basic.temperature[-1]
     cp = jnp.maximum(phase_basic.heat_capacity[-1], 100.0)
     dtdr = (t_node - t_top_cell) / half_cell
     dtdr_ad = phase_basic.dTdPs[-1] * mesh.dP_dr_basic[-1]
@@ -887,8 +882,9 @@ def compute_fluxes(
     # phase properties are not materialised here.
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
     if surface_temperature is not None:
+        t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
         dSdr = _matched_surface_gradient(
-            dSdr, surface_temperature, phase_basic, eos, params, mesh, S_stag
+            dSdr, surface_temperature[2], t_top_cell, phase_basic, mesh
         )
 
     # MLT eddy diffusivity

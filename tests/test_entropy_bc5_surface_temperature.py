@@ -334,7 +334,7 @@ def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
 
 
 @pytest.mark.physics_invariant
-def test_the_jax_surface_gradient_uses_the_heat_capacity_floor(monkeypatch):
+def test_the_jax_surface_gradient_uses_the_heat_capacity_floor():
     """The JAX matcher floors Cp at 100 J/kg/K as its conductive flux does; at Cp = 50 the
     gradient is (100 / T) (dT/dr - dT/dP|_S dP/dr), twice the unfloored value."""
     jnp = pytest.importorskip('jax.numpy')
@@ -343,44 +343,34 @@ def test_the_jax_surface_gradient_uses_the_heat_capacity_floor(monkeypatch):
 
     import aragog.jax.phase as jp
 
-    monkeypatch.setattr(
-        jp, 'evaluate_phase', lambda *a: SimpleNamespace(temperature=jnp.array([400.0]))
-    )
     pb = SimpleNamespace(
         heat_capacity=jnp.array([50.0]), temperature=jnp.array([300.0]), dTdPs=jnp.array([1e-8])
     )
-    mesh = SimpleNamespace(P_stag=jnp.zeros(3), dP_dr_basic=jnp.array([-4e4]))
-    out = jp._matched_surface_gradient(
-        jnp.zeros(4), (0.0, 300.0, 50.0), pb, None, None, mesh, jnp.zeros(3)
-    )
+    mesh = SimpleNamespace(dP_dr_basic=jnp.array([-4e4]))
+    out = jp._matched_surface_gradient(jnp.zeros(4), 50.0, 400.0, pb, mesh)
     expected = 100.0 / 300.0 * ((300.0 - 400.0) / 50.0 - 1e-8 * -4e4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-12)
     assert float(out[0]) == 0.0
 
 
 @pytest.mark.physics_invariant
-def test_the_jax_surface_gradient_takes_the_node_temperature(monkeypatch):
+def test_the_jax_surface_gradient_takes_the_node_temperature():
     """The JAX matcher builds dT/dr from the temperature of the surface node at S_surf, so a
     BoundaryParams whose outer_bc_value no longer matches S_surf still gives a face flux that
-    agrees with the node; here the node is at 1500 K and the stale value says 1600 K."""
+    agrees with the node; here the node is at 1500 K, a stale value would say 1600 K."""
     jnp = pytest.importorskip('jax.numpy')
     pytest.importorskip('equinox')
     from types import SimpleNamespace
 
     import aragog.jax.phase as jp
 
-    monkeypatch.setattr(
-        jp, 'evaluate_phase', lambda *a: SimpleNamespace(temperature=jnp.array([2000.0]))
-    )
     pb = SimpleNamespace(
         heat_capacity=jnp.array([1000.0]),
         temperature=jnp.array([1500.0]),
         dTdPs=jnp.array([0.0]),
     )
-    mesh = SimpleNamespace(P_stag=jnp.zeros(3), dP_dr_basic=jnp.array([0.0]))
-    out = jp._matched_surface_gradient(
-        jnp.zeros(4), (0.0, 1600.0, 50.0), pb, None, None, mesh, jnp.zeros(3)
-    )
+    mesh = SimpleNamespace(dP_dr_basic=jnp.array([0.0]))
+    out = jp._matched_surface_gradient(jnp.zeros(4), 50.0, 2000.0, pb, mesh)
     assert float(out[-1]) == pytest.approx(
         1000.0 / 1500.0 * (1500.0 - 2000.0) / 50.0, rel=1e-12
     )

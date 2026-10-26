@@ -14,6 +14,7 @@ finite-volume mesh.
 from __future__ import annotations
 
 import logging
+import numbers
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -2019,8 +2020,7 @@ class EntropySolver:
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
-        if self._outer_bc_kind == 5:
-            self._refresh_surface_temperature()
+        self._refresh_surface_temperature()
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
@@ -2042,6 +2042,8 @@ class EntropySolver:
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and after a change of
         ``outer_boundary_value``."""
+        if self._outer_bc_kind != 5:
+            return
         bc = self.evaluator.boundary_conditions._settings
         current = self.state._surface_temperature_bc
         if current is None or bc.outer_boundary_value != current[1]:
@@ -2072,11 +2074,8 @@ class EntropySolver:
             which have no meaning with a prescribed surface temperature.
         """
         t_surf = bc.outer_boundary_value
-        if (
-            isinstance(t_surf, bool)
-            or not isinstance(t_surf, (int, float, np.integer, np.floating))
-            or not (np.isfinite(t_surf) and t_surf > 0.0)
-        ):
+        real = isinstance(t_surf, numbers.Real) and not isinstance(t_surf, bool)
+        if not (real and np.isfinite(t_surf) and t_surf > 0.0):
             raise ValueError(
                 'outer_boundary_value must be a positive finite surface temperature [K] '
                 f'with outer_boundary_condition = 5, got {t_surf!r}'
@@ -2714,8 +2713,7 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
-        if self._outer_bc_kind == 5:
-            self._refresh_surface_temperature()
+        self._refresh_surface_temperature()
         # In energy_balance and core_module the first extra state is the CMB entropy
         # gradient, passed to state.update() in place of the FD estimate at that node.
         if gradient_mode:
@@ -3888,8 +3886,7 @@ class EntropySolver:
         """
         wall_start = time.perf_counter()
         self._sync_top_node()  # the EOS may have changed since the reset
-        if self._outer_bc_kind == 5:
-            self._refresh_surface_temperature()
+        self._refresh_surface_temperature()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
