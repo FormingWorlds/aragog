@@ -111,3 +111,70 @@ def half_cell_surface_flux() -> Iterator[None]:
         yield
     finally:
         estate_mod.EntropyState.update = orig_update
+
+
+def korenaga_ti_fixed_point(
+    t_stag: np.ndarray,
+    z_norm: np.ndarray,
+    t_surf: float,
+    dth: float,
+    *,
+    max_iter: int = 100,
+    tol_k: float = 1.0e-9,
+) -> float:
+    """Solve Korenaga (2009) Eq. 20 fixed point for sub-lid interior temperature ``T_i``."""
+    order = np.argsort(z_norm)
+    z_s, t_s_arr = z_norm[order], t_stag[order]
+    ti = float(t_s_arr.max())
+    for _ in range(max_iter):
+        dl = (ti - t_surf) / dth
+        z_above = z_s[z_s > dl]
+        if z_above.size == 0:
+            raise RuntimeError(
+                'Korenaga fixed-point iteration did not converge: lid exceeds domain'
+            )
+        zz = np.concatenate([[dl], z_above])
+        tt = np.interp(zz, z_s, t_s_arr)
+        ti_new = float(np.trapezoid(tt, zz) / (zz[-1] - dl))
+        if abs(ti_new - ti) < tol_k:
+            return ti_new
+        ti = ti_new
+    raise RuntimeError(
+        f'Korenaga fixed-point iteration did not converge within {max_iter} steps'
+    )
+
+
+def ols_fit(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
+    """Fit ``y = c_0 + sum_j c_j x_j`` by ordinary least squares with standard errors."""
+    n = len(y_vec)
+    x_mat = np.column_stack([np.ones(n), *x_cols])
+    coeffs, _, _, _ = np.linalg.lstsq(x_mat, y_vec, rcond=None)
+    resid = y_vec - x_mat @ coeffs
+    ss_res = float(np.sum(resid**2))
+    ss_tot = float(np.sum((y_vec - np.mean(y_vec)) ** 2))
+    r2 = 1.0 - ss_res / max(ss_tot, 1.0e-30)
+    dof = max(n - x_mat.shape[1], 1)
+    cov = (ss_res / dof) * np.linalg.inv(x_mat.T @ x_mat)
+    se = np.sqrt(np.diag(cov))
+    if len(x_cols) == 2:
+        ln_a, alpha, beta = float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
+        return {
+            'a': float(np.exp(ln_a)),
+            'ln_a': ln_a,
+            'alpha': alpha,
+            'beta': beta,
+            'std_err_ln_a': float(se[0]),
+            'std_err_alpha': float(se[1]),
+            'std_err_beta': float(se[2]),
+            'r_squared': r2,
+            'n_cases': int(n),
+            'dof': int(dof),
+        }
+    return {
+        'slope': float(coeffs[1]),
+        'std_err_slope': float(se[1]),
+        'intercept_log10': float(coeffs[0]),
+        'r_squared': r2,
+        'n_cases': int(n),
+        'dof': int(dof),
+    }
