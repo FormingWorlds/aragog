@@ -480,7 +480,8 @@ class EntropyState:
         """Prescribe the surface temperature (outer boundary condition 5).
 
         Each update then sets the surface basic node to ``entropy`` and its gradient so that the
-        conductive face flux is ``k (T_stag[-1] - temperature) / half_cell``.
+        conductive face flux is ``k (T_stag[-1] - T_node) / half_cell``, with ``T_node`` the
+        temperature of the node at ``entropy``.
 
         Parameters
         ----------

@@ -268,11 +268,22 @@ def build_jax_rhs_and_jacobian(
     info : dict
         Diagnostic info dict (counters, JIT compile times) populated
         on first call.
+
+    Raises
+    ------
+    RuntimeError
+        Without JAX or the ``aragog.jax`` module.
+    TypeError
+        For ``scales`` that is not a ``NonDimScales``.
+    ValueError
+        For a missing ``core_module_budget``, an unsupported ``core_bc_mode``, inputs of the
+        wrong size or shape, and a type 5 setup that
+        ``aragog.jax.solver.check_surface_temperature`` refuses.
     """
     try:
         import jax.numpy as jnp
 
-        import aragog.jax.solver  # noqa: F401
+        import aragog.jax.solver
     except ImportError as exc:
         raise RuntimeError(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '
@@ -302,9 +313,9 @@ def build_jax_rhs_and_jacobian(
             f'automatic FD-Jacobian fallback.'
         )
 
-    from aragog.jax.solver import check_surface_temperature
-
-    check_surface_temperature(eos_jax, phase_params, mesh_arrays, boundary_params)
+    aragog.jax.solver.check_surface_temperature(
+        eos_jax, phase_params, mesh_arrays, boundary_params
+    )
 
     # NonDimScales enforces the internal nondim contract
     # rhs_scale = t_ref / state_scale in __post_init__. The factory

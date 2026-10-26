@@ -368,8 +368,13 @@ def check_surface_temperature(
     or not finite), or whose ``S_surf`` gives a temperature at the surface pressure more than
     1e-6 relative off ``outer_bc_value``; a no-op for the other types.
 
-    ``solve_entropy`` and ``build_jax_rhs_and_jacobian`` call it; ``dSdt`` runs under ``jit``
-    and is not checked.
+    ``solve_entropy`` and ``build_jax_rhs_and_jacobian`` call it; the right-hand sides
+    (``dSdt``, ``dSdt_energy_balance``, ``dSdt_core_module``) and ``step_powers`` do not.
+
+    Raises
+    ------
+    ValueError
+        For each of the refused setups above.
     """
     if getattr(bc, 'outer_bc_type', None) != 5:
         return
@@ -988,6 +993,12 @@ def solve_entropy(
     -------
     SolveResult
         Final entropy, time, step count, success flag.
+
+    Raises
+    ------
+    ValueError
+        For a type 5 setup that :func:`check_surface_temperature` refuses, and for an unknown
+        ``method``.
     """
     # Lazy import: keeps the rest of this module importable when
     # diffrax is not installed. Callers using only dSdt /
