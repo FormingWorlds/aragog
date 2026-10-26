@@ -14,6 +14,7 @@ finite-volume mesh.
 from __future__ import annotations
 
 import logging
+import math
 import numbers
 import time
 from dataclasses import dataclass
@@ -2034,8 +2035,6 @@ class EntropySolver:
         the ``S_surf``, ``outer_bc_value`` and ``surf_dr_half`` of a JAX ``BoundaryParams``;
         None for the other outer modes. A changed ``outer_boundary_value`` is inverted first,
         and an invalid one raises ``ValueError``."""
-        if self._outer_bc_kind != 5:
-            return None
         self._refresh_surface_temperature()
         return self.state._surface_temperature_bc
 
@@ -2076,7 +2075,7 @@ class EntropySolver:
         """
         t_surf = bc.outer_boundary_value
         real = isinstance(t_surf, numbers.Real) and not isinstance(t_surf, bool)
-        if not (real and np.isfinite(t_surf) and t_surf > 0.0):
+        if not (real and math.isfinite(float(t_surf)) and t_surf > 0.0):
             raise ValueError(
                 'outer_boundary_value must be a positive finite surface temperature [K] '
                 f'with outer_boundary_condition = 5, got {t_surf!r}'

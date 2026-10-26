@@ -134,9 +134,10 @@ class BoundaryParams(eqx.Module):
     Surface BC types:
         1 = grey-body (F = emissivity * sigma * (T^4 - T_eq^4))
         4 = prescribed flux (from atmosphere module)
-        5 = prescribed temperature ``outer_bc_value`` [K]: the surface node takes the entropy
-            ``S_surf`` and the face flux is the kernel flux at the half-cell gradient over
-            ``surf_dr_half`` (``EntropySolver.surface_temperature_bc``)
+        5 = prescribed temperature: the surface node takes the entropy ``S_surf``, which sets
+            the surface temperature, and the face flux is the kernel flux at the half-cell
+            gradient over ``surf_dr_half``; ``outer_bc_value`` [K] is only validated, so a new
+            temperature needs a new ``S_surf`` (``EntropySolver.surface_temperature_bc``)
 
     CMB BC types:
         0 = insulating (F = 0)
@@ -156,7 +157,7 @@ class BoundaryParams(eqx.Module):
 
     # Surface
     outer_bc_type: int = eqx.field(static=True)
-    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4) or temperature [K] (type 5)
+    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4); type 5: validated only
     S_surf: jax.Array  # [J/kg/K], entropy of the prescribed temperature (type 5)
     surf_dr_half: jax.Array  # [m], surface face to top cell, delta_mesh / dxidr / 2 (type 5)
     emissivity: jax.Array
@@ -355,7 +356,7 @@ def _surface_overrides(bc: BoundaryParams) -> dict:
     """``compute_fluxes`` arguments of a prescribed surface temperature (type 5), else none."""
     if bc.outer_bc_type != 5:
         return {}
-    return {'surface_temperature': (bc.S_surf, bc.outer_bc_value, bc.surf_dr_half)}
+    return {'surface_temperature': (bc.S_surf, bc.surf_dr_half)}
 
 
 def _apply_cmb_bc(

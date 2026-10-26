@@ -836,8 +836,8 @@ def compute_fluxes(
         core_module core BCs, where dSdr_cmb is a state-tracked variable. When None,
         the standard d_dr_matrix mapping is used.
     surface_temperature : tuple or None
-        ``(S_surf, T_surf, dr_half)`` of a prescribed surface temperature (outer BC 5): the
-        surface node takes ``S_surf`` [J/kg/K] and the gradient of
+        ``(S_surf, dr_half)`` of a prescribed surface temperature (outer BC 5): the surface
+        node takes ``S_surf`` [J/kg/K], which sets its temperature, and the gradient of
         :func:`_matched_surface_gradient`. When None, the surface copy convention is used.
 
     Returns
@@ -884,7 +884,7 @@ def compute_fluxes(
     if surface_temperature is not None:
         t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
         dSdr = _matched_surface_gradient(
-            dSdr, surface_temperature[2], t_top_cell, phase_basic, mesh
+            dSdr, surface_temperature[1], t_top_cell, phase_basic, mesh
         )
 
     # MLT eddy diffusivity
