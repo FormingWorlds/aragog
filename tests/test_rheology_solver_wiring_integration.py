@@ -46,8 +46,27 @@ from tests.test_rheology_solver_wiring import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 
+# Round-off bound for the stored main reference (recorded on macOS, read on Linux CI too).
+MAIN_REF_RTOL = 1.0e-12
 
-def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
+
+def _assert_matches_main_reference(actual, expected, key: str) -> None:
+    """Assert ``actual`` equals the stored main-branch reference ``expected`` within round-off."""
+    a = np.asarray(actual, dtype=float)
+    e = np.asarray(expected, dtype=float)
+    diff = np.abs(a - e)
+    scale = float(np.max(np.abs(e))) if e.size else 0.0
+    rel = diff / np.maximum(np.abs(e), 1e-300)
+    np.testing.assert_allclose(
+        a,
+        e,
+        rtol=MAIN_REF_RTOL,
+        atol=MAIN_REF_RTOL * scale,
+        err_msg=f'{key}: max abs diff {diff.max():.3e}, max rel diff {rel.max():.3e}',
+    )
+
+
+def test_rheology_off_preserves_main_rhs_and_solve() -> None:
     """When rheology is disabled, zero rheology core functions are invoked,
     and RHS and solve outputs match the pinned main reference bitwise across
     all 54 arrays."""
@@ -176,8 +195,14 @@ def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
         for prof_name, s_profile in profs.items():
             rhs_np = solver.dSdt(0.0, s_profile)
             rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_profile), args_jax))
-            assert np.array_equal(rhs_np, ref[f'rhs/{cfg_name}/{prof_name}/np'])
-            assert np.array_equal(rhs_jax, ref[f'rhs/{cfg_name}/{prof_name}/jax'])
+            _assert_matches_main_reference(
+                rhs_np, ref[f'rhs/{cfg_name}/{prof_name}/np'], f'rhs/{cfg_name}/{prof_name}/np'
+            )
+            _assert_matches_main_reference(
+                rhs_jax,
+                ref[f'rhs/{cfg_name}/{prof_name}/jax'],
+                f'rhs/{cfg_name}/{prof_name}/jax',
+            )
 
     # 2. 6 energy_balance RHS arrays
     params_eb = replace(
@@ -257,8 +282,16 @@ def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
     for name, y in profs_eb.items():
         rhs_np = solver_eb.dSdt(0.0, y)
         rhs_jax = np.asarray(dSdt_energy_balance(0.0, jnp.asarray(y), args_eb))
-        assert np.array_equal(rhs_np, ref['rhs/energy_balance/' + name + '/np'])
-        assert np.array_equal(rhs_jax, ref['rhs/energy_balance/' + name + '/jax'])
+        _assert_matches_main_reference(
+            rhs_np,
+            ref['rhs/energy_balance/' + name + '/np'],
+            'rhs/energy_balance/' + name + '/np',
+        )
+        _assert_matches_main_reference(
+            rhs_jax,
+            ref['rhs/energy_balance/' + name + '/jax'],
+            'rhs/energy_balance/' + name + '/jax',
+        )
 
     # 3. 6 short solve() trajectory arrays (100 yr, 20 nodes)
     with importlib.resources.as_file(
@@ -275,9 +308,15 @@ def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
     s_np.set_initial_entropy(2500.0)
     s_np.solve()
     out_np = s_np.get_state()
-    assert np.array_equal(np.asarray(out_np.S_final), ref['solve/np/S_final'])
-    assert np.array_equal(np.asarray(out_np.T_stag), ref['solve/np/T_stag'])
-    assert np.array_equal(np.asarray(out_np.heat_flux), ref['solve/np/heat_flux'])
+    _assert_matches_main_reference(
+        np.asarray(out_np.S_final), ref['solve/np/S_final'], 'solve/np/S_final'
+    )
+    _assert_matches_main_reference(
+        np.asarray(out_np.T_stag), ref['solve/np/T_stag'], 'solve/np/T_stag'
+    )
+    _assert_matches_main_reference(
+        np.asarray(out_np.heat_flux), ref['solve/np/heat_flux'], 'solve/np/heat_flux'
+    )
 
     s_jax = EntropySolver(c_solve, entropy_eos=eos_inst)
     eos_jx_inst = entropy_eos_jax(str(eos_dir))
@@ -286,9 +325,15 @@ def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
     s_jax.set_initial_entropy(2500.0)
     s_jax.solve()
     out_jax = s_jax.get_state()
-    assert np.array_equal(np.asarray(out_jax.S_final), ref['solve/jax/S_final'])
-    assert np.array_equal(np.asarray(out_jax.T_stag), ref['solve/jax/T_stag'])
-    assert np.array_equal(np.asarray(out_jax.heat_flux), ref['solve/jax/heat_flux'])
+    _assert_matches_main_reference(
+        np.asarray(out_jax.S_final), ref['solve/jax/S_final'], 'solve/jax/S_final'
+    )
+    _assert_matches_main_reference(
+        np.asarray(out_jax.T_stag), ref['solve/jax/T_stag'], 'solve/jax/T_stag'
+    )
+    _assert_matches_main_reference(
+        np.asarray(out_jax.heat_flux), ref['solve/jax/heat_flux'], 'solve/jax/heat_flux'
+    )
 
     # Verify that turning rheology on shifts RHS relative to rheology off
     params_on = _make_abe_solid_params(SolidRheologyParams(enabled=True), number_of_nodes=20)

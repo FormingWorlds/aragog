@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _HEX40_RE = re.compile(r'^[0-9a-f]{40}$')
 _HEX64_RE = re.compile(r'^[0-9a-f]{64}$')
 _FINGERPRINT_SUFFIXES = ('.py', '.toml', '.cfg', '.dat')
+_FINGERPRINT_EXCLUDED_NAMES = frozenset({'_version.py'})
 
 CLOSURE_SCALAR_KEYS: tuple[str, ...] = (
     'd_lid',
@@ -67,6 +68,19 @@ def _is_valid_sha256(digest: object) -> bool:
     return isinstance(digest, str) and bool(_HEX64_RE.fullmatch(digest))
 
 
+def _git_tracked_files(input_paths: Sequence[str], repo_root: Path) -> set[str] | None:
+    """Return the git-tracked files under ``input_paths``, or None outside a git work tree."""
+    try:
+        out = subprocess.run(
+            ['git', '-C', str(repo_root), 'ls-files', '-z', '--', *input_paths],
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {rel for rel in out.decode('utf-8').split('\0') if rel}
+
+
 def compute_generator_input_fingerprint(
     input_paths: Sequence[str] = ('src/aragog',),
     repo_root: Path = REPO_ROOT,
@@ -74,7 +88,8 @@ def compute_generator_input_fingerprint(
     """Compute a deterministic SHA-256 content fingerprint of ``input_paths`` under ``repo_root``.
 
     Directories are expanded recursively to ``.py``, ``.toml``, ``.cfg``, and ``.dat`` files
-    (excluding ``__pycache__``). Returns ``(sha256_hex, file_sha256_by_relpath)``.
+    (excluding ``__pycache__``, the install-generated ``_version.py`` and, inside a git work
+    tree, untracked files). Returns ``(sha256_hex, file_sha256_by_relpath)``.
     """
     collected: set[str] = set()
     for rel_str in input_paths:
@@ -93,7 +108,13 @@ def compute_generator_input_fingerprint(
                     and child.suffix in _FINGERPRINT_SUFFIXES
                 ):
                     collected.add(child.relative_to(repo_root).as_posix())
-    files = sorted(collected)
+    tracked = _git_tracked_files(input_paths, repo_root)
+    files = sorted(
+        rel
+        for rel in collected
+        if Path(rel).name not in _FINGERPRINT_EXCLUDED_NAMES
+        and (tracked is None or rel in tracked)
+    )
     hasher = hashlib.sha256()
     file_hashes: dict[str, str] = {}
     for rel_posix in files:
