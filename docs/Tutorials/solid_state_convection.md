@@ -110,7 +110,7 @@ With the CI test EOS tables, the two runs produce:
 | Bulk CMB viscosity $\eta_\mathrm{cmb}$ (`phase_basic.viscosity()[0]`) [Pa s] | `$1.664e+17$` | `$1.916e+18$` |
 | Solid CMB diffusion viscosity $\eta_\mathrm{diff,cmb}$ (`phase_basic.eta_diff()[0]`) [Pa s] | `$3.000e+17$` | `$3.601e+18$` |
 | Peak convective heat flux $\max(F_\mathrm{conv})$ (`np.max(out.jconv_b)`) [W/m$^2$] | `$166020.23$` | `$249.54$` |
-| Peak eddy diffusivity $\max(\kappa_h)$ (`np.max(out.eddy_diff)`) [m$^2$/s] | `$16.3075$` | `$0.04223$` |
+| Peak eddy diffusivity $\max(\kappa_h)$ (`np.max(out.eddy_diff)`) [m$^2$/s] | `$16.3075$` | `$0.0422$` |
 | Near-surface magma temperature $T_\mathrm{magma}$ (`out.T_magma`) [K] | `$781.64$` | `$781.55$` |
 | Core temperature $T_\mathrm{core}$ (`out.T_core`) [K] | `$3563.96$` | `$3563.96$` |
 

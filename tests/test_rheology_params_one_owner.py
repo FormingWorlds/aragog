@@ -855,6 +855,58 @@ def test_solid_rheology_params_bounds_covers_every_numeric_field():
 
 
 @pytest.mark.unit
+def test_rheology_bounds_edges():
+    """Verify each numerical field bound in _BOUNDS is strictly enforced at its edge."""
+    from aragog.rheology import _BOUNDS, SolidRheologyParams
+
+    for name, _pred, text in _BOUNDS:
+        if name == 'activation_volume':
+            SolidRheologyParams(activation_energy=1e5, activation_volume=0.0)
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(activation_energy=1e5, activation_volume=-1e-6)
+        elif name == 'activation_volume_decay_pressure':
+            SolidRheologyParams(activation_energy=1e5, activation_volume_decay_pressure=1e-6)
+            SolidRheologyParams(
+                activation_energy=1e5, activation_volume_decay_pressure=float('inf')
+            )
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(activation_energy=1e5, activation_volume_decay_pressure=0.0)
+        elif 'in (0, 1]' in text:
+            SolidRheologyParams(**{name: 1.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 1.0001})
+        elif 'non-negative' in text:
+            SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: -1e-6})
+        elif 'positive' in text:
+            SolidRheologyParams(**{name: 1e-6})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+        elif 'in (20, 300]' in text:
+            SolidRheologyParams(**{name: 300.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 20.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 300.001})
+        elif 'in [0.05, 0.5]' in text:
+            SolidRheologyParams(**{name: 0.05})
+            SolidRheologyParams(**{name: 0.5})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0499})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.5001})
+        elif 'in (0, 1)' in text:
+            SolidRheologyParams(**{name: 0.5})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 1.0})
+
+
+@pytest.mark.unit
 def test_arrhenius_viscosity_lower_exponent_clip_active():
     """Verify arrhenius viscosity clips exponent to -700 rather than -100."""
     from aragog.rheology import compute_arrhenius_viscosity

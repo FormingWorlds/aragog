@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / 'src'))
 
-from aragog.rheology import SolidRheologyParams  # noqa: E402
+from aragog.rheology import _BOUNDS, SolidRheologyParams  # noqa: E402
 
 UNITS: dict[str, str] = {
     'enabled': '--',
@@ -51,31 +51,30 @@ UNITS: dict[str, str] = {
     'activation_volume_decay_pressure': 'Pa',
 }
 
+
+def _range_from_bounds_text(text: str) -> str:
+    """Map human-readable _BOUNDS text to mathematical range interval notation."""
+    if text.startswith('in '):
+        return text[3:]
+    if 'non-negative' in text:
+        return '[0, inf)'
+    if 'positive (finite or +inf)' in text:
+        return '(0, inf]'
+    if 'positive' in text:
+        return '(0, inf)'
+    raise ValueError(f'Unknown bounds text: {text}')
+
+
 RANGES: dict[str, str] = {
     'enabled': '`true` \\| `false`',
-    'g_homologous': '[0, inf)',
-    't_sol_0': '(0, inf)',
-    'dt_sol_dp': '[0, inf)',
-    'arrhenius_t_ref': '(0, inf)',
-    'viscosity_max_log10': '(20, 300]',
-    'water_prefactor': '(0, inf)',
-    'yield_stress_c': '[0, inf)',
-    'yield_stress_mu': '[0, inf)',
-    'yield_stress_max': '(0, inf)',
     'stress_closure_mode': '`"lid"` \\| `"local"`',
-    'interior_flux_fraction': '[0.05, 0.5]',
     'lid_base_mode': '`"rheological"` \\| `"fixed"`',
-    'lid_base_temperature': '(0, inf)',
-    'lid_contrast_coeff': '(0, inf)',
-    'lid_mask_width_cells': '(0, inf)',
-    'phi_visc_single': '(0, 1)',
-    'mlt_bottom_slope': '(0, 1]',
-    's_top_inf': '(0, 1]',
-    'c_theta': '[0, inf)',
-    'activation_energy': '[0, inf) \\| `null`',
+    'activation_energy': '(0, inf) when enabled',
     'activation_volume': '[0, inf)',
     'activation_volume_decay_pressure': '(0, inf]',
 }
+for _name, _pred, _text in _BOUNDS:
+    RANGES[_name] = _range_from_bounds_text(_text)
 
 EFFECTS: dict[str, str] = {
     'enabled': 'Enable solid-state mantle rheology and variable viscosity',
@@ -89,7 +88,7 @@ EFFECTS: dict[str, str] = {
     'yield_stress_mu': 'Friction coefficient in Byerlee brittle frictional yielding criterion',
     'yield_stress_max': 'Maximum ductile yield stress ceiling capping frictional strength at depth',
     'stress_closure_mode': 'Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress',
-    'interior_flux_fraction': 'Convective velocity onset threshold ($w_\\text{conv}$) for stagnant lid boundary layer',
+    'interior_flux_fraction': 'Threshold on the convective flux fraction F_conv/F_tot (f_conv,min)',
     'lid_base_mode': 'Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm',
     'lid_base_temperature': 'Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed"',
     'lid_contrast_coeff': 'Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\\text{lid,iso} = T_i - c \\, \\Delta T_\\text{rh}$',
