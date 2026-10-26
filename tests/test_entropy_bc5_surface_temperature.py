@@ -267,42 +267,68 @@ def test_bc5_refuses_conduction_off():
     assert getattr(s.state, '_surface_temperature_bc', None) is None
 
 
-def test_the_solver_gives_the_surface_entropy_and_half_cell():
-    """surface_temperature_bc returns the inverted surface entropy and the face half cell, and
-    follows a changed outer_boundary_value without a right-hand-side call."""
+def test_the_solver_gives_the_surface_entropy_temperature_and_half_cell():
+    """surface_temperature_bc returns the inverted surface entropy, the surface temperature and
+    the face half cell, follows a changed outer_boundary_value without a right-hand-side call,
+    and is None under another outer mode."""
     s = _solver(300.0)
-    s_surf, half = s.surface_temperature_bc
+    s_surf, t_surf, half = s.surface_temperature_bc
     assert s_surf == pytest.approx(S_REF + CP * math.log(300.0 / T_REF), rel=1e-12)
-    assert half == pytest.approx(_half_cell(s), rel=1e-15)
+    assert (t_surf, half) == (300.0, pytest.approx(_half_cell(s), rel=1e-15))
     s.evaluator.boundary_conditions._settings.outer_boundary_value = 2000.0
-    assert s.surface_temperature_bc[0] == pytest.approx(
-        S_REF + CP * math.log(2000.0 / T_REF), rel=1e-12
+    assert s.surface_temperature_bc[:2] == (
+        pytest.approx(S_REF + CP * math.log(2000.0 / T_REF), rel=1e-12),
+        2000.0,
     )
+    p = _build_const_properties_parameters(n_nodes=20)
+    other = EntropySolver(p, entropy_eos=None)
+    other.initialize()
+    assert other.surface_temperature_bc is None
+
+
+def test_solve_checks_a_changed_surface_temperature_before_the_first_rhs():
+    """solve() inverts a changed outer_boundary_value before the integrator starts, so a value
+    outside the domain stops it without a right-hand-side call."""
+    s = _solver(300.0)
+    s.evaluator.boundary_conditions._settings.outer_boundary_value = float('nan')
+
+    def no_rhs(*_):
+        raise AssertionError('right-hand side called')
+
+    s._dSdt_single = no_rhs
+    with pytest.raises(ValueError, match='outer_boundary_value'):
+        s.solve()
 
 
 @pytest.mark.parametrize(
-    ('s_surf', 'half'),
+    ('kw', 'match'),
     [
-        (2000.0, 0.0),
-        (2000.0, -5.0),
-        (2000.0, float('nan')),
-        (2000.0, float('inf')),
-        (float('nan'), 100.0),
+        ({'surf_dr_half': 100.0}, 'S_surf'),
+        ({'S_surf': float('nan'), 'surf_dr_half': 100.0}, 'S_surf'),
+        ({'S_surf': 2000.0, 'surf_dr_half': 0.0}, 'surf_dr_half'),
+        ({'S_surf': 2000.0, 'surf_dr_half': -5.0}, 'surf_dr_half'),
+        ({'S_surf': 2000.0, 'surf_dr_half': float('nan')}, 'surf_dr_half'),
+        ({'S_surf': 2000.0, 'surf_dr_half': float('inf')}, 'surf_dr_half'),
+        (
+            {'S_surf': 2000.0, 'surf_dr_half': 100.0, 'outer_bc_value': float('nan')},
+            'outer_bc_value',
+        ),
+        ({'S_surf': 2000.0, 'surf_dr_half': 100.0, 'outer_bc_value': -5.0}, 'outer_bc_value'),
     ],
 )
-def test_boundary_params_refuse_bc5_without_its_surface_values(s_surf, half):
-    """BoundaryParams of type 5 needs a finite surface entropy and a finite positive half cell;
-    the defaults would divide by zero or set the surface node to a meaningless entropy."""
+def test_boundary_params_refuse_bc5_without_its_surface_values(kw, match):
+    """BoundaryParams of type 5 needs a finite surface entropy, a positive finite surface
+    temperature and a finite positive half cell; a default or a broken value is refused."""
     pytest.importorskip('equinox')
     from aragog.jax.solver import BoundaryParams
 
-    kw = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
-    kw.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
-    with pytest.raises(ValueError, match='S_surf|surf_dr_half'):
-        BoundaryParams(
-            outer_bc_type=5, outer_bc_value=1500.0, S_surf=s_surf, surf_dr_half=half, **kw
-        )
-    assert float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **kw).surf_dr_half) == 0.0
+    base = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
+    base.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
+    with pytest.raises(ValueError, match=match):
+        BoundaryParams(outer_bc_type=5, **{'outer_bc_value': 1500.0, **kw}, **base)
+    assert (
+        float(BoundaryParams(outer_bc_type=4, outer_bc_value=0.0, **base).surf_dr_half) == 0.0
+    )
 
 
 @pytest.mark.physics_invariant

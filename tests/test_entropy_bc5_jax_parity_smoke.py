@@ -16,10 +16,12 @@ pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
 
 
-def _bc5_solver(core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0, **build):
+def _bc5_solver(
+    core_bc, t_surf=T_SURF, profile='nearest_boundary', smooth=0.0, strict=False, **build
+):
     """A 10-node table solver under BC 5; outside core_module the entropy falls from 2900 to
     2600 J/kg/K, so every interior face has a nonzero gradient."""
-    eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
+    eos = entropy_eos_copy(EOS_DIR, strict_range=strict, identity_alpha=True)
     s = _build(
         core_bc,
         eos,
@@ -53,7 +55,7 @@ def _jax_rhs_and_args(s, outer_bc_type=5):
     if s._core_bc != 'core_module':
         s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
     args = list(_build_jax_pieces(s))
-    s_surf, half = s.surface_temperature_bc
+    s_surf, _, half = s.surface_temperature_bc
     args[3] = dataclasses.replace(
         args[3],
         outer_bc_type=outer_bc_type,
@@ -95,7 +97,7 @@ def test_the_surface_node_holds_the_prescribed_temperature_in_every_phase(t_surf
 def test_the_update_stops_when_the_surface_node_leaves_the_prescribed_temperature():
     """A surface entropy that no longer matches the prescribed temperature stops the run."""
     s = _bc5_solver('quasi_steady')
-    s_surf, half = s.surface_temperature_bc
+    s_surf, _, half = s.surface_temperature_bc
     s.state.set_surface_temperature(s_surf + 50.0, T_SURF, half)
     with pytest.raises(RuntimeError, match='prescribed 1500.0 K'):
         s.dSdt(0.0, np.asarray(s._S0, dtype=float))
@@ -168,7 +170,7 @@ def test_the_jax_jacobian_matches_a_finite_difference_of_the_numpy_rhs():
         up[i] += h
         dn[i] -= h
         fd[:, i] = (np.ravel(s.dSdt(0.0, up)) - np.ravel(s.dSdt(0.0, dn))) / (2 * h)
-    np.testing.assert_allclose(jac, fd, rtol=0, atol=1e-5 * np.max(np.abs(fd)))
+    np.testing.assert_allclose(jac, fd, rtol=0, atol=1e-8 * np.max(np.abs(fd)))
     fn4, args4 = _jax_rhs_and_args(s, outer_bc_type=4)
     jac4 = np.asarray(jax.jacrev(lambda v: fn4(0.0, v, args4))(jax.numpy.asarray(y)))
     assert abs(jac4[-1, -1] - jac[-1, -1]) > 1e-3 * abs(jac[-1, -1])
@@ -194,20 +196,56 @@ def test_the_conductive_face_flux_is_the_half_cell_difference_on_the_tables():
     st_ = s.state
     t_top_cell = float(np.ravel(st_.phase_staggered.temperature())[-1])
     k_surf = float(np.ravel(st_.phase_basic.thermal_conductivity())[-1])
-    dtdr = (T_SURF - t_top_cell) / s.surface_temperature_bc[1]
+    dtdr = (T_SURF - t_top_cell) / s.surface_temperature_bc[2]
     assert float(np.ravel(st_._jcond)[-1]) == pytest.approx(-k_surf * dtdr, rel=1e-10)
     dtdr_ad = float(np.ravel(st_.phase_basic.dTdPs())[-1]) * float(st_._dP_dr_basic[-1])
     assert abs(dtdr_ad / dtdr) > 0.01
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('t_surf', [1434.23, 1445.0, 1830.0])
-def test_the_surface_node_holds_its_temperature_with_smoothed_properties(t_surf):
-    """With matprop_smooth_width = 0.01 the phase evaluator blends the properties within about
-    10 K of the solidus (1439 K at the surface) and the liquidus (1831 K); the surface entropy
-    is inverted through the same evaluator, so the node sits at the prescribed temperature."""
-    s = _bc5_solver('quasi_steady', t_surf=t_surf, smooth=0.01)
+@pytest.mark.parametrize(
+    ('t_surf', 'smooth'),
+    [
+        (1434.23, 0.01),
+        (1445.0, 0.01),
+        (1830.0, 0.01),
+        (1400.0, 0.1),
+        (1445.0, 0.1),
+        (1825.0, 0.2),
+    ],
+)
+def test_the_surface_node_holds_its_temperature_with_smoothed_properties(t_surf, smooth):
+    """matprop_smooth_width blends the properties near the solidus (1439 K at the surface) and
+    the liquidus (1831 K), and moves the entropy of a given temperature by up to about 80 J/kg/K
+    at a width of 0.2; the surface entropy is found on the same evaluator, so the node sits at
+    the prescribed temperature."""
+    s = _bc5_solver('quasi_steady', t_surf=t_surf, smooth=smooth)
     f = np.asarray(s.dSdt(0.0, np.asarray(s._S0, dtype=float))).ravel()
     assert np.all(np.isfinite(f))
     t_node = float(np.ravel(s.state.phase_basic.temperature())[-1])
     assert t_node == pytest.approx(t_surf, rel=1e-9)
+
+
+def test_the_surface_inversion_leaves_the_phase_evaluator_as_it_was():
+    """Reading surface_temperature_bc after a change of outer_boundary_value inverts the
+    surface entropy again, but the basic-node evaluator keeps the profile of the last update."""
+    s = _bc5_solver('quasi_steady')
+    s.dSdt(0.0, np.asarray(s._S0, dtype=float))
+    before = np.array(np.ravel(s.state.phase_basic.temperature()))
+    s.parameters.boundary_conditions.outer_boundary_value = 1600.0
+    assert s.surface_temperature_bc[1] == 1600.0
+    np.testing.assert_array_equal(np.ravel(s.state.phase_basic.temperature()), before)
+
+
+@pytest.mark.parametrize('strict', [False, True])
+def test_the_surface_entropy_stays_inside_the_table(strict):
+    """At the temperature of the table minimum the surface entropy is the table minimum, not a
+    point beyond it; below that temperature the setup refuses with a ValueError, also when the
+    EOS raises on out-of-range lookups."""
+    s = _bc5_solver('quasi_steady', strict=strict)
+    p_s = float(s._P_basic_flat[-1])
+    t_min = float(np.ravel(s.entropy_eos.temperature(p_s, s.entropy_eos.S_min))[0])
+    edge = _bc5_solver('quasi_steady', t_surf=t_min, strict=strict)
+    assert edge.surface_temperature_bc[0] >= edge.entropy_eos.S_min
+    with pytest.raises(ValueError, match='outside the entropy tables'):
+        _bc5_solver('quasi_steady', t_surf=t_min - 20.0, strict=strict)
