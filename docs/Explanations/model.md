@@ -142,7 +142,7 @@ The volumetric work associated with phase segregation is carried implicitly by t
 
 ### Outer (surface) boundary
 
-Three outer BC modes are implemented in the entropy solver:
+Three outer BC modes are implemented in the entropy solver. The parser also accepts mode 2, for which the entropy solver applies no surface condition (the surface face carries the flux of the gradient copied from the cell below), so do not use it; mode 3 is refused.
 
 | Mode | Description |
 |------|-------------|

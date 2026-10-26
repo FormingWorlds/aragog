@@ -4,19 +4,19 @@
 
 This page checks the prescribed surface temperature, `outer_boundary_condition = 5`: the surface of the mantle is held at a fixed temperature, and the solver works out how much heat leaves through it (see [Surface boundary conditions](../Explanations/surface_bc.md)). Validation here means that we run Aragog on a case where the right answer is known from a textbook solution or from a convergence law, and check that Aragog gives that answer. If this boundary condition were wrong, every run with a fixed surface temperature would lose heat at the wrong rate, and its interior temperature and lid thickness would be wrong. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot and the test details.
 
-All cases use the constant-properties mode: thermal conductivity $k$ = 4 W/m/K, density times heat capacity $\rho c_p$ = 4 × 10⁶ J/m³/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 10⁻⁶ m²/s. The outer radius is 6371 km, the mesh is uniform in radius, no heat crosses the bottom of the shell, and the floor of the eddy diffusivity (`kappah_floor`) is 0. The tests drive the solver's own right-hand side with SciPy, so they test the same code a run uses.
+All cases use the constant-properties mode: thermal conductivity $k$ = 4 W/m/K, density $\rho$ = 4000 kg/m³ times heat capacity $c_p$ = 1000 J/kg/K, $\rho c_p$ = 4 × 10⁶ J/m³/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 10⁻⁶ m²/s. The outer radius is 6371 km, the mesh is uniform in radius, no heat crosses the bottom of the shell, and the floor of the eddy diffusivity (`kappah_floor`) is 0. The tests drive the solver's own right-hand side with SciPy, so they test the same code a run uses.
 
 ## A heated shell in steady state
 
-**Why this check exists.** The surface face could carry the wrong conduction, for example over a full cell in place of a half cell. A heated shell then settles at the wrong temperatures: with a full-cell face the temperature error falls only as $N^{-1}$, and the test sees it.
+**Why this check exists.** The surface face could use a wrong rule: conduction over a full cell in place of a half cell, an entropy difference over the half cell in place of the temperature difference, or $c_p/T$ of the top cell in place of the surface node. A heated shell then settles at the wrong temperatures. With a full-cell face the temperature error falls only as $N^{-1}$; the other two keep the $N^{-2}$ decrease but give a top-cell error 3.4 and 5.9 times larger, and the test sees all three.
 
 **What it tests.** A mantle shell from 3480 km to 6371 km radius is heated uniformly, $H$ = 3.4 × 10⁻¹³ W/kg, with the surface held at $T_s$ = 1000 K and convection off. The test finds the steady state, where heating and heat loss balance, on 50, 100 and 200 cells. It checks the surface heat flux and the temperature in every cell.
 
-**How we know the right answer.** Conduction with uniform heating in a spherical shell has a closed-form steady state (Turcotte and Schubert 2014, eq. 4.40). With no flux at the inner radius $r_\mathrm{in}$ and $T_s$ at the outer radius $r_\mathrm{out}$ it is
+**How we know the right answer.** Conduction with uniform heating $H$ \[W/kg\] in a sphere or spherical shell has the general steady solution $T = -\rho H r^2 / (6k) + c_1 / r + c_2$ (Turcotte and Schubert 2014, section 4.9, eq. 4.40, p. 177). Choosing the constants for no flux at the inner radius $r_\mathrm{in}$ and $T_s$ at the outer radius $r_\mathrm{out}$ gives the shell form
 
 $$T(r) = T_s + \frac{\rho H}{6k}\left(r_\mathrm{out}^2 - r^2\right) + \frac{\rho H r_\mathrm{in}^3}{3k}\left(\frac{1}{r_\mathrm{out}} - \frac{1}{r}\right),$$
 
-and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rho H (r_\mathrm{out}^3 - r_\mathrm{in}^3) / (3 r_\mathrm{out}^2)$. The solver uses exact shell volumes, so this flux holds on every grid. The temperature error of a second-order scheme falls as $N^{-2}$, with $N$ the number of cells.
+and all heat made in the shell leaves through the surface: the surface heat flux is $F_\mathrm{top} = \rho H (r_\mathrm{out}^3 - r_\mathrm{in}^3) / (3 r_\mathrm{out}^2)$ \[W/m²\]. The solver uses exact shell volumes, so this flux holds on every grid. The temperature error of a second-order scheme falls as $N^{-2}$, with $N$ the number of cells.
 
 **Why it matters.** The interior temperature of a run with a fixed surface temperature depends on how the surface face converts the temperature difference into a flux.
 
@@ -26,9 +26,9 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 **How to read the plot.** Top: the temperature against radius from the closed form (line) and from Aragog on 50 cells (dots); the dots lie on the line. Bottom: $N^2$ times the largest temperature error, divided by the temperature rise at the inner radius; a horizontal line means the error falls as $N^{-2}$.
 
 ??? info "Test details"
-    - Reference: Turcotte and Schubert (2014), section 4.9, eq. 4.40, with zero flux at the inner radius.
-    - Tolerance: surface flux to a relative 10⁻⁸ on each grid; temperature error with order 2.0 ± 0.2 between 50, 100 and 200 cells.
-    - Discrimination: the surface flux checks the energy balance and holds for any face rule; the convergence order catches a wrong face. With a full-cell face the order is 1.00 and the largest error on 50 cells is 1.8 % of the temperature rise at the inner radius, against 0.01 % with the half cell.
+    - Reference: Turcotte and Schubert (2014), section 4.9, eq. 4.40 (p. 177), with the constants for zero flux at the inner radius.
+    - Tolerance: surface flux to a relative 10⁻⁸ on each grid; temperature error with order 2.0 ± 0.2 between 50, 100 and 200 cells; $N^2$ times the top-cell error at 0.159 of the temperature rise at the inner radius to 10 % on each grid (a pin of this scheme, measured at 0.1586, 0.1585 and 0.1585).
+    - Discrimination: the surface flux checks the energy balance and holds for any face rule. A full-cell face drops the order to 1.00 (largest error on 50 cells 1.8 % of the rise, against 0.01 % with the half cell). An entropy difference over the half cell and $c_p/T$ of the top cell keep order 2 but give $N^2$ times the top-cell error 0.55 and 0.94, outside the pin.
     - Test id: `tests/test_entropy_bc5_validation.py::test_the_steady_heated_shell_matches_the_closed_form`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k steady_heated` (add `--validation-plots` to write the plot pair)
 
@@ -36,11 +36,11 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 
 **Why this check exists.** A wrong surface face also gives a wrong heat flux while the mantle cools, not only in steady state. This case follows the flux through time; a full-cell face turns the early flux error from +4.6 × 10⁻³ to −4.7 × 10⁻³, and the test sees it.
 
-**What it tests.** A shell 25 km thick, divided into 400 cells (62.5 m each), starts at $T_i$ = 1100 K everywhere. Its surface is held at $T_s$ = 1000 K, and convection is off. The test records the surface flux at 16 times from 5.3 × 10¹⁰ s to 7.5 × 10¹² s (about 1700 to 240,000 years).
+**What it tests.** A shell 25 km thick, divided into 400 cells (62.5 m each), starts at $T_i$ = 1100 K everywhere. Its surface is held at $T_s$ = 1000 K, and convection is off. The test records the surface flux at 16 times $t$ from 5.3 × 10¹⁰ s to 7.5 × 10¹² s (about 1700 to 240,000 years).
 
-**How we know the right answer.** A half space that starts at $T_i$, with its surface held at $T_s$, loses heat at the rate $F(t) = k (T_i - T_s) / \sqrt{\pi \kappa t}$ (Turcotte and Schubert 2014, section 4.15, eq. 4.116). The shell differs from a half space in 3 small ways:
+**How we know the right answer.** A half space that starts at $T_i$, with its surface held at $T_s$, loses heat at the rate $F(t) = k (T_i - T_s) / \sqrt{\pi \kappa t}$ (Turcotte and Schubert 2014, section 4.15, eq. 4.116, p. 189). The shell differs from a half space in 3 small ways:
 
-- The grid error of the flux is about $0.063\,(h/\delta)^2$, with $h$ the cell size and $\delta = \sqrt{\kappa t}$ the depth of the cooled layer: 4.7 × 10⁻³ at the first time and 3.2 × 10⁻⁵ at the last. The coefficient 0.063 is a fit to a separate finite-volume script with the same half-cell face.
+- The grid error of the flux is about $0.063\,(h/\delta)^2$, with $h$ the cell size and $\delta = \sqrt{\kappa t}$ the depth of the cooled layer: 4.64 × 10⁻³ at the first time and 3.3 × 10⁻⁵ at the last. The coefficient 0.063 comes from a finite-volume solution with the same half-cell face and a temperature-based scheme, outside this repository, so the check of the signed error below is a pin of this scheme at $h$ = 62.5 m, not an independent reference.
 - The curvature of the shell lowers the flux by $\sqrt{\pi \kappa t} / r_\mathrm{out}$, at most 7.6 × 10⁻⁴.
 - The bottom of the shell lies more than 9 cooled-layer depths down, so the shell never feels it.
 
@@ -52,15 +52,15 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 **How to read the plot.** Top: the surface flux against time on log axes, from the half-space solution (line) and from Aragog (dots). Bottom: the relative difference, with the tolerance as dashed lines; the points stay between them.
 
 ??? info "Test details"
-    - Reference: Turcotte and Schubert (2014), section 4.15, eq. 4.116.
-    - Tolerance: relative 10⁻² at every output time (sum of the estimates above: below 5.5 × 10⁻³).
+    - Reference: Turcotte and Schubert (2014), section 4.15, eq. 4.116 (p. 189).
+    - Tolerance: relative 10⁻² at every output time (sum of the estimates above: below 5.5 × 10⁻³); the signed error within 5 × 10⁻⁴ of the sum of the grid and curvature estimates.
     - Discrimination: the signed error follows the sum of the grid and curvature estimates to 5 × 10⁻⁴ (6.7 × 10⁻⁵ in the run); a full-cell face misses it by 9.3 × 10⁻³.
     - Test id: `tests/test_entropy_bc5_validation.py::test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k half_space` (add `--validation-plots` to write the plot pair)
 
 ## Grid convergence with convection
 
-**Why this check exists.** With convection on, the entropy gradient at the surface also drives the convective flux. A gradient that is inconsistent with the conduction would make the result depend on the grid in an irregular way. This check shows that the result converges at the rate of the scheme.
+**Why this check exists.** With convection on, the entropy gradient at the surface node also enters the mixing-length flux. This check shows that the steady solution with convection converges at the rate of the scheme and keeps the energy balance. It does not separate the wrong surface rules of the first case, which keep order 2 here too; the first case catches them.
 
 **What it tests.** The heated shell of the first case, now with mixing-length convection at a viscosity of 10²¹ Pa s, once with the mixing length 0 at both boundaries (`nearest_boundary`) and once with a constant mixing length (`constant`). The test runs each to steady state on 100, 200 and 400 cells. It compares the mean temperature and the temperature at 5 fixed radii between the grids.
 
@@ -76,12 +76,13 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 ??? info "Test details"
     - Reference: the convergence order of the scheme and Richardson extrapolation; the steady surface flux from the energy balance.
     - Tolerance: order 2.0 ± 0.4 for the mean temperature and the 5 fixed-radius temperatures; the 400-cell values within 10⁻³ of the temperature rise from their extrapolation; surface flux to a relative 10⁻⁸; boundary layer at least 8 cells wide on 400 cells.
+    - Discrimination: a wrong face makes the order or the extrapolation fail only when it breaks the convergence; the wrong rules of the first case do not.
     - Test id: `tests/test_entropy_bc5_validation.py::test_the_convecting_shell_converges_with_second_order`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k convecting` (add `--validation-plots` to write the plot pair)
 
 ## Stagnant-lid benchmark states
 
-**Why this check exists.** The stagnant-lid scaling benchmarks hold the surface at 273 K. They computed the half-cell conduction through the surface outside the solver. This check shows that the boundary condition of the solver gives the same surface flux on their stored states.
+**Why this check exists.** The stagnant-lid scaling benchmarks hold the surface at 273 K, and their tools set the half-cell conduction through the surface outside the solver. This check shows that the boundary condition of the solver gives the same surface flux on their stored states.
 
 **What it tests.** The 5 stored steady states of the internal-heating benchmark and the 3 stored states of the yield-stress benchmark, evaluated once with the flux of the benchmarks and once with `outer_boundary_condition = 5`, with the eddy-diffusivity floor off as in the benchmarks.
 
@@ -89,7 +90,7 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 
 **Why it matters.** The benchmarks can use the boundary condition of the solver for their surface.
 
-**Known limit.** The surface flux agrees on all 8 states to a relative $1.3 \times 10^{-16}$. The rates of the stored states do not: with the boundary condition the surface node is at 273 K, the stored states are not exactly steady (largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the benchmarks), and the steady runs of the internal-heating benchmark move its interior temperature by up to $2.5 \times 10^{-4}$ (relative). The checks of the rates ($10^{-10}$) and of the steady runs ($10^{-6}$) use benchmark references computed with this boundary condition.
+**Known limit.** No test in this repository runs this case: the stored states and the tools of the benchmarks belong to the stagnant-lid verification suite, and the numbers here come from running those tools with this boundary condition. The surface flux agrees on all 8 states to a relative $1.3 \times 10^{-16}$. The rates of the stored states do not: with the boundary condition the surface node is at 273 K, the stored states are not exactly steady (largest rate $3.4 \times 10^{-5}$ J/kg/K/yr, against at most $3.4 \times 10^{-11}$ with the flux of the benchmarks), and the steady runs of the internal-heating benchmark move its interior temperature by up to $2.5 \times 10^{-4}$ (relative). The checks of the rates ($10^{-10}$) and of the steady runs ($10^{-6}$) use benchmark references computed with this boundary condition.
 
 ??? info "Test details"
     - Reference: the stored states and surface fluxes of the stagnant-lid scaling benchmarks.

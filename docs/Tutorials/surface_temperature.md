@@ -11,7 +11,7 @@ In this tutorial you hold the surface of a mantle shell at a fixed temperature a
 ## What you need
 
 - Aragog installed (see [Installation](../How-to/installation.md)).
-- No equation-of-state (EOS) tables: the tutorial uses the constant-properties mode, where the temperature follows from the entropy by $T = T_\mathrm{ref} \exp[(S - S_\mathrm{ref}) / c_p]$.
+- No equation-of-state (EOS) tables: the tutorial uses the constant-properties mode, where the temperature $T$ \[K\] follows from the specific entropy $S$ \[J/kg/K\] by $T = T_\mathrm{ref} \exp[(S - S_\mathrm{ref}) / c_p]$. Here $T_\mathrm{ref}$ = 3000 K and $S_\mathrm{ref}$ = 3000 J/kg/K are the reference values `const_T_ref` and `const_S_ref`, and $c_p$ = 1000 J/kg/K is the heat capacity `const_Cp` of the configuration below.
 
 ## 1. Write the configuration
 
@@ -102,7 +102,7 @@ The value of `outer_boundary_value` is a temperature in kelvin in this mode. In 
 
 ## 2. Run the solver
 
-The solver evolves the entropy $S$ in each cell. We give it the entropy of 1100 K as the start value in every cell.
+The solver evolves the entropy $S$ in each cell. We give it the entropy of 1100 K as the start value in every cell, from the constant-properties values of the configuration. We pass `entropy_eos=None` because the constant-properties mode reads no EOS tables; it does not read the files `solidus.dat` and `liquidus.dat` named in `[phase_mixed]` either.
 
 ```python
 import numpy as np
@@ -113,7 +113,8 @@ from aragog.solver import EntropySolver
 params = Parameters.from_file('surface_temperature.toml')
 solver = EntropySolver(params, entropy_eos=None)
 solver.initialize()
-solver.set_initial_entropy(3000.0 + 1000.0 * np.log(1100.0 / 3000.0))
+pm = params.phase_mixed
+solver.set_initial_entropy(pm.const_S_ref + pm.const_Cp * np.log(1100.0 / pm.const_T_ref))
 solver.solve()
 out = solver.get_state()
 print(f'surface node temperature: {float(np.ravel(out.T_basic)[-1]):.6f} K')
@@ -127,7 +128,7 @@ For a half space that starts at $T_i$ and has its surface held at $T_s$, the sur
 
 $$F(t) = \frac{k\,(T_i - T_s)}{\sqrt{\pi \kappa t}}$$
 
-(Turcotte and Schubert 2014, *Geodynamics*, 3rd ed., eq. 4.116). Our shell is thin compared with the planet and deep compared with the cooled layer, so it behaves like a half space.
+(Turcotte and Schubert 2014, *Geodynamics*, 3rd ed., section 4.15, eq. 4.116, p. 189). Our shell is thin compared with the planet and deep compared with the cooled layer, so it behaves like a half space.
 
 ```python
 from scipy.constants import Julian_year
@@ -141,11 +142,11 @@ print(f'half-space F(t)  = {f_exact:.6f} W/m^2')
 print(f'relative difference = {f_top / f_exact - 1:+.2e}')
 ```
 
-The two agree to 7.5 × 10⁻⁴. Two small effects make up the difference, and their sum is 7.5 × 10⁻⁴. The top cell is $h$ = 250 m thick, and the grid error of the flux is about 0.063 $(h/\delta)^2$ with $\delta = \sqrt{\kappa t}$, here +1.25 × 10⁻³. The curvature of the shell lowers the flux by about $\sqrt{\pi \kappa t} / r_\mathrm{out}$, here 4.9 × 10⁻⁴.
+The two agree to 7.5 × 10⁻⁴: the grid error (+1.25 × 10⁻³) minus the curvature effect (4.9 × 10⁻⁴). The top cell is $h$ = 250 m thick, and the grid error of the flux is about 0.063 $(h/\delta)^2$ with $\delta = \sqrt{\kappa t}$; the shell, unlike a half space, is curved, and that lowers the flux by about $\sqrt{\pi \kappa t} / r_\mathrm{out}$, with $r_\mathrm{out}$ = 6371 km the outer radius.
 
 ## 4. Compare the temperature profile
 
-The half-space temperature at depth $z$ below the surface is $T = T_s + (T_i - T_s)\,\mathrm{erf}\big(z / (2\sqrt{\kappa t})\big)$ (Turcotte and Schubert 2014, eq. 4.113).
+The half-space temperature at depth $z$ below the surface is $T = T_s + (T_i - T_s)\,\mathrm{erf}\big(z / (2\sqrt{\kappa t})\big)$ (Turcotte and Schubert 2014, eq. 4.113, p. 188).
 
 ```python
 from scipy.special import erf
