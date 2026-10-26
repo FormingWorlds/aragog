@@ -90,6 +90,8 @@ $$
 
 with a narrow blend width $\Delta = 0.01\,Re_\mathrm{crit}$. A configurable floor `kappah_floor` sets a phase-modulated lower bound on $\kappa_h$. Mixing lengths are either the distance to the nearest boundary (`mixing_length_profile = "nearest_boundary"`) or a constant fraction of the mantle thickness.
 
+When solid mantle rheology is enabled (`[phase_solid.rheology]`), solid viscosity follows Arrhenius creep and Byerlee brittle yielding, and boundary layer closures govern stagnant-lid growth and mixing-length top slope. See [Solid-state convection](solid_state_convection.md) for the complete formulation of solid mantle dynamics.
+
 ### Gravitational separation of melt
 
 In the partially molten regime, melt and solid separate vertically by gravity. The separation mass flux is
