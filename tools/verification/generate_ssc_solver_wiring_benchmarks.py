@@ -28,8 +28,10 @@ Execution modes and per-block coverage:
   file, verifies via ``verify_benchmarks``, and writes the updated JSON.
 - ``--check`` (requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR``):
   1. Stored provenance and table hashes: verifies ``canary.aragog_commit`` is a valid 40-hex
-     commit SHA and checks all 12 SPIDER P-S table MD5 hashes in ``canary`` and in every block
-     of ``rhs_parity_and_activity``, ``rhs_wall_time``, and ``perturbed_starts``.
+     commit SHA, recomputes and verifies ``canary.generator_input_sha256`` and
+     ``canary.generator_input_files`` against the live generator input files on disk, and checks
+     all 12 SPIDER P-S table MD5 hashes in ``canary`` and in every block of
+     ``rhs_parity_and_activity``, ``rhs_wall_time``, and ``perturbed_starts``.
   2. Stored-array consistency in ``rhs_parity_and_activity``: requires all per-state and
      per-step arrays and recomputes from them every summary statistic (``max/median/min`` of
      ``rel_rhs_numpy_vs_jax``, ``rel_rhs_numpy_vs_jax_eager``, ``rel_flux_numpy_vs_jax``,
@@ -76,13 +78,19 @@ sys.path.insert(0, str(REPO_ROOT / 'src'))
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.verification._ssc_helpers import (  # noqa: E402
-    _check_commit_matches_generator_inputs,
+    _check_generator_input_fingerprint,
     _resolve_origin_head_commit,
+    compute_generator_input_fingerprint,
     entropy_eos_copy,
     entropy_eos_jax,
 )
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_solver_wiring_benchmarks.json'
+WIRING_GENERATOR_INPUT_PATHS = (
+    'src/aragog',
+    'tools/verification/_ssc_helpers.py',
+    'tools/verification/generate_ssc_solver_wiring_benchmarks.py',
+)
 TABLE_FILES = (
     'adiabat_temp_grad_melt.dat',
     'adiabat_temp_grad_solid.dat',
@@ -875,6 +883,27 @@ def _diagnose_flux_vs_rhs(
     rel_rhs_global_ks = abs_rhs_diff_ks / denom_rhs_global
     rel_rhs_local_ks = abs_rhs_diff_ks / abs(rhs_np_ks)
 
+    def _eval_unclamped_alpha_mixed(P_arr: Any, S_arr: Any) -> Any:
+        S_sol = eos_jax.solidus_entropy(P_arr)
+        S_liq = eos_jax.liquidus_entropy(P_arr)
+        dS_phase = jnp.maximum(S_liq - S_sol, 1.0e-10)
+        phi = jnp.clip((S_arr - S_sol) / dS_phase, 0.0, 1.0)
+        T_sol = eos_jax._lookup_at_phase_boundary('temperature', P_arr, 'solid')
+        T_liq = eos_jax._lookup_at_phase_boundary('temperature', P_arr, 'melt')
+        rho_sol = eos_jax._lookup_at_phase_boundary('density', P_arr, 'solid')
+        rho_liq = eos_jax._lookup_at_phase_boundary('density', P_arr, 'melt')
+        inv_rho_m = phi / jnp.maximum(rho_liq, 1.0) + (1.0 - phi) / jnp.maximum(rho_sol, 1.0)
+        rho_mixed = 1.0 / jnp.maximum(inv_rho_m, 1.0e-30)
+        dT_phase = jnp.maximum(T_liq - T_sol, 1.0e-10)
+        return (rho_sol - rho_liq) / dT_phase / jnp.maximum(rho_mixed, 1.0)
+
+    a_unclamped_eager = float(
+        _eval_unclamped_alpha_mixed(mesh_jax.P_basic, s_basic_jax)[k_basic]
+    )
+    a_unclamped_jit = float(
+        jax.jit(_eval_unclamped_alpha_mixed)(mesh_jax.P_basic, s_basic_jax)[k_basic]
+    )
+
     diag: dict[str, Any] = {
         'worst_state_index': state_idx,
         'worst_basic_node_index': k_basic,
@@ -887,6 +916,9 @@ def _diagnose_flux_vs_rhs(
         'temperature_basic_K_jax': float(pb_jax.temperature[k_basic]),
         'viscosity_basic_Pa_s_np': float(pb_np.viscosity()[k_basic]),
         'viscosity_basic_Pa_s_jax': float(pb_jax.viscosity[k_basic]),
+        'alpha_mixed_unclamped_1_K_jax_eager': a_unclamped_eager,
+        'alpha_mixed_unclamped_1_K_jax_jit': a_unclamped_jit,
+        'alpha_mixed_unclamped_abs_diff_1_K': float(abs(a_unclamped_jit - a_unclamped_eager)),
         'alpha_basic_1_K_np_table': alpha_np_k,
         'alpha_basic_1_K_jax_identity': alpha_jax_k,
         'alpha_basic_1_K_jax_eager': alpha_jax_eager_k,
@@ -915,15 +947,23 @@ def _diagnose_flux_vs_rhs(
             f'{rel_rhs_global_ks:.6e} on the CI SPIDER EOS tables occur at state index {state_idx}, '
             f'basic node k = {k_basic} (staggered cell ks = {k_stag}, P = {float(mesh_jax.P_basic[k_basic]) / 1e9:.6f} GPa, '
             f'S = {float(s_basic_jax[k_basic]):.2f} J kg^-1 K^-1, phi = {float(pb_np.melt_fraction()[k_basic]):.6f}). '
-            f'At this two-phase node, the effective thermal expansivity alpha_eff cancels to near zero '
-            f'({alpha_np_k:.6e} K^-1, six orders of magnitude below the single-phase value ~3.5e-5 K^-1). '
-            f'In eager JAX, alpha_eff agrees with NumPy to 0.0 ({alpha_jax_eager_k:.6e} K^-1); under '
-            f'jax.jit (the path CVODE calls), XLA fused multiply-add in _interp_2d shifts the uncancelled '
-            f'terms by {abs(alpha_np_k - alpha_jax_k):.3e} K^-1 (< 1 ULP of 3.5e-5 K^-1), a '
-            f'{abs(alpha_np_k - alpha_jax_k) / abs(alpha_np_k):.6e} relative shift in the near-zero '
-            f'alpha_eff[{k_basic}]. Because inviscid mixing-length velocity scales as sqrt(alpha_eff), '
-            f'kappa_h[{k_basic}] shifts by {abs(kappah_np_k - kappah_jax_k):.6e} m^2 s^-1 and heat_flux[{k_basic}] '
-            f'shifts by {abs_flux_diff_k:.6e} W m^-2.'
+            f'At this two-phase node (smth = 1.0, cp_blend = "latent"), rho_sol < rho_liq so the unclamped '
+            f'two-phase thermal expansivity a = (rho_sol - rho_liq) / (dT_phase * rho_mixed) is negative '
+            f'({a_unclamped_eager:.16e} K^-1 in NumPy and eager JAX vs {a_unclamped_jit:.16e} K^-1 under jax.jit, '
+            f'a 1 ULP = {abs(a_unclamped_jit - a_unclamped_eager):.6e} K^-1 division-rounding difference). '
+            f'The smooth positivity clamp alpha = 0.5 * (a + sqrt(a^2 + eps_a^2)) with eps_a = 1.0e-8 K^-1 '
+            f'(entropy_phase.py:471-473, jax/eos.py:806-808) subtracts two numbers of magnitude 3.559e-4 K^-1 '
+            f'that agree to 10 digits, cancelling to eps_a^2 / (4 |a|) = {alpha_np_k:.6e} K^-1 and amplifying '
+            f'the 1 ULP difference in a into a {abs(alpha_np_k - alpha_jax_k):.6e} K^-1 '
+            f'({abs(alpha_np_k - alpha_jax_k) / abs(alpha_np_k):.6e} relative) shift in alpha[{k_basic}] '
+            f'(while eager JAX agrees with NumPy at {alpha_jax_eager_k:.6e} K^-1). Because the viscous '
+            f'mixing-length branch dominates at node {k_basic} (kappa_h proportional to alpha) and two-phase '
+            f'latent-blend nodes use alpha_mixed exclusively (so identity_alpha / harmonised_alpha has zero effect), '
+            f'kappa_h[{k_basic}] shifts by {abs(kappah_np_k - kappah_jax_k):.6e} m^2 s^-1, heat_flux[{k_basic}] '
+            f'shifts by {abs_flux_diff_k:.6e} W m^-2 ({rel_flux_k:.6e} relative to peak interior flux), and '
+            f'rhs[{k_stag}] shifts by {abs_rhs_diff_ks:.6e} J kg^-1 K^-1 yr^-1 ({rel_rhs_global_ks:.6e} relative '
+            f'to peak |dS/dt|; the 1.0e-9 harmonised-alpha smoke bound sits {1.0e-9 / rel_rhs_global_ks:.2f}x '
+            f'above this 1-ULP shift, equivalent to 2 ULP in unclamped alpha_mixed).'
         ),
     }
     if table_hashes is not None:
@@ -1311,20 +1351,30 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     if live_np_loc != [0, 1, 1, 0, 1, 2] or live_jax_loc != [0, 1, 1, 0, 1, 2]:
         failures.append(f'Live local call-count deltas NP={live_np_loc} JAX={live_jax_loc}')
 
-    cfg_on = Config.from_file(str(cfg_path))
-    cfg_on.boundary_conditions.inner_boundary_condition = 1
-    cfg_on.boundary_conditions.core_bc = 'quasi_steady'
-    cfg_on.energy.kappah_floor = 0.0
-    cfg_on.phase_solid.viscosity = 1.0e18
-    cfg_on.phase_solid.rheology = SolidRheologyParams(
-        enabled=True,
-        stress_closure_mode='lid',
-        yield_stress_c=1.0e7,
-        yield_stress_mu=0.1,
-        yield_stress_max=1.0e8,
+    def _make_solver(
+        kappah_floor: float, viscosity: float, rheo: SolidRheologyParams
+    ) -> EntropySolver:
+        cfg = Config.from_file(str(cfg_path))
+        cfg.boundary_conditions.inner_boundary_condition = 1
+        cfg.boundary_conditions.core_bc = 'quasi_steady'
+        cfg.energy.kappah_floor = kappah_floor
+        cfg.phase_solid.viscosity = viscosity
+        cfg.phase_solid.rheology = rheo
+        sol = EntropySolver(cfg, entropy_eos=eos_np)
+        sol.initialize()
+        return sol
+
+    solver_on = _make_solver(
+        0.0,
+        1.0e18,
+        SolidRheologyParams(
+            enabled=True,
+            stress_closure_mode='lid',
+            yield_stress_c=1.0e7,
+            yield_stress_mu=0.1,
+            yield_stress_max=1.0e8,
+        ),
     )
-    solver_on = EntropySolver(cfg_on, entropy_eos=eos_np)
-    solver_on.initialize()
     n_stag = solver_on._n_stag
     xi = np.linspace(0.0, 1.0, n_stag)
     s_profile = (2500.0 - 450.0 * (0.2 * xi + 0.8 * xi**4)).copy()
@@ -1353,14 +1403,23 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
             f'{stored_0_eager:.6e} exceeds upper bound 1.0e-13'
         )
 
+    def _state0_rel_diff(
+        s_bot: float,
+        delta_s: float,
+        kappah_floor: float,
+        viscosity: float,
+        rheo_a: SolidRheologyParams,
+        rheo_b: SolidRheologyParams,
+    ) -> float:
+        sol_a = _make_solver(kappah_floor, viscosity, rheo_a)
+        sol_b = _make_solver(kappah_floor, viscosity, rheo_b)
+        prof = (s_bot - delta_s * (0.2 * xi + 0.8 * xi**4)).copy()
+        rhs_a = sol_a.dSdt(0.0, prof).copy()
+        rhs_b = sol_b.dSdt(0.0, prof).copy()
+        return float(np.max(np.abs(rhs_a - rhs_b)) / max(float(np.max(np.abs(rhs_b))), 1.0e-30))
+
     # Also evaluate state 0 of abe_solid_yield_active and abe_solid_default so a merge
     # carrying another branch's JSON fails even when git history is unavailable.
-    s_profile_y = (2150.0 - 1820.0 * (0.2 * xi + 0.8 * xi**4)).copy()
-    cfg_y_on = Config.from_file(str(cfg_path))
-    cfg_y_on.boundary_conditions.inner_boundary_condition = 1
-    cfg_y_on.boundary_conditions.core_bc = 'quasi_steady'
-    cfg_y_on.energy.kappah_floor = 0.0
-    cfg_y_on.phase_solid.viscosity = 3.0e17
     rheo_y_on = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
@@ -1368,26 +1427,13 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
         yield_stress_mu=0.0,
         yield_stress_max=1.0e8,
     )
-    cfg_y_on.phase_solid.rheology = rheo_y_on
-    solver_y_on = EntropySolver(cfg_y_on, entropy_eos=eos_np)
-    solver_y_on.initialize()
-
-    cfg_y_off = Config.from_file(str(cfg_path))
-    cfg_y_off.boundary_conditions.inner_boundary_condition = 1
-    cfg_y_off.boundary_conditions.core_bc = 'quasi_steady'
-    cfg_y_off.energy.kappah_floor = 0.0
-    cfg_y_off.phase_solid.viscosity = 3.0e17
-    cfg_y_off.phase_solid.rheology = replace(
-        rheo_y_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30
-    )
-    solver_y_off = EntropySolver(cfg_y_off, entropy_eos=eos_np)
-    solver_y_off.initialize()
-
-    rhs_y_on_0 = solver_y_on.dSdt(0.0, s_profile_y).copy()
-    rhs_y_off_0 = solver_y_off.dSdt(0.0, s_profile_y).copy()
-    live_y_on_off_0 = float(
-        np.max(np.abs(rhs_y_on_0 - rhs_y_off_0))
-        / max(float(np.max(np.abs(rhs_y_off_0))), 1.0e-30)
+    live_y_on_off_0 = _state0_rel_diff(
+        2150.0,
+        1820.0,
+        0.0,
+        3.0e17,
+        rheo_y_on,
+        replace(rheo_y_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30),
     )
     stored_y_on_off_0 = float(
         data['rhs_parity_and_activity']['abe_solid_yield_active'][
@@ -1402,36 +1448,19 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
         rtol=1.0e-6,
     )
 
-    s_profile_d = (2900.0 - 450.0 * (0.2 * xi + 0.8 * xi**4)).copy()
-    cfg_d_on = Config.from_file(str(cfg_path))
-    cfg_d_on.boundary_conditions.inner_boundary_condition = 1
-    cfg_d_on.boundary_conditions.core_bc = 'quasi_steady'
-    cfg_d_on.energy.kappah_floor = 10.0
-    cfg_d_on.phase_solid.viscosity = 1.0e21
-    cfg_d_on.phase_solid.rheology = SolidRheologyParams(
-        enabled=True,
-        stress_closure_mode='lid',
-        yield_stress_c=1.0e7,
-        yield_stress_mu=0.1,
-        yield_stress_max=1.0e8,
-    )
-    solver_d_on = EntropySolver(cfg_d_on, entropy_eos=eos_np)
-    solver_d_on.initialize()
-
-    cfg_d_off = Config.from_file(str(cfg_path))
-    cfg_d_off.boundary_conditions.inner_boundary_condition = 1
-    cfg_d_off.boundary_conditions.core_bc = 'quasi_steady'
-    cfg_d_off.energy.kappah_floor = 10.0
-    cfg_d_off.phase_solid.viscosity = 1.0e21
-    cfg_d_off.phase_solid.rheology = SolidRheologyParams(enabled=False)
-    solver_d_off = EntropySolver(cfg_d_off, entropy_eos=eos_np)
-    solver_d_off.initialize()
-
-    rhs_d_on_0 = solver_d_on.dSdt(0.0, s_profile_d).copy()
-    rhs_d_off_0 = solver_d_off.dSdt(0.0, s_profile_d).copy()
-    live_d_on_off_0 = float(
-        np.max(np.abs(rhs_d_on_0 - rhs_d_off_0))
-        / max(float(np.max(np.abs(rhs_d_off_0))), 1.0e-30)
+    live_d_on_off_0 = _state0_rel_diff(
+        2900.0,
+        450.0,
+        10.0,
+        1.0e21,
+        SolidRheologyParams(
+            enabled=True,
+            stress_closure_mode='lid',
+            yield_stress_c=1.0e7,
+            yield_stress_mu=0.1,
+            yield_stress_max=1.0e8,
+        ),
+        SolidRheologyParams(enabled=False),
     )
     stored_d_on_off_0 = float(
         data['rhs_parity_and_activity']['abe_solid_default']['rel_rhs_on_vs_off_per_state'][0]
@@ -2108,11 +2137,21 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
         failures.append("Missing or invalid 'canary' section")
     else:
         commit_sha = canary.get('aragog_commit')
+        input_sha256 = canary.get('generator_input_sha256')
+        input_files = canary.get('generator_input_files')
         if not commit_sha:
             failures.append("Missing 'aragog_commit' in canary")
+        elif not input_sha256:
+            failures.append("Missing 'generator_input_sha256' in canary")
         else:
             failures.extend(
-                _check_commit_matches_generator_inputs(commit_sha, ('src/aragog',), REPO_ROOT)
+                _check_generator_input_fingerprint(
+                    commit_sha,
+                    input_sha256,
+                    WIRING_GENERATOR_INPUT_PATHS,
+                    recorded_files=input_files if isinstance(input_files, list) else None,
+                    repo_root=REPO_ROOT,
+                )
             )
         if eos_dir is None or not eos_dir.is_dir():
             failures.append(
@@ -2210,12 +2249,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     table_hashes = compute_table_hashes(args.eos_dir)
+    input_sha256, input_files = compute_generator_input_fingerprint(
+        WIRING_GENERATOR_INPUT_PATHS, repo_root=REPO_ROOT
+    )
     cfg_path = Path(str(importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')))
 
     if args.full:
         data = {
             'canary': {
                 'aragog_commit': head_sha,
+                'generator_input_sha256': input_sha256,
+                'generator_input_files': input_files,
                 'table_md5': table_hashes,
             },
             'rhs_parity_and_activity': run_rhs_parity_benchmarks(
@@ -2235,6 +2279,8 @@ def main(argv: list[str] | None = None) -> int:
         data = json.loads(output_path.read_text(encoding='utf-8'))
         data.setdefault('canary', {})['table_md5'] = table_hashes
         data.setdefault('canary', {})['aragog_commit'] = head_sha
+        data['canary']['generator_input_sha256'] = input_sha256
+        data['canary']['generator_input_files'] = input_files
         if args.parity_only:
             data['rhs_parity_and_activity'] = run_rhs_parity_benchmarks(
                 cfg_path, args.eos_dir, table_hashes
