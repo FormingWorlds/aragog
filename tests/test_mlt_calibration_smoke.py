@@ -508,8 +508,7 @@ half_life_years = 1.0e30
 
 def test_benchmark_generators_check_mode_passes_on_committed_jsons() -> None:
     """Run --check on all four SSC benchmark generators against the committed JSONs."""
-    import os
-
+    from tests.conftest import EOS_DIR
     from tools.verification import (
         evaluate_mlt_top_slope_calibration as mlt_cal_mod,
     )
@@ -526,5 +525,6 @@ def test_benchmark_generators_check_mode_passes_on_committed_jsons() -> None:
     assert mlt_cal_mod.main(['--check']) == 0
     assert ref0d_mod.main(['--check']) == 0
     assert scaling_mod.main(['--check']) == 0
-    if os.environ.get('ARAGOG_TEST_EOS_DIR'):
-        assert wiring_mod.main(['--check']) == 0
+    if not EOS_DIR.exists():
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}.')
+    assert wiring_mod.main(['--check', '--eos-dir', str(EOS_DIR)]) == 0

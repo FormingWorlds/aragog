@@ -1959,6 +1959,9 @@ class EntropySolver:
         self,
         trace_y: npt.NDArray | None = None,
         trace_t: npt.NDArray | None = None,
+        *,
+        step_idx: int = 0,
+        time_yr: float | None = None,
     ) -> None:
         """Check solid rheology invariants on an accepted state when rheology is enabled.
 
@@ -1983,21 +1986,19 @@ class EntropySolver:
             )
             counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
             try:
-                for step_idx in range(n_steps):
-                    t_step = float(t_pts[step_idx]) if step_idx < t_pts.size else 0.0
+                for k_idx in range(n_steps):
+                    t_step = float(t_pts[k_idx]) if k_idx < t_pts.size else 0.0
                     self._check_rheology_eos_range(
-                        self._stag_entropy(y_pts[:, step_idx]),
-                        step_idx=step_idx,
+                        self._stag_entropy(y_pts[:, k_idx]),
+                        step_idx=k_idx,
                         time_yr=t_step,
                     )
-                    self._dSdt_single(t_step, y_pts[:, step_idx])
-                    self._check_rheology_step_invariants(
-                        rheo, step_idx=step_idx, time_yr=t_step
-                    )
+                    self._dSdt_single(t_step, y_pts[:, k_idx])
+                    self._check_rheology_step_invariants(rheo, step_idx=k_idx, time_yr=t_step)
             finally:
                 self.state._pb_cache_hits, self.state._pb_cache_misses = counters
             return
-        self._check_rheology_step_invariants(rheo, step_idx=0)
+        self._check_rheology_step_invariants(rheo, step_idx=step_idx, time_yr=time_yr)
 
     def _check_rheology_eos_range(
         self,
@@ -2030,11 +2031,6 @@ class EntropySolver:
 
     def _check_rheology_eos_trace(self, t_pts: npt.ArrayLike, y_pts: npt.ArrayLike) -> None:
         """Check ``_check_rheology_eos_range`` across every accepted state in ``(t_pts, y_pts)``."""
-        eos = getattr(self, 'entropy_eos', None)
-        if eos is None or getattr(self.parameters.phase_mixed, 'const_properties', False):
-            return
-        if getattr(eos, 'S_min', None) is None or getattr(eos, 'S_max', None) is None:
-            return
         y_arr = np.asarray(y_pts, dtype=float)
         if y_arr.ndim == 1:
             y_arr = y_arr.reshape(-1, 1)
@@ -4876,7 +4872,10 @@ class EntropySolver:
                 finally:
                     self.state._pb_cache_hits, self.state._pb_cache_misses = counters
             if sol is not None:
-                self._check_rheology_invariants()
+                t_last_opt = float(sol.t[-1]) if sol.t.size > 0 else None
+                self._check_rheology_invariants(
+                    step_idx=max(int(sol.t.size - 1), 0), time_yr=t_last_opt
+                )
             return dict(_ZERO_ENERGY_INTEGRALS)
 
         # On the scipy path solve_ivp returns its accepted steps as sol.t.

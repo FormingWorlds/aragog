@@ -430,6 +430,9 @@ def evaluate_stagnant_lid_0d(
 
     Implements the 0-D stagnant-lid boundary-layer and yield-mobilisation closure
     from Moresi & Solomatov (1998), Foley & Bercovici (2014), and Thiriet et al. (2019).
+    The spherical surface-flux geometry factor scales ``F_top_planar`` by
+    ``(r_surf - d_lid_eff) / r_surf`` using the effective isotherm lid thickness
+    ``d_lid_eff`` rather than the conductive-equivalent depth ``delta_l_eff``.
 
     Parameters
     ----------

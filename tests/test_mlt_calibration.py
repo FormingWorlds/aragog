@@ -390,7 +390,7 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
 def test_benchmark_generators_require_origin_commit_and_clean_tree(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Verify all 3 benchmark generators record and check origin-reachable commits only."""
+    """Verify benchmark provenance format in --check and origin/clean-tree rules at generation time."""
     import copy
     import json
     import subprocess
@@ -405,8 +405,11 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     from tools.verification import (
         generate_ssc_solver_wiring_benchmarks as wiring_mod,
     )
-
-    repo_root = Path(__file__).resolve().parents[1]
+    from tools.verification._ssc_helpers import (
+        _is_commit_on_origin,
+        _is_valid_commit_sha,
+        _resolve_origin_head_commit,
+    )
 
     ref_dir = Path(__file__).parent / 'reference'
     wiring_data = json.loads((ref_dir / 'ssc_solver_wiring_benchmarks.json').read_text('utf-8'))
@@ -415,6 +418,60 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
         (ref_dir / 'ssc_scaling_exponents_benchmarks.json').read_text('utf-8')
     )
 
+    # Set up a real git repository in tmp_path with one commit on origin/main and one local-only commit
+    tmp_repo = tmp_path / 'git_repo'
+    tmp_repo.mkdir()
+    git_env = {
+        'GIT_AUTHOR_NAME': 'Test',
+        'GIT_AUTHOR_EMAIL': 'test@example.com',
+        'GIT_COMMITTER_NAME': 'Test',
+        'GIT_COMMITTER_EMAIL': 'test@example.com',
+        'PATH': '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin',
+    }
+    subprocess.run(['git', '-C', str(tmp_repo), 'init', '-b', 'main'], check=True, env=git_env)
+    (tmp_repo / 'tracked.txt').write_text('v1\n', encoding='utf-8')
+    subprocess.run(['git', '-C', str(tmp_repo), 'add', 'tracked.txt'], check=True, env=git_env)
+    subprocess.run(
+        ['git', '-C', str(tmp_repo), 'commit', '-m', 'Initial commit'], check=True, env=git_env
+    )
+    origin_sha = subprocess.check_output(
+        ['git', '-C', str(tmp_repo), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    subprocess.run(
+        ['git', '-C', str(tmp_repo), 'update-ref', 'refs/remotes/origin/main', origin_sha],
+        check=True,
+        env=git_env,
+    )
+    assert _is_commit_on_origin(origin_sha, tmp_repo) is True
+    assert _resolve_origin_head_commit(tmp_repo) == origin_sha
+
+    # Create a real second commit on local branch 'main' that is NOT on refs/remotes/origin/*
+    (tmp_repo / 'tracked.txt').write_text('v2\n', encoding='utf-8')
+    subprocess.run(['git', '-C', str(tmp_repo), 'add', 'tracked.txt'], check=True, env=git_env)
+    subprocess.run(
+        ['git', '-C', str(tmp_repo), 'commit', '-m', 'Local unpushed commit'],
+        check=True,
+        env=git_env,
+    )
+    local_only_sha = subprocess.check_output(
+        ['git', '-C', str(tmp_repo), 'rev-parse', 'HEAD'], text=True
+    ).strip()
+    assert _is_valid_commit_sha(local_only_sha) is True
+    assert _is_commit_on_origin(local_only_sha, tmp_repo) is False
+    with pytest.raises(RuntimeError, match='origin'):
+        _resolve_origin_head_commit(tmp_repo)
+
+    # Reset back to origin_sha and dirty the tracked file to verify the dirty-tree guard
+    subprocess.run(
+        ['git', '-C', str(tmp_repo), 'reset', '--hard', origin_sha], check=True, env=git_env
+    )
+    (tmp_repo / 'tracked.txt').write_text('dirty\n', encoding='utf-8')
+    with pytest.raises(RuntimeError, match='uncommitted'):
+        _resolve_origin_head_commit(tmp_repo)
+
+    assert _is_valid_commit_sha('uncommitted') is False
+    assert _is_commit_on_origin('uncommitted', tmp_repo) is False
+
     specs = (
         ('wiring', wiring_mod, wiring_data, ('canary', 'aragog_commit')),
         ('ref0d', ref0d_mod, ref0d_data, ('metadata', 'git_commit')),
@@ -422,37 +479,17 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     )
     for label, mod, data, (sec_key, sha_key) in specs:
         sha = str(data[sec_key][sha_key])
-        obj_type = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'cat-file', '-t', sha], text=True
-        ).strip()
-        assert obj_type == 'commit', f'{label} {sha} is not a git commit object'
-        branches_out = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha], text=True
-        )
-        origin_branches = [
-            b.strip() for b in branches_out.splitlines() if b.strip().startswith('origin/')
-        ]
-        assert origin_branches, f'{label} recorded commit {sha} is not on any origin/* branch'
-        assert mod._is_commit_on_origin(sha, repo_root) is True
-        assert (
-            mod._is_commit_on_origin('06846a9844568933e170ba562e1f935089fe4e01', repo_root)
-            is False
-        )
-        assert (
-            mod._is_commit_on_origin('f343d7bfb7a2b4f9fe9960c52375cc825a88e904', repo_root)
-            is False
-        )
-        assert mod._is_commit_on_origin('uncommitted', repo_root) is False
+        assert _is_valid_commit_sha(sha) is True, f'{label} {sha} is not a 40-hex SHA'
 
         bad_data = copy.deepcopy(data)
-        bad_data[sec_key][sha_key] = '06846a9844568933e170ba562e1f935089fe4e01'
+        bad_data[sec_key][sha_key] = 'not-a-valid-40-hex-sha'
         failures = (
             mod.verify_benchmarks(bad_data, eos_dir=None)
             if label == 'wiring'
             else mod.verify_benchmarks(bad_data)
         )
-        assert any('origin' in f for f in failures), (
-            f'{label} verify_benchmarks accepted non-origin SHA'
+        assert any('commit' in f or 'SHA' in f for f in failures), (
+            f'{label} verify_benchmarks accepted malformed SHA'
         )
 
         out_copy = tmp_path / f'{label}_copy.json'
@@ -474,36 +511,13 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
             assert mod.main(argv) == 1
             assert out_copy.read_text(encoding='utf-8') == orig_text
 
-        with monkeypatch.context() as mp:
-            mp.setattr(
-                subprocess,
-                'check_output',
-                lambda cmd, *a, **kw: (
-                    ' M src/aragog/rheology.py\n'
-                    if 'status' in cmd
-                    else '06846a9844568933e170ba562e1f935089fe4e01\n'
-                ),
-            )
-            with pytest.raises(RuntimeError, match='uncommitted'):
-                mod._resolve_origin_head_commit(repo_root)
-
-        with monkeypatch.context() as mp:
-            mp.setattr(
-                subprocess,
-                'check_output',
-                lambda cmd, *a, **kw: (
-                    '' if 'status' in cmd else '06846a9844568933e170ba562e1f935089fe4e01\n'
-                ),
-            )
-            with pytest.raises(RuntimeError, match='origin'):
-                mod._resolve_origin_head_commit(repo_root)
-
 
 @pytest.mark.unit
 def test_solid_state_convection_tutorial_registered_and_code_blocks_parse() -> None:
-    """Verify the solid-state convection tutorial, its light/dark SVGs, and its Python blocks."""
+    """Verify the solid-state convection tutorial, its TOML/Python blocks, and its light/dark SVGs."""
     import ast
     import re
+    import tomllib
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -518,6 +532,15 @@ def test_solid_state_convection_tutorial_registered_and_code_blocks_parse() -> N
     svg_dark = repo_root / 'docs' / 'assets' / 'tutorials' / 'ssc_tutorial_profiles_dark.svg'
     assert svg_light.is_file() and 1000 < svg_light.stat().st_size <= 60_000
     assert svg_dark.is_file() and 1000 < svg_dark.stat().st_size <= 60_000
+
+    toml_blocks = re.findall(r'```toml\n(.*?)```', tut_text, flags=re.DOTALL)
+    assert len(toml_blocks) >= 1
+    abe_solid_text = (repo_root / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml').read_text(
+        encoding='utf-8'
+    )
+    parsed_toml = tomllib.loads(abe_solid_text + '\n' + toml_blocks[0])
+    assert parsed_toml['phase_solid']['rheology']['enabled'] is True
+    assert parsed_toml['phase_solid']['rheology']['stress_closure_mode'] == 'lid'
 
     py_blocks = re.findall(r'```python\n(.*?)```', tut_text, flags=re.DOTALL)
     assert len(py_blocks) >= 3

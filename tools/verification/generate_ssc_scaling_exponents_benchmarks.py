@@ -3,7 +3,7 @@
 Generates or checks ``tests/reference/ssc_scaling_exponents_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
-- The shipped entropy solver ignores ``outer_boundary_condition = 5`` today:
+- In the entropy solver, ``outer_boundary_condition = 5`` is not branched:
   ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py``)
   branches only on ``self._outer_bc_kind == 1`` and ``self._outer_bc_kind == 4``, and
   ``EntropyState.update`` (``src/aragog/solver/entropy_state.py``) copies the
@@ -17,55 +17,44 @@ Prescribed surface temperature boundary condition (``outer_boundary_condition = 
   returns, the stagnant-lid closure (``_compute_stagnant_lid_state_core`` in
   ``src/aragog/rheology_lid.py``, called inside ``EntropyState.update`` in
   ``src/aragog/solver/entropy_state.py``) reads the extrapolated surface
-  temperature ``T_basic[-1]`` (273.67 to 304.23 K across the 5 snapshots) and
-  unpatched surface flux (0.78 to 5.39 W/m^2 vs patched 0.85 to
-  8.51 W/m^2), so the stored states are steady for a closure fed the extrapolated
-  surface temperature and flux. Recomputing the closure with ``T_surf = 273.0 K`` and the
-  patched flux leaves ``T_i`` unchanged (0.0), shifts the isotherm ``d_lid`` by 0.0 to
-  3.8e-5 (-3.816e-05 on ``case_06``, -1.667e-12 on ``case_07``, and 0.0
-  on ``case_01``, ``case_03``, ``case_12``), shifts the conductive-equivalent lid thickness by
-  +5.5e-5 to +3.7e-3 (+5.470e-05 on ``case_12`` and +8.505e-05 on
-  ``case_01`` up to +3.726e-03 on ``case_06``), shifts ``theta`` by
-  +6.572e-04 up to +2.3e-2 (+2.282e-02 on ``case_06``), and yields a
-  residual under a consistent evaluation of up to 3.4e-5 J/(kg K yr)
-  (2.186e-10 on ``case_12`` and 1.146e-09 on ``case_01`` up to
-  3.426e-05 J/(kg K yr) on ``case_06``, vs stored 3.100e-16 to
-  3.370e-11 J/(kg K yr)).
+  temperature ``T_basic[-1]`` and the unpatched surface flux, so the stored states are
+  steady for a closure fed the extrapolated surface temperature and flux.
 
 Execution modes and per-block coverage:
-- ``--full`` (~50 s on 1 CPU core): recomputes the steady-state trajectories, snapshots,
-  conduction floors, and OLS fits using ``EntropySolver`` (temporarily replacing
-  ``EntropySolver._solve_cvode`` with an unbounded-step wrapper ``max_step = np.inf`` to
-  integrate to the multi-Gyr steady states without hitting the 100 yr phase-boundary
-  step cap; this override is removed once the step-cap fix lands on ``main``):
-  1. ``metadata.fixed_parameters`` (~0.01 s): derives the analytical and discrete
-     ``N = 100`` staggered-grid pure-conduction Nusselt floors (parabola peak ``2.0``,
-     analytical Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.227638``,
-     and spherical-shell ``r_in/r_out = 0.99``, ``N = 100`` ``2.247151``).
-  2. ``cases_results`` and ``steady_state_snapshots`` (~50 s): integrates all 12
-     internally heated stagnant-lid cases (``case_01``..``case_12``) to statistical
-     steady state in 8-chunk doublings (``t_end`` up to ``320 Gyr``) and extracts the
-     12 steady-state result rows and 5 full steady-state profile snapshots
-     (``case_01``, ``case_03``, ``case_06``, ``case_07``, ``case_12``).
-  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and ``realized_state_fits``
-     (~0.01 s): computes the ordinary least-squares multilinear and 1-D sweep power-law
-     fits on design parameters ``(Ra_i, theta)``, alternative Nusselt diagnostics, and
-     realized steady-state parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
-- ``--check`` (~0.25 s on 1 CPU core): verifies expected schema keys, the no-table
-  constant-property record (``eos_tables``), and recomputes and compares every stored
-  field across all blocks:
-  1. ``metadata``: verifies ``git_commit`` reachability on ``origin/*``, ``eos_tables``,
+- ``--full``: recomputes the steady-state trajectories, snapshots, conduction floors, and
+  OLS fits using ``EntropySolver`` (temporarily replacing ``EntropySolver._solve_cvode``
+  with an unbounded-step wrapper ``max_step = np.inf`` because the solver caps steps at
+  100 yr after solidification):
+  1. ``metadata.fixed_parameters``: derives the analytical and discrete ``N = 100``
+     staggered-grid pure-conduction Nusselt floors (parabola peak ``2.0``, analytical
+     Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.227638``, and
+     spherical-shell ``r_in/r_out = 0.99``, ``N = 100`` ``2.247151``).
+  2. ``cases_results`` and ``steady_state_snapshots``: integrates all 12 internally heated
+     stagnant-lid cases (``case_01``..``case_12``) to statistical steady state in 8-chunk
+     doublings (``t_end`` up to ``320 Gyr``) and extracts the 12 steady-state result rows
+     and 5 full steady-state profile snapshots (``case_01``, ``case_03``, ``case_06``,
+     ``case_07``, ``case_12``).
+  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and ``realized_state_fits``:
+     computes the ordinary least-squares multilinear and 1-D sweep power-law fits on design
+     parameters ``(Ra_i, theta)``, alternative Nusselt diagnostics, and realized steady-state
+     parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
+- ``--check``: verifies expected schema keys, the no-table constant-property record
+  (``eos_tables``), and compares every stored field across all blocks, combining live 1-D
+  evaluations on the 5 stored snapshots with algebraic and regression checks on the
+  remaining 7 stored rows:
+  1. ``metadata``: verifies ``git_commit`` as a valid commit object, ``eos_tables``,
      ``rheology_calibration``, ``acceptance_window``, and all ``fixed_parameters``
      conduction-floor values within ``1e-12``.
-  2. ``cases_results`` and ``steady_state_snapshots``: verifies all 12 rows of
+  2. ``cases_results`` and ``steady_state_snapshots``: evaluates live 1-D
+     ``EntropySolver._dSdt_single`` and ``korenaga_ti_fixed_point`` on the 5 stored
+     steady-state snapshots (``case_01``, ``case_03``, ``case_06``, ``case_07``,
+     ``case_12``), verifying ``max_abs_rhs_J_kg_K_yr <= 1e-9``, elementwise relative
+     agreement of ``rhs_final`` (``rtol=1e-4, atol=1e-18``) and ``T_stag_final``
+     (``rtol=1e-11``), and agreement of ``F_top_W_m2``, ``jconv_max_W_m2``,
+     ``T_i_korenaga_K``, ``Nu_korenaga``, and ``_lid_state`` observables within ``1e-11``;
+     for all 12 rows (including the 7 cases without stored profile snapshots), verifies
      ``cases_results`` against ``cases_spec`` and internal Nusselt/Rayleigh/Frank-Kamenetskii
-     identities within ``1e-11``, and evaluates live 1-D ``EntropySolver._dSdt_single``
-     and ``korenaga_ti_fixed_point`` on all 5 stored steady-state snapshots
-     (``case_01``, ``case_03``, ``case_06``, ``case_07``, ``case_12``), verifying
-     ``max_abs_rhs_J_kg_K_yr <= 1e-9``, elementwise relative agreement of ``rhs_final``
-     (``rtol=1e-4, atol=1e-18``) and ``T_stag_final`` (``rtol=1e-11``), and agreement of
-     ``F_top_W_m2``, ``jconv_max_W_m2``, ``T_i_korenaga_K``, ``Nu_korenaga``, and
-     ``_lid_state`` observables within ``1e-11``.
+     identities within ``1e-11``.
   3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and ``realized_state_fits``:
      recomputes all design-parameter, diagnostic, and realized-state multilinear and 1-D
      sweep OLS fits (slopes, intercepts, standard errors, ``R^2``, residuals, window
@@ -76,16 +65,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / 'src'))
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from aragog.parser import (  # noqa: E402
     Parameters,
@@ -101,6 +88,9 @@ from aragog.parser import (  # noqa: E402
 from aragog.rheology import R_GAS, SolidRheologyParams, compute_mlt_top_slope  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tools.verification._ssc_helpers import (  # noqa: E402
+    REPO_ROOT,
+    _is_valid_commit_sha,
+    _resolve_origin_head_commit,
     half_cell_surface_flux,
     korenaga_ti_fixed_point,
     unbounded_cvode_step,
@@ -559,13 +549,13 @@ def _compute_nu_fit_bundle(
             },
             'beta_sweep': {
                 'slope': b_raw['slope'],
-                'intercept': b_raw['intercept_log10'],
+                'intercept': b_raw['intercept'],
                 'r_squared': b_raw['r_squared'],
                 'std_err_slope': b_raw['std_err_slope'],
             },
             'alpha_sweep': {
                 'slope': a_raw['slope'],
-                'intercept': a_raw['intercept_log10'],
+                'intercept': a_raw['intercept'],
                 'r_squared': a_raw['r_squared'],
                 'std_err_slope': a_raw['std_err_slope'],
             },
@@ -654,48 +644,6 @@ def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
-    """Return True if ``sha`` is a 40-hex git commit reachable from any ``origin/*`` branch."""
-    if not isinstance(sha, str) or len(sha) != 40 or sha == 'uncommitted':
-        return False
-    try:
-        obj_type = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'cat-file', '-t', sha],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        if obj_type != 'commit':
-            return False
-        branches_out = subprocess.check_output(
-            ['git', '-C', str(repo_root), 'branch', '-r', '--contains', sha],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        return False
-    return any(line.strip().startswith('origin/') for line in branches_out.splitlines())
-
-
-def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
-    """Return ``HEAD`` SHA only when the tracked tree is clean and ``HEAD`` is on ``origin``."""
-    status_out = subprocess.check_output(
-        ['git', '-C', str(repo_root), 'status', '--porcelain', '--untracked-files=no'],
-        text=True,
-    ).strip()
-    if status_out:
-        raise RuntimeError(
-            'Working tree has uncommitted tracked changes; commit and push before generating benchmarks'
-        )
-    head_sha = subprocess.check_output(
-        ['git', '-C', str(repo_root), 'rev-parse', 'HEAD'], text=True
-    ).strip()
-    if not _is_commit_on_origin(head_sha, repo_root):
-        raise RuntimeError(
-            f'HEAD {head_sha} is not reachable from any origin/* branch; push before generating benchmarks'
-        )
-    return head_sha
-
-
 def _compare_fit_bundle(
     live_bundle: dict[str, Any],
     stored_bundle: dict[str, Any],
@@ -759,9 +707,9 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
     meta = data.get('metadata', {})
     if not isinstance(meta, dict) or tuple(meta.keys()) != EXPECTED_META_KEYS:
         failures.append(f'metadata keys {tuple(meta.keys())} != {EXPECTED_META_KEYS}')
-    elif not _is_commit_on_origin(str(meta.get('git_commit'))):
+    elif not _is_valid_commit_sha(str(meta.get('git_commit'))):
         failures.append(
-            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a commit reachable from origin/*"
+            f"metadata['git_commit'] {meta.get('git_commit')!r} is not a valid commit object"
         )
     elif meta.get('eos_tables') != NO_TABLE_RECORD:
         failures.append(
