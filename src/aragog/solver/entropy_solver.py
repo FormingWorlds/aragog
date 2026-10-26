@@ -2021,10 +2021,7 @@ class EntropySolver:
         self._outer_bc_kind = int(bc.outer_boundary_condition)
         self._outer_bc_S_surf = self._outer_bc_dr_half = None
         if self._outer_bc_kind == 5:
-            self._outer_bc_S_surf, self._outer_bc_dr_half = self._surface_temperature_bc(bc)
-            self.state.set_surface_temperature(
-                self._outer_bc_S_surf, float(bc.outer_boundary_value), self._outer_bc_dr_half
-            )
+            self._refresh_surface_temperature()
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
@@ -2032,14 +2029,23 @@ class EntropySolver:
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
+    def _refresh_surface_temperature(self) -> None:
+        """Invert the BC 5 surface entropy at setup and whenever ``outer_boundary_value`` changed."""
+        bc = self.evaluator.boundary_conditions._settings
+        current = self.state._surface_temperature_bc
+        if current is None or bc.outer_boundary_value != current[1]:
+            self._outer_bc_S_surf, self._outer_bc_dr_half = self._surface_temperature_bc(bc)
+            self.state.set_surface_temperature(
+                self._outer_bc_S_surf, float(bc.outer_boundary_value), self._outer_bc_dr_half
+            )
+
     def _surface_temperature_bc(self, bc) -> tuple[float, float]:
         """Surface entropy and face half cell of the prescribed surface temperature (BC 5).
 
         Parameters
         ----------
         bc : BoundaryConditionsParameters
-            Boundary settings; ``outer_boundary_value`` is the surface temperature [K], read
-            here at setup.
+            Boundary settings; ``outer_boundary_value`` is the surface temperature [K].
 
         Returns
         -------
@@ -2665,6 +2671,8 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
+        if self._outer_bc_kind == 5:
+            self._refresh_surface_temperature()
         # In energy_balance and core_module the first extra state is the CMB entropy
         # gradient, passed to state.update() in place of the FD estimate at that node.
         if gradient_mode:
