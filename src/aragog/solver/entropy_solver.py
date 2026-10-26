@@ -2071,7 +2071,7 @@ class EntropySolver:
         """
         t_surf = bc.outer_boundary_value
         if (
-            isinstance(t_surf, (bool, np.bool_))
+            isinstance(t_surf, bool)
             or not isinstance(t_surf, (int, float, np.integer, np.floating))
             or not (np.isfinite(t_surf) and t_surf > 0.0)
         ):
