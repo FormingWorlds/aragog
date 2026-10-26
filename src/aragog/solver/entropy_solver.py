@@ -2070,8 +2070,9 @@ class EntropySolver:
         ------
         ValueError
             For a surface temperature that is not a positive finite number or lies outside the
-            entropy tables, and for ``param_utbl``, ``core_bc = 'gradient'`` or conduction off,
-            which have no meaning with a prescribed surface temperature.
+            entropy tables, and for ``param_utbl``, ``core_bc = 'gradient'``, conduction off or
+            ``mixing_length_profile = 'constant'``, which have no meaning with a prescribed
+            surface temperature.
         """
         t_surf = bc.outer_boundary_value
         real = isinstance(t_surf, numbers.Real) and not isinstance(t_surf, bool)
@@ -2084,6 +2085,11 @@ class EntropySolver:
             raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
         if not self.parameters.energy.conduction:
             raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
+        if self.parameters.mesh.mixing_length_profile == 'constant':
+            raise ValueError(
+                "outer_boundary_condition = 5 needs mixing_length_profile = 'nearest_boundary': "
+                "with mixing_length_profile = 'constant' the surface face carries an eddy flux"
+            )
         if self._core_bc == 'gradient':
             raise ValueError(
                 "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
