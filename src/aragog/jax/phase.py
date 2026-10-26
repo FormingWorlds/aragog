@@ -666,6 +666,7 @@ def compute_mlt(
     phase_basic: PhaseProperties,
     mesh: MeshArrays,
     params: PhaseParams,
+    surface_floor: bool = True,
 ) -> tuple[jax.Array, jax.Array]:
     """Compute MLT eddy diffusivity from the entropy gradient.
 
@@ -679,6 +680,9 @@ def compute_mlt(
         Mesh geometry.
     params : PhaseParams
         Static parameters.
+    surface_floor : bool
+        False under a prescribed surface temperature (outer BC 5): the kappa_h floor does
+        not act at the surface node.
 
     Returns
     -------
@@ -705,6 +709,8 @@ def compute_mlt(
     # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
     floor_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
+    if not surface_floor:  # a surface held at its temperature (outer BC 5) gets no floor
+        floor_mask = floor_mask.at[-1].set(0.0)
 
     # Viscous velocity (Re <= Re_crit)
     viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
@@ -883,7 +889,9 @@ def compute_fluxes(
         )
 
     # MLT eddy diffusivity
-    kappa_h, kappa_c = compute_mlt(dSdr, phase_basic, mesh, params)
+    kappa_h, kappa_c = compute_mlt(
+        dSdr, phase_basic, mesh, params, surface_floor=surface_temperature is None
+    )
 
     # Basic node properties
     rho = phase_basic.density

@@ -25,7 +25,7 @@ import scipy
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.interpolate import PchipInterpolator
-from scipy.optimize import OptimizeResult
+from scipy.optimize import OptimizeResult, brentq
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -2029,6 +2029,15 @@ class EntropySolver:
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
+    @property
+    def surface_temperature_bc(self) -> tuple[float, float] | None:
+        """Surface entropy [J/kg/K] and face half cell [m] of BC 5, the ``S_surf`` and
+        ``surf_dr_half`` of a JAX ``BoundaryParams``; None for the other outer modes."""
+        if self._outer_bc_kind != 5:
+            return None
+        self._refresh_surface_temperature()
+        return self._outer_bc_S_surf, self._outer_bc_dr_half
+
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and whenever ``outer_boundary_value`` changed."""
         bc = self.evaluator.boundary_conditions._settings
@@ -2057,8 +2066,8 @@ class EntropySolver:
         ------
         ValueError
             For a surface temperature that is not a positive finite number or lies outside the
-            entropy tables, and for ``param_utbl`` or ``core_bc = 'gradient'``, which have no
-            meaning with a prescribed surface temperature.
+            entropy tables, and for ``param_utbl``, ``core_bc = 'gradient'`` or conduction off,
+            which have no meaning with a prescribed surface temperature.
         """
         t_surf = bc.outer_boundary_value
         if (
@@ -2072,6 +2081,8 @@ class EntropySolver:
             )
         if bc.param_utbl:
             raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
+        if not self.parameters.energy.conduction:
+            raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
         if self._core_bc == 'gradient':
             raise ValueError(
                 "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
@@ -2081,16 +2092,35 @@ class EntropySolver:
             pm = self.parameters.phase_mixed
             s_surf = pm.const_S_ref + pm.const_Cp * np.log(t_surf / pm.const_T_ref)
         else:
-            s_surf = float(self.entropy_eos.entropy_at_temperature(p_surf, t_surf))
-            t_back = float(np.ravel(self.entropy_eos.temperature(p_surf, s_surf))[0])
-            if not abs(t_back - t_surf) <= 1e-9 * t_surf:
-                raise ValueError(
-                    f'outer_boundary_value = {t_surf} K lies outside the entropy tables at '
-                    f'the surface pressure {p_surf:.6g} Pa'
-                )
+            s_surf = self._surface_entropy_on_evaluator(p_surf, t_surf)
         mesh = self.evaluator.mesh
         half_cell = float(np.ravel(mesh.basic.delta_mesh)[-1] / np.ravel(mesh.dxidr)[-1]) / 2.0
         return float(s_surf), half_cell
+
+    def _surface_entropy_on_evaluator(self, p_surf: float, t_surf: float) -> float:
+        """Entropy [J/kg/K] where the basic-node phase evaluator, with its property smoothing,
+        gives ``t_surf`` at ``p_surf``: a Brent search 20 J/kg/K around the table inversion."""
+        outside = ValueError(
+            f'outer_boundary_value = {t_surf} K lies outside the entropy tables at the surface '
+            f'pressure {p_surf:.6g} Pa'
+        )
+        s0 = float(self.entropy_eos.entropy_at_temperature(p_surf, t_surf))
+        if not np.isfinite(s0):
+            raise outside
+        pb, n_basic = self.state.phase_basic, np.ravel(self._P_basic_flat).size
+
+        def miss(s):
+            pb.set_entropy(np.full(n_basic, s))
+            pb.update()
+            return float(np.ravel(pb.temperature())[-1]) - t_surf
+
+        lo, hi = s0 - 20.0, s0 + 20.0
+        if not miss(lo) <= 0.0 <= miss(hi):
+            raise outside
+        s_surf = brentq(miss, lo, hi, xtol=1e-12, rtol=4 * np.finfo(float).eps)
+        if not abs(miss(s_surf)) <= 1e-9 * t_surf:
+            raise outside
+        return s_surf
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
@@ -3845,6 +3875,8 @@ class EntropySolver:
         """
         wall_start = time.perf_counter()
         self._sync_top_node()  # the EOS may have changed since the reset
+        if self._outer_bc_kind == 5:
+            self._refresh_surface_temperature()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.

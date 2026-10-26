@@ -204,14 +204,22 @@ class BoundaryParams(eqx.Module):
         cmb_dr_cmb=0.0,
         param_utbl=False,
         param_utbl_const=0.0,
-        S_surf=0.0,
+        S_surf=None,
         surf_dr_half=0.0,
     ):
-        if outer_bc_type == 5 and not float(surf_dr_half) > 0.0:
-            raise ValueError(f'outer_bc_type 5 needs surf_dr_half > 0 m, got {surf_dr_half}')
+        if outer_bc_type == 5 and not (
+            S_surf is not None
+            and np.isfinite(float(S_surf))
+            and np.isfinite(float(surf_dr_half))
+            and float(surf_dr_half) > 0.0
+        ):
+            raise ValueError(
+                'outer_bc_type 5 needs a finite S_surf and a finite surf_dr_half > 0 m '
+                f'(EntropySolver.surface_temperature_bc), got {S_surf}, {surf_dr_half}'
+            )
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
-        self.S_surf = jnp.asarray(S_surf, dtype=jnp.float64)
+        self.S_surf = jnp.asarray(0.0 if S_surf is None else S_surf, dtype=jnp.float64)
         self.surf_dr_half = jnp.asarray(surf_dr_half, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
         self.T_eq = jnp.asarray(T_eq, dtype=jnp.float64)

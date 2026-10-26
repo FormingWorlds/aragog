@@ -625,6 +625,8 @@ class EntropyState:
         # (convective_threshold). D = 0 gives the dS/dr < 0 switch for both.
         self._is_convective = self._dSdr < 0.0
         floor_mask = self._dSdr < self._convective_threshold
+        if self._surface_temperature_bc is not None:
+            floor_mask[-1] = False  # no floor at a surface held at its temperature
 
         # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp, at least alpha*T*D/Cp
         # on unstable nodes.
@@ -1057,8 +1059,7 @@ class EntropyState:
         self._ensure_basic_phase_boundary_cache()  # fills _dP_dr_basic
         pb = self.phase_basic
         t_top_cell = float(np.ravel(self.phase_staggered.temperature())[-1])
-        cp = float(np.ravel(pb.heat_capacity())[-1])
-        cp = cp if cp >= 100.0 else 100.0  # the Cp_safe floor of the conductive flux
+        cp = max(100.0, float(np.ravel(pb.heat_capacity())[-1]))  # the Cp_safe floor
         t_node = float(np.ravel(pb.temperature())[-1])
         if not abs(t_node - t_surf) <= 1e-6 * t_surf:
             raise RuntimeError(f'surface node at {t_node} K, prescribed {t_surf} K (BC 5)')
