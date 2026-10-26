@@ -209,12 +209,13 @@ Long planetary evolution runs require robust integration from magma ocean throug
 
 **Known limit.**
 Per Tim's ruling (2026-10-26, Ruling 19), integration to $1.0 \times 10^9\text{ yr}$ is not required; each run passes its old stall point and reaches full solidification ($\phi_{\max} = 0$) with status 0.
+The first `rheo_on` run used finite-difference Jacobians because the standalone runner installed no JAX factory, and does not count for V4; only the run with the JAX factory installed (as in coupled PROTEUS runs) counts (Ruling 22b).
 
 ??? info "Test details"
     - Reference: Historical stall points at $83.684\text{ Myr}$ and $107.655\text{ Myr}$
-    - Tolerance: Each run passes its old stall point (rheo_on $83.684\text{ Myr}$, rheo_off $107.655\text{ Myr}$), reaches $\phi_{\max} = 0$, status 0; $10^9\text{ yr}$ not required. Evidence: unique progress files (Tim's ruling 2026-10-26, Ruling 19)
+    - Tolerance: Each run passes its old stall point (rheo_on $83.684\text{ Myr}$, rheo_off $107.655\text{ Myr}$), reaches $\phi_{\max} = 0$, status 0; $10^9\text{ yr}$ not required. The first rheo_on run used finite-difference Jacobians (no JAX factory in the standalone runner) and does not count; only the factory run counts. Evidence: unique progress files (Ruling 19, Ruling 22b).
     - Test id: V4
-    - Command: `python scripts/run_v4_rheo_off_r18.py` and `python scripts/run_v4_rheo_on.py`
+    - Command: `python scripts/run_v4_rheo_off_r18.py` and `python scripts/run_v4_rheo_on_r22.py`
 
 ### Coupled planetary evolution under super-solidus conditions
 
