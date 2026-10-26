@@ -100,7 +100,7 @@ def half_cell_surface_flux() -> Iterator[None]:
     yield-thinning and internal-heating scaling steady states are therefore steady
     for a closure fed the extrapolated surface temperature and flux (recomputing
     the closure with ``T_surf = 273.0 K`` and the patched flux shifts isotherm ``d_lid``
-    by 0.0 to 3.8e-5, conductive-equivalent lid thickness by +8.5e-5 to +3.7e-3,
+    by 0.0 to 3.8e-5, conductive-equivalent lid thickness by +5.5e-5 to +3.7e-3,
     ``theta`` up to +2.3e-2, and the consistent-evaluation residual up to 3.4e-5
     J/(kg K yr)).
     """

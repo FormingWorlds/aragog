@@ -26,8 +26,8 @@ Prescribed surface temperature boundary condition (``outer_boundary_condition = 
   and the patched flux leaves ``T_i`` unchanged (0.0), leaves the isotherm ``d_lid``
   unchanged (0.0 to -1.412e-12 relative; up to 3.8e-5 / -3.816e-05 on
   internal-heating scaling ``case_06``), shifts the conductive-equivalent lid thickness by
-  +3.185e-04 to +7.401e-04 (+8.5e-5 to +3.7e-3 / +8.505e-05 to
-  +3.726e-03 on the scaling snapshots, +5.470e-05 on ``case_12``),
+  +3.185e-04 to +7.401e-04 (+5.5e-5 to +3.7e-3 / +5.470e-05 on ``case_12`` and
+  +8.505e-05 on ``case_01`` to +3.726e-03 on ``case_06`` on the scaling snapshots),
   shifts ``theta`` by +2.302e-03 to +5.347e-03 (up to +2.3e-2 /
   +2.282e-02 on ``case_06``), and gives a consistent-evaluation residual
   ``max|dS/dt|`` of 2.265e-07 to 9.609e-07 J/(kg K yr) (up to 3.4e-5 /
