@@ -817,7 +817,11 @@ def evaluate_calibration_point(
 
 
 def verify_calibration_json(
-    data: dict[str, Any], *, run_live_spot_check: bool = True
+    data: dict[str, Any],
+    *,
+    run_live_spot_check: bool = True,
+    repo_root: Path = REPO_ROOT,
+    strict_fingerprint: bool = False,
 ) -> list[str]:
     """Verify every stored field, recomputed summary, and live spot-check in ``data``."""
     failures: list[str] = []
@@ -830,7 +834,11 @@ def verify_calibration_json(
             meta.get('generator_input_sha256'),
             MLT_CALIBRATION_INPUT_PATHS,
             recorded_files=meta.get('generator_input_files'),
-            repo_root=REPO_ROOT,
+            repo_root=repo_root,
+            regenerate_cmd=(
+                'python tools/verification/evaluate_mlt_top_slope_calibration.py --full'
+            ),
+            strict=strict_fingerprint,
         )
     )
 
@@ -1072,8 +1080,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f'CHECK PASSED: {args.output} verified.')
         return 0
 
+    try:
+        _resolve_origin_head_commit(REPO_ROOT)
+    except RuntimeError as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        return 1
+
+    if not args.full and args.output.is_file():
+        existing = json.loads(args.output.read_text(encoding='utf-8'))
+        existing_meta = existing.get('metadata', {})
+        fp_errs = _check_generator_input_fingerprint(
+            existing_meta.get('git_commit'),
+            existing_meta.get('generator_input_sha256'),
+            MLT_CALIBRATION_INPUT_PATHS,
+            recorded_files=existing_meta.get('generator_input_files'),
+            repo_root=REPO_ROOT,
+            regenerate_cmd=(
+                'python tools/verification/evaluate_mlt_top_slope_calibration.py --full'
+            ),
+            strict=True,
+        )
+        if fp_errs:
+            for err in fp_errs:
+                print(err, file=sys.stderr)
+            return 1
+
     payload = build_full_payload(n_nodes=args.n_nodes)
-    failures = verify_calibration_json(payload, run_live_spot_check=False)
+    failures = verify_calibration_json(
+        payload, run_live_spot_check=False, strict_fingerprint=True
+    )
     if failures:
         for msg in failures:
             print(f'INTERNAL VERIFICATION FAILED: {msg}', file=sys.stderr)

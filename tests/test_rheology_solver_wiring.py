@@ -1717,8 +1717,13 @@ def test_compute_step_energy_integrals_early_return_reports_last_step_index(
         solver._compute_step_energy_integrals()
 
 
-def test_generator_input_fingerprint_guard(tmp_path) -> None:
-    """_check_generator_input_fingerprint verifies unchanged inputs and rejects changed inputs or merged branch JSONs."""
+def test_generator_input_fingerprint_guard(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify fingerprint check warns with file list in check mode and fails in generation mode."""
+    import subprocess as sp
+
+    from tools.verification import generate_ssc_solver_wiring_benchmarks as gen_mod
     from tools.verification._ssc_helpers import (
         _check_generator_input_fingerprint,
         compute_generator_input_fingerprint,
@@ -1731,42 +1736,88 @@ def test_generator_input_fingerprint_guard(tmp_path) -> None:
 
     (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 1\n', encoding='utf-8')
     (repo / 'tools' / 'verification' / 'gen.py').write_text('y = 1\n', encoding='utf-8')
-    watched = ('src/aragog', 'tools/verification/gen.py')
-    commit_a = 'a' * 40
-    commit_b = 'b' * 40
+    sp.run(['git', 'init', str(repo)], check=True, capture_output=True)
+    sp.run(['git', '-C', str(repo), 'config', 'user.email', 't@t.org'], check=True)
+    sp.run(['git', '-C', str(repo), 'config', 'user.name', 'T'], check=True)
+    sp.run(['git', '-C', str(repo), 'add', '.'], check=True)
+    sp.run(['git', '-C', str(repo), 'commit', '-m', 'init'], check=True, capture_output=True)
 
+    watched = ('src/aragog', 'tools/verification/gen.py')
+    regen_cmd = 'python tools/verification/generate_ssc_solver_wiring_benchmarks.py --full'
+    commit_a = 'a' * 40
+
+    # (1) Unchanged inputs -> no warning and exit 0 (no errors)
     sha_a, files_a = compute_generator_input_fingerprint(watched, repo_root=repo)
+    capsys.readouterr()
     assert (
         _check_generator_input_fingerprint(
-            commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
+            commit_a,
+            sha_a,
+            watched,
+            recorded_files=files_a,
+            repo_root=repo,
+            regenerate_cmd=regen_cmd,
+            strict=False,
         )
         == []
     )
+    assert capsys.readouterr().err == ''
 
-    # Unwatched file edit keeps generator input fingerprint unchanged
+    # Unwatched file edit keeps generator input fingerprint unchanged -> no warning
     (repo / 'docs' / 'note.md').write_text('doc\n', encoding='utf-8')
     assert (
         _check_generator_input_fingerprint(
-            commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
+            commit_a,
+            sha_a,
+            watched,
+            recorded_files=files_a,
+            repo_root=repo,
+            regenerate_cmd=regen_cmd,
+            strict=False,
         )
         == []
     )
+    assert capsys.readouterr().err == ''
 
-    # Branch B modifies src/aragog and records its own JSON fingerprint sha_b
+    # (2) Changed input in --check mode (strict=False) -> warning with file list + regen cmd, exit 0
     (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 2\n', encoding='utf-8')
-    sha_b, files_b = compute_generator_input_fingerprint(watched, repo_root=repo)
+    sha_b, _ = compute_generator_input_fingerprint(watched, repo_root=repo)
     assert sha_b != sha_a
-
-    # (ii) Changed input fails against recorded sha_a
-    errs_changed = _check_generator_input_fingerprint(
-        commit_a, sha_a, watched, recorded_files=files_a, repo_root=repo
+    errs_check = _check_generator_input_fingerprint(
+        commit_a,
+        sha_a,
+        watched,
+        recorded_files=files_a,
+        repo_root=repo,
+        regenerate_cmd=regen_cmd,
+        strict=False,
     )
-    assert len(errs_changed) == 1
-    assert 'Generator inputs changed' in errs_changed[0]
+    err_out = capsys.readouterr().err
+    assert errs_check == []
+    assert 'WARNING: Generator inputs changed' in err_out
+    assert 'changed files: src/aragog/rheology.py' in err_out
+    assert regen_cmd in err_out
 
-    # (iii) Merging branch A's JSON (sha_a) onto branch B's tree fails without needing git history
-    errs_merge = _check_generator_input_fingerprint(
-        commit_b, sha_a, watched, recorded_files=files_b, repo_root=repo
+    # (3) Generation mode with changed inputs (strict=True or dirty tree) -> failure
+    errs_strict = _check_generator_input_fingerprint(
+        commit_a,
+        sha_a,
+        watched,
+        recorded_files=files_a,
+        repo_root=repo,
+        regenerate_cmd=regen_cmd,
+        strict=True,
     )
-    assert len(errs_merge) == 1
-    assert 'Generator inputs changed' in errs_merge[0]
+    assert len(errs_strict) == 1
+    assert 'changed files: src/aragog/rheology.py' in errs_strict[0]
+    assert regen_cmd in errs_strict[0]
+
+    dummy_eos = tmp_path / 'eos'
+    dummy_eos.mkdir()
+    monkeypatch.setattr(gen_mod, 'REPO_ROOT', repo)
+    rc_dirty = gen_mod.main(
+        ['--full', '--eos-dir', str(dummy_eos), '--output', str(tmp_path / 'out.json')]
+    )
+    dirty_err = capsys.readouterr().err
+    assert rc_dirty == 1
+    assert 'uncommitted tracked changes' in dirty_err
