@@ -29,7 +29,6 @@ from aragog.parser import (
 )
 from aragog.rheology import (
     SolidRheologyParams,
-    compute_arrhenius_viscosity,
 )
 from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 from aragog.solver.entropy_solver import (
@@ -346,6 +345,8 @@ def test_const_properties_with_rheology_enabled_sets_phi_zero_arrhenius_viscosit
     rather than 10**const_log10visc."""
     import logging
 
+    from aragog.rheology import compute_arrhenius_viscosity
+
     rheo = SolidRheologyParams(
         enabled=True,
         g_homologous=25.0,
@@ -449,9 +450,9 @@ def test_solve_rheology_invariants_checked_inside_step_energy_integrals_without_
     step_invariant_indices: list[int] = []
     orig_step_check = solver._check_rheology_step_invariants
 
-    def _spy_step_check(rheo_arg, step_idx: int = 0) -> None:
+    def _spy_step_check(rheo_arg, step_idx: int = 0, time_yr: float | None = None) -> None:
         step_invariant_indices.append(step_idx)
-        orig_step_check(rheo_arg, step_idx=step_idx)
+        orig_step_check(rheo_arg, step_idx=step_idx, time_yr=time_yr)
 
     monkeypatch.setattr(solver, '_check_rheology_step_invariants', _spy_step_check)
 
