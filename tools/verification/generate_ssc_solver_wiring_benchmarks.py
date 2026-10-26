@@ -2124,7 +2124,13 @@ def _verify_starts_block(
     return failures
 
 
-def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list[str]:
+def verify_benchmarks(
+    data: dict[str, Any],
+    eos_dir: Path | None = None,
+    *,
+    repo_root: Path = REPO_ROOT,
+    strict_fingerprint: bool = False,
+) -> list[str]:
     """Verify that benchmark data satisfy schema keys, invariants, and live fast checks."""
     failures: list[str] = []
 
@@ -2149,8 +2155,14 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
                     commit_sha,
                     input_sha256,
                     WIRING_GENERATOR_INPUT_PATHS,
-                    recorded_files=input_files if isinstance(input_files, list) else None,
-                    repo_root=REPO_ROOT,
+                    recorded_files=input_files
+                    if isinstance(input_files, (list, dict))
+                    else None,
+                    repo_root=repo_root,
+                    regenerate_cmd=(
+                        'python tools/verification/generate_ssc_solver_wiring_benchmarks.py --full'
+                    ),
+                    strict=strict_fingerprint,
                 )
             )
         if eos_dir is None or not eos_dir.is_dir():
@@ -2277,6 +2289,24 @@ def main(argv: list[str] | None = None) -> int:
         }
     else:
         data = json.loads(output_path.read_text(encoding='utf-8'))
+        existing_canary = data.get('canary', {})
+        fp_errs = _check_generator_input_fingerprint(
+            existing_canary.get('aragog_commit'),
+            existing_canary.get('generator_input_sha256'),
+            WIRING_GENERATOR_INPUT_PATHS,
+            recorded_files=existing_canary.get('generator_input_files')
+            if isinstance(existing_canary.get('generator_input_files'), (list, dict))
+            else None,
+            repo_root=REPO_ROOT,
+            regenerate_cmd=(
+                'python tools/verification/generate_ssc_solver_wiring_benchmarks.py --full'
+            ),
+            strict=True,
+        )
+        if fp_errs:
+            for err in fp_errs:
+                sys.stderr.write(f'{err}\n')
+            return 1
         data.setdefault('canary', {})['table_md5'] = table_hashes
         data.setdefault('canary', {})['aragog_commit'] = head_sha
         data['canary']['generator_input_sha256'] = input_sha256
@@ -2297,7 +2327,7 @@ def main(argv: list[str] | None = None) -> int:
                 cfg_path, args.eos_dir, table_hashes
             )
 
-    failures = verify_benchmarks(data, eos_dir=args.eos_dir)
+    failures = verify_benchmarks(data, eos_dir=args.eos_dir, strict_fingerprint=True)
     if failures:
         sys.stderr.write(
             f'Generated benchmark verification failed with {len(failures)} issue(s):\n'

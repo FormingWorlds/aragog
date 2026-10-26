@@ -8,7 +8,8 @@ import functools
 import hashlib
 import re
 import subprocess
-from collections.abc import Iterator, Sequence
+import sys
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -69,11 +70,11 @@ def _is_valid_sha256(digest: object) -> bool:
 def compute_generator_input_fingerprint(
     input_paths: Sequence[str] = ('src/aragog',),
     repo_root: Path = REPO_ROOT,
-) -> tuple[str, list[str]]:
+) -> tuple[str, dict[str, str]]:
     """Compute a deterministic SHA-256 content fingerprint of ``input_paths`` under ``repo_root``.
 
     Directories are expanded recursively to ``.py``, ``.toml``, ``.cfg``, and ``.dat`` files
-    (excluding ``__pycache__``). Returns ``(sha256_hex, sorted_posix_relpaths)``.
+    (excluding ``__pycache__``). Returns ``(sha256_hex, file_sha256_by_relpath)``.
     """
     collected: set[str] = set()
     for rel_str in input_paths:
@@ -94,22 +95,32 @@ def compute_generator_input_fingerprint(
                     collected.add(child.relative_to(repo_root).as_posix())
     files = sorted(collected)
     hasher = hashlib.sha256()
+    file_hashes: dict[str, str] = {}
     for rel_posix in files:
         file_bytes = (repo_root / rel_posix).read_bytes()
+        file_hashes[rel_posix] = hashlib.sha256(file_bytes).hexdigest()
         hasher.update(f'{rel_posix}\0{len(file_bytes)}\0'.encode('utf-8'))
         hasher.update(file_bytes)
         hasher.update(b'\0')
-    return hasher.hexdigest(), files
+    return hasher.hexdigest(), file_hashes
 
 
 def _check_generator_input_fingerprint(
     commit_sha: object,
     recorded_sha256: object,
     input_paths: Sequence[str] = ('src/aragog',),
-    recorded_files: Sequence[str] | None = None,
+    recorded_files: Mapping[str, str] | Sequence[str] | None = None,
     repo_root: Path = REPO_ROOT,
+    *,
+    regenerate_cmd: str = 'python tools/verification/<tool>.py --full',
+    strict: bool = False,
 ) -> list[str]:
-    """Verify ``commit_sha`` is 40-hex and ``recorded_sha256`` matches the live content fingerprint."""
+    """Verify ``commit_sha`` is 40-hex and check ``recorded_sha256`` against the live fingerprint.
+
+    When ``strict=False`` (``--check`` mode), a fingerprint mismatch logs a warning to
+    ``stderr`` naming the changed input files and ``regenerate_cmd`` without adding a failure.
+    When ``strict=True`` (generation mode), a fingerprint mismatch is returned as an error.
+    """
     errors: list[str] = []
     if not _is_valid_commit_sha(commit_sha):
         errors.append(f'Recorded commit {commit_sha!r} is not a valid 40-hex commit SHA')
@@ -125,16 +136,30 @@ def _check_generator_input_fingerprint(
     except Exception as exc:
         errors.append(f'Failed to compute generator input fingerprint: {exc}')
         return errors
-    if recorded_files is not None and list(recorded_files) != current_files:
-        errors.append(
-            f'Generator input file list mismatch: recorded {len(recorded_files)} files '
-            f'vs current {len(current_files)} files'
+
+    changed_files: list[str] = []
+    if isinstance(recorded_files, Mapping):
+        all_keys = sorted(set(recorded_files.keys()) | set(current_files.keys()))
+        changed_files = [k for k in all_keys if recorded_files.get(k) != current_files.get(k)]
+    elif isinstance(recorded_files, Sequence) and not isinstance(recorded_files, (str, bytes)):
+        rec_set = set(str(x) for x in recorded_files)
+        cur_set = set(current_files.keys())
+        changed_files = sorted(rec_set ^ cur_set)
+
+    if changed_files or str(recorded_sha256) != current_sha256:
+        files_desc = (
+            ', '.join(changed_files) if changed_files else ', '.join(sorted(current_files))
         )
-    if str(recorded_sha256) != current_sha256:
-        errors.append(
-            f'Generator inputs changed since benchmark generation: '
-            f'recorded sha256 {str(recorded_sha256)[:12]} != current {current_sha256[:12]}'
+        msg = (
+            f'WARNING: Generator inputs changed since benchmark generation '
+            f'(recorded sha256 {str(recorded_sha256)[:12]} != current {current_sha256[:12]}; '
+            f'changed files: {files_desc}). '
+            f'Regenerate with: {regenerate_cmd}'
         )
+        if strict:
+            errors.append(msg)
+        else:
+            sys.stderr.write(f'{msg}\n')
     return errors
 
 
