@@ -348,34 +348,49 @@ def _rate_phase_boundary_max_step(
 
     Every cell with a boundary ahead counts: its time to the next boundary in
     the direction it moves is ``|S - S_b| / |dS/dt|``. A cell inside the stiff
-    zone (within ``delta`` of either boundary) or slower than the mass-weighted
-    mean ``|dS/dt|`` rate floor uses the distance to the nearer boundary on
-    either side. The floor covers an isentropic start, where interior cells
-    have almost no rate until the thermal boundary layers form.
+    zone (within ``delta`` of either boundary) or a super-solidus cell
+    (``S > S_sol``) slower than the mass-weighted mean ``|dS/dt|`` rate floor
+    uses the distance to the nearer boundary floored at
+    ``_PhaseBoundarySegmentRoot.alpha * delta`` (``0.5 * delta``), matching the
+    minimum segment progress distance of ``_PhaseBoundarySegmentRoot``. The
+    rate floor covers an isentropic molten or mushy start, where interior cells
+    have almost no rate until the thermal boundary layers form. Once every
+    entry is at or below the solidus (``np.all(S <= S_sol)``), the upper bound
+    relaxes from ``bounds[1]`` to ``np.inf``.
 
     Parameters
     ----------
     S, dSdt : npt.NDArray
-        Entropy [J/kg/K] and its rate [J/kg/K/yr].
+        Entropy [J/(kg K)] (finite real array) and its time derivative
+        [J/(kg K yr)] (finite real array).
     S_liq, S_sol : npt.NDArray
-        Liquidus and solidus entropy at each entry's pressure [J/kg/K].
+        Liquidus and solidus entropy at each entry's pressure [J/(kg K)]
+        (finite real arrays with ``S_sol <= S_liq``).
     mass : npt.NDArray
-        Weight of each entry in the rate floor [kg]; zero excludes an entry.
+        Weight of each entry in the rate floor [kg] (non-negative, with
+        positive sum when ``rate_floor`` is True); zero excludes an entry.
     delta : float
-        Half-width of the stiff zone around each boundary [J/kg/K].
-    fraction : float
-        Fraction of the shortest time to a boundary used as ``max_step``.
-    bounds : tuple of float
-        Lower and upper clip [yr].
-    rate_floor : bool
-        Apply the mass-weighted rate floor.
+        Half-width of the stiff zone around each boundary [J/(kg K)]
+        (positive, ``delta >= _RATE_CAP_MIN_DELTA = 10.0``).
+    fraction : float, default 0.1
+        Dimensionless fraction of the shortest time to a boundary used as
+        ``max_step`` [-], in ``(0, 1]``.
+    bounds : tuple[float, float], default (1.0, 100.0)
+        Lower and molten/mushy upper clip [yr], with
+        ``0 < bounds[0] <= bounds[1]``.
+    rate_floor : bool, default True
+        Whether to apply the mass-weighted mean ``|dS/dt|`` rate floor
+        [J/(kg K yr)].
 
     Returns
     -------
     float
-        ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
-        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the
-        boundaries or the floor are not finite.
+        Maximum CVODE step size ``max_step`` [yr] in ``[bounds[0], hi]``, where
+        ``hi = np.inf`` when ``np.all(S <= S_sol)`` and ``bounds[1]``
+        otherwise: ``fraction * min(t_c)`` clipped to ``[bounds[0], hi]`` when
+        at least one entry has a finite ``t_c``; ``hi`` when no entry has a
+        finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the boundaries, or
+        the floor are not finite.
     """
     dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
     rate = np.abs(dSdt)
@@ -385,11 +400,13 @@ def _rate_phase_boundary_max_step(
     down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
     up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
     ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
-    d = np.where((dist < delta) | (rate < floor), dist, ahead)
+    d_near = np.maximum(dist, _PhaseBoundarySegmentRoot.alpha * delta)
+    d = np.where((dist < delta) | ((rate < floor) & (S > S_sol)), d_near, ahead)
     with np.errstate(divide='ignore', invalid='ignore'):
         t_c = d / np.maximum(rate, floor)
     t_c = t_c[np.isfinite(t_c)]
-    return float(np.clip(fraction * t_c.min(), *bounds)) if t_c.size else bounds[1]
+    hi = np.inf if np.all(S <= S_sol) else bounds[1]
+    return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
 
 
 class _PhaseBoundarySegmentRoot(_CV_RootFunction):
