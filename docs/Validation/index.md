@@ -3,7 +3,7 @@
 This tab lists the tests that compare Aragog with an independent result: a published benchmark, an analytical limit or a second implementation. Each case in the table carries the `reference_pinned` marker. Where a page section exists, the table links it.
 
 - [Core](core.md): the core module against Nimmo (2015), the `leeds` and `leeds_thermal` models of thermal_history (Greenwood et al. 2021) and analytical limits.
-- [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides; these are checks, not `reference_pinned` cases.
+- [Numerics](numerics.md): first-principles checks of the solver, phase-boundary rate controller, equation of state, and NumPy and JAX right-hand sides; these are checks, not `reference_pinned` cases.
 
 ## Cases by process
 

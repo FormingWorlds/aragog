@@ -1,6 +1,6 @@
 # Why `phi_step_cap` is a SUNDIALS root function
 
-The `phi_step_cap` knob limits the per-call change in the mass-weighted mean melt fraction $\Phi_\mathrm{global}$. The user-facing description and configuration recipe are in [How-to: phi_step_cap](../How-to/phi-step-cap.md). This page covers the *design choice*: why a SUNDIALS root function is the right tool for this and what alternatives were considered.
+The `phi_step_cap` parameter limits the per-call change in the mass-weighted mean melt fraction $\Phi_\mathrm{global}$. The user-facing description and configuration recipe are in [How-to: phi_step_cap](../How-to/phi-step-cap.md). This page covers the *design choice*: why a SUNDIALS root function is the right tool for this and what alternatives were considered.
 
 ## The problem
 
