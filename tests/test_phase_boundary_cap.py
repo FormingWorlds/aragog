@@ -99,6 +99,34 @@ def test_rate_cap_applies_fraction_and_clip():
     assert _cap([1200.0], [-1e-3]) == 100.0
 
 
+@pytest.mark.unit
+def test_rate_cap_stiff_zone_boundary_landing_scales_with_rate_instead_of_floor():
+    """Cells sitting at dist ~ 0 inside the stiff zone scale inversely with rate instead of pinning to 1.0 yr."""
+    assert _cap(
+        [1000.0 + 2.4e-11], [-0.01], fraction=0.1, bounds=(1.0, 100.0)
+    ) == pytest.approx(50.0)
+    assert _cap(
+        [1300.0 - 2.4e-11], [-2.0e-5], fraction=0.1, bounds=(1.0, 100.0)
+    ) == pytest.approx(100.0)
+    assert _cap([1000.0 + 2.4e-11], [-5.0], fraction=0.1, bounds=(1.0, 100.0)) == 1.0
+
+
+@pytest.mark.unit
+def test_rate_cap_relaxes_upper_bound_when_all_cells_are_subsolidus():
+    """When all cells are sub-solidus, the 100 yr ceiling relaxes to infinity."""
+    assert np.isinf(
+        _cap(
+            [950.0, 980.0],
+            [-0.01, -0.001],
+            mass=[1.0, 1.0],
+            rate_floor=True,
+            bounds=(1.0, 100.0),
+        )
+    )
+    assert _cap([995.0], [-1e-3], fraction=0.1, bounds=(1.0, 100.0)) == pytest.approx(500.0)
+    assert _cap([950.0, 1200.0], [-0.01, -1e-4], bounds=(1.0, 100.0)) == 100.0
+
+
 def _roots(S0, inside, cap=None):
     """Segment root on two cells (plus the CMB copy of cell 0), unit state scale."""
     return _PhaseBoundarySegmentRoot(
@@ -231,15 +259,31 @@ def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
 
 
 def _solver(
-    eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None, tol=None, **energy
+    eos,
+    mode,
+    core_bc='quasi_steady',
+    n_nodes=12,
+    end_time=2.0,
+    S=None,
+    tol=None,
+    outer_bc=None,
+    outer_value=None,
+    max_steps=None,
+    **energy,
 ):
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=n_nodes, end_time=end_time)
     p.energy = dataclasses.replace(
         p.energy, phase_boundary_cap=mode, phi_step_cap=None, **energy
     )
     p.boundary_conditions.core_bc = core_bc
+    if outer_bc is not None:
+        p.boundary_conditions.outer_boundary_condition = outer_bc
+    if outer_value is not None:
+        p.boundary_conditions.outer_boundary_value = outer_value
     if tol is not None:
         p.solver.rtol = p.solver.atol = tol
+    if max_steps is not None:
+        p.solver.max_steps = max_steps
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(eos) if S is None else np.full(s._n_stag, S))
@@ -1210,3 +1254,67 @@ def test_rate_mode_arms_and_completes_for_core_module(shared_eos, caplog):
     assert sol.y.shape[0] == s._n_stag + 2
     messages = [r.getMessage() for r in caplog.records]
     assert not any('dS/dt evaluation failed' in m or 'can lock CVODE' in m for m in messages)
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_boundary_landing_does_not_pin_cap_to_floor_across_segments(shared_eos):
+    """Mechanism 1: slow boundary landing does not pin max_step to 1 yr across segments."""
+    s = _solver(
+        shared_eos,
+        'rate',
+        n_nodes=12,
+        end_time=15000.0,
+        outer_bc=4,
+        outer_value=20.0,
+        max_steps=300,
+        tol=1e-8,
+        convective_threshold=0.0,
+    )
+    S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
+    rate_delta = 10.0
+    S0 = S_sol.copy() - 10.0
+    S0[4] = S_sol[4] + rate_delta + 1.0
+    S0[5] = S_sol[5] + rate_delta + 2.5
+    s.set_initial_entropy(S0)
+    s.solve()
+    sol = s._solution
+    assert sol.status == 0, f'Solver aborted with status {sol.status}'
+    segs = getattr(sol, 'segments', [])
+    assert len(segs) > 0
+    for k, seg in enumerate(segs):
+        assert seg[2] >= 10.0, f'Segment {k} max_step {seg[2]} is below 10.0 yr'
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eos):
+    """Mechanism 2: the 100 yr ceiling relaxes to inf once phi_max reaches zero."""
+    s = _solver(
+        shared_eos,
+        'rate',
+        n_nodes=12,
+        end_time=2.0e5,
+        outer_bc=4,
+        outer_value=200.0,
+        max_steps=300,
+        tol=1e-8,
+        convective_threshold=0.0,
+    )
+    S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
+    S0 = np.full_like(S_sol, S_sol[-1] + 5.0)
+    s.set_initial_entropy(S0)
+    s.solve()
+    sol = s._solution
+    assert sol.status == 0, f'Solver aborted with status {sol.status}'
+    phi_end = float(
+        getattr(sol, 'phi_global', [0.0])[-1] if hasattr(sol, 'phi_global') else 0.0
+    )
+    assert phi_end == 0.0
+    segs = getattr(sol, 'segments', [])
+    assert len(segs) >= 10
+    S_all = np.asarray(sol.y)[: s._n_stag, :]
+    assert np.min(S_all) >= -1406.28, f'Entropy fell below S_min + 200: {np.min(S_all)}'
+    assert any(not np.isfinite(seg[2]) for seg in segs), 'max_step never relaxed to inf'
