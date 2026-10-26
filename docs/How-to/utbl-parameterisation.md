@@ -53,7 +53,7 @@ For super-Earth or sub-Earth standalone runs, calibrate $b$ against a higher-res
 ```toml
 [boundary_conditions]
 outer_boundary_condition = 1      # grey-body atmosphere (UTBL applies here only)
-outer_boundary_value     = 280.0  # W/m^2 reference flux
+outer_boundary_value     = 280.0  # not used in mode 1
 emissivity               = 1.0
 equilibrium_temperature  = 273.0
 param_utbl               = true

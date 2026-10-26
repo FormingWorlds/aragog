@@ -18,13 +18,13 @@ Here $\varepsilon$ is the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T
 
 The solver works with the specific entropy $S$ \[J/kg/K\], not with the temperature $T$ \[K\]. Mode 5 must therefore turn a prescribed temperature into an entropy and an entropy gradient at the surface node.
 
-**Short answer.** At setup the solver finds the entropy $S_s$ at which the equation of state (EOS) gives the prescribed temperature $T_s$ at the surface pressure. At every call it gives the surface node this entropy, and it sets the entropy gradient at the node so that the temperature gradient is the difference between $T_s$ and the top cell temperature over half a cell. The conductive flux through the surface is then exactly the half-cell conduction, and the other fluxes use the same gradient.
+**Short answer.** At setup the solver finds the entropy $S_s$ at which the equation of state (EOS) gives the prescribed temperature $T_s$ at the surface pressure. At every call it gives the surface node this entropy, and it sets the entropy gradient at the node so that the temperature gradient is the difference between $T_s$ and the top cell temperature over half a cell. The conductive flux through the surface is then exactly the half-cell conduction, and the convective flux uses the same gradient. Gravitational separation and chemical mixing carry no flux through the surface.
 
 ### The surface entropy
 
 The mantle grid has cell centres (the staggered nodes, where the solver keeps $S$) and cell faces (the basic nodes, where the fluxes are). The surface is the last basic node. Its pressure is $P_s$. The solver solves $T(P_s, S_s) = T_s$ for $S_s$:
 
-- with EOS tables, by a root search on the tables (`EntropyEOS.entropy_at_temperature`);
+- with EOS tables, by a root search on the tables (`EntropyEOS.entropy_at_temperature`), refined with the phase evaluator of the surface node, so that the value includes the property smoothing near the solidus and liquidus (`matprop_smooth_width`);
 - in the constant-properties mode, from the closed form $S_s = S_\mathrm{ref} + c_p \ln(T_s / T_\mathrm{ref})$.
 
 ### The surface gradient
@@ -49,7 +49,7 @@ The conductive flux is $F_\mathrm{cond} = -k\,\partial T/\partial r$, with $k$ t
 
 $$F_\mathrm{cond} = k\,\frac{T_{N-1} - T_s}{\Delta r / 2},$$
 
-positive outward when the mantle is warmer than the surface. The convective flux of the mixing-length theory, $\rho T \kappa_h (-\partial S / \partial r)$, uses the same entropy gradient. With `mixing_length_profile = 'nearest_boundary'` the mixing length is 0 at the surface, so the convective flux there is 0, unless the floor `kappah_floor` acts in a molten top cell. With `'constant'` the surface face also carries a convective flux.
+positive outward when the mantle is warmer than the surface. The convective flux of the mixing-length theory, $\rho T \kappa_h (-\partial S / \partial r)$, uses the same entropy gradient. With `mixing_length_profile = 'nearest_boundary'` the mixing length is 0 at the surface, so the convective flux there is 0. With `'constant'` the surface face also carries a convective flux. The floor of the eddy diffusivity (`kappah_floor`), which keeps molten cells below the convective threshold mixing, does not act at a surface held at its temperature.
 
 ### Why the solver does not use an entropy difference
 
@@ -63,9 +63,9 @@ The solver takes $\Delta r / 2 = \Delta\xi / (2\, \mathrm{d}\xi/\mathrm{d}r)$, w
 
 - `outer_boundary_value` must be a positive finite number in kelvin. A string, a TOML `true`, NaN, an infinity, zero or a negative value stops the setup with a `ValueError`.
 - A temperature outside the EOS tables at the surface pressure stops the setup with a `ValueError`; the solver does not clamp it to the table edge.
-- `param_utbl = true` and `core_bc = 'gradient'` stop the setup with a `ValueError`: the UTBL correction belongs to the grey-body flux, and the gradient core keeps its own surface gradient.
-- A caller can change `outer_boundary_value` between calls; the next call inverts the surface entropy again.
+- `param_utbl = true`, `core_bc = 'gradient'` and `energy.conduction = false` stop the setup with a `ValueError`: the UTBL correction belongs to the grey-body flux, the gradient core keeps its own surface gradient, and without conduction the prescribed temperature would set no flux under `nearest_boundary`.
+- A caller can change `outer_boundary_value` between calls; the next call of the NumPy right-hand side, and the next `solve`, invert the surface entropy again.
 - Every call of the NumPy right-hand side checks that the surface node is at $T_s$ to a relative 10⁻⁶ and raises a `RuntimeError` if it is not.
-- The JAX right-hand side takes the surface entropy and the half cell as `S_surf` and `surf_dr_half` of `BoundaryParams` with `outer_bc_type = 5`, and applies the same gradient. `BoundaryParams` refuses type 5 when `surf_dr_half` is not a positive number.
+- The JAX right-hand side takes the surface entropy and the half cell as `S_surf` and `surf_dr_half` of `BoundaryParams` with `outer_bc_type = 5`, and applies the same gradient. Take both from `EntropySolver.surface_temperature_bc`, and build `BoundaryParams` again after a change of `outer_boundary_value`. `BoundaryParams` refuses type 5 without a finite `S_surf` and a finite positive `surf_dr_half`.
 
 **Where this is checked.** [Surface boundary](../Validation/surface.md) compares mode 5 with a steady heated shell, a cooling half space and a grid-convergence study, and the [tutorial](../Tutorials/surface_temperature.md) repeats the half-space case step by step.
