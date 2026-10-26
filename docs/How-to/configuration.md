@@ -258,7 +258,7 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `yield_stress_mu` | `float` | -- | `0.6` | [0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
 | `yield_stress_max` | `float` | Pa | `500000000.0` | (0, inf) | Maximum ductile yield stress ceiling capping frictional strength at depth |
 | `stress_closure_mode` | `str` | -- | `"lid"` | `"lid"` \| `"local"` | Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress |
-| `interior_flux_fraction` | `float` | -- | `0.05` | [0.05, 0.5] | Convective heat flux fraction carried across interior boundary layer under lid |
+| `interior_flux_fraction` | `float` | -- | `0.05` | [0.05, 0.5] | Threshold on the convective flux fraction F_conv/F_tot (f_conv,min) |
 | `lid_base_mode` | `str` | -- | `"rheological"` | `"rheological"` \| `"fixed"` | Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm |
 | `lid_base_temperature` | `float` | K | `1400.0` | (0, inf) | Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed" |
 | `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Viscosity contrast exponent in rheological stagnant-lid thickness scaling |

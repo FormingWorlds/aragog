@@ -805,16 +805,16 @@ def test_public_effective_viscosity_local_delegates_to_compute_strain_rate_local
 # ============================================================================
 
 
-@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_perturbed_starts_spread(validation_plot) -> None:
-    """Verify stored-data consistency for perturbation-spread benchmarks.
+    """Regression pin of the stored spread for perturbation-spread benchmarks.
 
     Reads tests/reference/ssc_solver_wiring_benchmarks.json to verify that five
     runs of abe_solid.toml from perturbed initial entropy profiles
     S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
     Delta T_on(r) <= 3.5e-5 K on active-solid (2x margin over measured 1.751e-5 K)
     and Delta T_on(r) <= 2.0e-6 K on default inert (3.6x margin over measured
-    5.557e-7 K) across the full radial profile.
+    5.557e-7 K) across both basic and staggered radial profiles.
 
     Parameters
     ----------
@@ -833,16 +833,24 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     dt_var_off = np.asarray(var_suite['off']['delta_T_basic_profile_K'], dtype=float)
     dt_def_on = np.asarray(def_suite['on']['delta_T_basic_profile_K'], dtype=float)
     dt_def_off = np.asarray(def_suite['off']['delta_T_basic_profile_K'], dtype=float)
+    dt_stag_var_on = np.asarray(var_suite['on']['delta_T_stag_profile_K'], dtype=float)
+    dt_stag_def_on = np.asarray(def_suite['on']['delta_T_stag_profile_K'], dtype=float)
 
     active_spread_bound_k = 3.5e-5
     default_spread_bound_k = 2.0e-6
 
     assert np.all(dt_var_on <= active_spread_bound_k)
     assert np.all(dt_def_on <= default_spread_bound_k)
+    assert np.all(dt_stag_var_on <= active_spread_bound_k)
+    assert np.all(dt_stag_def_on <= default_spread_bound_k)
     assert float(np.max(dt_var_on)) <= active_spread_bound_k
     assert float(np.max(dt_def_on)) <= default_spread_bound_k
+    assert float(np.max(dt_stag_var_on)) <= active_spread_bound_k
+    assert float(np.max(dt_stag_def_on)) <= default_spread_bound_k
     assert float(np.max(dt_def_on)) == pytest.approx(5.557178610615665e-07, rel=1.0e-9)
     assert float(np.max(dt_def_off)) == pytest.approx(1.034986325976206e-06, rel=1.0e-9)
+    assert float(np.max(dt_stag_var_on)) == pytest.approx(3.388989807717735e-05, rel=1.0e-9)
+    assert float(np.max(dt_stag_def_on)) == pytest.approx(1.3583121472038329e-07, rel=1.0e-9)
 
     var_act = var_suite['on_vs_off_activity']
     def_act = def_suite['on_vs_off_activity']

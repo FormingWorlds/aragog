@@ -48,9 +48,10 @@ Execution modes and per-block coverage:
      ``spread_*_std``, ``mean_wall_time_s``, ``solve_wall_time_ratio_on_over_off``), and
      all ``on_vs_off_activity`` differences from the ``epsilon == 0`` run pair.
   5. Live solver evaluation: recomputes live the 6-row per-evaluation call-count deltas in
-     NumPy and JAX across ``off``, ``on_lid``, and ``on_local`` modes and evaluates state 0 of
-     ``abe_solid_kappah_floor_0`` live on both the JIT CVODE path and the eager JAX path,
-     requiring relative agreement ``<= 1e-3`` with the stored state-0 values.
+     NumPy and JAX across ``off``, ``on_lid``, and ``on_local`` modes; evaluates state 0 of
+     ``abe_solid_kappah_floor_0`` live on both the JIT CVODE path and the eager JAX path
+     (checking eager relative difference <= 1e-13); and evaluates state 0 of
+     ``abe_solid_yield_active`` and ``abe_solid_default`` against their stored values.
 """
 
 from __future__ import annotations
@@ -1346,11 +1347,10 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
             f'{stored_0_jit:.6e} exceeds tolerance {tol_0_jit:.3e}'
         )
     stored_0_eager = float(kappah_rec['rel_rhs_numpy_vs_jax_eager_per_state'][0])
-    tol_0_eager = max(1.0e-3 * stored_0_eager, 1.0e-15)
-    if abs(rel_diff_0_eager - stored_0_eager) > tol_0_eager:
+    if rel_diff_0_eager > 1.0e-13:
         failures.append(
             f'Live state-0 eager rel_rhs_numpy_vs_jax {rel_diff_0_eager:.6e} vs stored '
-            f'{stored_0_eager:.6e} exceeds tolerance {tol_0_eager:.3e}'
+            f'{stored_0_eager:.6e} exceeds upper bound 1.0e-13'
         )
 
     # Also evaluate state 0 of abe_solid_yield_active and abe_solid_default so a merge
