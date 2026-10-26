@@ -52,7 +52,7 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     from aragog.parser import Parameters
     from aragog.solver.entropy_solver import EntropySolver
 
-    ref_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
+    ref_path = Path(__file__).parent / 'reference' / 'ssc_scaling_exponents_benchmarks.json'
     data = json.loads(ref_path.read_text(encoding='utf-8'))
     win = data['metadata']['acceptance_window']
     rel_pin = float(win['round_off_spread_rel_tol'])
@@ -514,17 +514,17 @@ def test_benchmark_generators_check_mode_passes_on_committed_jsons() -> None:
         evaluate_mlt_top_slope_calibration as mlt_cal_mod,
     )
     from tools.verification import (
-        generate_ssc_wp2_benchmarks as wp2_mod,
+        generate_ssc_0d_reference_benchmarks as ref0d_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+        generate_ssc_scaling_exponents_benchmarks as scaling_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+        generate_ssc_solver_wiring_benchmarks as wiring_mod,
     )
 
     assert mlt_cal_mod.main(['--check']) == 0
-    assert a6_1_mod.main(['--check']) == 0
-    assert a6_2_mod.main(['--check']) == 0
+    assert ref0d_mod.main(['--check']) == 0
+    assert scaling_mod.main(['--check']) == 0
     if os.environ.get('ARAGOG_TEST_EOS_DIR'):
-        assert wp2_mod.main(['--check']) == 0
+        assert wiring_mod.main(['--check']) == 0

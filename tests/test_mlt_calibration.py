@@ -286,99 +286,103 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
     from pathlib import Path
 
     from tools.verification import (
-        generate_ssc_wp2_benchmarks as wp2_mod,
+        generate_ssc_0d_reference_benchmarks as ref0d_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+        generate_ssc_scaling_exponents_benchmarks as scaling_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+        generate_ssc_solver_wiring_benchmarks as wiring_mod,
     )
 
-    wp2_path = Path(__file__).parent / 'reference' / 'ssc_wp2_validation_benchmarks.json'
-    wp2_data = json.loads(wp2_path.read_text(encoding='utf-8'))
+    wiring_path = Path(__file__).parent / 'reference' / 'ssc_solver_wiring_benchmarks.json'
+    wiring_data = json.loads(wiring_path.read_text(encoding='utf-8'))
 
     # 1. Missing --eos-dir in generation mode must fail with exit code 1 without mutating file
-    orig_wp2_text = wp2_path.read_text(encoding='utf-8')
-    wp2_copy = tmp_path / 'wp2_copy.json'
-    wp2_copy.write_text(orig_wp2_text, encoding='utf-8')
-    rc_missing_eos = wp2_mod.main(
-        ['--output', str(wp2_copy), '--eos-dir', str(tmp_path / 'does_not_exist')]
+    orig_wiring_text = wiring_path.read_text(encoding='utf-8')
+    wiring_copy = tmp_path / 'wiring_copy.json'
+    wiring_copy.write_text(orig_wiring_text, encoding='utf-8')
+    rc_missing_eos = wiring_mod.main(
+        ['--output', str(wiring_copy), '--eos-dir', str(tmp_path / 'does_not_exist')]
     )
     assert rc_missing_eos == 1
-    assert wp2_copy.read_text(encoding='utf-8') == orig_wp2_text
+    assert wiring_copy.read_text(encoding='utf-8') == orig_wiring_text
 
     # 2. Incomplete EOS directory in verify_benchmarks appends failure instead of raising
     empty_eos_dir = tmp_path / 'empty_eos'
     empty_eos_dir.mkdir()
-    missing_table_failures = wp2_mod.verify_benchmarks(wp2_data, eos_dir=empty_eos_dir)
+    missing_table_failures = wiring_mod.verify_benchmarks(wiring_data, eos_dir=empty_eos_dir)
     assert any('Missing required table file' in f for f in missing_table_failures)
 
     # 3. abe_solid_default parity bound, local call-count deltas, starts_block dict check, rationale
-    assert wp2_data['a2_2_rhs_parity_and_activity']['abe_solid_default'][
-        'rationale'
-    ].startswith('Default state set on the CI SPIDER EOS tables: s_init=2900 J/kg/K')
-    wp2_bad_def = copy.deepcopy(wp2_data)
-    wp2_bad_def['a2_2_rhs_parity_and_activity']['abe_solid_default'][
+    assert wiring_data['rhs_parity_and_activity']['abe_solid_default']['rationale'].startswith(
+        'Default state set on the CI SPIDER EOS tables: s_init=2900 J/kg/K'
+    )
+    wiring_bad_def = copy.deepcopy(wiring_data)
+    wiring_bad_def['rhs_parity_and_activity']['abe_solid_default'][
         'rel_rhs_numpy_vs_jax_per_state'
     ][0] = 1.0e-3
     assert any(
         'abe_solid_default.max_rel_rhs_numpy_vs_jax' in f
-        for f in wp2_mod.verify_benchmarks(wp2_bad_def, eos_dir=None)
+        for f in wiring_mod.verify_benchmarks(wiring_bad_def, eos_dir=None)
     )
 
-    wp2_bad_local = copy.deepcopy(wp2_data)
-    wp2_bad_local['a2_4_rhs_wall_time']['six_row_call_count_table'][0][
+    wiring_bad_local = copy.deepcopy(wiring_data)
+    wiring_bad_local['rhs_wall_time']['six_row_call_count_table'][0][
         'measured_numpy_local_delta'
     ] = 99
     assert any(
-        'local' in f.lower() for f in wp2_mod.verify_benchmarks(wp2_bad_local, eos_dir=None)
+        'local' in f.lower()
+        for f in wiring_mod.verify_benchmarks(wiring_bad_local, eos_dir=None)
     )
 
-    wp2_bad_starts = copy.deepcopy(wp2_data)
-    wp2_bad_starts['a2_3_perturbed_starts']['abe_solid_default'] = None
+    wiring_bad_starts = copy.deepcopy(wiring_data)
+    wiring_bad_starts['perturbed_starts']['abe_solid_default'] = None
     assert any(
         'abe_solid_default' in f
-        for f in wp2_mod.verify_benchmarks(wp2_bad_starts, eos_dir=None)
+        for f in wiring_mod.verify_benchmarks(wiring_bad_starts, eos_dir=None)
     )
 
     # 4. compute_crossing_time_linear returns None (JSON null) when threshold is never crossed or already exceeded at t=0
     t_grid = np.array([0.0, 1.0e7, 2.0e7], dtype=float)
     err_grid = np.array([0.01, 0.02, 0.03], dtype=float)
-    assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.22) is None
+    assert ref0d_mod.compute_crossing_time_linear(t_grid, err_grid, 0.22) is None
     assert (
-        a6_1_mod.compute_crossing_time_linear(
+        ref0d_mod.compute_crossing_time_linear(
             t_grid, np.array([0.30, 0.35, 0.40], dtype=float), 0.22
         )
         is None
     )
-    assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.025) == pytest.approx(
+    assert ref0d_mod.compute_crossing_time_linear(t_grid, err_grid, 0.025) == pytest.approx(
         1.5e7, rel=1.0e-12
     )
 
     # 5. korenaga_ti_fixed_point domain safety and non-convergence RuntimeError
     with pytest.raises(RuntimeError, match='lid exceeds domain'):
-        a6_2_mod.korenaga_ti_fixed_point(
+        scaling_mod.korenaga_ti_fixed_point(
             np.array([2000.0, 2000.0]), np.array([0.1, 0.2]), 300.0, 1000.0
         )
     with pytest.raises(RuntimeError, match='within 1 steps'):
-        a6_2_mod.korenaga_ti_fixed_point(
+        scaling_mod.korenaga_ti_fixed_point(
             np.array([1500.0, 300.0]), np.array([0.1, 0.9]), 300.0, 2000.0, max_iter=1
         )
 
-    # 6. Clean metadata and cases_spec in ssc_wp6_a6_2_benchmarks.json and primary fit helper
-    a6_2_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
-    a6_2_data = json.loads(a6_2_path.read_text(encoding='utf-8'))
-    assert tuple(a6_2_data['metadata'].keys()) == a6_2_mod.EXPECTED_META_KEYS
+    # 6. Clean metadata and cases_spec in ssc_scaling_exponents_benchmarks.json and primary fit helper
+    scaling_path = Path(__file__).parent / 'reference' / 'ssc_scaling_exponents_benchmarks.json'
+    scaling_data = json.loads(scaling_path.read_text(encoding='utf-8'))
+    assert tuple(scaling_data['metadata'].keys()) == scaling_mod.EXPECTED_META_KEYS
     assert all(
-        tuple(spec.keys()) == a6_2_mod.EXPECTED_SPEC_KEYS for spec in a6_2_data['cases_spec']
+        tuple(spec.keys()) == scaling_mod.EXPECTED_SPEC_KEYS
+        for spec in scaling_data['cases_spec']
     )
-    prim_fit = a6_2_mod.compute_primary_fit_all_12_nu_korenaga(a6_2_data['cases_results'])
+    prim_fit = scaling_mod.compute_primary_fit_all_12_nu_korenaga(scaling_data['cases_results'])
     assert prim_fit['multilinear']['alpha'] == pytest.approx(
-        float(a6_2_data['primary_fit_all_12_nu_korenaga']['multilinear']['alpha']), rel=1.0e-12
+        float(scaling_data['primary_fit_all_12_nu_korenaga']['multilinear']['alpha']),
+        rel=1.0e-12,
     )
     assert prim_fit['multilinear']['beta'] == pytest.approx(
-        float(a6_2_data['primary_fit_all_12_nu_korenaga']['multilinear']['beta']), rel=1.0e-12
+        float(scaling_data['primary_fit_all_12_nu_korenaga']['multilinear']['beta']),
+        rel=1.0e-12,
     )
 
 
@@ -393,26 +397,28 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     from pathlib import Path
 
     from tools.verification import (
-        generate_ssc_wp2_benchmarks as wp2_mod,
+        generate_ssc_0d_reference_benchmarks as ref0d_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+        generate_ssc_scaling_exponents_benchmarks as scaling_mod,
     )
     from tools.verification import (
-        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+        generate_ssc_solver_wiring_benchmarks as wiring_mod,
     )
 
     repo_root = Path(__file__).resolve().parents[1]
 
     ref_dir = Path(__file__).parent / 'reference'
-    wp2_data = json.loads((ref_dir / 'ssc_wp2_validation_benchmarks.json').read_text('utf-8'))
-    a6_1_data = json.loads((ref_dir / 'ssc_wp6_a6_1_benchmarks.json').read_text('utf-8'))
-    a6_2_data = json.loads((ref_dir / 'ssc_wp6_a6_2_benchmarks.json').read_text('utf-8'))
+    wiring_data = json.loads((ref_dir / 'ssc_solver_wiring_benchmarks.json').read_text('utf-8'))
+    ref0d_data = json.loads((ref_dir / 'ssc_0d_reference_benchmarks.json').read_text('utf-8'))
+    scaling_data = json.loads(
+        (ref_dir / 'ssc_scaling_exponents_benchmarks.json').read_text('utf-8')
+    )
 
     specs = (
-        ('wp2', wp2_mod, wp2_data, ('canary', 'aragog_commit')),
-        ('a6_1', a6_1_mod, a6_1_data, ('metadata', 'git_commit')),
-        ('a6_2', a6_2_mod, a6_2_data, ('metadata', 'git_commit')),
+        ('wiring', wiring_mod, wiring_data, ('canary', 'aragog_commit')),
+        ('ref0d', ref0d_mod, ref0d_data, ('metadata', 'git_commit')),
+        ('scaling', scaling_mod, scaling_data, ('metadata', 'git_commit')),
     )
     for label, mod, data, (sec_key, sha_key) in specs:
         sha = str(data[sec_key][sha_key])
@@ -442,7 +448,7 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
         bad_data[sec_key][sha_key] = '06846a9844568933e170ba562e1f935089fe4e01'
         failures = (
             mod.verify_benchmarks(bad_data, eos_dir=None)
-            if label == 'wp2'
+            if label == 'wiring'
             else mod.verify_benchmarks(bad_data)
         )
         assert any('origin' in f for f in failures), (
@@ -461,7 +467,7 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
                 ),
             )
             argv = ['--output', str(out_copy)]
-            if label == 'wp2':
+            if label == 'wiring':
                 eos_dir = tmp_path / 'dummy_eos'
                 eos_dir.mkdir(exist_ok=True)
                 argv.extend(['--eos-dir', str(eos_dir)])
@@ -530,9 +536,11 @@ def test_half_cell_surface_flux_patch_pins_bc5_prescribed_surface_temperature() 
 
     from aragog.solver.entropy_solver import EntropySolver
     from tools.verification._ssc_helpers import half_cell_surface_flux
-    from tools.verification.generate_ssc_wp6_a6_2_benchmarks import build_scaling_case_params
+    from tools.verification.generate_ssc_scaling_exponents_benchmarks import (
+        build_scaling_case_params,
+    )
 
-    ref_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
+    ref_path = Path(__file__).parent / 'reference' / 'ssc_scaling_exponents_benchmarks.json'
     data = json.loads(ref_path.read_text(encoding='utf-8'))
     spec = next(s for s in data['cases_spec'] if s['case_id'] == 'case_06')
     snap = data['steady_state_snapshots']['case_06']

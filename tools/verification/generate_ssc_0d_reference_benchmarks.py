@@ -1,6 +1,6 @@
 """Generate and verify reference benchmarks for 0-D stagnant-lid and yield-thinning tests.
 
-Generates or checks ``tests/reference/ssc_wp6_a6_1_benchmarks.json``.
+Generates or checks ``tests/reference/ssc_0d_reference_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
 - The shipped entropy solver ignores ``outer_boundary_condition = 5`` today:
@@ -133,7 +133,7 @@ from tools.verification._ssc_helpers import (  # noqa: E402
 
 SECS_PER_YR = 31557600.0
 
-DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_wp6_a6_1_benchmarks.json'
+DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_0d_reference_benchmarks.json'
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
 )

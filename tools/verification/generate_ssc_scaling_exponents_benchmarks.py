@@ -1,6 +1,6 @@
 """Generate and verify reference benchmarks for internal-heating stagnant-lid scaling tests.
 
-Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
+Generates or checks ``tests/reference/ssc_scaling_exponents_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
 - The shipped entropy solver ignores ``outer_boundary_condition = 5`` today:
@@ -109,7 +109,9 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     ols_fit as _ols,
 )
 
-DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
+DEFAULT_BENCHMARK_PATH = (
+    REPO_ROOT / 'tests' / 'reference' / 'ssc_scaling_exponents_benchmarks.json'
+)
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
 )

@@ -69,7 +69,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         load_aragog_0d_params,
     )
 
-    ref_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_1_benchmarks.json'
+    ref_path = Path(__file__).parent / 'reference' / 'ssc_0d_reference_benchmarks.json'
     data = json.loads(ref_path.read_text(encoding='utf-8'))
     tols = data['metadata']['tolerances']
     rel_pin = float(tols['round_off_spread_rel_tol'])
