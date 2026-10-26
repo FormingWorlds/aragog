@@ -267,6 +267,9 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
 | `c_theta` | `float` | -- | `0.15` | [0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta |
+| `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) \| `null` | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
+| `activation_volume` | `float` | m³/mol | `0.0` | [0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
+| `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |
 <!-- rheology-config-reference:end -->
 
 ### `[phase_mixed]`
