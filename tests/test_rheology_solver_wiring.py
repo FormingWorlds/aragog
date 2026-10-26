@@ -1523,3 +1523,88 @@ def test_check_rheology_eos_trace_reshapes_1d_y_arr() -> None:
     solver = _make_solver(params)
     s_profile = _make_solid_profile(solver)
     solver._check_rheology_eos_trace(np.array([0.0]), s_profile)
+
+
+def test_solve_core_module_refuses_unmodelled_regime_on_trace_y(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify solve() checks core trajectory against unmodelled crystallization regimes.
+
+    Line 4677 of entropy_solver.py extracts T_core from trace_y[self._n_stag + 1] and passes
+    it to refuse_unmodelled_regime. This test verifies that unmodelled core temperatures raise
+    ValueError while modelled temperatures complete successfully.
+    """
+    from types import SimpleNamespace
+
+    core_params = {
+        'rho_cen': 12500.0,
+        'length_scale': 7200e3,
+        'alpha': 1.35e-5,
+        'c_p': 840.0,
+        'melting_curve': 'iron',
+        'light_element_fraction': 0.1,
+        'depression': 1.2,
+        'ds_fusion': 170.0,
+        'icn_width': 10.0,
+    }
+    params = _make_abe_solid_params(SolidRheologyParams(enabled=False), number_of_nodes=10)
+    params = replace(
+        params,
+        boundary_conditions=replace(
+            params.boundary_conditions,
+            core_bc='core_module',
+            core_module_params=core_params,
+        ),
+    )
+    solver = _make_solver(params)
+    solver.set_initial_entropy(np.linspace(2950.0, 2600.0, solver._n_stag))
+    solver.set_initial_core_temperature(5000.0)
+
+    scales = solver._build_nondim_scales()
+    idx = solver._n_stag + 1
+    n_states = solver._n_stag + 2
+    t_dummy = np.array([0.0, 1.0])
+    s_stag = np.linspace(2950.0, 2600.0, solver._n_stag)
+    s_nondim = (s_stag - scales.state_offset[: solver._n_stag]) / scales.state_scale[
+        : solver._n_stag
+    ]
+
+    # 1. Unmodelled core state (T_core = 500 K) must raise ValueError
+    y_unmodelled = np.zeros((n_states, 2))
+    y_unmodelled[: solver._n_stag, :] = s_nondim[:, None]
+    y_unmodelled[idx, :] = (500.0 - scales.state_offset[idx]) / scales.state_scale[idx]
+
+    mock_unmodelled = SimpleNamespace(
+        status=0,
+        message='success',
+        t=t_dummy,
+        y=y_unmodelled,
+        nfev=10,
+        get=lambda k, d=None: {'cvode_nst': 0, 'cvode_nfe': 0}.get(k, d),
+    )
+    monkeypatch.setattr(
+        solver, '_solve_cvode_segments', lambda *args, **kwargs: mock_unmodelled
+    )
+    monkeypatch.setattr(solver, '_solve_cvode', lambda *args, **kwargs: mock_unmodelled)
+
+    with pytest.raises(ValueError, match='core_module: the outer core holds'):
+        solver.solve()
+
+    # 2. Modelled core state (T_core = 5000 K) completes successfully
+    y_modelled = np.zeros((n_states, 2))
+    y_modelled[: solver._n_stag, :] = s_nondim[:, None]
+    y_modelled[idx, :] = (5000.0 - scales.state_offset[idx]) / scales.state_scale[idx]
+
+    mock_modelled = SimpleNamespace(
+        status=0,
+        message='success',
+        t=t_dummy,
+        y=y_modelled,
+        nfev=10,
+        get=lambda k, d=None: {'cvode_nst': 0, 'cvode_nfe': 0}.get(k, d),
+    )
+    monkeypatch.setattr(solver, '_solve_cvode_segments', lambda *args, **kwargs: mock_modelled)
+    monkeypatch.setattr(solver, '_solve_cvode', lambda *args, **kwargs: mock_modelled)
+
+    solver.solve()
+    assert solver._solution.energy_integrals is not None
