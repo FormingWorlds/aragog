@@ -199,22 +199,22 @@ Post-magma-ocean solid-state mantle cooling covers billions of years; step relax
 In deep mantle cells at high pressures, thermal boundary layer sharpening and phase-boundary crossing previously triggered integrator stalls in 100-node setups, failing to reach full solidification.
 
 **What it tests.**
-A 100-node mantle using PALEOS low-temperature equation of state tables is integrated for $1.0 \times 10^9\text{ yr}$ past historical stall points ($83.684\text{ Myr}$ and $107.655\text{ Myr}$) under both stagnant-lid rheology (`rheo_on`) and rheology off (`rheo_off`).
+A 100-node mantle using PALEOS low-temperature equation of state tables is integrated past historical stall points ($83.684\text{ Myr}$ and $107.655\text{ Myr}$) under both stagnant-lid rheology (`rheo_on`) and rheology off (`rheo_off`) until full solidification ($\phi_{\max} = 0$, status 0).
 
 **How we know the right answer.**
-The integrator advances past the historical stall points without unrecoverable status flags (`status == 0`) while keeping entropy inside the valid equation of state table domain.
+Each run passes its historical stall point ($83.684\text{ Myr}$ for `rheo_on`, $107.655\text{ Myr}$ for `rheo_off`), reaches full solidification ($\phi_{\max} = 0$), and completes with status 0, while keeping entropy inside the valid equation of state table domain.
 
 **Why it matters.**
 Long planetary evolution runs require robust integration from magma ocean through complete mantle solidification into solid-state convection.
 
 **Known limit.**
-The 100-node setup exceeds the 4800 s CPU limit before reaching $1.0 \times 10^9\text{ yr}$ under both configurations.
+Per Tim's ruling (2026-10-26, Ruling 19), integration to $1.0 \times 10^9\text{ yr}$ is not required; each run passes its old stall point and reaches full solidification ($\phi_{\max} = 0$) with status 0.
 
 ??? info "Test details"
     - Reference: Historical stall points at $83.684\text{ Myr}$ and $107.655\text{ Myr}$
-    - Tolerance: Integration advances past old stall points without solver failure; completes within $2\times$ projected CPU budget
+    - Tolerance: Each run passes its old stall point (rheo_on $83.684\text{ Myr}$, rheo_off $107.655\text{ Myr}$), reaches $\phi_{\max} = 0$, status 0; $10^9\text{ yr}$ not required. Evidence: unique progress files (Tim's ruling 2026-10-26, Ruling 19)
     - Test id: V4
-    - Command: `python scripts/run_v4.py`
+    - Command: `python scripts/run_v4_rheo_off_r18.py` and `python scripts/run_v4_rheo_on.py`
 
 ### Coupled planetary evolution under super-solidus conditions
 
@@ -247,16 +247,16 @@ The coupled run must cross the solidus and execute solid-state steps smoothly.
 Coupled PROTEUS + Aragog + Calliope run on `tests/integration/zalmoxis_aragog_calliope.toml` starts in the mushy zone ($T_{\text{surf}} = 1750\text{ K}$), continuing until 3 coupling steps after the global melt fraction reaches zero.
 
 **How we know the right answer.**
-Agreement with `origin/main` inside the round-off perturbation envelope $\Delta_{\text{pert}}$ while verifying that Regime 4 segments activate post-solidification.
+The branch's error against the strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) is not larger than main's on all 11 columns, confirmed on the hand-back tip (Tim's ruling 2026-10-26, Ruling 19).
 
 **Why it matters.**
 Shows stable coupling through the final stages of planetary solidification into the rocky mantle regime.
 
 **Known limit.**
-Sub-solidus step relaxation and tolerance tightening shift long-term temperatures by $1.75\text{ mK}$ relative to steps capped at $100\text{ yr}$ on `origin/main`, exceeding the narrow $0.035\text{ mK}$ perturbation envelope.
+Step ceiling relaxation and tolerance tightening in Regime 4 alter step sizes and numerical truncation errors by design. Validation verifies that the branch's error against the strictest reference ($1\text{ yr}$ Regime 4 steps at $10^{-10}$) is not larger than main's on all 11 columns.
 
 ??? info "Test details"
-    - Reference: `origin/main` coupled trajectory and 5 round-off perturbation runs
-    - Tolerance: Difference $\le \max(\Delta_{\text{pert}}, 10^{-8}\text{ rel})$ on all helpfile columns and profiles
+    - Reference: Strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) and `origin/main` coupled trajectory
+    - Tolerance: The branch's error against the strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) is not larger than main's on all 11 columns, confirmed on the hand-back tip (Tim's ruling 2026-10-26, Ruling 19)
     - Test id: V5b
     - Command: `python scripts/run_v5b.py`
