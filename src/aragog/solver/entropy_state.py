@@ -1059,9 +1059,12 @@ class EntropyState:
         t_top_cell = float(np.ravel(self.phase_staggered.temperature())[-1])
         cp = float(np.ravel(pb.heat_capacity())[-1])
         cp = cp if cp >= 100.0 else 100.0  # the Cp_safe floor of the conductive flux
+        t_node = float(np.ravel(pb.temperature())[-1])
+        if not abs(t_node - t_surf) <= 1e-6 * t_surf:
+            raise RuntimeError(f'surface node at {t_node} K, prescribed {t_surf} K (BC 5)')
         dtdr = (t_surf - t_top_cell) / half_cell
         dtdr_ad = float(np.ravel(pb.dTdPs())[-1]) * float(self._dP_dr_basic[-1])
-        self._dSdr[-1] = cp / float(np.ravel(pb.temperature())[-1]) * (dtdr - dtdr_ad)
+        self._dSdr[-1] = cp / t_node * (dtdr - dtdr_ad)
 
     @property
     def top_temperature(self) -> npt.NDArray:
