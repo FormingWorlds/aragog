@@ -20,9 +20,10 @@ Execution modes and per-block coverage:
   the JSON in place.
 - ``--a2-4-only`` (~5 s): recomputes ``a2_4_rhs_wall_time`` and updates the JSON
   in place.
-- ``--check`` (~2 s when ``--eos-dir`` is provided): verifies expected schema keys,
-  canary table MD5 hashes, and stored numerical bounds, and recomputes a fast live
-  subset when ``--eos-dir`` is available:
+- ``--check`` (~2 s; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR`` and exits 1
+  if no valid EOS table directory is provided): verifies expected schema keys,
+  canary MD5 hashes for all 12 read SPIDER P-S table files, and stored numerical
+  bounds, and recomputes a fast live subset:
   1. ``a2_2_rhs_parity_and_activity``: recomputes state 0 of
      ``abe_solid_kappah_floor_0`` in NumPy and JAX and verifies that the live
      relative right-hand side difference matches the stored element within ``1e-6``
@@ -56,7 +57,20 @@ sys.path.insert(0, str(REPO_ROOT))
 DEFAULT_BENCHMARK_PATH = (
     REPO_ROOT / 'tests' / 'reference' / 'ssc_wp2_validation_benchmarks.json'
 )
-TABLE_FILES = ('density_melt.dat', 'density_solid.dat', 'temperature_solid.dat')
+TABLE_FILES = (
+    'adiabat_temp_grad_melt.dat',
+    'adiabat_temp_grad_solid.dat',
+    'density_melt.dat',
+    'density_solid.dat',
+    'heat_capacity_melt.dat',
+    'heat_capacity_solid.dat',
+    'liquidus_P-S.dat',
+    'solidus_P-S.dat',
+    'temperature_melt.dat',
+    'temperature_solid.dat',
+    'thermal_exp_melt.dat',
+    'thermal_exp_solid.dat',
+)
 
 EXPECTED_TOP_KEYS = (
     'canary',
@@ -148,8 +162,10 @@ def measure_per_rhs_call_counts(
     """Count per-RHS kernel calls and solidus EOS lookups on NumPy and JAX."""
     import jax.numpy as jnp
 
+    import aragog.eos.entropy_phase as entropy_phase_mod
     import aragog.jax.phase as jax_phase_mod
     import aragog.rheology as rheo_mod
+    import aragog.solver.entropy_state as entropy_state_mod
     from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.solver.entropy_solver import EntropySolver
@@ -212,7 +228,9 @@ def measure_per_rhs_call_counts(
     for backend, counts in (('numpy', np_counts), ('jax', jax_counts)):
         with ExitStack() as stack:
             mods_arr = [rheo_mod] + ([rheo_lid_mod] if rheo_lid_mod is not rheo_mod else [])
-            if backend == 'jax':
+            if backend == 'numpy':
+                mods_arr.extend([entropy_phase_mod, entropy_state_mod])
+            else:
                 mods_arr.append(jax_phase_mod)
             for mod in mods_arr:
                 if hasattr(mod, '_validate_inputs'):
@@ -515,9 +533,21 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
     else:
         if not canary.get('aragog_commit'):
             failures.append("Missing 'aragog_commit' in canary")
-        if eos_dir is not None:
+        if eos_dir is None or not str(eos_dir) or not eos_dir.is_dir():
+            failures.append(
+                'Missing or invalid EOS table directory (--eos-dir or ARAGOG_TEST_EOS_DIR); '
+                'required for table_md5 and live solver verification'
+            )
+        else:
             expected_hashes = canary.get('table_md5')
-            if isinstance(expected_hashes, dict):
+            if (
+                not isinstance(expected_hashes, dict)
+                or tuple(expected_hashes.keys()) != TABLE_FILES
+            ):
+                failures.append(
+                    f"canary['table_md5'] keys {tuple(expected_hashes.keys()) if isinstance(expected_hashes, dict) else None} != {TABLE_FILES}"
+                )
+            else:
                 actual_hashes = compute_table_hashes(eos_dir)
                 for fname, expected_hash in expected_hashes.items():
                     actual_hash = actual_hashes.get(fname)
@@ -611,11 +641,12 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Generate or check validation benchmarks for solid rheology.'
     )
+    env_eos = os.environ.get('ARAGOG_TEST_EOS_DIR', '').strip()
     parser.add_argument('--output', type=Path, default=DEFAULT_BENCHMARK_PATH)
     parser.add_argument(
         '--eos-dir',
         type=Path,
-        default=Path(os.environ.get('ARAGOG_TEST_EOS_DIR', '')),
+        default=Path(env_eos) if env_eos else None,
     )
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--full', action='store_true')
@@ -628,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point for benchmark generation and checking."""
     args = parse_arguments(argv)
     output_path = args.output.resolve()
-    has_eos_dir = bool(str(args.eos_dir)) and args.eos_dir.is_dir()
+    has_eos_dir = args.eos_dir is not None and bool(str(args.eos_dir)) and args.eos_dir.is_dir()
 
     if args.check:
         if not output_path.is_file():
