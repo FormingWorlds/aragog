@@ -305,13 +305,16 @@ def test_the_jax_factory_builds_the_bc5_rhs_and_refuses_a_constant_mesh(settings
     from aragog.jax.phase import MeshArrays
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-    s = _bc5_solver('quasi_steady', **settings)
-    _, args = _jax_rhs_and_args(s)
-    kw = dict(eos_jax=args[0], phase_params=args[1], heating_array=np.zeros(s._n_stag))
-    scales = NonDimScales(state_scale=np.ones(s._n_stag), t_ref=1.0)
-    rhs, _, _ = build_jax_rhs_and_jacobian(
-        mesh_arrays=args[2], boundary_params=args[3], scales=scales, **kw
-    )
+    try:
+        s = _bc5_solver('quasi_steady', **settings)
+        _, args = _jax_rhs_and_args(s)
+        kw = dict(eos_jax=args[0], phase_params=args[1], heating_array=np.zeros(s._n_stag))
+        scales = NonDimScales(state_scale=np.ones(s._n_stag), t_ref=1.0)
+        rhs, _, _ = build_jax_rhs_and_jacobian(
+            mesh_arrays=args[2], boundary_params=args[3], scales=scales, **kw
+        )
+    except Exception as exc:
+        pytest.fail(f'BC 5 refused {settings}: {exc!r}')
     y, ydot = np.asarray(s._S0, dtype=float).ravel(), np.full(s._n_stag, np.nan)
     assert rhs(0.0, y, ydot) == 0
     np.testing.assert_allclose(ydot, np.ravel(s.dSdt(0.0, y)), rtol=1e-10)

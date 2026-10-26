@@ -136,7 +136,10 @@ def test_bc5_refuses_a_constant_mixing_length(fraction):
 def test_bc5_accepts_the_settings_without_a_surface_eddy_flux(kw):
     """A constant mixing length of 0 and eddy_diffusivity_thermal 0 leave no eddy flux at the
     surface; the setup accepts both and the surface face carries no convective flux."""
-    s = _solver(300.0, **kw)
+    try:
+        s = _solver(300.0, **kw)
+    except Exception as exc:
+        pytest.fail(f'BC 5 refused {kw}: {exc!r}')
     assert np.all(np.isfinite(_rhs(s)))
     assert _top(s, '_jconv') == 0.0
     assert _top(s, 'heat_flux') > 0.0
