@@ -3,11 +3,11 @@
 Generates or checks ``tests/reference/ssc_wp6_a6_2_benchmarks.json``.
 
 Execution modes and per-block coverage:
-- ``--full`` (~50 s on 1 CPU core): recomputes all benchmark blocks from scratch
-  using ``EntropySolver`` (temporarily replacing ``EntropySolver._solve_cvode`` with an
-  unbounded-step wrapper ``max_step = np.inf`` to integrate to the multi-Gyr steady
-  states without hitting the 100 yr phase-boundary step cap; this override is removed
-  once the step-cap fix lands on ``main``):
+- ``--full`` (~50 s on 1 CPU core): recomputes the steady-state trajectories, snapshots,
+  conduction floors, and OLS fits using ``EntropySolver`` (temporarily replacing
+  ``EntropySolver._solve_cvode`` with an unbounded-step wrapper ``max_step = np.inf`` to
+  integrate to the multi-Gyr steady states without hitting the 100 yr phase-boundary
+  step cap; this override is removed once the step-cap fix lands on ``main``):
   1. ``metadata.fixed_parameters`` (~0.01 s): derives the analytical and discrete
      ``N = 100`` staggered-grid pure-conduction Nusselt floors (parabola peak ``2.0``,
      analytical Korenaga ``1 + sqrt(6)/2 = 2.224745``, planar ``N = 100`` ``2.227638``,
@@ -17,10 +17,10 @@ Execution modes and per-block coverage:
      steady state in 8-chunk doublings (``t_end`` up to ``320 Gyr``) and extracts the
      12 steady-state result rows and 5 full steady-state profile snapshots
      (``case_01``, ``case_03``, ``case_06``, ``case_07``, ``case_12``).
-  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and
-     ``realized_state_fits`` (~0.01 s): computes the ordinary least-squares multilinear
-     and 1-D sweep power-law fits on both design parameters ``(Ra_i, theta)`` and
-     realized steady-state parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
+  3. ``primary_fit_all_12_nu_korenaga`` and ``realized_state_fits`` (~0.01 s): computes
+     the ordinary least-squares multilinear and 1-D sweep power-law fits on both design
+     parameters ``(Ra_i, theta)`` and realized steady-state parameters
+     ``(Ra_i_realized_kor, theta_realized_kor)``.
 - ``--check`` (~0.25 s on 1 CPU core): verifies expected schema keys and the no-table
   constant-property record (``eos_tables``), and recomputes a stated fast live subset
   across every block:
@@ -32,9 +32,9 @@ Execution modes and per-block coverage:
      ``case_12``), verifying ``max_abs_rhs_J_kg_K_yr <= 1e-9`` and agreement of
      ``rhs_final``, ``F_top_W_m2``, ``jconv_max_W_m2``, ``T_i_korenaga_K``,
      ``Nu_korenaga``, and ``_lid_state`` observables within ``1e-11``.
-  3. ``primary_fit_all_12_nu_korenaga``, ``diagnostic_fits``, and
-     ``realized_state_fits``: recomputes all design-parameter and realized-state OLS
-     fits from ``cases_results`` and verifies agreement within ``1e-12``.
+  3. ``primary_fit_all_12_nu_korenaga`` and ``realized_state_fits``: recomputes the
+     design-parameter and realized-state OLS fits from ``cases_results`` and verifies
+     agreement within ``1e-12``.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ import argparse
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -87,11 +86,37 @@ EXPECTED_TOP_KEYS = (
 )
 EXPECTED_META_KEYS = (
     'git_commit',
-    'branch',
     'eos_tables',
     'rheology_calibration',
     'acceptance_window',
     'fixed_parameters',
+)
+EXPECTED_SPEC_KEYS = (
+    'case_id',
+    'case_num',
+    'name',
+    'sweep',
+    'target_Ra_i',
+    'target_theta',
+    'E_activation_J_per_mol',
+    'eta_i_Pa_s',
+    'H_W_per_kg',
+    'Nu_estimated',
+    'T_surf_K',
+    'T_i_nominal_K',
+    'delta_T_nominal_K',
+    'D_m',
+    'R_out_m',
+    'R_in_m',
+    'rho_kg_per_m3',
+    'g_m_per_s2',
+    'alpha_thermal_per_K',
+    'k_thermal_W_per_m_K',
+    'cp_J_per_kg_K',
+    'kappa_m2_per_s',
+    'cp_scale_F',
+    'inner_boundary_condition',
+    'outer_boundary_condition',
 )
 EXPECTED_DIAG_FIT_KEYS = (
     'all_12_cases_nu_flux_kor',
@@ -117,13 +142,22 @@ def korenaga_ti_fixed_point(
     ti = float(t_s_arr.max())
     for _ in range(100):
         dl = (ti - t_surf) / dth
-        zz = np.concatenate([[dl], z_s[z_s > dl]])
+        z_above = z_s[z_s > dl]
+        if z_above.size == 0:
+            raise RuntimeError(
+                'Korenaga fixed-point iteration did not converge: lid exceeds domain'
+            )
+        zz = np.concatenate([[dl], z_above])
+        if zz[-1] <= dl:
+            raise RuntimeError(
+                'Korenaga fixed-point iteration did not converge: zero sub-lid span'
+            )
         tt = np.interp(zz, z_s, t_s_arr)
         ti_new = float(np.trapezoid(tt, zz) / (zz[-1] - dl))
         if abs(ti_new - ti) < 1.0e-9:
-            break
+            return ti_new
         ti = ti_new
-    return ti
+    raise RuntimeError('Korenaga fixed-point iteration did not converge within 100 steps')
 
 
 def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
@@ -418,7 +452,6 @@ def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[s
 
     estate_mod.EntropyState.update = _half_cell_update
     es_mod.EntropySolver._solve_cvode = _unbounded_cvode
-    t0 = time.perf_counter()
     try:
         chunks = 8
         for t_end in (4.0e10, 8.0e10, 1.6e11, 3.2e11):
@@ -451,7 +484,6 @@ def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[s
         else:
             raise RuntimeError(f'Case {cid} did not converge by t_end={t_end:.2e} yr')
 
-        wall_s = time.perf_counter() - t0
         s_final = np.asarray(solver._S0, dtype=float).copy()
         rhs_final = np.asarray(solver._dSdt_single(float(t_end), s_final), dtype=float)
         lid = solver.state._lid_state
@@ -504,7 +536,6 @@ def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[s
             'abs_dTi_last_K': float(abs(hist[-1][1] - hist[-2][1])),
             't_end_yr': float(t_end),
             'status': int(st.status),
-            'wall_time_s': wall_s,
         }
         snap = {
             'case_id': cid,
@@ -532,6 +563,69 @@ def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[s
     finally:
         estate_mod.EntropyState.update = orig_update
         es_mod.EntropySolver._solve_cvode = orig_cvode
+
+
+def compute_primary_fit_all_12_nu_korenaga(
+    cases: list[dict[str, Any]],
+    win: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compute design-parameter multilinear and 1-D sweep OLS fits on ``Nu_korenaga``."""
+    ra_des = np.array([float(c['Ra_i']) for c in cases])
+    th_des = np.array([float(c['theta']) for c in cases])
+    nu_kor = np.array([float(c['Nu_korenaga']) for c in cases])
+    mask_ra = np.array([c['sweep'] == 'Ra_i' for c in cases])
+    mask_th = np.array([c['sweep'] == 'theta' for c in cases])
+
+    ml_raw = _ols([-np.log(th_des), np.log(ra_des)], np.log(nu_kor))
+    x_mat = np.column_stack([np.ones(len(cases)), -np.log(th_des), np.log(ra_des)])
+    coeffs = np.array([ml_raw['ln_a'], ml_raw['alpha'], ml_raw['beta']], dtype=float)
+    residuals = (np.log(nu_kor) - x_mat @ coeffs).tolist()
+
+    b_raw = _ols([np.log(ra_des[mask_ra])], np.log(nu_kor[mask_ra]))
+    a_raw = _ols([-np.log(th_des[mask_th])], np.log(nu_kor[mask_th]))
+
+    b_min = float(win['beta_min']) if isinstance(win, dict) and 'beta_min' in win else 0.294
+    b_max = float(win['beta_max']) if isinstance(win, dict) and 'beta_max' in win else 0.350
+    a_min = float(win['alpha_min']) if isinstance(win, dict) and 'alpha_min' in win else 1.294
+    a_max = float(win['alpha_max']) if isinstance(win, dict) and 'alpha_max' in win else 1.350
+
+    b_in = bool(b_min <= ml_raw['beta'] <= b_max)
+    a_in = bool(a_min <= ml_raw['alpha'] <= a_max)
+    bs_in = bool(b_min <= b_raw['slope'] <= b_max)
+    as_in = bool(a_min <= a_raw['slope'] <= a_max)
+    all_in = bool(b_in and a_in)
+    return {
+        'multilinear': {
+            'a': ml_raw['a'],
+            'ln_a': ml_raw['ln_a'],
+            'alpha': ml_raw['alpha'],
+            'beta': ml_raw['beta'],
+            'r_squared': ml_raw['r_squared'],
+            'std_err_alpha': ml_raw['std_err_alpha'],
+            'std_err_beta': ml_raw['std_err_beta'],
+            'std_err_ln_a': ml_raw['std_err_ln_a'],
+            'residuals': residuals,
+        },
+        'beta_sweep': {
+            'slope': b_raw['slope'],
+            'intercept': b_raw['intercept_log10'],
+            'r_squared': b_raw['r_squared'],
+            'std_err_slope': b_raw['std_err_slope'],
+        },
+        'alpha_sweep': {
+            'slope': a_raw['slope'],
+            'intercept': a_raw['intercept_log10'],
+            'r_squared': a_raw['r_squared'],
+            'std_err_slope': a_raw['std_err_slope'],
+        },
+        'beta_in_window': b_in,
+        'alpha_in_window': a_in,
+        'all_in_window': all_in,
+        'beta_sweep_in_window': bs_in,
+        'alpha_sweep_in_window': as_in,
+        'all_sweep_in_window': bool(bs_in and as_in),
+        'verdict': 'PASS' if all_in else 'FAIL',
+    }
 
 
 def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -585,6 +679,14 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             f"metadata['eos_tables'] {meta.get('eos_tables')!r} != {NO_TABLE_RECORD!r}"
         )
 
+    specs_list = data.get('cases_spec', [])
+    if not isinstance(specs_list, list) or len(specs_list) != 12:
+        failures.append('cases_spec must be a 12-element list')
+    elif any(
+        not isinstance(s, dict) or tuple(s.keys()) != EXPECTED_SPEC_KEYS for s in specs_list
+    ):
+        failures.append(f'cases_spec entry keys != {EXPECTED_SPEC_KEYS}')
+
     diag = data.get('diagnostic_fits', {})
     if not isinstance(diag, dict) or tuple(diag.keys()) != EXPECTED_DIAG_FIT_KEYS:
         failures.append(f'diagnostic_fits keys != {EXPECTED_DIAG_FIT_KEYS}')
@@ -634,18 +736,34 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             failures.append(
                 f'{cid} live max_abs_rhs {live_obs["max_abs_rhs_J_kg_K_yr"]:.3e} > {STEADY_RESIDUAL_BOUND}'
             )
-        for key in ('F_top_W_m2', 'T_i_korenaga_K', 'Nu_korenaga'):
-            if abs(live_obs[key] - float(snap[key])) / abs(float(snap[key])) > 1.0e-11:
+        rhs_diff = float(
+            np.max(np.abs(live_obs['rhs_final'] - np.asarray(snap['rhs_final'], dtype=float)))
+        )
+        if rhs_diff > 1.0e-13:
+            failures.append(f'{cid} snapshot rhs_final live mismatch: {rhs_diff:.3e}')
+        for key in (
+            'F_top_W_m2',
+            'jconv_max_W_m2',
+            'T_i_korenaga_K',
+            'Nu_korenaga',
+            'lid_state_T_i_K',
+            'lid_state_theta',
+            'lid_state_d_lid_m',
+        ):
+            if (
+                abs(live_obs[key] - float(snap[key])) / max(abs(float(snap[key])), 1.0e-30)
+                > 1.0e-11
+            ):
                 failures.append(f'{cid} snapshot {key} live mismatch')
+        for key in ('F_top_W_m2', 'T_i_korenaga_K', 'Nu_korenaga'):
             if abs(live_obs[key] - float(row[key])) / abs(float(row[key])) > 1.0e-11:
                 failures.append(f'{cid} cases_results {key} live mismatch')
 
     # 3. Block 3 live check: design-parameter and realized-state OLS fits
     cases = data['cases_results']
-    ra_des = np.array([float(c['Ra_i']) for c in cases])
-    th_des = np.array([float(c['theta']) for c in cases])
-    nu_kor = np.array([float(c['Nu_korenaga']) for c in cases])
-    ml_des = _ols([-np.log(th_des), np.log(ra_des)], np.log(nu_kor))
+    ml_des = compute_primary_fit_all_12_nu_korenaga(cases, meta.get('acceptance_window'))[
+        'multilinear'
+    ]
     ml_stored = data['primary_fit_all_12_nu_korenaga']['multilinear']
     for k_fit in ('alpha', 'beta', 'r_squared'):
         if abs(ml_des[k_fit] - float(ml_stored[k_fit])) > 1.0e-12:
@@ -700,6 +818,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     data = json.loads(output_path.read_text(encoding='utf-8'))
+    if isinstance(data.get('cases_spec'), list):
+        data['cases_spec'] = [
+            {k: s[k] for k in EXPECTED_SPEC_KEYS if k in s}
+            for s in data['cases_spec']
+            if isinstance(s, dict)
+        ]
     if args.full:
         new_rows = []
         new_snaps: dict[str, Any] = {}
@@ -734,14 +858,17 @@ def main(argv: list[str] | None = None) -> int:
         'Nu_korenaga_conduction_floor_spherical_N100'
     ]
     fp['steady_residual_bound_J_kg_K_yr'] = STEADY_RESIDUAL_BOUND
+    acc_win = raw_meta.get('acceptance_window', {})
     data['metadata'] = {
         'git_commit': head_sha,
-        'branch': raw_meta.get('branch', 'tl/ssc-wp2-verification'),
         'eos_tables': NO_TABLE_RECORD,
         'rheology_calibration': raw_meta.get('rheology_calibration', {}),
-        'acceptance_window': raw_meta.get('acceptance_window', {}),
+        'acceptance_window': acc_win,
         'fixed_parameters': fp,
     }
+    data['primary_fit_all_12_nu_korenaga'] = compute_primary_fit_all_12_nu_korenaga(
+        data['cases_results'], acc_win
+    )
     data['realized_state_fits'] = compute_realized_state_fits(data['cases_results'])
 
     failures = verify_benchmarks(data)

@@ -2563,7 +2563,7 @@
     },
     "abe_solid_default": {
       "case_name": "abe_solid_default",
-      "rationale": "Default solid state set under zero-anchored kappah_floor (Closure Item 3): s_init=2900 J/kg/K, kappah_floor=10 m^2/s, viscosity_solid=1e21 Pa s. In the solid (phi=0), kappah_floor is zeroed with rheology enabled while retained with rheology disabled, producing an on-vs-off relative RHS shift of 8.1e-5 to 1.27e-3 across all 100 cooling states.",
+      "rationale": "Default solid state set under zero-anchored kappah_floor: s_init=2900 J/kg/K, kappah_floor=10 m^2/s, viscosity_solid=1e21 Pa s. In the solid (phi=0), kappah_floor is zeroed with rheology enabled while retained with rheology disabled, producing an on-vs-off relative RHS shift of 8.1e-5 to 1.27e-3 across all 100 cooling states.",
       "n_states": 100,
       "s_init": 2900.0,
       "s_bot_span": 650.0,

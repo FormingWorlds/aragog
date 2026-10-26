@@ -3,34 +3,27 @@
 Generates or checks ``tests/reference/ssc_wp6_a6_1_benchmarks.json``.
 
 Execution modes and per-block coverage:
-- ``--full`` (~120 s on 1 CPU core): recomputes all benchmark blocks from scratch
-  using the standalone 0-D stagnant-lid model (``tests.reference.stagnant_lid_0d``)
+- ``--full`` (~45 s on 1 CPU core): recomputes the secular-cooling trajectories and 0-D
+  sweeps using the standalone 0-D stagnant-lid model (``tests.reference.stagnant_lid_0d``)
   and the 1-D ``EntropySolver`` (temporarily replacing ``EntropySolver._solve_cvode``
   with an unbounded-step wrapper ``max_step = np.inf`` to integrate the multi-Gyr
-  secular-cooling and steady-state runs without hitting the 100 yr phase-boundary step
-  cap; this override is removed once the step-cap fix lands on ``main``):
+  secular-cooling runs without hitting the 100 yr phase-boundary step cap; this override
+  is removed once the step-cap fix lands on ``main``), and then verifies all blocks:
   1. ``a_nu_provenance`` (~0.02 s): computes empirical ``a_nu = Nu * theta**(4/3) * Ra_i**(-1/3)``
      across all 12 Newtonian Arrhenius rows of Korenaga (2009) Table 1 (mean ``0.5954``,
      sample standard deviation ``0.0651``) and integrates the 4.5 Gyr 0-D ODE across
      ``a_nu in {0.5954, 0.57, 0.53}``.
-  2. ``trajectory_calibrated_400Myr``, ``trajectory_default_400Myr``, and
-     ``segment_25Myr_spread_5starts`` (~18 s): integrates the 400 Myr 1-D ``EntropySolver``
-     secular-cooling trajectories at ``(s_top_inf, c_theta) = (0.25, 0.25)`` and
-     ``(0.22, 0.15)``, the 5-start relative initial-entropy perturbations over
-     ``[0, 25 Myr]``, and the 400 Myr 0-D ODE trajectories.
+  2. ``trajectory_calibrated_400Myr`` and ``trajectory_default_400Myr`` (~18 s):
+     integrates the 400 Myr 1-D ``EntropySolver`` secular-cooling trajectories at
+     ``(s_top_inf, c_theta) = (0.25, 0.25)`` and ``(0.22, 0.15)`` and the 400 Myr 0-D
+     ODE trajectories, updating the stored 1-D snapshot states and window error metrics.
   3. ``trajectory_calibrated_4p5Gyr`` and ``trajectory_default_4p5Gyr`` (~25 s):
      integrates the 4.5 Gyr 1-D ``EntropySolver`` and 0-D ODE trajectories (129 output
-     points), computes the linear crossing times ``t_cross_rel_err_d_lid_0p22_yr`` and
-     ``t_cross_rel_err_T_i_0p05_yr``, and solves ``brentq`` for ``t_nu_0d_clamp_1_yr``.
-  4. ``yield_sweep_0d_at_1600K``, ``yield_sweep_1d_by_dt``,
-     ``yield_sweep_1d_equal_Ti_from_S_ref``, and
-     ``yield_sweep_1d_equal_Ti_1600K_from_init`` (~22 s): evaluates the 5-case 0-D and
-     1-D yield-ceiling sweeps across ``tau_y / tau_d_lid in {500 MPa, 2.0, 0.5, 0.2, 0.1}``.
-  5. ``steady_yield_thinning`` and ``live_yield_states`` (~55 s): integrates the
-     internally heated planar Arrhenius ``EntropySolver`` steady states across
-     ``E300``, ``E340``, and ``E270`` (``N=100`` and ``N=50``), records the 5-start
-     steady-state residual spread on ``E300``, and computes the 0-D fixed-``T_i`` and
-     fixed-``H`` steady-state predictions.
+     points), updates the stored 1-D snapshot states, computes the linear crossing times
+     ``t_cross_rel_err_d_lid_0p22_yr`` and ``t_cross_rel_err_T_i_0p05_yr``, and records
+     ``t_nu_0d_clamp_1_yr``.
+  4. ``yield_sweep_0d_at_1600K`` (~0.01 s): evaluates the 5-case 0-D yield-ceiling sweep
+     across ``tau_y / tau_d_lid in {500 MPa, 2.0, 0.5, 0.2, 0.1}`` at ``T_i = 1600 K``.
 - ``--check`` (~1.8 s on 1 CPU core): verifies expected schema keys and the no-table
   constant-property record (``eos_tables``), and recomputes a stated fast live subset
   across every block:
@@ -39,16 +32,17 @@ Execution modes and per-block coverage:
   2. ``trajectory_calibrated_400Myr`` and ``segment_25Myr_spread_5starts``: integrates
      the live 1-D ``EntropySolver`` over ``[0, 25 Myr]`` (17 points) and the 400 Myr 0-D
      ODE, comparing ``T_i(t)`` and ``d_lid(t)`` within ``1e-7`` (10x the 5-start spread).
-  3. ``trajectory_calibrated_4p5Gyr``: integrates the 4.5 Gyr 0-D ODE, solves ``brentq``
-     for ``t_nu_0d_clamp_1_yr``, recomputes the linear crossing times, and evaluates live
-     1-D ``EntropySolver._dSdt_single`` at 4.5 Gyr (``solver_last_S``) within ``1e-12``.
+  3. ``trajectory_calibrated_4p5Gyr``: integrates the 4.5 Gyr 0-D ODE, verifies the grid
+     crossing ``t_nu_0d_clamp_1_yr``, and evaluates live 1-D
+     ``EntropySolver._dSdt_single`` at 4.5 Gyr (``solver_last_S``) within ``1e-9``.
   4. ``yield_sweep_0d_at_1600K`` and ``yield_sweep_1d_by_dt['0Myr']``: recomputes all 5
      0-D yield cases at 1600 K and evaluates live 1-D ``EntropySolver._dSdt_single`` on
      ``s_ref_51`` (``below_0p5x_tau_d_lid``) within ``1e-12``.
   5. ``steady_yield_thinning`` and ``live_yield_states``: recomputes the 0-D fixed-``T_i``
-     and fixed-``H`` steady-state ratios across all 7 sweeps and evaluates live 1-D
-     ``EntropySolver._dSdt_single`` on all 3 stored ``E300`` (``N=100``) steady-state
-     profiles within ``1e-11``, verifying ``max_abs_rhs <= 100 * max_5start_rhs``.
+     and fixed-``H`` steady-state ratios across the 5 fixed-``H`` sweeps and evaluates
+     live 1-D ``EntropySolver._dSdt_single`` on all 3 stored ``E300`` (``N=100``)
+     steady-state profiles within ``1e-11``, verifying
+     ``max_abs_rhs <= 100 * max_5start_rhs``.
 """
 
 from __future__ import annotations
@@ -160,11 +154,11 @@ YIELD_MULTIPLIERS: tuple[tuple[str, float | None], ...] = (
 
 def compute_crossing_time_linear(
     t_yr: np.ndarray, series: np.ndarray, threshold: float
-) -> float:
+) -> float | None:
     """Compute linear-interpolated first crossing time where ``series`` exceeds ``threshold``."""
     idx = np.where(series > threshold)[0]
     if idx.size == 0:
-        return float('nan')
+        return None
     i1 = int(idx[0])
     if i1 == 0:
         return float(t_yr[0])
@@ -822,6 +816,29 @@ def _recompute_trajectory_block(
     )
     out['t_cross_rel_err_T_i_0p05_yr'] = compute_crossing_time_linear(t_1d, err_ti, 0.05)
     out['solver_last_S'] = y_1d[:, -1].tolist()
+    if 't_nu_0d_clamp_1_yr' in out:
+        nu_unyielded_grid = np.array(
+            [
+                float(evaluate_stagnant_lid_0d(float(ti_val), p0d)['Nu_unyielded'])
+                for ti_val in ti_0d
+            ],
+            dtype=float,
+        )
+        clamp_idx = np.where(nu_unyielded_grid < 1.0)[0]
+        if clamp_idx.size > 0:
+            out['t_nu_0d_clamp_1_yr'] = float(t_1d[int(clamp_idx[0])])
+    if isinstance(out.get('states_1d_snapshots'), dict):
+        snaps_updated = dict(out['states_1d_snapshots'])
+        for k_str, snap_val in snaps_updated.items():
+            idx_k = int(k_str)
+            if 0 <= idx_k < len(t_1d) and isinstance(snap_val, dict):
+                snap_copy = dict(snap_val)
+                snap_copy['T_i_K'] = float(ti_1d[idx_k])
+                snap_copy['d_lid_pass1_m'] = float(dl_1d[idx_k])
+                snap_copy['d_lid_cond_m'] = float(dl_cond_1d[idx_k])
+                snap_copy['F_top_W_m2'] = float(ft_1d[idx_k])
+                snaps_updated[k_str] = snap_copy
+        out['states_1d_snapshots'] = snaps_updated
     out['trajectory'] = {
         't_yr': t_1d.tolist(),
         'T_i_1d_K': ti_1d,

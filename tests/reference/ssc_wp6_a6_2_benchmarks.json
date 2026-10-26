@@ -1,7 +1,6 @@
 {
   "metadata": {
-    "git_commit": "f343d7bfb7a2b4f9fe9960c52375cc825a88e904",
-    "branch": "tl/ssc-wp2-verification",
+    "git_commit": "06846a9844568933e170ba562e1f935089fe4e01",
     "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)",
     "rheology_calibration": {
       "enabled": true,
@@ -68,8 +67,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_01.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_02",
@@ -96,8 +94,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_02.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_03",
@@ -124,8 +121,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_03.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_04",
@@ -152,8 +148,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_04.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_05",
@@ -180,8 +175,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_05.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_06",
@@ -208,8 +202,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_06.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_07",
@@ -236,8 +229,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_07.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_08",
@@ -264,8 +256,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_08.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_09",
@@ -292,8 +283,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_09.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_10",
@@ -320,8 +310,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_10.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_11",
@@ -348,8 +337,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_11.toml"
+      "outer_boundary_condition": 5
     },
     {
       "case_id": "case_12",
@@ -376,8 +364,7 @@
       "kappa_m2_per_s": 1e-06,
       "cp_scale_F": 100.0,
       "inner_boundary_condition": 2,
-      "outer_boundary_condition": 5,
-      "config_file": "cfg_v2/a6_2/case_12.toml"
+      "outer_boundary_condition": 5
     }
   ],
   "cases_results": [
@@ -792,16 +779,16 @@
       ]
     },
     "beta_sweep": {
-      "slope": 0.27846707421182404,
+      "slope": 0.278467074211824,
       "intercept": -3.169946319632335,
-      "r_squared": 0.9849055592757606,
-      "std_err_slope": 0.01723673778237447
+      "r_squared": 0.9849055592757607,
+      "std_err_slope": 0.017236737782374483
     },
     "alpha_sweep": {
-      "slope": 1.0108926163649687,
-      "intercept": 4.003078180484225,
-      "r_squared": 0.9864871504760144,
-      "std_err_slope": 0.059156542457968614
+      "slope": 1.0108926163649703,
+      "intercept": 4.003078180484231,
+      "r_squared": 0.9864871504760145,
+      "std_err_slope": 0.0591565424579688
     },
     "beta_in_window": false,
     "alpha_in_window": false,

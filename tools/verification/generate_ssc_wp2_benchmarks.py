@@ -4,26 +4,18 @@ Generates or checks the validation benchmarks in
 ``tests/reference/ssc_wp2_validation_benchmarks.json``.
 
 Execution modes and per-block coverage:
-- ``--full`` (~180 s on 1 CPU core): recomputes all three benchmark blocks from
-  scratch using ``EntropySolver`` and the JAX right-hand side kernels:
-  1. ``a2_2_rhs_parity_and_activity`` (~35 s): evaluates 100 boundary-layer cooling
-     states and an integrated trajectory across ``abe_solid_kappah_floor_0``,
-     ``abe_solid_yield_active``, and ``abe_solid_default``, plus the single-state
-     interior-flux versus right-hand side diagnostic ``flux_vs_rhs_diagnostic``.
-  2. ``a2_4_rhs_wall_time`` (~5 s): instruments NumPy and JAX right-hand side
-     kernels to count per-evaluation function calls across ``off``, ``on_lid``, and
-     ``on_local`` modes and times 1000 right-hand side evaluations per backend.
-  3. ``a2_3_perturbed_starts`` (~140 s): integrates 5 relative initial-entropy
-     perturbations ``eps in [-2e-12, -1e-12, 0, 1e-12, 2e-12]`` for rheology off
-     and on across ``abe_solid_default`` and ``abe_solid_kappah_floor_0``.
-- ``--a2-2-only`` (~35 s): recomputes ``a2_2_rhs_parity_and_activity`` and updates
-  the JSON in place.
-- ``--a2-4-only`` (~5 s): recomputes ``a2_4_rhs_wall_time`` and updates the JSON
-  in place.
+- ``--full`` or ``--a2-4-only`` (~5 s on 1 CPU core; requires ``--eos-dir`` or
+  ``ARAGOG_TEST_EOS_DIR`` and exits 1 if no valid EOS table directory is provided):
+  recomputes ``canary.table_md5`` for all 12 read SPIDER P-S table files, updates
+  ``canary.aragog_commit``, and recomputes ``a2_4_rhs_wall_time`` in place by
+  instrumenting NumPy and JAX right-hand side kernels to count per-evaluation function
+  calls across ``off``, ``on_lid``, and ``on_local`` modes and timing 1000 right-hand
+  side evaluations per backend.
 - ``--check`` (~2 s; requires ``--eos-dir`` or ``ARAGOG_TEST_EOS_DIR`` and exits 1
   if no valid EOS table directory is provided): verifies expected schema keys,
   canary MD5 hashes for all 12 read SPIDER P-S table files, and stored numerical
-  bounds, and recomputes a fast live subset:
+  bounds across ``a2_2_rhs_parity_and_activity``, ``a2_4_rhs_wall_time``, and
+  ``a2_3_perturbed_starts``, and recomputes a fast live subset:
   1. ``a2_2_rhs_parity_and_activity``: recomputes state 0 of
      ``abe_solid_kappah_floor_0`` in NumPy and JAX and verifies that the live
      relative right-hand side difference matches the stored element within ``1e-6``
@@ -548,14 +540,18 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
                     f"canary['table_md5'] keys {tuple(expected_hashes.keys()) if isinstance(expected_hashes, dict) else None} != {TABLE_FILES}"
                 )
             else:
-                actual_hashes = compute_table_hashes(eos_dir)
-                for fname, expected_hash in expected_hashes.items():
-                    actual_hash = actual_hashes.get(fname)
-                    if actual_hash != expected_hash:
-                        failures.append(
-                            f'Table hash mismatch for {fname}: '
-                            f'expected {expected_hash}, got {actual_hash}'
-                        )
+                try:
+                    actual_hashes = compute_table_hashes(eos_dir)
+                except FileNotFoundError as exc:
+                    failures.append(str(exc))
+                else:
+                    for fname, expected_hash in expected_hashes.items():
+                        actual_hash = actual_hashes.get(fname)
+                        if actual_hash != expected_hash:
+                            failures.append(
+                                f'Table hash mismatch for {fname}: '
+                                f'expected {expected_hash}, got {actual_hash}'
+                            )
 
     parity_block = data.get('a2_2_rhs_parity_and_activity')
     if not isinstance(parity_block, dict):
@@ -579,7 +575,7 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
             rel_rhs = suite.get('rel_rhs_numpy_vs_jax_per_state')
             if not isinstance(rel_rhs, list) or len(rel_rhs) != 100:
                 failures.append(f"'{suite_name}' rel_rhs array missing or not length 100")
-            elif suite_name != 'abe_solid_default' and max(rel_rhs) > 1.0e-6:
+            elif max(rel_rhs) > 1.0e-6:
                 failures.append(f"'{suite_name}' max rel_rhs {max(rel_rhs):.3e} exceeds 1.0e-6")
 
         yld = parity_block.get('abe_solid_yield_active', {})
@@ -617,6 +613,17 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
                 failures.append(
                     f'Stored call count deltas NP={actual_np} JAX={actual_jax} != {expected_deltas}'
                 )
+            expected_local_deltas = [0, 1, 1, 0, 1, 2]
+            actual_np_loc = [row.get('measured_numpy_local_delta') for row in table]
+            actual_jax_loc = [row.get('measured_jax_local_delta') for row in table]
+            if (
+                actual_np_loc != expected_local_deltas
+                or actual_jax_loc != expected_local_deltas
+            ):
+                failures.append(
+                    f'Stored local call count deltas NP={actual_np_loc} '
+                    f'JAX={actual_jax_loc} != {expected_local_deltas}'
+                )
 
     starts_block = data.get('a2_3_perturbed_starts')
     if not isinstance(starts_block, dict):
@@ -625,6 +632,9 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
         for req_key in EXPECTED_STARTS_KEYS:
             if req_key not in starts_block:
                 failures.append(f"Missing '{req_key}' in starts block")
+        for suite_key in ('abe_solid_default', 'abe_solid_kappah_floor_0'):
+            if not isinstance(starts_block.get(suite_key), dict):
+                failures.append(f"Invalid or missing '{suite_key}' dictionary in starts block")
         epsilons = starts_block.get('epsilons')
         expected_eps = [-2.0e-12, -1.0e-12, 0.0, 1.0e-12, 2.0e-12]
         if epsilons != expected_eps:
@@ -650,7 +660,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--full', action='store_true')
-    parser.add_argument('--a2-2-only', action='store_true')
     parser.add_argument('--a2-4-only', action='store_true')
     return parser.parse_args(argv)
 
@@ -679,20 +688,22 @@ def main(argv: list[str] | None = None) -> int:
     if not output_path.is_file():
         sys.stderr.write(f'Baseline benchmark file not found: {output_path}\n')
         return 1
+    if not has_eos_dir:
+        sys.stderr.write(
+            'Missing or invalid EOS table directory (--eos-dir or ARAGOG_TEST_EOS_DIR)\n'
+        )
+        return 1
 
     data = json.loads(output_path.read_text(encoding='utf-8'))
-    if has_eos_dir:
-        table_hashes = compute_table_hashes(args.eos_dir)
-        data.setdefault('canary', {})['table_md5'] = table_hashes
-        if args.a2_4_only or args.full:
-            from tests.conftest import entropy_eos_copy, entropy_eos_jax
+    table_hashes = compute_table_hashes(args.eos_dir)
+    data.setdefault('canary', {})['table_md5'] = table_hashes
+    if args.a2_4_only or args.full:
+        from tests.conftest import entropy_eos_copy, entropy_eos_jax
 
-            cfg_path = Path(
-                str(importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml'))
-            )
-            data['a2_4_rhs_wall_time'] = run_a2_4_rhs_benchmarks(
-                cfg_path, entropy_eos_copy(args.eos_dir), entropy_eos_jax(args.eos_dir)
-            )
+        cfg_path = Path(str(importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')))
+        data['a2_4_rhs_wall_time'] = run_a2_4_rhs_benchmarks(
+            cfg_path, entropy_eos_copy(args.eos_dir), entropy_eos_jax(args.eos_dir)
+        )
     try:
         head_sha = subprocess.check_output(
             ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
