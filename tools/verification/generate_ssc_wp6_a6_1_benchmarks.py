@@ -2,6 +2,19 @@
 
 Generates or checks ``tests/reference/ssc_wp6_a6_1_benchmarks.json``.
 
+Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
+- The shipped ``EntropyState`` (``src/aragog/solver/entropy_state.py``) ignores
+  ``outer_boundary_condition = 5`` today: ``_BoundaryConditions.apply_entropy_boundary_conditions``
+  has no ``outer == 5`` branch, leaving ``_entropy_basic[-1] = _entropy_staggered[-1]`` and
+  ``dS/dr[-1] = 0`` at the surface node (only ``outer == 4`` overrides ``_heat_flux[-1]``).
+- For steady-state internally heated benchmarks with prescribed surface temperature
+  ``T_surf`` (Korenaga 2009 Table 1 ``E300`` steady states), this tool applies the
+  verification-only context manager ``half_cell_surface_flux``
+  (``tools/verification/_ssc_helpers.py``), which sets the top conductive heat flux to the
+  temperature-solver BC 5 half-cell formula ``F_top = k * (T_cell - T_surf) / (dr / 2)``
+  (whereas the 400 Myr and 4.5 Gyr secular-cooling trajectories use ``outer_boundary_condition = 4``
+  with the 0-D surface heat flux updated between segments).
+
 Execution modes and per-block coverage:
 - ``--full`` (~45 s on 1 CPU core): recomputes the secular-cooling trajectories and 0-D
   sweeps using the standalone 0-D stagnant-lid model (``tests.reference.stagnant_lid_0d``)
@@ -12,7 +25,8 @@ Execution modes and per-block coverage:
   1. ``a_nu_provenance`` (~0.02 s): computes empirical ``a_nu = Nu * theta**(4/3) * Ra_i**(-1/3)``
      across all 12 Newtonian Arrhenius rows of Korenaga (2009) Table 1 (mean ``0.5954``,
      sample standard deviation ``0.0651``) and integrates the 4.5 Gyr 0-D ODE across
-     ``a_nu in {0.5954, 0.57, 0.53}``.
+     ``a_nu in {0.5954, 0.57, 0.53}``, computing each prefactor's own ``Nu_unyielded < 1``
+     grid crossing ``t_nu_clamp_1_yr`` and strict pre-clamp validity window ``t < t_clamp``.
   2. ``trajectory_calibrated_400Myr`` and ``trajectory_default_400Myr`` (~18 s):
      integrates the 400 Myr 1-D ``EntropySolver`` secular-cooling trajectories at
      ``(s_top_inf, c_theta) = (0.25, 0.25)`` and ``(0.22, 0.15)`` and the 400 Myr 0-D
@@ -21,27 +35,41 @@ Execution modes and per-block coverage:
      integrates the 4.5 Gyr 1-D ``EntropySolver`` and 0-D ODE trajectories (129 output
      points), updates the stored 1-D snapshot states, computes the linear crossing times
      ``t_cross_rel_err_d_lid_0p22_yr`` and ``t_cross_rel_err_T_i_0p05_yr``, and records
-     ``t_nu_0d_clamp_1_yr``.
-  4. ``yield_sweep_0d_at_1600K`` (~0.01 s): evaluates the 5-case 0-D yield-ceiling sweep
-     across ``tau_y / tau_d_lid in {500 MPa, 2.0, 0.5, 0.2, 0.1}`` at ``T_i = 1600 K``.
-- ``--check`` (~1.8 s on 1 CPU core): verifies expected schema keys and the no-table
-  constant-property record (``eos_tables``), and recomputes a stated fast live subset
-  across every block:
+     ``t_nu_0d_clamp_1_yr``, ``max_rel_err_T_i_valid_nu_ge_1``, and
+     ``max_rel_err_d_lid_valid_nu_ge_1_post_relax`` on the strict window ``t < t_clamp``.
+  4. ``yield_sweep_0d_at_1600K`` (~0.01 s) and ``acceptance_summary``: evaluates the
+     5-case 0-D yield-ceiling sweep across ``tau_y / tau_d_lid in {500 MPa, 2.0, 0.5, 0.2, 0.1}``
+     at ``T_i = 1600 K`` and updates ``acceptance_summary``.
+  5. Fixed-input 1-D blocks (``steady_yield_thinning``, ``live_yield_states``,
+     ``yield_sweep_reference_state``, ``yield_sweep_1d_by_dt``,
+     ``yield_sweep_1d_equal_Ti_from_S_ref``, ``yield_sweep_1d_equal_Ti_1600K_from_init``,
+     ``segment_25Myr_spread_5starts``): refreshes 0-D fixed-``T_i`` and fixed-``H``
+     steady-state ratios and stamps ``source_git_commit`` and ``eos_tables`` on each
+     fixed-input block.
+- ``--check`` (~1.8 s on 1 CPU core): verifies expected schema keys, the no-table
+  constant-property record (``eos_tables``), and recomputes and compares every stored
+  field across all blocks:
   1. ``a_nu_provenance``: recomputes all 12 Korenaga (2009) Table 1 ``a_nu`` values,
-     mean, standard deviation, and all three 4.5 Gyr 0-D ODE trajectories within ``1e-12``.
-  2. ``trajectory_calibrated_400Myr`` and ``segment_25Myr_spread_5starts``: integrates
-     the live 1-D ``EntropySolver`` over ``[0, 25 Myr]`` (17 points) and the 400 Myr 0-D
-     ODE, comparing ``T_i(t)`` and ``d_lid(t)`` within ``1e-7`` (10x the 5-start spread).
-  3. ``trajectory_calibrated_4p5Gyr``: integrates the 4.5 Gyr 0-D ODE, verifies the grid
-     crossing ``t_nu_0d_clamp_1_yr``, and evaluates live 1-D
-     ``EntropySolver._dSdt_single`` at 4.5 Gyr (``solver_last_S``) within ``1e-9``.
-  4. ``yield_sweep_0d_at_1600K`` and ``yield_sweep_1d_by_dt['0Myr']``: recomputes all 5
-     0-D yield cases at 1600 K and evaluates live 1-D ``EntropySolver._dSdt_single`` on
-     ``s_ref_51`` (``below_0p5x_tau_d_lid``) within ``1e-12``.
-  5. ``steady_yield_thinning`` and ``live_yield_states``: recomputes the 0-D fixed-``T_i``
-     and fixed-``H`` steady-state ratios across the 5 fixed-``H`` sweeps and evaluates
-     live 1-D ``EntropySolver._dSdt_single`` on all 3 stored ``E300`` (``N=100``)
-     steady-state profiles within ``1e-11``, verifying
+     mean, standard deviation, and all three 4.5 Gyr 0-D ODE trajectories and per-prefactor
+     ``t_nu_clamp_1_yr`` and pre-clamp window metrics within ``1e-12``.
+  2. ``trajectory_calibrated_400Myr``, ``trajectory_default_400Myr``,
+     ``trajectory_calibrated_4p5Gyr``, ``trajectory_default_4p5Gyr``,
+     ``segment_25Myr_spread_5starts``, and ``acceptance_summary``: recomputes all four
+     0-D ODE trajectories, all error series, all window maxima, all linear crossing
+     times, all snapshot entries, and ``acceptance_summary`` within ``1e-12``, integrates
+     the live 1-D ``EntropySolver`` over ``[0, 25 Myr]`` (17 points) within ``1e-7``, and
+     evaluates live 1-D ``EntropySolver._dSdt_single`` on all four ``solver_last_S``
+     endpoint profiles within ``1e-9``.
+  3. ``yield_sweep_0d_at_1600K``, ``yield_sweep_reference_state``,
+     ``yield_sweep_1d_by_dt``, ``yield_sweep_1d_equal_Ti_from_S_ref``, and
+     ``yield_sweep_1d_equal_Ti_1600K_from_init``: recomputes all 5 0-D yield cases at
+     1600 K, verifies all 1-D thinning ratios across all horizons within ``1e-12``, and
+     evaluates live 1-D ``EntropySolver._dSdt_single`` on ``s_ref_51`` across all 5 cases
+     of ``0Myr`` within ``1e-11``.
+  4. ``steady_yield_thinning`` and ``live_yield_states``: recomputes the 0-D fixed-``T_i``
+     and fixed-``H`` steady-state ratios and relative errors across all 7 steady-state
+     sweeps within ``1e-11`` and evaluates live 1-D ``EntropySolver._dSdt_single`` on all
+     3 stored ``E300`` (``N=100``) steady-state profiles within ``1e-11``, verifying
      ``max_abs_rhs <= 100 * max_5start_rhs``.
 """
 
@@ -74,20 +102,23 @@ from aragog.parser import (  # noqa: E402
     _SolverParameters,
 )
 from aragog.rheology import R_GAS, SolidRheologyParams  # noqa: E402
-from aragog.solver import entropy_solver as es_mod  # noqa: E402
-from aragog.solver import entropy_state as estate_mod  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tests.reference.stagnant_lid_0d import (  # noqa: E402
     evaluate_stagnant_lid_0d,
     integrate_stagnant_lid_0d,
     load_aragog_0d_params,
 )
+from tools.verification._ssc_helpers import (  # noqa: E402
+    half_cell_surface_flux,
+    unbounded_cvode_step,
+)
+
+SECS_PER_YR = 31557600.0
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_wp6_a6_1_benchmarks.json'
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
 )
-SECS_PER_YR = 31557600.0
 
 EXPECTED_TOP_KEYS = (
     'metadata',
@@ -117,7 +148,10 @@ EXPECTED_STEADY_KEYS = (
     'e340_n100_matched_ti',
     'e300_n100_five_start_spread',
 )
-EXPECTED_LIVE_YIELD_KEYS = ('e300_n100_steady_vectors', 's_ref_51')
+EXPECTED_LIVE_YIELD_KEYS = (
+    'e300_n100_steady_vectors',
+    's_ref_51',
+)
 EXPECTED_PROVENANCE_KEYS = (
     'a_nu_value',
     'a_nu_std',
@@ -126,6 +160,15 @@ EXPECTED_PROVENANCE_KEYS = (
     'korenaga_2009_table1_rows',
     'prefactor_comparisons_4p5Gyr',
     'citation',
+)
+FIXED_INPUT_1D_BLOCKS = (
+    'yield_sweep_reference_state',
+    'yield_sweep_1d_by_dt',
+    'yield_sweep_1d_equal_Ti_from_S_ref',
+    'yield_sweep_1d_equal_Ti_1600K_from_init',
+    'steady_yield_thinning',
+    'segment_25Myr_spread_5starts',
+    'live_yield_states',
 )
 
 KORENAGA_TABLE1_ROWS: tuple[tuple[str, float, float, float, float, float], ...] = (
@@ -155,13 +198,13 @@ YIELD_MULTIPLIERS: tuple[tuple[str, float | None], ...] = (
 def compute_crossing_time_linear(
     t_yr: np.ndarray, series: np.ndarray, threshold: float
 ) -> float | None:
-    """Compute linear-interpolated first crossing time where ``series`` exceeds ``threshold``."""
+    """Compute linear-interpolated first crossing time where ``series`` crosses above ``threshold``."""
     idx = np.where(series > threshold)[0]
     if idx.size == 0:
         return None
     i1 = int(idx[0])
     if i1 == 0:
-        return float(t_yr[0])
+        return None
     i0 = i1 - 1
     y0, y1 = float(series[i0]), float(series[i1])
     frac = (threshold - y0) / (y1 - y0)
@@ -171,7 +214,6 @@ def compute_crossing_time_linear(
 def build_default_0d_params() -> Any:
     """Load the canonical 0-D stagnant-lid parameter bundle for ``abe_solid.toml``."""
     return load_aragog_0d_params(
-        rheology_py=REPO_ROOT / 'src' / 'aragog' / 'rheology.py',
         abe_solid_toml=REPO_ROOT / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml',
         viscosity_solid=1.0e18,
         t_surf=300.0,
@@ -239,7 +281,7 @@ def compute_a_nu_provenance_block(
     t_i_1d_4p5: np.ndarray,
     d_lid_1d_4p5: np.ndarray,
     f_top_1d_4p5: np.ndarray,
-    t_nu_clamp_yr: float,
+    _t_nu_clamp_yr_unused: float | None = None,
 ) -> dict[str, Any]:
     """Compute Korenaga (2009) Table 1 ``a_nu`` statistics and 4.5 Gyr 0-D comparisons."""
     rows_out = []
@@ -263,8 +305,6 @@ def compute_a_nu_provenance_block(
     a_std = float(np.std(a_arr, ddof=1))
 
     mask_post_25 = t_4p5_yr >= 2.5e7
-    mask_valid_nu = t_4p5_yr <= t_nu_clamp_yr
-    mask_valid_post = mask_post_25 & mask_valid_nu
     comp: dict[str, Any] = {}
     for label, a_val in (
         ('korenaga_2009_table1_mean_0p5954', a_mean),
@@ -284,6 +324,21 @@ def compute_a_nu_provenance_block(
         ti_0d = np.asarray(ode['T_i_K'], dtype=float)
         dl_0d = np.asarray(ode['d_lid_eff_m'], dtype=float)
         ft_0d = np.asarray(ode['F_top_W_m2'], dtype=float)
+        nu_unyielded_sub = np.array(
+            [
+                float(evaluate_stagnant_lid_0d(float(ti_val), p_sub)['Nu_unyielded'])
+                for ti_val in ti_0d
+            ],
+            dtype=float,
+        )
+        clamp_idx_sub = np.where(nu_unyielded_sub < 1.0)[0]
+        t_nu_clamp_sub = (
+            float(t_4p5_yr[int(clamp_idx_sub[0])])
+            if clamp_idx_sub.size > 0
+            else float(t_4p5_yr[-1])
+        )
+        mask_valid_nu = t_4p5_yr < t_nu_clamp_sub
+        mask_valid_post = mask_post_25 & mask_valid_nu
         err_ti = np.abs(t_i_1d_4p5 - ti_0d) / ti_0d
         err_dl = np.abs(d_lid_1d_4p5 - dl_0d) / dl_0d
         comp[label] = {
@@ -297,7 +352,7 @@ def compute_a_nu_provenance_block(
             'max_rel_err_d_lid_valid_nu_ge_1_post_relax': float(
                 np.max(err_dl[mask_valid_post])
             ),
-            't_nu_clamp_1_yr': float(t_nu_clamp_yr),
+            't_nu_clamp_1_yr': float(t_nu_clamp_sub),
             'F_top_ratio_1d_over_0d_4p5Gyr': float(f_top_1d_4p5[-1] / ft_0d[-1]),
         }
 
@@ -489,24 +544,7 @@ def evaluate_live_e300_steady_vector(
         ],
         solver=_SolverParameters(start_time=0.0, end_time=1.0, atol=1.0e-6, rtol=1.0e-6),
     )
-    orig_update = estate_mod.EntropyState.update
-
-    def _half_cell_update(
-        self_st: Any, entropy: Any, time_val: Any, *a: Any, **kw: Any
-    ) -> None:
-        orig_update(self_st, entropy, time_val, *a, **kw)
-        bc_set = self_st._evaluator.boundary_conditions._settings
-        if int(bc_set.outer_boundary_condition) == 5:
-            k_surf = float(np.asarray(self_st.phase_basic.thermal_conductivity()).ravel()[-1])
-            t_cell = float(np.asarray(self_st.phase_staggered.temperature()).ravel()[-1])
-            r_b = np.asarray(self_st._evaluator.mesh.basic.radii).ravel()
-            dr_half = 0.5 * float(r_b[-1] - r_b[-2])
-            self_st._heat_flux[-1] = (
-                k_surf * (t_cell - float(bc_set.outer_boundary_value)) / dr_half
-            )
-
-    estate_mod.EntropyState.update = _half_cell_update
-    try:
+    with half_cell_surface_flux():
         solver = EntropySolver(params, entropy_eos=None)
         solver.initialize()
         rhs = np.asarray(solver._dSdt_single(0.0, s_vec), dtype=float)
@@ -529,8 +567,6 @@ def evaluate_live_e300_steady_vector(
             'F_top_W_m2': f_top,
             'n_yielding_basic_nodes': int(np.sum(eta_eff_b < 0.999 * eta_diff_b)),
         }
-    finally:
-        estate_mod.EntropyState.update = orig_update
 
 
 def _is_commit_on_origin(sha: str, repo_root: Path = REPO_ROOT) -> bool:
@@ -575,8 +611,156 @@ def _resolve_origin_head_commit(repo_root: Path = REPO_ROOT) -> str:
     return head_sha
 
 
+def _compute_trajectory_metrics_from_arrays(
+    t_1d: np.ndarray,
+    ti_1d: np.ndarray,
+    dl_1d: np.ndarray,
+    dl_cond_1d: np.ndarray,
+    ft_1d: np.ndarray,
+    p0d: Any,
+    *,
+    is_4p5gyr: bool,
+) -> dict[str, Any]:
+    """Recompute 0-D ODE trajectory, error series, window maxima, and crossing times."""
+    ode_0d = integrate_stagnant_lid_0d(
+        1800.0,
+        t_1d * SECS_PER_YR,
+        p0d,
+        conduction_geometry='spherical',
+        heat_capacity_mode='isothermal',
+        rtol=1.0e-10,
+        atol=1.0e-12,
+    )
+    ti_0d = np.asarray(ode_0d['T_i_K'], dtype=float)
+    dl_0d = np.asarray(ode_0d['d_lid_eff_m'], dtype=float)
+    ft_0d = np.asarray(ode_0d['F_top_W_m2'], dtype=float)
+    s_err_ti = (ti_1d - ti_0d) / ti_0d
+    s_err_dl = (dl_1d - dl_0d) / dl_0d
+    err_ti = np.abs(s_err_ti)
+    err_dl = np.abs(s_err_dl)
+    err_dl_cond = np.abs(dl_cond_1d - dl_0d) / dl_0d
+
+    mask_post = t_1d >= 2.5e7
+    mask_10m = t_1d >= 1.0e7
+    mask_16p5m = t_1d >= 1.65e7
+    mask_25_400 = (t_1d >= 2.5e7) & (t_1d <= 4.0e8)
+    mask_1600_1800 = (ti_0d >= 1600.0) & (ti_0d <= 1800.0) & mask_post
+
+    metrics: dict[str, Any] = {
+        'ti_0d': ti_0d,
+        'dl_0d': dl_0d,
+        'ft_0d': ft_0d,
+        's_err_ti': s_err_ti,
+        's_err_dl': s_err_dl,
+        'err_ti': err_ti,
+        'err_dl': err_dl,
+        'max_rel_err_T_i_all': float(np.max(err_ti)),
+        'max_rel_err_T_i_post_relax': float(np.max(err_ti[mask_post])),
+        'max_rel_err_T_i_window_25_400Myr': float(np.max(err_ti[mask_25_400])),
+        'max_rel_err_T_i_window_1600_1800': float(np.max(err_ti[mask_1600_1800])),
+        'max_rel_err_d_lid_all': float(np.max(err_dl)),
+        'max_rel_err_d_lid_post_10Myr': float(np.max(err_dl[mask_10m])),
+        'max_rel_err_d_lid_post_16p5Myr': float(np.max(err_dl[mask_16p5m])),
+        'max_rel_err_d_lid_post_relax': float(np.max(err_dl[mask_post])),
+        'max_rel_err_d_lid_window_25_400Myr': float(np.max(err_dl[mask_25_400])),
+        'max_rel_err_d_lid_window_1600_1800': float(np.max(err_dl[mask_1600_1800])),
+        'max_rel_err_d_lid_cond_post_relax': float(np.max(err_dl_cond[mask_post])),
+        't_cross_rel_err_d_lid_0p22_yr': compute_crossing_time_linear(
+            t_1d[mask_post], err_dl[mask_post], 0.22
+        ),
+    }
+    if is_4p5gyr:
+        metrics['t_cross_rel_err_T_i_0p05_yr'] = compute_crossing_time_linear(
+            t_1d, err_ti, 0.05
+        )
+        nu_unyielded_grid = np.array(
+            [
+                float(evaluate_stagnant_lid_0d(float(ti_val), p0d)['Nu_unyielded'])
+                for ti_val in ti_0d
+            ],
+            dtype=float,
+        )
+        clamp_idx = np.where(nu_unyielded_grid < 1.0)[0]
+        t_nu_clamp = float(t_1d[int(clamp_idx[0])]) if clamp_idx.size > 0 else float(t_1d[-1])
+        mask_valid_nu = t_1d < t_nu_clamp
+        metrics['t_nu_0d_clamp_1_yr'] = t_nu_clamp
+        metrics['max_rel_err_T_i_valid_nu_ge_1'] = float(np.max(err_ti[mask_valid_nu]))
+        metrics['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = float(
+            np.max(err_dl[mask_post & mask_valid_nu])
+        )
+    return metrics
+
+
+def compute_acceptance_summary(data: dict[str, Any]) -> dict[str, Any]:
+    """Compute ``acceptance_summary`` from the trajectory and yield-sweep blocks."""
+    r0d_ref = float(data['yield_sweep_0d_at_1600K']['below_0p5x_tau_d_lid']['R_thin_0d'])
+    by_dt = data['yield_sweep_1d_by_dt']
+    eq_sref = data['yield_sweep_1d_equal_Ti_from_S_ref']['below_0p5x_tau_d_lid']
+    eq_init = data['yield_sweep_1d_equal_Ti_1600K_from_init']['below_0p5x_tau_d_lid']
+
+    p1_10m = float(by_dt['10Myr']['below_0p5x_tau_d_lid']['R_thin_d_lid_pass1'])
+    p1_sref = float(eq_sref['R_thin_d_lid_pass1'])
+    p1_init = float(eq_init['R_thin_d_lid_pass1'])
+    tol_r = 0.11
+
+    tr400 = data['trajectory_calibrated_400Myr']
+    tr4p5 = data['trajectory_calibrated_4p5Gyr']
+    return {
+        'R_thin_0p5x_tau_d_lid': {
+            'r_thin_0d_ref': r0d_ref,
+            'tol_rel': tol_r,
+            'pass1_isotherm_d_lid_at_dt0': float(
+                by_dt['0Myr']['below_0p5x_tau_d_lid']['R_thin_d_lid_pass1']
+            ),
+            'pass1_isotherm_d_lid_at_10Myr': p1_10m,
+            'pass1_isotherm_rel_err_at_10Myr': abs(p1_10m - r0d_ref) / r0d_ref,
+            'pass1_isotherm_d_lid_at_equal_Ti_from_S_ref': p1_sref,
+            'pass1_isotherm_rel_err_at_equal_Ti_from_S_ref': abs(p1_sref - r0d_ref) / r0d_ref,
+            'pass1_isotherm_d_lid_at_equal_Ti_1600K_from_init': p1_init,
+            'pass1_isotherm_rel_err_at_equal_Ti_1600K_from_init': abs(p1_init - r0d_ref)
+            / r0d_ref,
+            'pass2_fixed_d_lid_at_10Myr': float(
+                by_dt['10Myr']['below_0p5x_tau_d_lid']['R_thin_d_lid_pass2_fixed']
+            ),
+            'pass2_fixed_d_lid_at_equal_Ti_from_S_ref': float(
+                eq_sref['R_thin_d_lid_pass2_fixed']
+            ),
+            'conductive_d_lid_planar_at_5Myr': float(
+                by_dt['5Myr']['below_0p5x_tau_d_lid']['R_thin_d_lid_cond_planar']
+            ),
+            'conductive_d_lid_planar_at_10Myr': float(
+                by_dt['10Myr']['below_0p5x_tau_d_lid']['R_thin_d_lid_cond_planar']
+            ),
+            'conductive_d_lid_planar_at_equal_Ti_from_S_ref': float(
+                eq_sref['R_thin_d_lid_cond_planar']
+            ),
+            'conductive_d_lid_planar_at_equal_Ti_1600K_from_init': float(
+                eq_init['R_thin_d_lid_cond_planar']
+            ),
+            'pass1_isotherm_within_tolerance': bool(abs(p1_10m - r0d_ref) / r0d_ref <= tol_r),
+        },
+        'T_i_trajectory_calibrated': {
+            'max_rel_err_full_400Myr': float(tr400['max_rel_err_T_i_all']),
+            'max_rel_err_window_25_400Myr': float(tr400['max_rel_err_T_i_window_25_400Myr']),
+            'max_rel_err_window_1600_1800': float(tr400['max_rel_err_T_i_window_1600_1800']),
+            'max_rel_err_full_4p5Gyr': float(tr4p5['max_rel_err_T_i_all']),
+            'max_rel_err_post_relax_4p5Gyr': float(tr4p5['max_rel_err_T_i_post_relax']),
+            'tol_rel': 0.05,
+        },
+        'd_lid_trajectory_calibrated': {
+            'max_rel_err_full_400Myr': float(tr400['max_rel_err_d_lid_all']),
+            'max_rel_err_window_25_400Myr': float(tr400['max_rel_err_d_lid_window_25_400Myr']),
+            'max_rel_err_window_1600_1800': float(tr400['max_rel_err_d_lid_window_1600_1800']),
+            'max_rel_err_full_4p5Gyr': float(tr4p5['max_rel_err_d_lid_all']),
+            'max_rel_err_post_relax_4p5Gyr': float(tr4p5['max_rel_err_d_lid_post_relax']),
+            't_cross_0p22_yr': float(tr4p5['t_cross_rel_err_d_lid_0p22_yr']),
+            'tol_rel': 0.22,
+        },
+    }
+
+
 def verify_benchmarks(data: dict[str, Any]) -> list[str]:
-    """Verify schema keys, no-table metadata record, and recompute the live fast subset."""
+    """Verify schema keys, no-table metadata record, and recompute every quoted field."""
     failures: list[str] = []
 
     if tuple(data.keys()) != EXPECTED_TOP_KEYS:
@@ -595,15 +779,18 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
         )
 
     steady = data.get('steady_yield_thinning', {})
-    if not isinstance(steady, dict) or tuple(steady.keys()) != EXPECTED_STEADY_KEYS:
-        failures.append(f'steady_yield_thinning keys != {EXPECTED_STEADY_KEYS}')
+    steady_keys = tuple(
+        k for k in steady.keys() if k not in ('source_git_commit', 'eos_tables')
+    )
+    if not isinstance(steady, dict) or steady_keys != EXPECTED_STEADY_KEYS:
+        failures.append(f'steady_yield_thinning keys {steady_keys} != {EXPECTED_STEADY_KEYS}')
 
     live_states = data.get('live_yield_states', {})
-    if (
-        not isinstance(live_states, dict)
-        or tuple(live_states.keys()) != EXPECTED_LIVE_YIELD_KEYS
-    ):
-        failures.append(f'live_yield_states keys != {EXPECTED_LIVE_YIELD_KEYS}')
+    live_keys = tuple(
+        k for k in live_states.keys() if k not in ('source_git_commit', 'eos_tables')
+    )
+    if not isinstance(live_states, dict) or live_keys != EXPECTED_LIVE_YIELD_KEYS:
+        failures.append(f'live_yield_states keys {live_keys} != {EXPECTED_LIVE_YIELD_KEYS}')
 
     prov = data.get('a_nu_provenance', {})
     if not isinstance(prov, dict) or tuple(prov.keys()) != EXPECTED_PROVENANCE_KEYS:
@@ -612,38 +799,198 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
         return failures
 
     p0d = build_default_0d_params()
+    p0d_dict = asdict(p0d)
+    stored_p0d = meta.get('params_0d', {})
+    if not isinstance(stored_p0d, dict):
+        failures.append("metadata['params_0d'] is not a dict")
+    else:
+        for pk, pv in p0d_dict.items():
+            if pk not in stored_p0d:
+                failures.append(f"metadata['params_0d'] missing {pk!r}")
+            elif isinstance(pv, float) and abs(pv - float(stored_p0d[pk])) > 1.0e-12:
+                failures.append(f"metadata['params_0d'][{pk!r}] mismatch")
+
     base_params = Parameters.from_file(REPO_ROOT / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml')
 
-    # 1. Block 1 live check: a_nu_provenance (Table 1 mean/std and 3 x 4.5 Gyr 0-D ODEs)
+    # 1. Block 1 live check: a_nu_provenance (all 12 rows, mean, std, and all 3 prefactor comparisons)
     tr_4p5 = data['trajectory_calibrated_4p5Gyr']['trajectory']
     t_4p5_yr = np.asarray(tr_4p5['t_yr'], dtype=float)
     ti_1d_4p5 = np.asarray(tr_4p5['T_i_1d_K'], dtype=float)
     dl_1d_4p5 = np.asarray(tr_4p5['d_lid_1d_m'], dtype=float)
     ft_1d_4p5 = np.asarray(tr_4p5['F_top_1d_W_m2'], dtype=float)
-    t_nu_clamp_ref = float(data['trajectory_calibrated_4p5Gyr']['t_nu_0d_clamp_1_yr'])
-    live_prov = compute_a_nu_provenance_block(
-        p0d, t_4p5_yr, ti_1d_4p5, dl_1d_4p5, ft_1d_4p5, t_nu_clamp_ref
-    )
+    live_prov = compute_a_nu_provenance_block(p0d, t_4p5_yr, ti_1d_4p5, dl_1d_4p5, ft_1d_4p5)
     if abs(live_prov['a_nu_value'] - float(prov['a_nu_value'])) > 1.0e-15:
         failures.append('a_nu_provenance mean mismatch')
-    for k_sub, v_sub in live_prov['prefactor_comparisons_4p5Gyr'].items():
-        stored_sub = prov['prefactor_comparisons_4p5Gyr'][k_sub]
-        for metric in ('max_rel_err_T_i_4p5Gyr', 'max_rel_err_d_lid_post_relax'):
-            if abs(v_sub[metric] - float(stored_sub[metric])) > 1.0e-12:
-                failures.append(f'a_nu_provenance {k_sub} {metric} mismatch')
+    if abs(live_prov['a_nu_std'] - float(prov['a_nu_std'])) > 1.0e-15:
+        failures.append('a_nu_provenance std mismatch')
+    if prov.get('fitted_to_1d_aragog_solver') is not False:
+        failures.append('a_nu_provenance fitted_to_1d_aragog_solver != False')
+    stored_rows = prov.get('korenaga_2009_table1_rows', [])
+    if not isinstance(stored_rows, list) or len(stored_rows) != len(
+        live_prov['korenaga_2009_table1_rows']
+    ):
+        failures.append('a_nu_provenance korenaga_2009_table1_rows length mismatch')
+    else:
+        for r_live, r_st in zip(live_prov['korenaga_2009_table1_rows'], stored_rows):
+            if r_st.get('case') != r_live['case']:
+                failures.append(
+                    f'a_nu_provenance row case {r_st.get("case")} != {r_live["case"]}'
+                )
+            for rk in ('E_kJ_mol', 'dT_K', 'theta', 'Ra_i', 'Nu_ref', 'a_nu_empirical'):
+                if (
+                    abs(float(r_st.get(rk, -1.0)) - float(r_live[rk]))
+                    / max(abs(float(r_live[rk])), 1.0e-30)
+                    > 1.0e-12
+                ):
+                    failures.append(f'a_nu_provenance row {r_live["case"]} {rk} mismatch')
 
-    # 2. Block 2 live check: 1-D EntropySolver [0, 25 Myr] trajectory + 400 Myr 0-D ODE
-    orig_cvode = es_mod.EntropySolver._solve_cvode
+    stored_pref = prov.get('prefactor_comparisons_4p5Gyr', {})
+    if not isinstance(stored_pref, dict) or tuple(stored_pref.keys()) != tuple(
+        live_prov['prefactor_comparisons_4p5Gyr'].keys()
+    ):
+        failures.append('a_nu_provenance prefactor_comparisons_4p5Gyr keys mismatch')
+    else:
+        for k_sub, v_sub in live_prov['prefactor_comparisons_4p5Gyr'].items():
+            stored_sub = stored_pref[k_sub]
+            for metric, m_val in v_sub.items():
+                if metric not in stored_sub:
+                    failures.append(f'a_nu_provenance {k_sub} missing {metric!r}')
+                elif (
+                    abs(m_val - float(stored_sub[metric])) / max(abs(m_val), 1.0e-30) > 1.0e-12
+                ):
+                    failures.append(f'a_nu_provenance {k_sub} {metric} mismatch')
 
-    def _unclamped_cvode(self_s: EntropySolver, *a: Any, **kw: Any) -> Any:
-        if self_s.entropy_eos is None and getattr(
-            self_s.parameters.phase_mixed, 'const_properties', False
+    # 2. Block 2 & 3 check: all 4 trajectory blocks, live 25 Myr segment, live 4.5 Gyr endpoints, and acceptance_summary
+    with unbounded_cvode_step():
+        for blk_key, s_inf_exp, c_th_exp, is_4p5 in (
+            ('trajectory_calibrated_400Myr', 0.25, 0.25, False),
+            ('trajectory_default_400Myr', 0.22, 0.15, False),
+            ('trajectory_calibrated_4p5Gyr', 0.25, 0.25, True),
+            ('trajectory_default_4p5Gyr', 0.22, 0.15, True),
         ):
-            kw['max_step'] = np.inf
-        return orig_cvode(self_s, *a, **kw)
+            blk = data.get(blk_key, {})
+            if not isinstance(blk, dict) or 'trajectory' not in blk:
+                failures.append(f'{blk_key} missing trajectory')
+                continue
+            if (
+                abs(float(blk.get('s_top_inf', -1.0)) - s_inf_exp) > 1.0e-12
+                or abs(float(blk.get('c_theta', -1.0)) - c_th_exp) > 1.0e-12
+            ):
+                failures.append(f'{blk_key} s_top_inf/c_theta mismatch')
+            tr = blk['trajectory']
+            t_arr = np.asarray(tr['t_yr'], dtype=float)
+            ti_1d = np.asarray(tr['T_i_1d_K'], dtype=float)
+            dl_1d = np.asarray(tr['d_lid_1d_m'], dtype=float)
+            dlc_1d = np.asarray(tr['d_lid_cond_1d_m'], dtype=float)
+            ft_1d = np.asarray(tr['F_top_1d_W_m2'], dtype=float)
+            m_live = _compute_trajectory_metrics_from_arrays(
+                t_arr, ti_1d, dl_1d, dlc_1d, ft_1d, p0d, is_4p5gyr=is_4p5
+            )
+            for arr_k, live_arr in (
+                ('T_i_0d_K', m_live['ti_0d']),
+                ('d_lid_0d_m', m_live['dl_0d']),
+                ('F_top_0d_W_m2', m_live['ft_0d']),
+                ('signed_rel_err_T_i', m_live['s_err_ti']),
+                ('signed_rel_err_d_lid', m_live['s_err_dl']),
+                ('rel_err_T_i', m_live['err_ti']),
+                ('rel_err_d_lid', m_live['err_dl']),
+            ):
+                if not np.allclose(
+                    np.asarray(tr.get(arr_k, []), dtype=float),
+                    live_arr,
+                    rtol=1.0e-12,
+                    atol=1.0e-14,
+                ):
+                    failures.append(f'{blk_key}.trajectory.{arr_k} mismatch')
 
-    es_mod.EntropySolver._solve_cvode = _unclamped_cvode
-    try:
+            scalar_keys = [
+                'max_rel_err_T_i_all',
+                'max_rel_err_T_i_post_relax',
+                'max_rel_err_T_i_window_25_400Myr',
+                'max_rel_err_T_i_window_1600_1800',
+                'max_rel_err_d_lid_all',
+                'max_rel_err_d_lid_post_10Myr',
+                'max_rel_err_d_lid_post_16p5Myr',
+                'max_rel_err_d_lid_post_relax',
+                'max_rel_err_d_lid_window_25_400Myr',
+                'max_rel_err_d_lid_window_1600_1800',
+                'max_rel_err_d_lid_cond_post_relax',
+                't_cross_rel_err_d_lid_0p22_yr',
+            ]
+            if is_4p5:
+                for k_4p5 in (
+                    't_cross_rel_err_T_i_0p05_yr',
+                    't_nu_0d_clamp_1_yr',
+                    'max_rel_err_T_i_valid_nu_ge_1',
+                    'max_rel_err_d_lid_valid_nu_ge_1_post_relax',
+                ):
+                    if k_4p5 in blk or k_4p5 in (
+                        't_nu_0d_clamp_1_yr',
+                        'max_rel_err_T_i_valid_nu_ge_1',
+                        'max_rel_err_d_lid_valid_nu_ge_1_post_relax',
+                    ):
+                        scalar_keys.append(k_4p5)
+            for sk in scalar_keys:
+                v_exp = m_live[sk]
+                v_st = blk.get(sk, '__missing__')
+                if v_exp is None:
+                    if v_st is not None:
+                        failures.append(f'{blk_key}.{sk} expected None, got {v_st!r}')
+                elif v_st is None or v_st == '__missing__':
+                    failures.append(f'{blk_key}.{sk} missing or None')
+                elif (
+                    abs(float(v_st) - float(v_exp)) / max(abs(float(v_exp)), 1.0e-30) > 1.0e-12
+                ):
+                    failures.append(f'{blk_key}.{sk} mismatch: {v_st} vs {v_exp}')
+
+            snaps_1d = blk.get('states_1d_snapshots', {})
+            if isinstance(snaps_1d, dict):
+                for idx_str, snap_v in snaps_1d.items():
+                    idx_i = int(idx_str)
+                    if not isinstance(snap_v, dict):
+                        failures.append(f'{blk_key}.states_1d_snapshots[{idx_str}] not a dict')
+                        continue
+                    for sk_snap, arr_ref in (
+                        ('T_i_K', ti_1d),
+                        ('d_lid_pass1_m', dl_1d),
+                        ('d_lid_cond_m', dlc_1d),
+                        ('F_top_W_m2', ft_1d),
+                    ):
+                        if sk_snap in snap_v and (
+                            abs(float(snap_v[sk_snap]) - float(arr_ref[idx_i]))
+                            / max(abs(float(arr_ref[idx_i])), 1.0e-30)
+                            > 1.0e-12
+                        ):
+                            failures.append(
+                                f'{blk_key}.states_1d_snapshots[{idx_str}].{sk_snap} mismatch'
+                            )
+
+            rheo_blk = SolidRheologyParams(
+                enabled=True,
+                stress_closure_mode='lid',
+                lid_base_mode='rheological',
+                s_top_inf=s_inf_exp,
+                c_theta=c_th_exp,
+                yield_stress_c=500.0e6,
+                yield_stress_mu=0.6,
+                yield_stress_max=500.0e6,
+            )
+            solver_ep = build_const_prop_1d_solver(
+                base_params, rheo_blk, p0d, t_end_yr=float(t_arr[-1]), n_output_points=2
+            )
+            s_last = np.asarray(blk['solver_last_S'], dtype=float)
+            solver_ep._dSdt_single(float(t_arr[-1]), s_last)
+            lid_ep = solver_ep.state._lid_state
+            ti_ep = float(lid_ep['T_i'])
+            dl_ep = float(lid_ep['d_lid'])
+            ft_ep = float(solver_ep.state._heat_flux[-1])
+            if abs(ti_ep - float(ti_1d[-1])) / ti_ep > 1.0e-9:
+                failures.append(f'{blk_key} endpoint T_i mismatch')
+            if abs(dl_ep - float(dl_1d[-1])) / dl_ep > 1.0e-9:
+                failures.append(f'{blk_key} endpoint d_lid mismatch')
+            if abs(ft_ep - float(ft_1d[-1])) / ft_ep > 1.0e-9:
+                failures.append(f'{blk_key} endpoint F_top mismatch')
+
         rheo_cal = SolidRheologyParams(
             enabled=True,
             stress_closure_mode='lid',
@@ -662,73 +1009,156 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
         solver_25.solve()
         y_25 = np.asarray(solver_25.solution.y, dtype=float)
         t_25 = np.asarray(solver_25.solution.t, dtype=float)
-        solver_25._dSdt_single(float(t_25[-1]), y_25[:, -1])
-        ti_25_live = float(solver_25.state._lid_state['T_i'])
-        dl_25_live = float(solver_25.state._lid_state['d_lid'])
         tr_400 = data['trajectory_calibrated_400Myr']['trajectory']
-        if abs(ti_25_live - float(tr_400['T_i_1d_K'][16])) / ti_25_live > 1.0e-7:
-            failures.append(f'25 Myr live T_i {ti_25_live} vs stored {tr_400["T_i_1d_K"][16]}')
-        if abs(dl_25_live - float(tr_400['d_lid_1d_m'][16])) / dl_25_live > 1.0e-7:
-            failures.append(
-                f'25 Myr live d_lid {dl_25_live} vs stored {tr_400["d_lid_1d_m"][16]}'
-            )
+        for idx_25 in range(len(t_25)):
+            solver_25._dSdt_single(float(t_25[idx_25]), y_25[:, idx_25])
+            lid_25 = solver_25.state._lid_state
+            ti_25 = float(lid_25['T_i'])
+            dl_25 = float(lid_25['d_lid'])
+            ft_25 = float(solver_25.state._heat_flux[-1])
+            if abs(ti_25 - float(tr_400['T_i_1d_K'][idx_25])) / ti_25 > 1.0e-7:
+                failures.append(f'25 Myr step {idx_25} live T_i mismatch')
+            if idx_25 > 0 and abs(dl_25 - float(tr_400['d_lid_1d_m'][idx_25])) / dl_25 > 1.0e-7:
+                failures.append(f'25 Myr step {idx_25} live d_lid mismatch')
+            if abs(ft_25 - float(tr_400['F_top_1d_W_m2'][idx_25])) / ft_25 > 1.0e-7:
+                failures.append(f'25 Myr step {idx_25} live F_top mismatch')
 
-        # 3. Block 3 live check: 4.5 Gyr 1-D endpoint RHS, crossing times, and Nu_0d>=1 grid window
-        s_last_4p5 = np.asarray(
-            data['trajectory_calibrated_4p5Gyr']['solver_last_S'], dtype=float
-        )
-        solver_25._dSdt_single(4.5e9, s_last_4p5)
-        if abs(float(solver_25.state._lid_state['T_i']) - float(ti_1d_4p5[-1])) > 1.0e-9:
-            failures.append('4.5 Gyr endpoint T_i mismatch')
-        ode_4p5 = integrate_stagnant_lid_0d(
-            1800.0,
-            t_4p5_yr * SECS_PER_YR,
-            p0d,
-            conduction_geometry='spherical',
-            heat_capacity_mode='isothermal',
-            rtol=1.0e-10,
-            atol=1.0e-12,
-        )
-        nu_unyielded_grid = np.array(
-            [
-                float(evaluate_stagnant_lid_0d(float(ti_val), p0d)['Nu_unyielded'])
-                for ti_val in ode_4p5['T_i_K']
-            ],
-            dtype=float,
-        )
-        t_nu_clamp = float(t_4p5_yr[np.where(nu_unyielded_grid < 1.0)[0][0]])
+        seg_25 = data.get('segment_25Myr_spread_5starts', {})
         if (
-            abs(t_nu_clamp - float(data['trajectory_calibrated_4p5Gyr']['t_nu_0d_clamp_1_yr']))
-            > 1.0e-6
+            int(seg_25.get('n_starts', 0)) != 5
+            or float(seg_25.get('perturbation_rel', 0.0)) != 1.0e-12
+            or float(seg_25.get('tolerance_rel_used', 0.0)) != 1.0e-7
+            or float(seg_25.get('max_rel_T_i', 1.0)) >= 1.0e-7
+            or float(seg_25.get('max_rel_d_lid_post0', 1.0)) >= 1.0e-7
+            or float(seg_25.get('max_rel_F_top', 1.0)) >= 1.0e-7
         ):
-            failures.append(f't_nu_0d_clamp_1_yr mismatch: {t_nu_clamp}')
+            failures.append('segment_25Myr_spread_5starts bounds/metadata check failed')
 
-        # 4. Block 4 live check: 0-D yield sweep at 1600 K and 1-D s_ref_51 at dt = 0 Myr
+        # 3. Block 4 check: 0-D yield sweep at 1600 K, live s_ref_51 across all 5 cases of 0Myr, and all 1-D yield horizons
         live_0d_sweep = compute_yield_sweep_0d_at_1600k(p0d)
-        for k_case, v_case in live_0d_sweep.items():
-            stored_c = data['yield_sweep_0d_at_1600K'][k_case]
-            if abs(v_case['R_thin_0d'] - float(stored_c['R_thin_0d'])) > 1.0e-12:
-                failures.append(f'yield_sweep_0d_at_1600K {k_case} R_thin_0d mismatch')
+        stored_0d_sweep = data.get('yield_sweep_0d_at_1600K', {})
+        if not isinstance(stored_0d_sweep, dict) or tuple(stored_0d_sweep.keys()) != tuple(
+            live_0d_sweep.keys()
+        ):
+            failures.append('yield_sweep_0d_at_1600K keys mismatch')
+        else:
+            for k_case, v_case in live_0d_sweep.items():
+                stored_c = stored_0d_sweep[k_case]
+                for fk, fv in v_case.items():
+                    if fk == 'multiplier':
+                        if stored_c.get('multiplier') != fv:
+                            failures.append(
+                                f'yield_sweep_0d_at_1600K {k_case} multiplier mismatch'
+                            )
+                    elif (
+                        abs(fv - float(stored_c.get(fk, -1.0))) / max(abs(fv), 1.0e-30)
+                        > 1.0e-12
+                    ):
+                        failures.append(f'yield_sweep_0d_at_1600K {k_case} {fk} mismatch')
+
         s_ref_51 = np.asarray(live_states['s_ref_51']['S_ref_J_kg_K'], dtype=float)
         t_ref_51 = float(live_states['s_ref_51']['t_yr'])
-        tau_y_0p5 = float(
-            data['yield_sweep_1d_by_dt']['0Myr']['below_0p5x_tau_d_lid']['tau_y_set_Pa']
-        )
-        rheo_0p5 = replace(
-            rheo_cal, yield_stress_c=tau_y_0p5, yield_stress_mu=0.0, yield_stress_max=tau_y_0p5
-        )
-        solver_0p5 = build_const_prop_1d_solver(base_params, rheo_0p5, p0d, t_end_yr=1.0)
-        solver_0p5._dSdt_single(t_ref_51, s_ref_51)
-        dl_0p5_live = float(solver_0p5.state._lid_state['d_lid'])
-        dl_0p5_stored = float(
-            data['yield_sweep_1d_by_dt']['0Myr']['below_0p5x_tau_d_lid']['d_lid_pass1_m']
-        )
-        if abs(dl_0p5_live - dl_0p5_stored) / dl_0p5_stored > 1.0e-12:
-            failures.append(f'0Myr below_0p5x_tau_d_lid d_lid mismatch: {dl_0p5_live}')
-    finally:
-        es_mod.EntropySolver._solve_cvode = orig_cvode
+        ref_state_blk = data.get('yield_sweep_reference_state', {})
+        by_dt_0 = data.get('yield_sweep_1d_by_dt', {}).get('0Myr', {})
+        for k_case, _mult in YIELD_MULTIPLIERS:
+            c_0myr = by_dt_0.get(k_case, {})
+            tau_y_set = float(c_0myr.get('tau_y_set_Pa', 500.0e6))
+            rheo_c = (
+                rheo_cal
+                if k_case == 'unyielded_500MPa'
+                else replace(
+                    rheo_cal,
+                    yield_stress_c=tau_y_set,
+                    yield_stress_mu=0.0,
+                    yield_stress_max=tau_y_set,
+                )
+            )
+            solver_c = build_const_prop_1d_solver(base_params, rheo_c, p0d, t_end_yr=1.0)
+            solver_c._dSdt_single(t_ref_51, s_ref_51)
+            lid_c = solver_c.state._lid_state
+            ti_c = float(lid_c['T_i'])
+            dl_c = float(lid_c['d_lid'])
+            th_c = float(lid_c['theta'])
+            ft_c = float(solver_c.state._heat_flux[-1])
+            td_c = float(lid_c['tau_d_lid'])
+            wy_c = float(lid_c['w_y'])
+            dlc_pl = (1.0 - p0d.lid_contrast_coeff / th_c) * (
+                p0d.k_cond * (ti_c - p0d.t_surf) / ft_c
+            )
+            for mk, mv in (
+                ('T_i_K', ti_c),
+                ('d_lid_pass1_m', dl_c),
+                ('d_lid_cond_planar_m', dlc_pl),
+                ('F_top_W_m2', ft_c),
+                ('tau_d_lid_Pa', td_c),
+                ('w_y', wy_c),
+            ):
+                if abs(mv - float(c_0myr.get(mk, -1.0))) / max(abs(mv), 1.0e-30) > 1.0e-11:
+                    failures.append(f'yield_sweep_1d_by_dt.0Myr.{k_case}.{mk} live mismatch')
+            if k_case == 'unyielded_500MPa':
+                for mk in (
+                    'T_i_K',
+                    'd_lid_pass1_m',
+                    'd_lid_cond_planar_m',
+                    'F_top_W_m2',
+                    'tau_d_lid_Pa',
+                ):
+                    if (
+                        abs(float(ref_state_blk.get(mk, -1.0)) - float(c_0myr[mk]))
+                        / max(abs(float(c_0myr[mk])), 1.0e-30)
+                        > 1.0e-12
+                    ):
+                        failures.append(f'yield_sweep_reference_state.{mk} mismatch')
 
-    # 5. Block 5 live check: 0-D fixed-Ti/fixed-H ratios + 3 live E300 steady-state profiles
+        for grp_label, grp_dict in (
+            *(
+                (f'yield_sweep_1d_by_dt.{hk}', hv)
+                for hk, hv in data.get('yield_sweep_1d_by_dt', {}).items()
+            ),
+            (
+                'yield_sweep_1d_equal_Ti_from_S_ref',
+                data.get('yield_sweep_1d_equal_Ti_from_S_ref', {}),
+            ),
+            (
+                'yield_sweep_1d_equal_Ti_1600K_from_init',
+                data.get('yield_sweep_1d_equal_Ti_1600K_from_init', {}),
+            ),
+        ):
+            uny_g = grp_dict.get('unyielded_500MPa', {})
+            for k_case, _ in YIELD_MULTIPLIERS:
+                cg = grp_dict.get(k_case, {})
+                for r_key, num_key in (
+                    ('R_thin_d_lid_pass1', 'd_lid_pass1_m'),
+                    ('R_thin_d_lid_pass2_fixed', 'd_lid_pass2_fixed_m'),
+                    ('R_thin_d_lid_cond_planar', 'd_lid_cond_planar_m'),
+                    ('R_thin_d_lid_cond_sph', 'd_lid_cond_sph_m'),
+                    ('F_top_ratio_to_unyielded', 'F_top_W_m2'),
+                ):
+                    r_exp = float(cg.get(num_key, -1.0)) / float(uny_g.get(num_key, 1.0))
+                    if (
+                        abs(float(cg.get(r_key, -1.0)) - r_exp) / max(abs(r_exp), 1.0e-30)
+                        > 1.0e-12
+                    ):
+                        failures.append(f'{grp_label}.{k_case}.{r_key} ratio mismatch')
+
+    # Check acceptance_summary
+    live_acc = compute_acceptance_summary(data)
+    stored_acc = data.get('acceptance_summary', {})
+    for ak, av in live_acc.items():
+        st_av = stored_acc.get(ak, {})
+        if not isinstance(st_av, dict):
+            failures.append(f'acceptance_summary.{ak} is not a dict')
+            continue
+        for sk, sv in av.items():
+            if sk not in st_av:
+                failures.append(f'acceptance_summary.{ak} missing {sk!r}')
+            elif isinstance(sv, bool):
+                if st_av[sk] is not sv:
+                    failures.append(f'acceptance_summary.{ak}.{sk} {st_av[sk]!r} != {sv!r}')
+            elif abs(sv - float(st_av[sk])) / max(abs(sv), 1.0e-30) > 1.0e-12:
+                failures.append(f'acceptance_summary.{ak}.{sk} mismatch')
+
+    # 4. Block 5 live check: all 7 steady-state yield sweeps + 3 live E300 steady-state profiles
     for sweep_key in (
         'e300_n100_fixed_h',
         'e300_n50_fixed_h',
@@ -739,14 +1169,62 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
         blk = steady[sweep_key]
         row_name = str(blk['row_name'])
         ti_uny = float(blk['T_i_lid_unyielded_K'])
+        uny_c = blk['cases']['unyielded_500MPa']
         for c_name, mult in YIELD_MULTIPLIERS:
             pred = solve_0d_fixed_h_steady_ratio(row_name, ti_uny, mult)
             c_stored = blk['cases'][c_name]
-            if (
-                abs(pred['r_thin_dlid_0d_fixed_H'] - float(c_stored['r_thin_dlid_0d_fixed_H']))
-                > 1.0e-12
+            for pk in ('r_thin_0d_fixed_Ti', 'T_i_0d_fixed_H_K', 'r_thin_dlid_0d_fixed_H'):
+                if (
+                    abs(pred[pk] - float(c_stored.get(pk, -1.0))) / max(abs(pred[pk]), 1.0e-30)
+                    > 1.0e-11
+                ):
+                    failures.append(f'{sweep_key}.{c_name}.{pk} mismatch')
+            r_p1 = float(c_stored['d_lid_pass1_m']) / float(uny_c['d_lid_pass1_m'])
+            r_cl = float(c_stored['d_lid_cond_lid_m']) / float(uny_c['d_lid_cond_lid_m'])
+            r_p2 = float(c_stored['d_lid_pass2_fixed_m']) / float(uny_c['d_lid_pass2_fixed_m'])
+            r0_ti = pred['r_thin_0d_fixed_Ti']
+            r0_fh = pred['r_thin_dlid_0d_fixed_H']
+            for rk, r_exp in (
+                ('R_thin_pass1', r_p1),
+                ('rel_err_pass1_vs_0d_fixed_Ti', abs(r_p1 - r0_ti) / r0_ti),
+                ('R_thin_cond_lid', r_cl),
+                ('rel_err_cond_lid_vs_0d_fixed_Ti', abs(r_cl - r0_ti) / r0_ti),
+                ('rel_err_cond_lid_vs_0d_fixed_H', abs(r_cl - r0_fh) / r0_fh),
+                ('R_thin_pass2_fixed', r_p2),
             ):
-                failures.append(f'{sweep_key} {c_name} r_thin_dlid_0d_fixed_H mismatch')
+                if (
+                    abs(float(c_stored.get(rk, -1.0)) - r_exp) / max(abs(r_exp), 1.0e-30)
+                    > 1.0e-11
+                ):
+                    failures.append(f'{sweep_key}.{c_name}.{rk} mismatch')
+
+    for sweep_key, base_fixed_key in (
+        ('e300_n100_matched_ti', 'e300_n100_fixed_h'),
+        ('e340_n100_matched_ti', 'e340_n100_fixed_h'),
+    ):
+        blk = steady[sweep_key]
+        uny_c = steady[base_fixed_key]['cases']['unyielded_500MPa']
+        for c_name, mult in YIELD_MULTIPLIERS:
+            if c_name not in blk.get('cases', {}):
+                continue
+            c_stored = blk['cases'][c_name]
+            r0_ti = 1.0 if (mult is None or mult >= 1.0) else float(mult ** (1.0 / 3.0))
+            r_p1 = float(c_stored['d_lid_pass1_m']) / float(uny_c['d_lid_pass1_m'])
+            r_cl = float(c_stored['d_lid_cond_lid_m']) / float(uny_c['d_lid_cond_lid_m'])
+            r_p2 = float(c_stored['d_lid_pass2_fixed_m']) / float(uny_c['d_lid_pass2_fixed_m'])
+            for rk, r_exp in (
+                ('r_thin_0d_fixed_Ti', r0_ti),
+                ('R_thin_pass1', r_p1),
+                ('rel_err_pass1_vs_0d_fixed_Ti', abs(r_p1 - r0_ti) / r0_ti),
+                ('R_thin_cond_lid', r_cl),
+                ('rel_err_cond_lid_vs_0d_fixed_Ti', abs(r_cl - r0_ti) / r0_ti),
+                ('R_thin_pass2_fixed', r_p2),
+            ):
+                if (
+                    abs(float(c_stored.get(rk, -1.0)) - r_exp) / max(abs(r_exp), 1.0e-30)
+                    > 1.0e-11
+                ):
+                    failures.append(f'{sweep_key}.{c_name}.{rk} mismatch')
 
     vecs = live_states['e300_n100_steady_vectors']
     spread_5 = steady['e300_n100_five_start_spread']['five_start_steady_spread']
@@ -768,9 +1246,24 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             failures.append(
                 f'{vec_key} max_abs_rhs {obs["max_abs_rhs"]:.3e} > 100 * {max_5start_rhs:.3e}'
             )
-        for m_key in ('d_lid_pass1_m', 'd_lid_cond_lid_m', 'T_i_lid_K', 'F_top_W_m2'):
+        if int(obs['n_yielding_basic_nodes']) != int(ref_case['n_yielding_basic_nodes']) or int(
+            obs['n_yielding_basic_nodes']
+        ) != int(vecs[vec_key]['n_yielding_basic_nodes']):
+            failures.append(f'{vec_key} n_yielding_basic_nodes mismatch')
+        for m_key in (
+            'd_lid_pass1_m',
+            'd_lid_cond_lid_m',
+            'eta_eff_lid_over_eta_i',
+            'T_i_lid_K',
+            'F_top_W_m2',
+        ):
             if abs(obs[m_key] - float(ref_case[m_key])) / abs(float(ref_case[m_key])) > 1.0e-11:
-                failures.append(f'{vec_key} {m_key} live mismatch')
+                failures.append(f'{vec_key} {m_key} live vs steady_yield_thinning mismatch')
+            if m_key in vecs[vec_key] and (
+                abs(obs[m_key] - float(vecs[vec_key][m_key])) / abs(float(vecs[vec_key][m_key]))
+                > 1.0e-11
+            ):
+                failures.append(f'{vec_key} {m_key} live vs live_yield_states mismatch')
 
     return failures
 
@@ -796,17 +1289,7 @@ def _recompute_trajectory_block(
         yield_stress_mu=0.6,
         yield_stress_max=500.0e6,
     )
-    orig_cvode = es_mod.EntropySolver._solve_cvode
-
-    def _unclamped_cvode(self_s: EntropySolver, *a: Any, **kw: Any) -> Any:
-        if self_s.entropy_eos is None and getattr(
-            self_s.parameters.phase_mixed, 'const_properties', False
-        ):
-            kw['max_step'] = np.inf
-        return orig_cvode(self_s, *a, **kw)
-
-    es_mod.EntropySolver._solve_cvode = _unclamped_cvode
-    try:
+    with unbounded_cvode_step():
         solver = build_const_prop_1d_solver(
             base_params, rheo, p0d, t_end_yr=t_end_yr, n_output_points=n_output_points
         )
@@ -829,50 +1312,42 @@ def _recompute_trajectory_block(
                 max(1.0 - p0d.lid_contrast_coeff / max(theta, 1.0e-30), 0.0) * dl_p
             )
             ft_1d.append(ft)
-    finally:
-        es_mod.EntropySolver._solve_cvode = orig_cvode
 
-    ode_0d = integrate_stagnant_lid_0d(
-        1800.0,
-        t_1d * SECS_PER_YR,
+    is_4p5 = t_end_yr > 1.0e9
+    m_live = _compute_trajectory_metrics_from_arrays(
+        t_1d,
+        np.asarray(ti_1d, dtype=float),
+        np.asarray(dl_1d, dtype=float),
+        np.asarray(dl_cond_1d, dtype=float),
+        np.asarray(ft_1d, dtype=float),
         p0d,
-        conduction_geometry='spherical',
-        heat_capacity_mode='isothermal',
-        rtol=1.0e-10,
-        atol=1.0e-12,
+        is_4p5gyr=is_4p5,
     )
-    ti_0d = np.asarray(ode_0d['T_i_K'], dtype=float)
-    dl_0d = np.asarray(ode_0d['d_lid_eff_m'], dtype=float)
-    ft_0d = np.asarray(ode_0d['F_top_W_m2'], dtype=float)
-    ti_arr = np.asarray(ti_1d, dtype=float)
-    dl_arr = np.asarray(dl_1d, dtype=float)
-    s_err_ti = (ti_arr - ti_0d) / ti_0d
-    s_err_dl = (dl_arr - dl_0d) / dl_0d
-    err_ti = np.abs(s_err_ti)
-    err_dl = np.abs(s_err_dl)
-    mask_post = t_1d >= 2.5e7
 
     out = dict(existing_block)
-    out['max_rel_err_T_i_all'] = float(np.max(err_ti))
-    out['max_rel_err_T_i_post_relax'] = float(np.max(err_ti[mask_post]))
-    out['max_rel_err_d_lid_all'] = float(np.max(err_dl))
-    out['max_rel_err_d_lid_post_relax'] = float(np.max(err_dl[mask_post]))
-    out['t_cross_rel_err_d_lid_0p22_yr'] = compute_crossing_time_linear(
-        t_1d[mask_post], err_dl[mask_post], 0.22
-    )
-    out['t_cross_rel_err_T_i_0p05_yr'] = compute_crossing_time_linear(t_1d, err_ti, 0.05)
+    for mk in (
+        'max_rel_err_T_i_all',
+        'max_rel_err_T_i_post_relax',
+        'max_rel_err_T_i_window_25_400Myr',
+        'max_rel_err_T_i_window_1600_1800',
+        'max_rel_err_d_lid_all',
+        'max_rel_err_d_lid_post_10Myr',
+        'max_rel_err_d_lid_post_16p5Myr',
+        'max_rel_err_d_lid_post_relax',
+        'max_rel_err_d_lid_window_25_400Myr',
+        'max_rel_err_d_lid_window_1600_1800',
+        'max_rel_err_d_lid_cond_post_relax',
+        't_cross_rel_err_d_lid_0p22_yr',
+    ):
+        out[mk] = m_live[mk]
+    if is_4p5:
+        out['t_cross_rel_err_T_i_0p05_yr'] = m_live['t_cross_rel_err_T_i_0p05_yr']
+        out['t_nu_0d_clamp_1_yr'] = m_live['t_nu_0d_clamp_1_yr']
+        out['max_rel_err_T_i_valid_nu_ge_1'] = m_live['max_rel_err_T_i_valid_nu_ge_1']
+        out['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = m_live[
+            'max_rel_err_d_lid_valid_nu_ge_1_post_relax'
+        ]
     out['solver_last_S'] = y_1d[:, -1].tolist()
-    if 't_nu_0d_clamp_1_yr' in out:
-        nu_unyielded_grid = np.array(
-            [
-                float(evaluate_stagnant_lid_0d(float(ti_val), p0d)['Nu_unyielded'])
-                for ti_val in ti_0d
-            ],
-            dtype=float,
-        )
-        clamp_idx = np.where(nu_unyielded_grid < 1.0)[0]
-        if clamp_idx.size > 0:
-            out['t_nu_0d_clamp_1_yr'] = float(t_1d[int(clamp_idx[0])])
     if isinstance(out.get('states_1d_snapshots'), dict):
         snaps_updated = dict(out['states_1d_snapshots'])
         for k_str, snap_val in snaps_updated.items():
@@ -888,16 +1363,16 @@ def _recompute_trajectory_block(
     out['trajectory'] = {
         't_yr': t_1d.tolist(),
         'T_i_1d_K': ti_1d,
-        'T_i_0d_K': ti_0d.tolist(),
+        'T_i_0d_K': m_live['ti_0d'].tolist(),
         'd_lid_1d_m': dl_1d,
         'd_lid_cond_1d_m': dl_cond_1d,
-        'd_lid_0d_m': dl_0d.tolist(),
+        'd_lid_0d_m': m_live['dl_0d'].tolist(),
         'F_top_1d_W_m2': ft_1d,
-        'F_top_0d_W_m2': ft_0d.tolist(),
-        'signed_rel_err_T_i': s_err_ti.tolist(),
-        'signed_rel_err_d_lid': s_err_dl.tolist(),
-        'rel_err_T_i': err_ti.tolist(),
-        'rel_err_d_lid': err_dl.tolist(),
+        'F_top_0d_W_m2': m_live['ft_0d'].tolist(),
+        'signed_rel_err_T_i': m_live['s_err_ti'].tolist(),
+        'signed_rel_err_d_lid': m_live['s_err_dl'].tolist(),
+        'rel_err_T_i': m_live['err_ti'].tolist(),
+        'rel_err_d_lid': m_live['err_dl'].tolist(),
     }
     return out
 
@@ -991,17 +1466,42 @@ def main(argv: list[str] | None = None) -> int:
             t_end_yr=4.5e9,
             n_output_points=129,
         )
+    else:
+        for blk_key, is_4p5 in (
+            ('trajectory_calibrated_400Myr', False),
+            ('trajectory_default_400Myr', False),
+            ('trajectory_calibrated_4p5Gyr', True),
+            ('trajectory_default_4p5Gyr', True),
+        ):
+            blk = data[blk_key]
+            tr = blk['trajectory']
+            m_live = _compute_trajectory_metrics_from_arrays(
+                np.asarray(tr['t_yr'], dtype=float),
+                np.asarray(tr['T_i_1d_K'], dtype=float),
+                np.asarray(tr['d_lid_1d_m'], dtype=float),
+                np.asarray(tr['d_lid_cond_1d_m'], dtype=float),
+                np.asarray(tr['F_top_1d_W_m2'], dtype=float),
+                p0d,
+                is_4p5gyr=is_4p5,
+            )
+            if is_4p5:
+                blk['t_cross_rel_err_T_i_0p05_yr'] = m_live['t_cross_rel_err_T_i_0p05_yr']
+                blk['t_nu_0d_clamp_1_yr'] = m_live['t_nu_0d_clamp_1_yr']
+                blk['max_rel_err_T_i_valid_nu_ge_1'] = m_live['max_rel_err_T_i_valid_nu_ge_1']
+                blk['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = m_live[
+                    'max_rel_err_d_lid_valid_nu_ge_1_post_relax'
+                ]
 
     tr_4p5 = data['trajectory_calibrated_4p5Gyr']['trajectory']
     t_4p5_yr = np.asarray(tr_4p5['t_yr'], dtype=float)
     ti_1d_4p5 = np.asarray(tr_4p5['T_i_1d_K'], dtype=float)
     dl_1d_4p5 = np.asarray(tr_4p5['d_lid_1d_m'], dtype=float)
     ft_1d_4p5 = np.asarray(tr_4p5['F_top_1d_W_m2'], dtype=float)
-    t_nu_clamp_ref = float(data['trajectory_calibrated_4p5Gyr']['t_nu_0d_clamp_1_yr'])
     data['a_nu_provenance'] = compute_a_nu_provenance_block(
-        p0d, t_4p5_yr, ti_1d_4p5, dl_1d_4p5, ft_1d_4p5, t_nu_clamp_ref
+        p0d, t_4p5_yr, ti_1d_4p5, dl_1d_4p5, ft_1d_4p5
     )
     data['yield_sweep_0d_at_1600K'] = compute_yield_sweep_0d_at_1600k(p0d)
+    data['acceptance_summary'] = compute_acceptance_summary(data)
 
     failures = verify_benchmarks(data)
     if failures:

@@ -19,6 +19,12 @@ from aragog.rheology import (
     compute_mlt_top_slope,
     viscous_mixing_length_factor,
 )
+from tools.verification._ssc_helpers import (
+    korenaga_ti_fixed_point as _korenaga_ti_fixed_point,
+)
+from tools.verification._ssc_helpers import (
+    ols_fit as _ols,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -265,80 +271,18 @@ def test_solid_rheology_params_top_slope_defaults_and_bounds():
         SolidRheologyParams(c_theta=-0.01)
 
 
-def _korenaga_ti_fixed_point(
-    t_stag: np.ndarray,
-    z_over_d: np.ndarray,
-    t_surf: float,
-    dth: float,
-    *,
-    max_iter: int = 100,
-    tol_k: float = 1.0e-9,
-) -> float:
-    """Evaluate the Korenaga (2009, eq. 20) iterative sub-lid interior temperature T_i."""
-    order = np.argsort(z_over_d)
-    z_s, t_s_arr = z_over_d[order], t_stag[order]
-    ti = float(t_s_arr.max())
-    for _ in range(max_iter):
-        dl = (ti - t_surf) / dth
-        sub_z = z_s[z_s > dl]
-        if sub_z.size == 0:
-            raise RuntimeError(
-                f'_korenaga_ti_fixed_point failed: conductive lid depth dl={dl} exceeds domain'
-            )
-        zz = np.concatenate([[dl], sub_z])
-        tt = np.interp(zz, z_s, t_s_arr)
-        ti_new = float(np.trapezoid(tt, zz) / (zz[-1] - dl))
-        if abs(ti_new - ti) < tol_k:
-            return ti_new
-        ti = ti_new
-    raise RuntimeError(
-        f'_korenaga_ti_fixed_point did not converge within {tol_k} K after {max_iter} iterations'
-    )
-
-
 def test_korenaga_ti_fixed_point_raises_on_non_convergence() -> None:
     """Verify _korenaga_ti_fixed_point raises RuntimeError when iteration fails to converge."""
     z_grid = np.linspace(0.01, 0.99, 50)
     t_prof = 273.0 + 1500.0 * z_grid * (1.0 - 0.5 * z_grid)
-    with pytest.raises(RuntimeError, match='did not converge'):
+    with pytest.raises(RuntimeError, match='within 2 steps'):
         _korenaga_ti_fixed_point(t_prof, z_grid, 273.0, 1500.0, max_iter=2, tol_k=1.0e-15)
-    with pytest.raises(RuntimeError, match='exceeds domain'):
+    with pytest.raises(RuntimeError, match='lid exceeds domain'):
         _korenaga_ti_fixed_point(t_prof, z_grid, 273.0, 100.0)
 
 
-def _ols(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, float]:
-    """Fit ``y = c_0 + sum_j c_j x_j`` by ordinary least squares with standard errors."""
-    n = len(y_vec)
-    x_mat = np.column_stack([np.ones(n), *x_cols])
-    coeffs, _, _, _ = np.linalg.lstsq(x_mat, y_vec, rcond=None)
-    resid = y_vec - x_mat @ coeffs
-    ss_res = float(np.sum(resid**2))
-    ss_tot = float(np.sum((y_vec - np.mean(y_vec)) ** 2))
-    r2 = 1.0 - ss_res / max(ss_tot, 1.0e-30)
-    dof = max(n - x_mat.shape[1], 1)
-    cov = (ss_res / dof) * np.linalg.inv(x_mat.T @ x_mat)
-    se = np.sqrt(np.diag(cov))
-    if len(x_cols) == 2:
-        ln_a, alpha, beta = float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
-        return {
-            'a': float(np.exp(ln_a)),
-            'ln_a': ln_a,
-            'alpha': alpha,
-            'beta': beta,
-            'std_err_ln_a': float(se[0]),
-            'std_err_alpha': float(se[1]),
-            'std_err_beta': float(se[2]),
-            'r_squared': r2,
-        }
-    return {
-        'slope': float(coeffs[1]),
-        'std_err_slope': float(se[1]),
-        'intercept_log10': float(coeffs[0]),
-        'r_squared': r2,
-    }
-
-
-@pytest.mark.unit
+@pytest.mark.smoke
+@pytest.mark.timeout(120)
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
@@ -647,12 +591,12 @@ half_life_years = 1.0e30
         s_vec = np.asarray(snap['S_final'], dtype=float)
         rhs_live = np.asarray(sol._dSdt_single(float(snap['t_end_yr']), s_vec), dtype=float)
         np.testing.assert_allclose(
-            rhs_live, np.asarray(snap['rhs_final'], dtype=float), rtol=rel_pin, atol=1.0e-13
+            rhs_live, np.asarray(snap['rhs_final'], dtype=float), rtol=rel_pin, atol=1.0e-18
         )
         max_abs_rhs = float(np.max(np.abs(rhs_live)))
         assert max_abs_rhs <= steady_rhs_bound
         assert max_abs_rhs == pytest.approx(
-            float(snap['max_abs_rhs_J_kg_K_yr']), rel=1.0e-5, abs=1.0e-13
+            float(snap['max_abs_rhs_J_kg_K_yr']), rel=1.0e-4, abs=1.0e-18
         )
         t_stag_live = float(fp['T_i_nominal_K']) * np.exp(
             (s_vec - 3000.0) / float(fp['cp_J_kg_K'])
@@ -851,12 +795,14 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
     wp2_data = json.loads(wp2_path.read_text(encoding='utf-8'))
 
     # 1. Missing --eos-dir in generation mode must fail with exit code 1 without mutating file
+    orig_wp2_text = wp2_path.read_text(encoding='utf-8')
     wp2_copy = tmp_path / 'wp2_copy.json'
-    wp2_copy.write_text(wp2_path.read_text(encoding='utf-8'), encoding='utf-8')
+    wp2_copy.write_text(orig_wp2_text, encoding='utf-8')
     rc_missing_eos = wp2_mod.main(
         ['--output', str(wp2_copy), '--eos-dir', str(tmp_path / 'does_not_exist')]
     )
     assert rc_missing_eos == 1
+    assert wp2_copy.read_text(encoding='utf-8') == orig_wp2_text
 
     # 2. Incomplete EOS directory in verify_benchmarks appends failure instead of raising
     empty_eos_dir = tmp_path / 'empty_eos'
@@ -867,13 +813,13 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
     # 3. abe_solid_default parity bound, local call-count deltas, starts_block dict check, rationale
     assert wp2_data['a2_2_rhs_parity_and_activity']['abe_solid_default'][
         'rationale'
-    ].startswith('Default solid state set under zero-anchored kappah_floor: s_init=2900 J/kg/K')
+    ].startswith('Default state set on the CI SPIDER EOS tables: s_init=2900 J/kg/K')
     wp2_bad_def = copy.deepcopy(wp2_data)
     wp2_bad_def['a2_2_rhs_parity_and_activity']['abe_solid_default'][
         'rel_rhs_numpy_vs_jax_per_state'
     ][0] = 1.0e-3
     assert any(
-        "'abe_solid_default' max rel_rhs" in f
+        'abe_solid_default.max_rel_rhs_numpy_vs_jax' in f
         for f in wp2_mod.verify_benchmarks(wp2_bad_def, eos_dir=None)
     )
 
@@ -892,18 +838,28 @@ def test_verification_benchmark_generators_edge_cases_and_schema(tmp_path) -> No
         for f in wp2_mod.verify_benchmarks(wp2_bad_starts, eos_dir=None)
     )
 
-    # 4. compute_crossing_time_linear returns None (JSON null) when threshold is never crossed
+    # 4. compute_crossing_time_linear returns None (JSON null) when threshold is never crossed or already exceeded at t=0
     t_grid = np.array([0.0, 1.0e7, 2.0e7], dtype=float)
     err_grid = np.array([0.01, 0.02, 0.03], dtype=float)
     assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.22) is None
+    assert (
+        a6_1_mod.compute_crossing_time_linear(
+            t_grid, np.array([0.30, 0.35, 0.40], dtype=float), 0.22
+        )
+        is None
+    )
     assert a6_1_mod.compute_crossing_time_linear(t_grid, err_grid, 0.025) == pytest.approx(
         1.5e7, rel=1.0e-12
     )
 
     # 5. korenaga_ti_fixed_point domain safety and non-convergence RuntimeError
-    with pytest.raises(RuntimeError, match='did not converge'):
+    with pytest.raises(RuntimeError, match='lid exceeds domain'):
         a6_2_mod.korenaga_ti_fixed_point(
             np.array([2000.0, 2000.0]), np.array([0.1, 0.2]), 300.0, 1000.0
+        )
+    with pytest.raises(RuntimeError, match='within 1 steps'):
+        a6_2_mod.korenaga_ti_fixed_point(
+            np.array([1500.0, 300.0]), np.array([0.1, 0.9]), 300.0, 2000.0, max_iter=1
         )
 
     # 6. Clean metadata and cases_spec in ssc_wp6_a6_2_benchmarks.json and primary fit helper
@@ -1031,3 +987,81 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
             )
             with pytest.raises(RuntimeError, match='origin'):
                 mod._resolve_origin_head_commit(repo_root)
+
+
+@pytest.mark.smoke
+@pytest.mark.timeout(180)
+def test_benchmark_generators_check_mode_passes_on_committed_jsons(eos_dir) -> None:
+    """Run --check on all four SSC benchmark generators against the committed JSONs."""
+    from tools.verification import (
+        evaluate_mlt_top_slope_calibration as mlt_cal_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp2_benchmarks as wp2_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_1_benchmarks as a6_1_mod,
+    )
+    from tools.verification import (
+        generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
+    )
+
+    assert wp2_mod.main(['--check', '--eos-dir', str(eos_dir)]) == 0
+    assert mlt_cal_mod.main(['--check']) == 0
+    assert a6_1_mod.main(['--check']) == 0
+    assert a6_2_mod.main(['--check']) == 0
+
+
+@pytest.mark.unit
+def test_half_cell_surface_flux_patch_pins_bc5_prescribed_surface_temperature() -> None:
+    """Pin the half_cell_surface_flux verification helper against unpatched BC 5 on case_06."""
+    import json
+    from pathlib import Path
+
+    from aragog.solver.entropy_solver import EntropySolver
+    from tools.verification._ssc_helpers import half_cell_surface_flux
+    from tools.verification.generate_ssc_wp6_a6_2_benchmarks import build_scaling_case_params
+
+    ref_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_2_benchmarks.json'
+    data = json.loads(ref_path.read_text(encoding='utf-8'))
+    spec = next(s for s in data['cases_spec'] if s['case_id'] == 'case_06')
+    snap = data['steady_state_snapshots']['case_06']
+    s_final = np.array(snap['S_final'], dtype=float)
+    t_surf = float(spec['T_surf_K'])
+    k_cond = float(spec.get('k_thermal_W_per_m_K', 4.0))
+
+    with half_cell_surface_flux():
+        solver_patched = EntropySolver(build_scaling_case_params(spec), entropy_eos=None)
+        solver_patched.initialize()
+        rhs_patched = np.asarray(solver_patched._dSdt_single(0.0, s_final), dtype=float)
+        f_top_patched = float(solver_patched.state._heat_flux[-1])
+        t_cell = float(
+            np.asarray(solver_patched.state.phase_staggered.temperature()).ravel()[-1]
+        )
+        r_b = np.asarray(solver_patched.state._evaluator.mesh.basic.radii).ravel()
+        dr_half = 0.5 * float(r_b[-1] - r_b[-2])
+
+    expected_half_cell_flux = k_cond * (t_cell - t_surf) / dr_half
+    assert f_top_patched == pytest.approx(expected_half_cell_flux, rel=1.0e-14)
+    assert f_top_patched == pytest.approx(float(snap['F_top_W_m2']), rel=1.0e-12)
+    assert float(np.max(np.abs(rhs_patched))) < 1.0e-9
+
+    # Without half_cell_surface_flux, shipped EntropyState ignores outer_boundary_condition = 5:
+    # outer_boundary_value = 273 K and 1000 K yield bit-identical RHS and lower top flux.
+    params_273 = build_scaling_case_params(spec)
+    params_273.boundary_conditions.outer_boundary_value = 273.0
+    solver_273 = EntropySolver(params_273, entropy_eos=None)
+    solver_273.initialize()
+    rhs_273 = np.asarray(solver_273._dSdt_single(0.0, s_final), dtype=float)
+    f_top_unpatched = float(solver_273.state._heat_flux[-1])
+
+    params_1000 = build_scaling_case_params(spec)
+    params_1000.boundary_conditions.outer_boundary_value = 1000.0
+    solver_1000 = EntropySolver(params_1000, entropy_eos=None)
+    solver_1000.initialize()
+    rhs_1000 = np.asarray(solver_1000._dSdt_single(0.0, s_final), dtype=float)
+
+    assert np.array_equal(rhs_273, rhs_1000)
+    assert f_top_unpatched == pytest.approx(5.387415282426097, rel=1.0e-12)
+    assert f_top_patched > f_top_unpatched * 1.5
+    assert float(np.max(np.abs(rhs_273))) > 1.0e-3
