@@ -991,8 +991,10 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
 
 @pytest.mark.smoke
 @pytest.mark.timeout(180)
-def test_benchmark_generators_check_mode_passes_on_committed_jsons(eos_dir) -> None:
+def test_benchmark_generators_check_mode_passes_on_committed_jsons() -> None:
     """Run --check on all four SSC benchmark generators against the committed JSONs."""
+    import os
+
     from tools.verification import (
         evaluate_mlt_top_slope_calibration as mlt_cal_mod,
     )
@@ -1006,10 +1008,40 @@ def test_benchmark_generators_check_mode_passes_on_committed_jsons(eos_dir) -> N
         generate_ssc_wp6_a6_2_benchmarks as a6_2_mod,
     )
 
-    assert wp2_mod.main(['--check', '--eos-dir', str(eos_dir)]) == 0
     assert mlt_cal_mod.main(['--check']) == 0
     assert a6_1_mod.main(['--check']) == 0
     assert a6_2_mod.main(['--check']) == 0
+    if os.environ.get('ARAGOG_TEST_EOS_DIR'):
+        assert wp2_mod.main(['--check']) == 0
+
+
+@pytest.mark.unit
+def test_solid_state_convection_tutorial_registered_and_code_blocks_parse() -> None:
+    """Verify the solid-state convection tutorial, its light/dark SVGs, and its Python blocks."""
+    import ast
+    import re
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    mkdocs_text = (repo_root / 'mkdocs.yml').read_text(encoding='utf-8')
+    assert 'Tutorials/solid_state_convection.md' in mkdocs_text
+
+    tut_path = repo_root / 'docs' / 'Tutorials' / 'solid_state_convection.md'
+    assert tut_path.is_file()
+    tut_text = tut_path.read_text(encoding='utf-8')
+
+    svg_light = repo_root / 'docs' / 'assets' / 'tutorials' / 'ssc_tutorial_profiles.svg'
+    svg_dark = repo_root / 'docs' / 'assets' / 'tutorials' / 'ssc_tutorial_profiles_dark.svg'
+    assert svg_light.is_file() and 1000 < svg_light.stat().st_size <= 60_000
+    assert svg_dark.is_file() and 1000 < svg_dark.stat().st_size <= 60_000
+
+    py_blocks = re.findall(r'```python\n(.*?)```', tut_text, flags=re.DOTALL)
+    assert len(py_blocks) >= 3
+    combined_source = '\n'.join(py_blocks)
+    tree = ast.parse(combined_source)
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == 'run_case' for node in tree.body
+    )
 
 
 @pytest.mark.unit

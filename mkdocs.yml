@@ -32,6 +32,7 @@ nav:
   - Tutorials:
       - First run: Tutorials/firstrun.md
       - Building a test: Tutorials/build_test.md
+      - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
       - Overview:
