@@ -28,7 +28,7 @@ and all heat made in the shell leaves through the surface: $F_\mathrm{top} = \rh
 ??? info "Test details"
     - Reference: Turcotte and Schubert (2014), section 4.9, eq. 4.40, with zero flux at the inner radius.
     - Tolerance: surface flux to a relative 10⁻⁸ on each grid; temperature error with order 2.0 ± 0.2 between 50, 100 and 200 cells.
-    - Discrimination: the surface flux checks the energy balance and holds for any face rule; the convergence order catches a wrong face. With a full-cell face the order is 1.00 and the largest error on 50 cells is 1.8 %, against 0.01 % with the half cell.
+    - Discrimination: the surface flux checks the energy balance and holds for any face rule; the convergence order catches a wrong face. With a full-cell face the order is 1.00 and the largest error on 50 cells is 1.8 % of the temperature rise at the inner radius, against 0.01 % with the half cell.
     - Test id: `tests/test_entropy_bc5_validation.py::test_the_steady_heated_shell_matches_the_closed_form`
     - Command: `pytest tests/test_entropy_bc5_validation.py -k steady_heated` (add `--validation-plots` to write the plot pair)
 

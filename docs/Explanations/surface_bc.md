@@ -24,7 +24,7 @@ The solver works with the specific entropy $S$ \[J/kg/K\], not with the temperat
 
 The mantle grid has cell centres (the staggered nodes, where the solver keeps $S$) and cell faces (the basic nodes, where the fluxes are). The surface is the last basic node. Its pressure is $P_s$. The solver solves $T(P_s, S_s) = T_s$ for $S_s$:
 
-- with EOS tables, by a root search on the tables (`EntropyEOS.entropy_at_temperature`), refined with the phase evaluator of the surface node, so that the value includes the property smoothing near the solidus and liquidus (`matprop_smooth_width`);
+- with EOS tables, by a root search on the phase evaluator of the surface node, so that the value includes the property smoothing near the solidus and liquidus (`matprop_smooth_width`). The search starts 20 J/kg/K around the table value (`EntropyEOS.entropy_at_temperature`) and widens inside the table range; a smoothing width of 0.2 moves the root by up to 65 J/kg/K on the test tables;
 - in the constant-properties mode, from the closed form $S_s = S_\mathrm{ref} + c_p \ln(T_s / T_\mathrm{ref})$.
 
 ### The surface gradient
@@ -49,7 +49,7 @@ The conductive flux is $F_\mathrm{cond} = -k\,\partial T/\partial r$, with $k$ t
 
 $$F_\mathrm{cond} = k\,\frac{T_{N-1} - T_s}{\Delta r / 2},$$
 
-positive outward when the mantle is warmer than the surface. The convective flux of the mixing-length theory, $\rho T \kappa_h (-\partial S / \partial r)$, uses the same entropy gradient. With `mixing_length_profile = 'nearest_boundary'` the mixing length is 0 at the surface, so the convective flux there is 0. With `'constant'` the surface face also carries a convective flux. The floor of the eddy diffusivity (`kappah_floor`), which keeps molten cells below the convective threshold mixing, does not act at a surface held at its temperature.
+positive outward when the mantle is warmer than the surface. The convective flux of the mixing-length theory, $\rho T \kappa_h (-\partial S / \partial r)$, uses the same entropy gradient. With `mixing_length_profile = 'nearest_boundary'` the mixing length is 0 at the surface, so the convective flux there is 0. With `'constant'` the surface face also carries a convective flux. The floor of the eddy diffusivity (`kappah_floor`) lets molten cells mix below the convective threshold; it does not act at a surface held at its temperature.
 
 ### Why the solver does not use an entropy difference
 
@@ -66,6 +66,6 @@ The solver takes $\Delta r / 2 = \Delta\xi / (2\, \mathrm{d}\xi/\mathrm{d}r)$, w
 - `param_utbl = true`, `core_bc = 'gradient'` and `energy.conduction = false` stop the setup with a `ValueError`: the UTBL correction belongs to the grey-body flux, the gradient core keeps its own surface gradient, and without conduction the prescribed temperature would set no flux under `nearest_boundary`.
 - A caller can change `outer_boundary_value` between calls; the next call of the NumPy right-hand side, and the next `solve`, invert the surface entropy again.
 - Every call of the NumPy right-hand side checks that the surface node is at $T_s$ to a relative 10⁻⁶ and raises a `RuntimeError` if it is not.
-- The JAX right-hand side takes the surface entropy and the half cell as `S_surf` and `surf_dr_half` of `BoundaryParams` with `outer_bc_type = 5`, and applies the same gradient. Take both from `EntropySolver.surface_temperature_bc`, and build `BoundaryParams` again after a change of `outer_boundary_value`. `BoundaryParams` refuses type 5 without a finite `S_surf` and a finite positive `surf_dr_half`.
+- The JAX right-hand side takes the surface entropy and the half cell as `S_surf` and `surf_dr_half` of `BoundaryParams` with `outer_bc_type = 5`, and applies the same gradient. `EntropySolver.surface_temperature_bc` gives the surface entropy, the surface temperature (`outer_bc_value`) and the half cell; build `BoundaryParams` again after a change of `outer_boundary_value`. `BoundaryParams` refuses type 5 without a finite `S_surf` and a positive finite `outer_bc_value` and `surf_dr_half`.
 
 **Where this is checked.** [Surface boundary](../Validation/surface.md) compares mode 5 with a steady heated shell, a cooling half space and a grid-convergence study, and the [tutorial](../Tutorials/surface_temperature.md) repeats the half-space case step by step.
