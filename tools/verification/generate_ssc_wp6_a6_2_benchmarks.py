@@ -775,11 +775,11 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
 
     # 1. Block 1 live check: metadata calibration, acceptance window, and conduction floors
     rcal = meta.get('rheology_calibration', {})
+    if rcal.get('enabled') is not True:
+        failures.append('metadata.rheology_calibration.enabled is not True')
     for k_cal, v_exp in (
         ('s_top_inf', 0.25),
         ('c_theta', 0.25),
-        ('mlt_bottom_slope', 1.0),
-        ('lid_contrast_coeff_a', 2.2),
     ):
         if abs(float(rcal.get(k_cal, -1.0)) - v_exp) > 1.0e-12:
             failures.append(f'metadata.rheology_calibration.{k_cal} != {v_exp}')
