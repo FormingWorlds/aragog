@@ -24,7 +24,8 @@ class MeshConfig:
     number_of_nodes : int
         Number of basic mesh nodes.
     mixing_length_profile : str
-        'constant' or 'nearest_boundary'.
+        'constant' or 'nearest_boundary'. With ``outer_boundary_condition = 5``, 'constant'
+        is refused unless ``mixing_length_constant_fraction = 0``.
     mixing_length_constant_fraction : float
         Fraction of the mantle thickness to use as the mixing length
         when ``mixing_length_profile = 'constant'``. Default 0.25.

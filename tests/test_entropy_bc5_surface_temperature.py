@@ -390,8 +390,8 @@ def test_the_jax_surface_gradient(cp, t_node, t_top, dtdps, dp_dr):
 def test_the_jax_factory_refuses_bc5_without_a_conductive_surface(params, mixing_length, match):
     """The JAX CVODE factory refuses type 5 without conduction, with a mixing length that is
     not 0 at the surface node (as with 'constant'), or with a negative or non-finite
-    eddy_diffusivity_thermal, which gives the surface node a kappa_h; each leaves the surface face without the
-    half-cell conduction it prescribes."""
+    eddy_diffusivity_thermal, which gives the surface node a kappa_h; each leaves the surface
+    face without the half-cell conduction it prescribes."""
     pytest.importorskip('equinox')
     from types import SimpleNamespace
 

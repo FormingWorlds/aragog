@@ -13,6 +13,7 @@ finite-volume mesh.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import numbers
@@ -2042,43 +2043,37 @@ class EntropySolver:
 
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and after a change of
-        ``outer_boundary_value``."""
+        ``outer_boundary_value``; ValueError unless it is a positive finite real [K]."""
         if self._outer_bc_kind != 5:
             return
-        t_surf = self._surface_temperature_value()
-        current = self.state._surface_temperature_bc
-        if current is None or t_surf != current[1]:
-            s_surf, half_cell = self._invert_surface_temperature(t_surf)
-            self.state.set_surface_temperature(s_surf, t_surf, half_cell)
-
-    def _surface_temperature_value(self) -> float:
-        """``outer_boundary_value`` as a positive finite float [K] (BC 5); ValueError if not."""
         value = self.evaluator.boundary_conditions._settings.outer_boundary_value
         t_surf = math.nan
         if isinstance(value, numbers.Real) and not isinstance(value, bool):
-            try:
+            with contextlib.suppress(OverflowError):
                 t_surf = float(value)
-            except OverflowError:
-                pass
         if not (math.isfinite(t_surf) and t_surf > 0.0):
             raise ValueError(
                 'outer_boundary_value must be a positive finite surface temperature [K] '
                 f'with outer_boundary_condition = 5, got {value!r}'
             )
-        return t_surf
+        current = self.state._surface_temperature_bc
+        if current is None or t_surf != current[1]:
+            s_surf, half_cell = self._invert_surface_temperature(t_surf)
+            self.state.set_surface_temperature(s_surf, t_surf, half_cell)
 
     def _check_surface_temperature_settings(self) -> None:
         """Refuse the settings that have no meaning with BC 5: the UTBL correction, the
         gradient core, conduction off, and any eddy flux through the surface face (a mixing
-        length that is not 0 at the surface node, or a constant eddy diffusivity)."""
-        bc, energy = self.evaluator.boundary_conditions._settings, self.parameters.energy
+        length that is not 0 at the surface node, or an eddy_diffusivity_thermal that is
+        negative or not finite)."""
+        bc = self.evaluator.boundary_conditions._settings
         if bc.param_utbl:
             raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
         if self._core_bc == 'gradient':
             raise ValueError(
                 "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
             )
-        if not energy.conduction:
+        if not self.parameters.energy.conduction:
             raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
         surface_length = float(np.ravel(self.state._mixing_length)[-1])
         if surface_length != 0.0:
@@ -2087,10 +2082,11 @@ class EntropySolver:
                 "(mixing_length_profile = 'nearest_boundary'); mixing_length_profile = "
                 f"'{self.parameters.mesh.mixing_length_profile}' gives {surface_length:.6g} m"
             )
-        if getattr(energy, 'eddy_diffusivity_thermal', 1.0) < 0.0:
+        eddy = float(self.state._eddy_diff_thermal)
+        if not (math.isfinite(eddy) and eddy >= 0.0):
             raise ValueError(
-                'outer_boundary_condition = 5 needs eddy_diffusivity_thermal >= 0: a negative '
-                'value sets the eddy diffusivity of the surface node too'
+                'outer_boundary_condition = 5 needs a finite eddy_diffusivity_thermal >= 0 '
+                f'(another value puts an eddy flux on the surface face), got {eddy!r}'
             )
 
     def _invert_surface_temperature(self, t_surf: float) -> tuple[float, float]:
