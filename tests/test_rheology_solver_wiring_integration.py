@@ -46,11 +46,15 @@ from tests.test_rheology_solver_wiring import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 
-# Round-off bound for the stored main reference (recorded on macOS, read on Linux CI too).
+# Round-off bounds for the stored main reference (recorded on macOS, read on Linux CI too):
+# single RHS evaluations agree to 1e-12; a solve accumulates round-off (Linux: 3.3e-11 on S_final).
 MAIN_REF_RTOL = 1.0e-12
+MAIN_REF_SOLVE_RTOL = 1.0e-9
 
 
-def _assert_matches_main_reference(actual, expected, key: str) -> None:
+def _assert_matches_main_reference(
+    actual, expected, key: str, rtol: float = MAIN_REF_RTOL
+) -> None:
     """Assert ``actual`` equals the stored main-branch reference ``expected`` within round-off."""
     a = np.asarray(actual, dtype=float)
     e = np.asarray(expected, dtype=float)
@@ -60,8 +64,8 @@ def _assert_matches_main_reference(actual, expected, key: str) -> None:
     np.testing.assert_allclose(
         a,
         e,
-        rtol=MAIN_REF_RTOL,
-        atol=MAIN_REF_RTOL * scale,
+        rtol=rtol,
+        atol=rtol * scale,
         err_msg=f'{key}: max abs diff {diff.max():.3e}, max rel diff {rel.max():.3e}',
     )
 
@@ -309,13 +313,22 @@ def test_rheology_off_preserves_main_rhs_and_solve() -> None:
     s_np.solve()
     out_np = s_np.get_state()
     _assert_matches_main_reference(
-        np.asarray(out_np.S_final), ref['solve/np/S_final'], 'solve/np/S_final'
+        np.asarray(out_np.S_final),
+        ref['solve/np/S_final'],
+        'solve/np/S_final',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
     _assert_matches_main_reference(
-        np.asarray(out_np.T_stag), ref['solve/np/T_stag'], 'solve/np/T_stag'
+        np.asarray(out_np.T_stag),
+        ref['solve/np/T_stag'],
+        'solve/np/T_stag',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
     _assert_matches_main_reference(
-        np.asarray(out_np.heat_flux), ref['solve/np/heat_flux'], 'solve/np/heat_flux'
+        np.asarray(out_np.heat_flux),
+        ref['solve/np/heat_flux'],
+        'solve/np/heat_flux',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
 
     s_jax = EntropySolver(c_solve, entropy_eos=eos_inst)
@@ -326,13 +339,22 @@ def test_rheology_off_preserves_main_rhs_and_solve() -> None:
     s_jax.solve()
     out_jax = s_jax.get_state()
     _assert_matches_main_reference(
-        np.asarray(out_jax.S_final), ref['solve/jax/S_final'], 'solve/jax/S_final'
+        np.asarray(out_jax.S_final),
+        ref['solve/jax/S_final'],
+        'solve/jax/S_final',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
     _assert_matches_main_reference(
-        np.asarray(out_jax.T_stag), ref['solve/jax/T_stag'], 'solve/jax/T_stag'
+        np.asarray(out_jax.T_stag),
+        ref['solve/jax/T_stag'],
+        'solve/jax/T_stag',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
     _assert_matches_main_reference(
-        np.asarray(out_jax.heat_flux), ref['solve/jax/heat_flux'], 'solve/jax/heat_flux'
+        np.asarray(out_jax.heat_flux),
+        ref['solve/jax/heat_flux'],
+        'solve/jax/heat_flux',
+        rtol=MAIN_REF_SOLVE_RTOL,
     )
 
     # Verify that turning rheology on shifts RHS relative to rheology off
