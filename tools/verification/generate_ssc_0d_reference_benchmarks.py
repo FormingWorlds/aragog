@@ -62,13 +62,13 @@ Execution modes and per-block coverage:
      ``a_nu`` values, mean, standard deviation, and all three 4.5 Gyr 0-D ODE
      trajectories (``a_nu in {0.5954, 0.53, 0.57}``), per-prefactor ``t_nu_clamp_1_yr``,
      and pre-clamp window metrics against the stored 1-D 4.5 Gyr trajectory arrays
-     within ``1e-12``.
+     within ``LIVE_RECOMPUTE_RTOL`` (``1e-10`` relative).
   2. ``trajectory_calibrated_400Myr``, ``trajectory_default_400Myr``,
      ``trajectory_calibrated_4p5Gyr``, ``trajectory_default_4p5Gyr``,
      ``segment_25Myr_spread_5starts``, and ``acceptance_summary``: recomputes live all
      four 0-D ODE trajectories, error series, window maxima, linear crossing times,
      snapshot entries, and ``acceptance_summary`` against the stored 1-D trajectory
-     arrays within ``1e-12``; integrates the live 1-D ``EntropySolver`` over
+     arrays within ``1e-10`` relative; integrates the live 1-D ``EntropySolver`` over
      ``[0, 25 Myr]`` (17 output points) within ``1e-7``; evaluates live 1-D
      ``EntropySolver._dSdt_single`` on all four ``solver_last_S`` endpoint profiles
      within ``1e-9``; and verifies ``segment_25Myr_spread_5starts`` schema completeness
@@ -78,7 +78,7 @@ Execution modes and per-block coverage:
      ``yield_sweep_1d_by_dt``, ``yield_sweep_1d_equal_Ti_from_S_ref``, and
      ``yield_sweep_1d_equal_Ti_1600K_from_init``: recomputes live all 5 0-D yield cases
      at 1600 K within ``1e-12``, evaluates live 1-D ``EntropySolver._dSdt_single`` on
-     ``s_ref_51`` across all 5 cases of ``0Myr`` within ``1e-11``, integrates live 1-D
+     ``s_ref_51`` across all 5 cases of ``0Myr`` within ``1e-10`` relative, integrates live 1-D
      ``EntropySolver.solve()`` over ``[0, 10 Myr]`` from ``s_ref_51`` for
      ``unyielded_500MPa`` and ``below_0p5x_tau_d_lid`` (the non-zero horizon feeding
      ``acceptance_summary``) within ``1e-7``, and verifies stored-data thinning ratios
@@ -90,7 +90,8 @@ Execution modes and per-block coverage:
      and evaluates live 1-D ``EntropySolver._dSdt_single`` on all 3 stored ``E300``
      (``N=100``) steady-state profiles within ``1e-11``, verifying ``max_abs_rhs <= 1e-9``,
      ``max_abs_rhs <= 100 * max_5start_rhs``, and agreement with the stored unperturbed
-     residual within ``1e-4`` relative.
+     residual within ``1e-4`` relative or ``1e-12`` absolute (a steady residual is a
+     cancellation result).
 """
 
 from __future__ import annotations
@@ -137,6 +138,9 @@ from tools.verification._ssc_helpers import (  # noqa: E402
 )
 
 SECS_PER_YR = 31557600.0
+# Values recomputed live on another platform differ at round-off (macOS vs Linux: up to 2.8e-12
+# relative on the 0-D trajectories), so live-versus-stored comparisons use this relative bound.
+LIVE_RECOMPUTE_RTOL = 1.0e-10
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_0d_reference_benchmarks.json'
 SSC_0D_INPUT_PATHS: tuple[str, ...] = (
@@ -648,6 +652,19 @@ def evaluate_live_e300_steady_vector(
         }
 
 
+def _bc5_tolerances(field: str) -> tuple[float, float]:
+    """Return ``(rtol, atol)`` for a BC 5 surface-patch diagnostic field.
+
+    Residuals and relative differences of nearly equal values are cancellation results, so
+    they get an absolute round-off bound; other fields use ``LIVE_RECOMPUTE_RTOL``.
+    """
+    if 'max_abs_rhs' in field:
+        return 1.0e-4, 1.0e-12
+    if 'rel_diff' in field:
+        return LIVE_RECOMPUTE_RTOL, 1.0e-10
+    return LIVE_RECOMPUTE_RTOL, 1.0e-15
+
+
 def compute_e300_bc5_surface_patch_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
     """Compute BC 5 half-cell patch vs unpatched and surface-consistent closure diagnostics on E300 states."""
     steady = data['steady_yield_thinning']
@@ -966,9 +983,13 @@ def verify_benchmarks(
                 if metric not in stored_sub:
                     failures.append(f'a_nu_provenance {k_sub} missing {metric!r}')
                 elif (
-                    abs(m_val - float(stored_sub[metric])) / max(abs(m_val), 1.0e-30) > 1.0e-12
+                    abs(m_val - float(stored_sub[metric])) / max(abs(m_val), 1.0e-30)
+                    > LIVE_RECOMPUTE_RTOL
                 ):
-                    failures.append(f'a_nu_provenance {k_sub} {metric} mismatch')
+                    failures.append(
+                        f'a_nu_provenance {k_sub} {metric} mismatch: '
+                        f'{stored_sub[metric]} vs {m_val}'
+                    )
 
     # 2. Block 2 & 3 check: all 4 trajectory blocks, live 25 Myr segment, live 4.5 Gyr endpoints, and acceptance_summary
     with unbounded_cvode_step():
@@ -1008,7 +1029,7 @@ def verify_benchmarks(
                 if not np.allclose(
                     np.asarray(tr.get(arr_k, []), dtype=float),
                     live_arr,
-                    rtol=1.0e-12,
+                    rtol=LIVE_RECOMPUTE_RTOL,
                     atol=1.0e-14,
                 ):
                     failures.append(f'{blk_key}.trajectory.{arr_k} mismatch')
@@ -1045,7 +1066,8 @@ def verify_benchmarks(
                 elif v_st is None or v_st == '__missing__':
                     failures.append(f'{blk_key}.{sk} missing or None')
                 elif (
-                    abs(float(v_st) - float(v_exp)) / max(abs(float(v_exp)), 1.0e-30) > 1.0e-12
+                    abs(float(v_st) - float(v_exp)) / max(abs(float(v_exp)), 1.0e-30)
+                    > LIVE_RECOMPUTE_RTOL
                 ):
                     failures.append(f'{blk_key}.{sk} mismatch: {v_st} vs {v_exp}')
 
@@ -1221,8 +1243,14 @@ def verify_benchmarks(
                 ('tau_d_lid_Pa', td_c),
                 ('w_y', wy_c),
             ):
-                if abs(mv - float(c_0myr.get(mk, -1.0))) / max(abs(mv), 1.0e-30) > 1.0e-11:
-                    failures.append(f'yield_sweep_1d_by_dt.0Myr.{k_case}.{mk} live mismatch')
+                if (
+                    abs(mv - float(c_0myr.get(mk, -1.0))) / max(abs(mv), 1.0e-30)
+                    > LIVE_RECOMPUTE_RTOL
+                ):
+                    failures.append(
+                        f'yield_sweep_1d_by_dt.0Myr.{k_case}.{mk} live mismatch: '
+                        f'{c_0myr.get(mk)} vs {mv}'
+                    )
             if k_case == 'unyielded_500MPa':
                 for mk in (
                     'T_i_K',
@@ -1435,8 +1463,12 @@ def verify_benchmarks(
         ):
             failures.append(f'{vec_key} max_over_5starts_max_abs_rhs_J_kg_K_yr mismatch')
         unp_rhs = float(ulp_spread[vec_key]['unperturbed_max_abs_rhs_J_kg_K_yr'])
-        if not np.isclose(obs['max_abs_rhs'], unp_rhs, rtol=1.0e-4, atol=1.0e-18):
-            failures.append(f'{vec_key} live max_abs_rhs mismatch vs unperturbed stored')
+        # A steady residual is a cancellation result; compare it at an absolute round-off bound.
+        if not np.isclose(obs['max_abs_rhs'], unp_rhs, rtol=1.0e-4, atol=1.0e-12):
+            failures.append(
+                f'{vec_key} live max_abs_rhs mismatch vs unperturbed stored: '
+                f'{unp_rhs} vs {obs["max_abs_rhs"]}'
+            )
         if obs['max_abs_rhs'] > 100.0 * max_5start_rhs or obs['max_abs_rhs'] > 1.0e-9:
             failures.append(
                 f'{vec_key} max_abs_rhs {obs["max_abs_rhs"]:.3e} exceeds steady bound'
@@ -1484,19 +1516,22 @@ def verify_benchmarks(
                             f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch'
                         )
                 else:
-                    tol_f = 1.0e-4 if 'max_abs_rhs' in fk else 1.0e-9
-                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=1.0e-15):
+                    tol_f, atol_f = _bc5_tolerances(fk)
+                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=atol_f):
                         failures.append(
-                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch'
+                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch: {sv} vs {fv}'
                         )
         st_sum = stored_bc5.get('summary_ranges', {})
         for sk, sv_live in live_bc5['summary_ranges'].items():
             if not isinstance(st_sum, dict) or sk not in st_sum:
                 failures.append(f'bc5_surface_patch_diagnostics.summary_ranges missing {sk!r}')
                 continue
-            tol_s = 1.0e-4 if 'max_abs_rhs' in sk else 1.0e-9
-            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=1.0e-15):
-                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch')
+            tol_s, atol_s = _bc5_tolerances(sk)
+            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=atol_s):
+                failures.append(
+                    f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch: '
+                    f'{st_sum[sk]} vs {sv_live}'
+                )
 
     return failures
 

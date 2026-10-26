@@ -46,7 +46,7 @@
       "yield_blend_ratio_width": 0.025
     },
     "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)",
-    "generator_input_sha256": "080c671f410f4314ebe49197a594a1cf3d45b49290b16bf9e178185dbb4aa151",
+    "generator_input_sha256": "c89fba30214e74a589230b747b07159a2eb7f056381e87c55f859ed6c5df7719",
     "generator_input_files": {
       "src/aragog/__init__.py": "dc05d98b503aa6ce6f61ab234528a1fa6ee40cd54017cc7ab2499eb1e138b8bb",
       "src/aragog/cfg/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -100,8 +100,8 @@
       "src/aragog/solver/entropy_state.py": "c2e7b0841f6e6e907cbdf948366d9fe5d933e029d7732b8c1144cc912e22a65f",
       "src/aragog/utilities.py": "4d92a214e8c3edda11a6651fd396202de4f9869f629e77f4709a05a9187a8929",
       "tests/reference/stagnant_lid_0d.py": "5c69849e1fb6de96f2a71f549f856ac22a05308d56423b938dc6ef966a149602",
-      "tools/verification/_ssc_helpers.py": "35c04512178262b90fe59cd3db725c666f4704e411047ee0c5ed8098150bfb16",
-      "tools/verification/generate_ssc_0d_reference_benchmarks.py": "ffbb63a25f981851a293723304c6ca5f87c6fc9c061667e2d8127087c4885808"
+      "tools/verification/_ssc_helpers.py": "4e5dab1eb9afc149dc6401dc556dc320cdc3fc42c7bffa17bf26e5ec3521725e",
+      "tools/verification/generate_ssc_0d_reference_benchmarks.py": "160da0db2ec513751b3c91d5554dd3838607c751ca6d644c63bc8937f50e4ba8"
     }
   },
   "trajectory_calibrated_400Myr": {
