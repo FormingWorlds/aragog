@@ -115,10 +115,10 @@ _PARITY = [
     *[
         (core_bc, profile, {})
         for core_bc in ('quasi_steady', 'energy_balance', 'core_module')
-        for profile in ('nearest_boundary', 'constant')
+        for profile in ('nearest_boundary',)
     ],
     ('quasi_steady', 'nearest_boundary', {'t_surf': 1000.0}),
-    ('quasi_steady', 'constant', {'t_surf': 3000.0}),
+    ('quasi_steady', 'nearest_boundary', {'t_surf': 3000.0}),
     ('quasi_steady', 'nearest_boundary', {'t_surf': 1445.0, 'smooth': 0.01}),
 ]
 
@@ -159,7 +159,7 @@ def test_the_jax_jacobian_matches_a_finite_difference_of_the_numpy_rhs():
     """jax.jacrev of the BC 5 right-hand side equals a central difference of the NumPy one on
     the graded profile; the surface row differs from that of the prescribed-flux mode."""
     jax = pytest.importorskip('jax')
-    s = _bc5_solver('quasi_steady', profile='constant')
+    s = _bc5_solver('quasi_steady')
     y = np.asarray(s._S0, dtype=float)
     fn, args = _jax_rhs_and_args(s)
     jac = np.asarray(jax.jacrev(lambda v: fn(0.0, v, args))(jax.numpy.asarray(y)))

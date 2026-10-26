@@ -112,24 +112,15 @@ def test_the_half_cell_is_the_temperature_gradient_expression_on_a_mass_mesh():
         assert (abs(_half_cell(s) / geometric - 1.0) > 1e-3) is differs
 
 
-@pytest.mark.physics_invariant
-def test_the_convective_face_flux_uses_the_matched_gradient():
-    """With a constant mixing length the surface face also carries a convective flux, built
-    from the same entropy gradient that gives the half-cell conduction:
-    dS/dr = (Cp / T_surf) (dT/dr - dT/dP|_S dP/dr)."""
-    s = _solver(300.0, profile='constant', floor=10.0)
-    _rhs(s)
-    st_ = s.state
-    t_top_cell = float(np.ravel(st_.phase_staggered.temperature())[-1])
-    g_t = (300.0 - t_top_cell) / _half_cell(s)
-    dtdps = float(np.ravel(st_.phase_basic.dTdPs())[-1])
-    dpdr = float(np.ravel(st_._dP_dr_basic)[-1])
-    assert float(st_._dSdr[-1]) == pytest.approx((CP / 300.0) * (g_t - dtdps * dpdr), rel=1e-10)
-    assert _top(s, '_jcond') == pytest.approx(-K_COND * g_t, rel=1e-12)
-    assert _top(s, '_jconv') > 0.0
-    assert _top(s, 'heat_flux') == pytest.approx(
-        _top(s, '_jcond') + _top(s, '_jconv'), rel=1e-12
-    )
+def test_bc5_refuses_a_constant_mixing_length():
+    """A constant mixing length puts a convective flux of up to 8.8e12 W/m2 on a molten surface
+    node held at its temperature (test tables); the setup refuses mixing_length_profile =
+    'constant' with BC 5, and nearest_boundary, mixing length 0 at the surface, is accepted."""
+    with pytest.raises(Exception) as err:
+        _solver(300.0, profile='constant')
+    assert err.type is ValueError, repr(err.value)
+    assert "mixing_length_profile = 'constant'" in str(err.value)
+    assert _solver(300.0, profile='nearest_boundary').surface_temperature_bc[1] == 300.0
 
 
 @pytest.mark.parametrize(
@@ -414,3 +405,26 @@ def test_the_jax_factory_refuses_bc5_without_conduction():
         )
     assert err.type is ValueError, repr(err.value)
     assert 'conduction' in str(err.value)
+
+
+def test_the_jax_factory_refuses_bc5_with_a_surface_mixing_length():
+    """The JAX CVODE factory sees the mixing length of the mesh, not the profile name; it
+    refuses type 5 when the mixing length at the surface node is not 0, as with 'constant'."""
+    pytest.importorskip('equinox')
+    from types import SimpleNamespace
+
+    from aragog.jax.nondim import NonDimScales
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    scales = NonDimScales(state_scale=np.ones(4), t_ref=1.0)
+    with pytest.raises(Exception) as err:
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=SimpleNamespace(conduction=1.0),
+            mesh_arrays=SimpleNamespace(mixing_length=np.array([0.0, 7.2e5, 7.2e5])),
+            boundary_params=SimpleNamespace(outer_bc_type=5),
+            heating_array=np.zeros(4),
+            scales=scales,
+        )
+    assert err.type is ValueError, repr(err.value)
+    assert 'mixing length' in str(err.value)
