@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "git_commit": "428bfd3d41a4b4bfa33e8e7607c87e521c4dfa56",
+    "git_commit": "c0340e2110b248e207d22c74c0e25089180ee1a6",
     "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)",
     "rheology_calibration": {
       "enabled": true,
@@ -831,16 +831,16 @@
         ]
       },
       "beta_sweep": {
-        "slope": 0.278466879291935,
+        "slope": 0.2784668792919349,
         "intercept": -3.1799591289372175,
         "r_squared": 0.984905573869167,
-        "std_err_slope": 0.017236717257103566
+        "std_err_slope": 0.017236717257103584
       },
       "alpha_sweep": {
-        "slope": 1.010892772676225,
-        "intercept": 3.993063051834662,
+        "slope": 1.0108927726762267,
+        "intercept": 3.993063051834667,
         "r_squared": 0.9864877256372422,
-        "std_err_slope": 0.059155275376442835
+        "std_err_slope": 0.05915527537644307
       },
       "beta_in_window": false,
       "alpha_in_window": false,
@@ -881,16 +881,16 @@
         ]
       },
       "beta_sweep": {
-        "slope": 0.290797135250934,
+        "slope": 0.29079713525093387,
         "intercept": -3.4399910195987333,
         "r_squared": 0.9900064527519332,
-        "std_err_slope": 0.014608342768622083
+        "std_err_slope": 0.014608342768622065
       },
       "alpha_sweep": {
-        "slope": 1.0780991874470727,
-        "intercept": 4.11697296973115,
+        "slope": 1.0780991874470744,
+        "intercept": 4.1169729697311555,
         "r_squared": 0.9939093339378987,
-        "std_err_slope": 0.04219759823206658
+        "std_err_slope": 0.042197598232066896
       },
       "beta_in_window": true,
       "alpha_in_window": false,
@@ -932,15 +932,15 @@
       },
       "beta_sweep": {
         "slope": 0.2949633185246751,
-        "intercept": -3.4424987951225363,
+        "intercept": -3.4424987951225376,
         "r_squared": 0.9903630841496889,
-        "std_err_slope": 0.014548218885137276
+        "std_err_slope": 0.014548218885137312
       },
       "alpha_sweep": {
-        "slope": 1.0933042631814678,
-        "intercept": 4.218950594886074,
+        "slope": 1.09330426318147,
+        "intercept": 4.21895059488608,
         "r_squared": 0.994493177564573,
-        "std_err_slope": 0.04067810175991232
+        "std_err_slope": 0.0406781017599124
       },
       "beta_in_window": true,
       "alpha_in_window": false,
@@ -976,16 +976,16 @@
         ]
       },
       "beta_sweep": {
-        "slope": 0.3131675274330532,
-        "intercept": -3.818789072278932,
+        "slope": 0.31316752743305326,
+        "intercept": -3.8187890722789324,
         "r_squared": 0.9997123341457939,
-        "std_err_slope": 0.003756369949778376
+        "std_err_slope": 0.0037563699497783726
       },
       "alpha_sweep": {
-        "slope": 1.1563304546538864,
+        "slope": 1.1563304546538866,
         "intercept": 4.372050390788269,
         "r_squared": 0.9998942084367795,
-        "std_err_slope": 0.011894069031624573
+        "std_err_slope": 0.01189406903162366
       },
       "beta_in_window": true,
       "alpha_in_window": false,
@@ -1021,16 +1021,16 @@
         ]
       },
       "beta_sweep": {
-        "slope": 0.319412629063301,
-        "intercept": -3.974677868144507,
+        "slope": 0.3194126290633011,
+        "intercept": -3.9746778681445085,
         "r_squared": 0.9998325700930054,
-        "std_err_slope": 0.0029227385216382623
+        "std_err_slope": 0.002922738521638235
       },
       "alpha_sweep": {
-        "slope": 1.1696549532359133,
-        "intercept": 4.349979812712211,
+        "slope": 1.1696549532359124,
+        "intercept": 4.349979812712209,
         "r_squared": 0.9999661384158943,
-        "std_err_slope": 0.0068064201360991845
+        "std_err_slope": 0.006806420136099157
       },
       "beta_in_window": true,
       "alpha_in_window": false,
@@ -1066,16 +1066,16 @@
         ]
       },
       "beta_sweep": {
-        "slope": 0.322943478318038,
-        "intercept": -3.965055782423808,
+        "slope": 0.32294347831803805,
+        "intercept": -3.9650557824238097,
         "r_squared": 0.9999039095638803,
-        "std_err_slope": 0.002238579229118528
+        "std_err_slope": 0.0022385792291185077
       },
       "alpha_sweep": {
-        "slope": 1.1690467329577972,
-        "intercept": 4.412641827795393,
+        "slope": 1.169046732957796,
+        "intercept": 4.41264182779539,
         "r_squared": 0.999999888984019,
-        "std_err_slope": 0.0003895154127907382
+        "std_err_slope": 0.0003895154127908704
       },
       "beta_in_window": true,
       "alpha_in_window": false,
