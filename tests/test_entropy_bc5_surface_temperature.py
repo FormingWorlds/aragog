@@ -338,6 +338,7 @@ def test_the_jax_surface_gradient_uses_the_heat_capacity_floor(monkeypatch):
     """The JAX matcher floors Cp at 100 J/kg/K as its conductive flux does; at Cp = 50 the
     gradient is (100 / T) (dT/dr - dT/dP|_S dP/dr), twice the unfloored value."""
     jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
     from types import SimpleNamespace
 
     import aragog.jax.phase as jp
@@ -355,3 +356,71 @@ def test_the_jax_surface_gradient_uses_the_heat_capacity_floor(monkeypatch):
     expected = 100.0 / 300.0 * ((300.0 - 400.0) / 50.0 - 1e-8 * -4e4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-12)
     assert float(out[0]) == 0.0
+
+
+@pytest.mark.physics_invariant
+def test_the_jax_surface_gradient_takes_the_node_temperature(monkeypatch):
+    """The JAX matcher builds dT/dr from the temperature of the surface node at S_surf, so a
+    BoundaryParams whose outer_bc_value no longer matches S_surf still gives a face flux that
+    agrees with the node; here the node is at 1500 K and the stale value says 1600 K."""
+    jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
+    from types import SimpleNamespace
+
+    import aragog.jax.phase as jp
+
+    monkeypatch.setattr(
+        jp, 'evaluate_phase', lambda *a: SimpleNamespace(temperature=jnp.array([2000.0]))
+    )
+    pb = SimpleNamespace(
+        heat_capacity=jnp.array([1000.0]),
+        temperature=jnp.array([1500.0]),
+        dTdPs=jnp.array([0.0]),
+    )
+    mesh = SimpleNamespace(P_stag=jnp.zeros(3), dP_dr_basic=jnp.array([0.0]))
+    out = jp._matched_surface_gradient(
+        jnp.zeros(4), (0.0, 1600.0, 50.0), pb, None, None, mesh, jnp.zeros(3)
+    )
+    assert float(out[-1]) == pytest.approx(
+        1000.0 / 1500.0 * (1500.0 - 2000.0) / 50.0, rel=1e-12
+    )
+    assert float(out[-1]) != pytest.approx(1000.0 / 1500.0 * (1600.0 - 2000.0) / 50.0, rel=1e-3)
+
+
+def test_boundary_params_refuse_bc5_with_the_utbl_correction():
+    """The UTBL correction belongs to the grey-body flux; BoundaryParams refuses it with type 5,
+    as the NumPy setup does, instead of ignoring it."""
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import BoundaryParams
+
+    base = dict(emissivity=1.0, T_eq=255.0, inner_bc_type=2, inner_bc_value=0.0)
+    base.update(core_density=1e4, core_heat_capacity=880.0, tfac_core_avg=1.147)
+    kw = dict(outer_bc_value=1500.0, S_surf=2000.0, surf_dr_half=100.0)
+    with pytest.raises(Exception) as err:
+        BoundaryParams(outer_bc_type=5, param_utbl=True, param_utbl_const=1e-7, **kw, **base)
+    assert err.type is ValueError, repr(err.value)
+    assert 'param_utbl' in str(err.value)
+    assert BoundaryParams(outer_bc_type=5, **kw, **base).param_utbl is False
+
+
+def test_the_jax_factory_refuses_bc5_without_conduction():
+    """Without conduction a prescribed surface temperature sets no face flux under
+    nearest_boundary; the JAX CVODE factory refuses the pair before it builds anything."""
+    pytest.importorskip('equinox')
+    from types import SimpleNamespace
+
+    from aragog.jax.nondim import NonDimScales
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    scales = NonDimScales(state_scale=np.ones(4), t_ref=1.0)
+    with pytest.raises(Exception) as err:
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=SimpleNamespace(conduction=0.0),
+            mesh_arrays=None,
+            boundary_params=SimpleNamespace(outer_bc_type=5),
+            heating_array=np.zeros(4),
+            scales=scales,
+        )
+    assert err.type is ValueError, repr(err.value)
+    assert 'conduction' in str(err.value)

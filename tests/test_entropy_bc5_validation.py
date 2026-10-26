@@ -89,6 +89,9 @@ def test_the_steady_heated_shell_matches_the_closed_form(validation_plot):
         f_top = float(np.ravel(s.state.heat_flux)[-1])
         assert f_top == pytest.approx(f_exact, rel=1e-8)
         errors.append(np.max(np.abs(t - _shell_exact(r))) / rise)
+        # N^2 times the top-cell error is 0.159 for this face on all 3 grids (pin of the scheme);
+        # an entropy difference over the half cell gives 0.55, Cp/T at the top cell 0.94
+        assert n**2 * (t[-1] - _shell_exact(r[-1])) / rise == pytest.approx(0.159, rel=0.1)
         runs[n] = (r, t)
     orders = np.log2(np.asarray(errors[:-1]) / np.asarray(errors[1:]))
     assert np.all(np.abs(orders - 2.0) <= 0.2), orders
@@ -122,7 +125,7 @@ T_WINDOW = np.geomspace(5.3e10, 7.5e12, 16) / Julian_year  # [yr]
 def test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux(validation_plot):
     """From a uniform T_i, the surface flux is k (T_i - T_s) / sqrt(pi kappa t) (Turcotte and
     Schubert 2014, eq. 4.116) to 1 % over 2.2 decades: the half-cell error 0.063 (h/delta)^2 is
-    4.7e-3 at the window start (delta = sqrt(kappa t) = 3.7 h), the curvature of the shell
+    4.64e-3 at the window start (delta = sqrt(kappa t) = 3.7 h), the curvature of the shell
     lowers the flux by sqrt(pi kappa t) / r_out, at most 7.6e-4, and the bottom at 9 delta stays
     unseen. The signed error follows the sum of the two estimates to 5e-4."""
     s = _solver(N_2, R_OUT - D_2, T_S_2)
