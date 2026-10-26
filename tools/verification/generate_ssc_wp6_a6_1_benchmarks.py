@@ -1082,9 +1082,8 @@ def verify_benchmarks(data: dict[str, Any]) -> list[str]:
             ft_c = float(solver_c.state._heat_flux[-1])
             td_c = float(lid_c['tau_d_lid'])
             wy_c = float(lid_c['w_y'])
-            dlc_pl = (1.0 - p0d.lid_contrast_coeff / th_c) * (
-                p0d.k_cond * (ti_c - p0d.t_surf) / ft_c
-            )
+            ts_c = float(np.asarray(solver_c.state.phase_basic.temperature()).ravel()[-1])
+            dlc_pl = (1.0 - p0d.lid_contrast_coeff / th_c) * (p0d.k_cond * (ti_c - ts_c) / ft_c)
             for mk, mv in (
                 ('T_i_K', ti_c),
                 ('d_lid_pass1_m', dl_c),
