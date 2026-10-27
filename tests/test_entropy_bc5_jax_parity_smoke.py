@@ -8,12 +8,15 @@ import dataclasses
 import numpy as np
 import pytest
 
+from aragog.solver import entropy_solver as es
 from tests.conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 
 pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
 
 T_SURF = 1500.0  # [K], inside the table at the surface pressure
+needs_cvode = pytest.mark.skipif(not es._CVODE_AVAILABLE, reason='needs scikits.odes CVODE')
+CVODE_BDF = [pytest.param('cvode', marks=needs_cvode), 'bdf']
 
 
 def _bc5_solver(
@@ -418,3 +421,42 @@ def test_the_jax_factory_builds_the_bc5_rhs_and_refuses_a_constant_mesh(settings
         )
     assert err.type is ValueError, repr(err.value)
     assert 'mixing length' in str(err.value)
+
+
+@pytest.mark.parametrize('method', CVODE_BDF)
+def test_the_eos_floor_ignores_the_linear_top_node_bc5_replaces(method):
+    """Under BC 5 the surface node holds S_surf, so the EOS floor reads the top cell, not the
+    linear extrapolation BC 5 replaces: a start whose extrapolated node lies 50 J/kg/K below the
+    table minimum, with every cell inside it, advances with a margin of 50 J/kg/K."""
+    s = _bc5_solver('quasi_steady', solver_method=method)
+    s.parameters.energy.eos_floor_margin = 50.0
+    s_min = float(s.entropy_eos.S_min)
+    S = np.full(s._n_stag, s_min + 900.0)
+    S[-2], S[-1] = s_min + 400.0, s_min + 100.0
+    s.set_initial_entropy(S)
+    assert float(np.asarray(s.evaluator.mesh._quantity_transform)[-1] @ S) < s_min
+    s.solve()
+    assert s._solution.status == 0
+    assert float(s._solution.t[-1]) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize('method', CVODE_BDF)
+def test_the_eos_floor_stops_a_draining_top_cell_at_its_level_under_bc5(method):
+    """A heat sink in the top cell under BC 5 drains it toward the table minimum; the floor ends
+    the call when the top cell reaches S_min + 50 J/kg/K, not earlier when the linear node does,
+    and without the floor the top cell leaves the table."""
+    sink = np.zeros(9)
+    sink[-1] = -1.0e-3  # [W/kg]
+    for margin in (50.0, 0.0):
+        s = _bc5_solver('quasi_steady', tidal_array=sink, end_time=50.0, solver_method=method)
+        s.parameters.energy.eos_floor_margin = margin
+        s_min = float(s.entropy_eos.S_min)
+        s.set_initial_entropy(np.full(s._n_stag, s_min + 900.0))
+        s.solve()
+        top = np.asarray(s._solution.y, dtype=float)[s._n_stag - 1]
+        if margin:
+            assert 0.0 < float(s._solution.t[-1]) < 50.0
+            assert top[-1] == pytest.approx(s_min + 50.0, abs=1.0e-6)
+            assert top.min() >= s_min + 50.0 - 1.0e-6
+        else:
+            assert top[-1] < s_min
