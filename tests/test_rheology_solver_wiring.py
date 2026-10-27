@@ -558,11 +558,13 @@ def test_check_rheology_invariants_passes_and_catches_violations() -> None:
     eta_eff > eta_diff, non-finite eta_eff, or ceiling exceedance."""
     rheo = SolidRheologyParams(enabled=True, viscosity_max_log10=26.0)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    solver = _make_solver(params)
-    s_stag = _make_solid_profile(solver)
-    solver.state.update(s_stag, 0.0)
-
-    solver._check_rheology_invariants()
+    try:
+        solver = _make_solver(params)
+        s_stag = _make_solid_profile(solver)
+        solver.state.update(s_stag, 0.0)
+        solver._check_rheology_invariants()
+    except Exception as exc:
+        pytest.fail(f'valid rheology state rejected: {exc!r}')
 
     orig_eta_eff = solver.state._eta_eff_basic.copy()
     eta_diff = solver.state.phase_basic.eta_diff().copy()
@@ -602,8 +604,11 @@ def test_validate_rheology_setup_rejects_invalid_params_and_mesh() -> None:
     basic-node mesh and phase invariants at solver setup."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    solver = _make_solver(params)
-    solver._validate_rheology_setup()
+    try:
+        solver = _make_solver(params)
+        solver._validate_rheology_setup()
+    except Exception as exc:
+        pytest.fail(f'valid rheology setup rejected: {exc!r}')
 
     # 1. Mutate frozen rheology param in-place to verify rheo.__post_init__() is called
     bad_rheo = SolidRheologyParams(enabled=True)
