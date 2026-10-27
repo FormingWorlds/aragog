@@ -412,6 +412,7 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
         _is_commit_on_origin,
         _is_valid_commit_sha,
         _resolve_origin_head_commit,
+        compute_generator_input_fingerprint,
     )
 
     ref_dir = Path(__file__).parent / 'reference'
@@ -421,6 +422,20 @@ def test_benchmark_generators_require_origin_commit_and_clean_tree(
     scaling_data = json.loads(
         (ref_dir / 'ssc_scaling_exponents_benchmarks.json').read_text('utf-8')
     )
+
+    # Stamp each JSON with the live input fingerprint: the warn/strict logic is tested, not
+    # whether the committed stamps still match src (any later src edit changes that).
+    def _live_stamp(data, section, input_paths):
+        sha, files = compute_generator_input_fingerprint(input_paths)
+        out = copy.deepcopy(data)
+        out[section]['generator_input_sha256'] = sha
+        out[section]['generator_input_files'] = files
+        return out
+
+    wiring_data = _live_stamp(wiring_data, 'canary', wiring_mod.WIRING_GENERATOR_INPUT_PATHS)
+    mlt_data = _live_stamp(mlt_data, 'metadata', mlt_mod.MLT_CALIBRATION_INPUT_PATHS)
+    ref0d_data = _live_stamp(ref0d_data, 'metadata', ref0d_mod.SSC_0D_INPUT_PATHS)
+    scaling_data = _live_stamp(scaling_data, 'metadata', scaling_mod.SSC_SCALING_INPUT_PATHS)
 
     # Set up a real git repository in tmp_path with one commit on origin/main and one local-only commit
     tmp_repo = tmp_path / 'git_repo'
