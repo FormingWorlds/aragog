@@ -264,7 +264,7 @@ class EntropyPhaseEvaluator:
         self._smth_val = np.zeros_like(S)
         if not self._rheology.enabled:
             self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
-            self._eta_diff = self._viscosity_val
+            self._eta_diff = np.full_like(S, self._visc_solid, dtype=float)
             self._tau_y = np.full_like(S, np.inf)
             self._rheology_viscosity_dirty = False
         else:
