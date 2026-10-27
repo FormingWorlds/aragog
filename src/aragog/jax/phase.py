@@ -269,7 +269,9 @@ class PhaseParams(eqx.Module):
             'kappah_floor': float(parameters.energy.kappah_floor),
             'bottom_up_grav_sep': bool(parameters.energy.bottom_up_grav_sep),
             'phase_smoothing': str(parameters.energy.phase_smoothing),
-            'phase_smoothing_width': float(parameters.phase_mixed.matprop_smooth_width) or 1.0e-2,
+            'phase_smoothing_width': (
+                float(parameters.phase_mixed.matprop_smooth_width) or 1.0e-2
+            ),
             'separation_viscosity': str(parameters.phase_mixed.separation_viscosity),
             'convective_threshold': float(parameters.energy.convective_threshold),
             'separation_buoyancy': str(
