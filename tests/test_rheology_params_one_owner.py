@@ -243,6 +243,21 @@ def test_solid_rheology_params_unconditional_bounds_validation():
         SolidRheologyParams(enabled=False, viscosity_max_log10=15.0)
 
 
+@pytest.mark.parametrize('phase', ['phase_solid', 'phase_liquid'])
+def test_parameters_rechecks_the_viscosity_ceiling_of_a_changed_phase(phase):
+    """Parameters rejects a phase viscosity set above the ceiling after the phase was built."""
+    import importlib.resources
+
+    from aragog.parser import Parameters
+
+    cfg = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    with importlib.resources.as_file(cfg) as path:
+        params = Parameters.from_file(path)
+    getattr(params, phase).viscosity = 1.0e301
+    with pytest.raises(ValueError, match=r'must be > log10\(viscosity\) \(301'):
+        dataclasses.replace(params)
+
+
 def test_phase_config_merge_precedence():
     """Verify PhaseConfig preserves custom rheology when flat kwargs are provided."""
     custom = SolidRheologyParams(

@@ -1341,6 +1341,39 @@ def test_check_jax_factory_rheology_requires_cand_rheology_when_enabled() -> Non
         solver._check_jax_factory_rheology(bare_factory, require_when_enabled=True)
 
 
+def test_check_jax_factory_rheology_accepts_bare_factory_when_rheology_disabled() -> None:
+    """A factory without PhaseParams.rheology passes the check when solver rheology is off."""
+    from types import SimpleNamespace
+
+    params = _make_abe_solid_params(SolidRheologyParams(enabled=False), number_of_nodes=20)
+    solver = _make_solver(params)
+    bare_factory = SimpleNamespace(rhs_fn=lambda t, y: y)
+    try:
+        solver._check_jax_factory_rheology(bare_factory, require_when_enabled=True)
+    except ValueError as exc:
+        pytest.fail(f'bare factory rejected with rheology disabled: {exc}')
+
+
+def test_update_stores_the_pass_two_viscosity_when_yielding_is_active() -> None:
+    """After update, viscosity() is the solid blend of eta_eff, not of eta_diff."""
+    rheo = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='local',
+        yield_stress_c=1.0e5,
+        yield_stress_max=1.0e6,
+    )
+    solver = _make_solver(_make_abe_solid_params(rheo, number_of_nodes=20))
+    solver.state.update(_make_solid_profile(solver), 0.0)
+    phase = solver.state.phase_basic
+    eta_diff = np.asarray(phase.eta_diff()).ravel()
+    eta_eff = np.asarray(solver.state._eta_eff_basic).ravel()
+    # Yielding must lower eta_eff, or pass 1 and pass 2 give the same viscosity
+    assert np.min(eta_eff / eta_diff) < 0.5
+
+    pass_two = np.asarray(phase.blend_viscosity_with_solid(eta_eff)).ravel()
+    np.testing.assert_allclose(np.asarray(phase.viscosity()).ravel(), pass_two, rtol=1.0e-12)
+
+
 def test_compute_stagnant_lid_state_fixed_mode_melt_ramp_transition() -> None:
     """Verify compute_stagnant_lid_state in fixed mode uses a finite melt ramp width."""
     from aragog.rheology_lid import compute_stagnant_lid_state
