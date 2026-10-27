@@ -18,7 +18,7 @@ chosen pair ``(s_top_inf, c_theta) = (0.25, 0.25)`` and at the
 ``SolidRheologyParams`` default pair ``(0.22, 0.15)`` using
 ``stress_closure_mode = 'local'``, ``s_top`` frozen at each table's nominal
 ``theta`` via ``c_theta = 0.0``, a half-cell conductive boundary-flux patch on
-outer BC 5 and inner BC 3 via ``_patched_state_update``, and a
+inner BC 3 via ``_patched_state_update``, and a
 Frank-Kamenetskii viscosity override during steady-state integration on the
 spherical cases, verifies the generated payload in memory, and writes
 ``tests/reference/ssc_mlt_top_slope_calibration.json``.
@@ -180,14 +180,6 @@ def _patched_vmlf_core(
 def _patched_state_update(self: Any, entropy: Any, time_val: Any, *a: Any, **k: Any) -> None:
     _orig_state_update(self, entropy, time_val, *a, **k)
     bc_settings = self._evaluator.boundary_conditions._settings
-    if int(bc_settings.outer_boundary_condition) == 5:
-        k_surf = float(np.asarray(self.phase_basic.thermal_conductivity()).ravel()[-1])
-        t_cell = float(np.asarray(self.phase_staggered.temperature()).ravel()[-1])
-        r_b = np.asarray(self._evaluator.mesh.basic.radii).ravel()
-        dr_surf_half = 0.5 * float(r_b[-1] - r_b[-2])
-        self._heat_flux[-1] = (
-            k_surf * (t_cell - float(bc_settings.outer_boundary_value)) / dr_surf_half
-        )
     if int(bc_settings.inner_boundary_condition) == 3:
         k_first = float(np.asarray(self.phase_staggered.thermal_conductivity()).ravel()[0])
         t_first = float(np.asarray(self.phase_staggered.temperature()).ravel()[0])

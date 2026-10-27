@@ -23,11 +23,11 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     Across the 12-case planar internal-heating sweep (design Ra_i in [1e6, 1e9] at
     theta = 15 and design theta in [10, 25] at Ra_i = 1e7) at (s_top_inf, c_theta) =
     (0.25, 0.25), the least-squares fit of Nu = a * theta**(-alpha) * Ra_i**beta on
-    design parameters gives beta = 0.2820 +/- 0.0134 and alpha = 1.0371 +/- 0.0973
-    (a = 0.6411, R^2 = 0.9849; 1-D sweep slopes beta_sweep = 0.2785 +/- 0.0172 and
-    alpha_sweep = 1.0109 +/- 0.0592), and the fit on realized steady-state parameters
-    (Ra_i_realized_kor, theta_realized_kor) gives beta = 0.1129 +/- 0.0286 and
-    alpha = -0.0787 +/- 0.4406 (a = 0.6932, R^2 = 0.7744). Both fits fall below the
+    design parameters gives beta = 0.2819 +/- 0.0134 and alpha = 1.0366 +/- 0.0971
+    (a = 0.6415, R^2 = 0.9849; 1-D sweep slopes beta_sweep = 0.2783 +/- 0.0172 and
+    alpha_sweep = 1.0104 +/- 0.0590), and the fit on realized steady-state parameters
+    (Ra_i_realized_kor, theta_realized_kor) gives beta = 0.1128 +/- 0.0286 and
+    alpha = -0.0786 +/- 0.4398 (a = 0.6940, R^2 = 0.7750). Both fits fall below the
     Solomatov & Moresi (2000) internal-heating acceptance window beta in [0.294, 0.350]
     and alpha in [1.294, 1.350]:
     1. Two low-vigor cases sit at the discrete N = 100 staggered-grid pure-conduction
@@ -35,9 +35,9 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
        case_01 (design Ra_i = 1e6, realized Ra_i = 244.3, theta = 15, Nu = 2.2500) and
        case_12 (design Ra_i = 1e7, realized Ra_i = 227.9, theta = 25, Nu = 2.2509).
     2. Even on the 7-case convecting subset (Nu_est >= 2.8, a post-hoc diagnostic chosen
-       after the result), where design-parameter beta = 0.3114 +/- 0.0026 enters
-       [0.294, 0.350], the Frank-Kamenetskii exponent is alpha = 1.1710 +/- 0.0288
-       (1-D sweep 1.1563 +/- 0.0119 on 3 points, 1 degree of freedom), below
+       after the result), where design-parameter beta = 0.3112 +/- 0.0026 enters
+       [0.294, 0.350], the Frank-Kamenetskii exponent is alpha = 1.1698 +/- 0.0285
+       (1-D sweep 1.1553 +/- 0.0117 on 3 points, 1 degree of freedom), below
        [1.294, 1.350] because s_top(theta) = 0.25 + 0.75 * exp(-0.25 * theta) converges
        to the constant asymptote s_top_inf = 0.25 for theta >= 15.
 

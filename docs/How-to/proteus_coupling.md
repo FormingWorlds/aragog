@@ -47,7 +47,7 @@ This is the production-default pairing: SUNDIALS CVODE with the JAX-derived anal
 
 ## Solid-state convection in coupled runs
 
-When solid-state mantle rheology is enabled (`[phase_solid.rheology]`), Aragog evaluates temperature-dependent Arrhenius creep, Byerlee yielding, and stagnant-lid thermal resistance, regulating surface heat flow into the atmosphere. See [Solid-state convection](../Explanations/solid_state_convection.md) for theory and benchmark verification.
+Solid-state mantle rheology (`[phase_solid.rheology]`: temperature-dependent Arrhenius creep, Byerlee yielding and stagnant-lid thermal resistance) is available in standalone Aragog runs only; the PROTEUS configuration has no key that enables it, so a coupled run uses Aragog without it. See [Solid-state convection](../Explanations/solid_state_convection.md) for theory and benchmark verification.
 
 ---
 

@@ -52,7 +52,7 @@ The initial entropy IC is set from `hf_row['ini_entropy']` on the first call, an
 
 It then re-loads the previous S-field, calls `solver.solve()`, and packs the achieved `dt_actual = sol.t[-1] - sol.t[0]` plus surface fluxes back into the wrapper's `Interior_t` state. The achieved `dt` may be shorter than the requested window when the SUNDIALS root function fires for `phi_step_cap`; PROTEUS's outer loop then advances `Time` by the achieved value rather than the requested one.
 
-When solid-state mantle rheology is enabled (`[phase_solid.rheology]`), stagnant-lid growth and temperature-dependent viscosity regulate the mantle heat flux that couples into the atmosphere. See [Solid-state convection](solid_state_convection.md) for stagnant-lid boundary layer physics.
+Solid-state mantle rheology (`[phase_solid.rheology]`), with stagnant-lid growth and temperature-dependent viscosity, is available in standalone Aragog runs only; the PROTEUS configuration has no key that enables it. See [Solid-state convection](solid_state_convection.md) for stagnant-lid boundary layer physics.
 
 ### 3. Retry ladder
 
