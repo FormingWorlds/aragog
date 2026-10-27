@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import numbers
+import sys
 from typing import Any
 
 import attrs
@@ -28,16 +29,23 @@ MATPROP_SMOOTH_WIDTH_WARN_MAX: float = 0.05
 
 
 def check_matprop_smooth_width(value: float) -> None:
-    """Raise ``ValueError`` unless ``value`` is a real scalar strictly between 0 and 1.
+    """Raise ``ValueError`` unless ``value`` is a real scalar strictly between 0 and 1 and not
+    below the smallest normal float.
 
     At 0 the properties switch between the two-phase and the single-phase branch exactly at
-    the solidus and the liquidus; from 1 the blend spans the whole melting interval. A width
+    the solidus and the liquidus; from 1 the blend spans the whole melting interval. A
+    subnormal width makes the JAX blend weight NaN on the solidus and the liquidus. A width
     outside [``MATPROP_SMOOTH_WIDTH_WARN_MIN``, ``MATPROP_SMOOTH_WIDTH_WARN_MAX``] is kept and
     logs a warning.
     """
     # The range comparison first, so float() of a huge int never overflows; a bool is 0 or 1.
     if not (isinstance(value, numbers.Real) and 0 < value < 1 and 0.0 < float(value) < 1.0):
         raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
+    if float(value) < sys.float_info.min:
+        raise ValueError(
+            f'matprop_smooth_width must lie in [{sys.float_info.min!r}, 1): a subnormal width '
+            f'gives NaN in the JAX blend, got {value!r}'
+        )
     if not MATPROP_SMOOTH_WIDTH_WARN_MIN <= value <= MATPROP_SMOOTH_WIDTH_WARN_MAX:
         logger.warning(
             'matprop_smooth_width = %r lies outside [%g, %g]: below it the blend at the solidus '

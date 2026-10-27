@@ -4,7 +4,7 @@
 
 This page checks how Aragog changes the material properties of the mantle (heat capacity, density, expansivity, adiabatic gradient and viscosity) when the entropy of a node crosses the solidus or the liquidus (see [Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus)). Validation here means that we run the phase evaluator on the SPIDER test tables, where the right answer follows from the blend formula, and check that Aragog gives that answer. If this part were wrong, the heat flux through a cell face would jump when a node starts or stops to melt, and the solver would take very small time steps there. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot or says why it has none, and the test details.
 
-All cases use the SPIDER P-S test tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](../How-to/build_tests.md)) on a 12-node mesh from the core-mantle boundary (146 GPa) to the surface (0 GPa). The symbol $g = (S - S_\mathrm{sol}) / (S_\mathrm{liq} - S_\mathrm{sol})$ is the melt coordinate: 0 on the solidus, 1 on the liquidus, below 0 in the solid and above 1 in the liquid. The width $w$ is the setting `matprop_smooth_width`; the default is 0.01.
+All cases use the SPIDER P-S test tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](../How-to/build_tests.md)) on a mesh from the core-mantle boundary (146 GPa) to the surface (0 GPa): 12 nodes in the first three cases and 10 nodes in the JAX case. The symbol $g = (S - S_\mathrm{sol}) / (S_\mathrm{liq} - S_\mathrm{sol})$ is the melt coordinate: 0 on the solidus, 1 on the liquidus, below 0 in the solid and above 1 in the liquid. The width $w$ is the setting `matprop_smooth_width`; the default is 0.01.
 
 ## On each boundary, a property is the mean of its two values
 
@@ -81,4 +81,4 @@ This case has no plot: it checks the agreement of two arrays to round-off.
     - Reference: the NumPy right-hand side.
     - Tolerance: 10⁻¹⁰ relative (measured: 5.9 × 10⁻¹⁵); at JAX width 0 the difference is more than 10⁻⁶ (measured: a relative difference of 6.1).
     - Test id: `tests/test_matprop_smooth_width_validation.py::test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width`
-    - Command: `pytest tests/test_matprop_smooth_width_validation.py -k jax`
+    - Command: `pytest tests/test_matprop_smooth_width_validation.py -k jax_rhs`
