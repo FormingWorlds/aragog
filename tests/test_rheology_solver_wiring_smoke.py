@@ -17,6 +17,7 @@ import aragog.rheology as rheo_mod
 import aragog.rheology_lid as rheo_lid_mod
 import aragog.solver.entropy_state as entropy_state_mod
 from aragog.jax.phase import (
+    MeshArrays,
     PhaseParams,
     compute_fluxes,
     compute_mlt,
