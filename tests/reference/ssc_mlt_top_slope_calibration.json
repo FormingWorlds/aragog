@@ -2,8 +2,8 @@
   "metadata": {
     "description": "Viscous mixing-length top-slope s_top(theta) benchmark evaluation across 12 planar internally heated Newtonian cases (Korenaga 2009, Table 1) and 24 spherical internally and mixed heated cases (Deschamps and Vilella 2021, Table 1).",
     "generator": "tools/verification/evaluate_mlt_top_slope_calibration.py",
-    "git_commit": "cd6ede42acaa6ba0c13eda2a840f59a1af271974",
-    "generator_input_sha256": "76fdba85fd325404c4dac0ae08c3eec29d66b2a6cc2b897bd909cabfd026d570",
+    "git_commit": "51fa2d3df44d07ff5c50797e266118592d827b8a",
+    "generator_input_sha256": "c9a37b88145003ba864f3f53ebfdb5367ae22363fdd0f500b1a4adda1930a5d7",
     "generator_input_files": {
       "src/aragog/__init__.py": "dc05d98b503aa6ce6f61ab234528a1fa6ee40cd54017cc7ab2499eb1e138b8bb",
       "src/aragog/cfg/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -35,12 +35,12 @@
       "src/aragog/eos/__init__.py": "fb835c17a71351fefe9461d5b19c8cede2f4dcca11f27171b30b832d66459435",
       "src/aragog/eos/consistency.py": "806399a17a4bcb638c807cafe432ccacb467bd46f4e8827dc2f0be13cc322aac",
       "src/aragog/eos/entropy.py": "afb142ada302ee56e63c001cd8a9f7bd6969247b6d1aa3b34235dbc2a3af5327",
-      "src/aragog/eos/entropy_phase.py": "175bee47e4cb9bccae61fbdba444d7b17e01bb3900bb377049c1d49f79397e02",
+      "src/aragog/eos/entropy_phase.py": "75ca0968a7713791b5be1ff0b20ae3b2e80810da7e1a8650cfc1a18865f0db97",
       "src/aragog/eos/table_cache.py": "0e80e32adf996183b8a6fdcfcbbcef440b4ab8a34fe58793367a41980111a051",
       "src/aragog/jax/__init__.py": "45574d2c7b26ddca70da1c84052a890b4977fa966c648e403278ecfe6fae6292",
       "src/aragog/jax/eos.py": "30bbc4c48947bd1e5096d7f0fe4b257a0ac9d779064714d8945f63133f07a75d",
       "src/aragog/jax/nondim.py": "8521960850b72a8bb0ba385fe1a4330b66c46925b50f7a67b0db49343c757579",
-      "src/aragog/jax/phase.py": "54834002a4b7b7f37b62b8db75caf397c6fec88a5c45c518daed7a123b1ed8c5",
+      "src/aragog/jax/phase.py": "9c5c5775b046b38be8d5e6a8226892efd0f8666a819cefb9982dca60b16132e0",
       "src/aragog/jax/solver.py": "aba7a56200bcf36c2eacd2a049cb6ea19d91ba60e6b1afc7ed79432699e2b8a7",
       "src/aragog/mesh/__init__.py": "1cc3b8fa9070573106618cd591975ed83c731254e63e3c1c5e460d57a1dfe859",
       "src/aragog/mesh/fixed_mesh.py": "17c305ccefbb275f5bd7b6acc358187123cee4951440e6fad84ad6b71ea83a38",
@@ -78,7 +78,7 @@
   "evaluated_points": {
     "minimax_0p25_0p25": {
       "label": "minimax_0p25_0p25",
-      "git_commit": "cd6ede42acaa6ba0c13eda2a840f59a1af271974",
+      "git_commit": "51fa2d3df44d07ff5c50797e266118592d827b8a",
       "s_top_inf": 0.25,
       "c_theta": 0.25,
       "n_nodes": 100,
@@ -1044,7 +1044,7 @@
     },
     "default_0p22_0p15": {
       "label": "default_0p22_0p15",
-      "git_commit": "cd6ede42acaa6ba0c13eda2a840f59a1af271974",
+      "git_commit": "51fa2d3df44d07ff5c50797e266118592d827b8a",
       "s_top_inf": 0.22,
       "c_theta": 0.15,
       "n_nodes": 100,
