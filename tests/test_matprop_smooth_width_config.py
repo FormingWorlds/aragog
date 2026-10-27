@@ -37,7 +37,7 @@ def test_the_default_width_is_0_01(build):
     """Without the key the width is 0.01, the PROTEUS default, not 0 (the hard phase switch)."""
     width = build().matprop_smooth_width
     assert width == pytest.approx(0.01, rel=1e-15)
-    assert width != 0.0
+    assert isinstance(width, float)
 
 
 @_BUILDERS

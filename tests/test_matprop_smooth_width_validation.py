@@ -13,7 +13,7 @@ from tests.conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from tests.test_entropy_solver_core_module_smoke import _build
 from tests.test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
-pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(300)]
+pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(60)]
 
 _PROPS = ('heat_capacity', 'density', 'thermal_expansivity', 'dTdPs', 'log10_viscosity')
 _NODE = 6  # basic node of the plot, P = 65.7 GPa on the 12-node mesh
@@ -79,20 +79,11 @@ def _branch_means(s_hard, s, boundary):
 
     def table(name):  # clipped to the table as the evaluator does (the surface node is at P 0)
         tbl = eos._tables[f'{name}_{side}']
-        P_c, S_c = (
-            np.clip(P, tbl['P'][0], tbl['P'][-1]),
-            np.clip(S_b, tbl['S'][0], tbl['S'][-1]),
-        )
+        P_c = np.clip(P, tbl['P'][0], tbl['P'][-1])
+        S_c = np.clip(S_b, tbl['S'][0], tbl['S'][-1])
         return tbl['interp'](np.column_stack([P_c, S_c]))
 
-    single = {
-        p: table(t)
-        for p, t in (
-            ('heat_capacity', 'heat_capacity'),
-            ('density', 'density'),
-            ('dTdPs', 'dTdPs'),
-        )
-    }
+    single = {p: table(p) for p in ('heat_capacity', 'density', 'dTdPs')}
     phase = s.parameters.phase_solid if side == 'solid' else s.parameters.phase_liquid
     single['log10_viscosity'] = np.full_like(P, np.log10(float(phase.viscosity)))
     return blended, mixed, single

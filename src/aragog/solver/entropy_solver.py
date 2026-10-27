@@ -2120,9 +2120,7 @@ class EntropySolver:
         evaluator gets its profile back."""
         eos, pb = self.entropy_eos, self.state.phase_basic
         saved = pb.entropy  # np.array([]) before the first update; set_entropy rebinds it
-        width = getattr(
-            self.parameters.phase_mixed, 'matprop_smooth_width', MATPROP_SMOOTH_WIDTH_DEFAULT
-        )
+        width = pb._matprop_smooth_width
 
         def miss(s):
             pb.set_entropy(np.full_like(self._P_basic_flat, s))
@@ -3977,13 +3975,7 @@ class EntropySolver:
             # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
             rate_liq = np.append(S_liq_stag, S_liq)
             rate_sol = np.append(S_sol_stag, S_sol)
-            w = float(
-                getattr(
-                    self.parameters.phase_mixed,
-                    'matprop_smooth_width',
-                    MATPROP_SMOOTH_WIDTH_DEFAULT,
-                )
-            )
+            w = float(self.state.phase_basic._matprop_smooth_width)  # as the evaluator uses
             rate_delta = max(3.0 * w * float(np.max(rate_liq - rate_sol)), _RATE_CAP_MIN_DELTA)
             use_cvode = (
                 getattr(self.parameters.energy, 'solver_method', 'cvode') == 'cvode'

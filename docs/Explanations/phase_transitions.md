@@ -29,12 +29,14 @@ There is no separate `SinglePhaseEvaluator` / `MixedPhaseEvaluator` / `Composite
 
 ## Two-stage SPIDER-parity blend
 
-For each cell at $(P, S)$, the phase evaluator computes a blending weight in two stages:
+For each cell at $(P, S)$, the phase evaluator computes two values of each property and blends them:
 
-1. **Stage 1 - mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$, and the property reduces to the relevant single-phase value.
-2. **Stage 2 - SPIDER `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width` ([width of the blend](#width-of-the-blend-at-the-solidus-and-the-liquidus)). This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity across the solidus and liquidus.
+1. **Two values.** The two-phase (lever-rule) value comes from the solidus and liquidus values at that pressure. The single-phase value comes from the solid table in the lower half of the melting interval and below it, and from the melt table in the upper half and above it.
+2. **Blend (SPIDER `combine_matprop`).** The property is `smth*mixed + (1-smth)*single`. The weight $\mathrm{smth}$ is close to 1 inside the mushy band and close to 0 outside it, and it changes over the width `matprop_smooth_width` at the solidus and the liquidus ([width of the blend](#width-of-the-blend-at-the-solidus-and-the-liquidus)).
 
-The same two-stage blend is applied to density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
+The phase-boundary smoothing function of [Heat transport](heat_transport.md) (`phase_smoothing`, tanh or cubic Hermite) is a different weight: it acts on the gravitational-separation and chemical-mixing fluxes, not on the properties.
+
+The same blend is applied to density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
 
 ## Width of the blend at the solidus and the liquidus
 
@@ -60,7 +62,9 @@ With $w = 0$ the weight is 1 inside the mushy zone and 0 outside it, so the prop
 
 Limits:
 
-- `matprop_smooth_width` must lie strictly between 0 and 1. A value at or below 0, at or above 1, NaN, an infinity, a bool or a string stops the configuration with a `ValueError` that names the setting.
+- `matprop_smooth_width` must lie strictly between 0 and 1. When the configuration is built, a value at or below 0, at or above 1, NaN, an infinity, a bool or a string stops it with a `ValueError` that names the setting.
+- A positive width far below 0.01 brings the jump back: on the test tables the heat capacity changes between $10^{-3}$ J/kg/K below and above the solidus by the same factor (7.9 to 23) at $w = 10^{-12}$ as at $w = 0$, and by up to a factor of 1.8 at $w = 10^{-6}$.
+- From a width of about 0.1 the weight is no longer exactly 1 in the middle of the melting interval ($g = 0.5$), where the single-phase value switches from the solid to the melt table, so the properties jump there: on the test tables the heat capacity by a relative $4 \times 10^{-5}$ at $w = 0.1$ and 0.12 at $w = 0.5$, and the viscosity by a factor of 242 at $w = 0.5$.
 - More than 0.2 in $g$ from both boundaries, $\tanh$ rounds to 1 in double precision at $w = 0.01$: the weight is exactly 0 or 1, and the properties are the same as at $w = 0$.
 - `EntropyPhaseEvaluator` and the JAX `PhaseParams` keep a default of 0 when a test or script calls them directly; a run built from a configuration passes the width of the configuration.
 - PROTEUS passes its own setting `interior_energetics.spider.matprop_smooth_width` (default 0.01, also strictly between 0 and 1).

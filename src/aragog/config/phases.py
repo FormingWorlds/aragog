@@ -29,12 +29,8 @@ def check_matprop_smooth_width(value: float) -> None:
     At 0 the properties switch between the two-phase and the single-phase branch exactly at
     the solidus and the liquidus; from 1 the blend spans the whole melting interval.
     """
-    try:
-        ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
-        ok = ok and 0.0 < float(value) < 1.0
-    except OverflowError:
-        ok = False
-    if not ok:
+    # The range comparison first, so float() of a huge int never overflows; a bool is 0 or 1.
+    if not (isinstance(value, numbers.Real) and 0 < value < 1 and 0.0 < float(value) < 1.0):
         raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
 
 

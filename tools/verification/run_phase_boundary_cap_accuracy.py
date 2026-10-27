@@ -122,4 +122,7 @@ if __name__ == '__main__':
     flags = [a for a in sys.argv[1:] if a.startswith('--')]
     names = [a for a in sys.argv[1:] if not a.startswith('--')]
     widths = [float(a.split('=', 1)[1]) for a in flags if a.startswith('--width=')]
+    unknown = [a for a in flags if a != '--check' and not a.startswith('--width=')]
+    if unknown or set(names) - set(CASES):
+        sys.exit(f'unknown option or case: {unknown + sorted(set(names) - set(CASES))}')
     sys.exit(main(names or list(CASES), check='--check' in flags, width=(widths or [None])[-1]))

@@ -10,7 +10,7 @@ All cases use the SPIDER P-S test tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](.
 
 **Why this check exists.** Near a boundary every property has two values: the two-phase value of the mushy zone and the single-phase value from the solid or the melt table. If the code gave the wrong weight on the boundary, for example 1 as with $w = 0$, the property would take the two-phase value alone. On the test tables the two values of the heat capacity differ by 3.5 % to a factor of 23, so the test sees that error at every pressure.
 
-**What it tests.** The test puts every node exactly on the solidus ($g = 0$), then exactly on the liquidus ($g = 1$), at the default width. It compares the heat capacity, the density, the adiabatic gradient $(\partial T/\partial P)_S$ and the logarithm of the viscosity with the mean of the two values. It takes the two-phase value from the evaluator at $w = 0$, which uses weight 1 on the boundary, and the single-phase value from the tables directly.
+**What it tests.** The test puts every node exactly on the solidus ($g = 0$), then exactly on the liquidus ($g = 1$), at the default width. It compares the heat capacity, the density, the adiabatic gradient $(\partial T/\partial P)_S$ and the logarithm of the viscosity with the mean of the two values. It takes the two-phase value from the evaluator at $w = 0$, which uses weight 1 on the boundary, and the single-phase value from the tables directly. The two values of the density are the same on the boundary, so the density is compared but does not test the weight; the test asserts the gap between the two values for the heat capacity.
 
 **How we know the right answer.** SPIDER's `get_smoothing` (`util.c`) gives the two-phase value the weight $\tfrac{1}{2}[1 + \tanh(g/w)]$ below $g = 0.5$ and $\tfrac{1}{2}[1 - \tanh((g - 1)/w)]$ above it. Both are exactly $\tfrac{1}{2}$ on the boundary for any $w > 0$, so each property is the mean of its two values. The expansivity is not compared, because the evaluator changes negative values after the blend with a function that is not linear.
 
@@ -42,7 +42,7 @@ This case has no plot of its own: the plot of the case above shows the same curv
 
 ??? info "Test details"
     - Reference: continuity of the blend for $w > 0$.
-    - Tolerance: 10⁻⁶ relative at all 12 node pressures (measured: at most 1.2 × 10⁻⁷, at the surface node, where the expansivity is 1.2 × 10⁻¹³ 1/K and set by round-off; below 3 × 10⁻¹¹ at the other nodes).
+    - Tolerance: 10⁻⁶ relative at all 12 node pressures (measured: at most 1.2 × 10⁻⁷, at the surface node, where the blended expansivity is negative, −2.1 × 10⁻⁴ 1/K, and the clamp of negative values maps it to 1.2 × 10⁻¹³ 1/K, so a round-off change of the blended value shows as a larger relative change; below 3 × 10⁻¹¹ at the other nodes).
     - Discrimination: at $w = 0$ the heat capacity jumps by more than a factor of 7 at every node at the solidus (measured 7.9 to 23).
     - Test id: `tests/test_matprop_smooth_width_validation.py::test_the_default_width_keeps_every_property_continuous_across_the_boundary`
     - Command: `pytest tests/test_matprop_smooth_width_validation.py -k continuous`
@@ -65,11 +65,11 @@ This case has no plot: it checks that two arrays are equal bit for bit.
     - Test id: `tests/test_matprop_smooth_width_validation.py::test_far_from_both_boundaries_the_rhs_does_not_change_with_the_width`
     - Command: `pytest tests/test_matprop_smooth_width_validation.py -k far_from`
 
-## The JAX right-hand side uses the same width
+## The JAX right-hand side follows the width
 
-**Why this check exists.** The production solver uses the JAX right-hand side and its Jacobian. If the JAX path read a different width from the NumPy path, the two would disagree near every boundary.
+**Why this check exists.** The production solver uses the JAX right-hand side and its Jacobian. If the JAX kernel blended the properties with a different width from the NumPy evaluator, the two would disagree near every boundary.
 
-**What it tests.** The test puts 9 cells at $g$ = −0.02, −0.005, 0, 0.004, 0.012, 0.5, 0.99, 1 and 1.015, on both sides of both boundaries. It builds the JAX parameters from the configuration and compares the JAX right-hand side with the NumPy one at the default width. As a control, it sets the JAX width to 0.
+**What it tests.** The test puts 9 cells at $g$ = −0.02, −0.005, 0, 0.004, 0.012, 0.5, 0.99, 1 and 1.015, on both sides of both boundaries. A test helper builds the JAX parameters with the width of the configuration, as PROTEUS does in a coupled run; Aragog itself does not build JAX parameters from a configuration. The test compares the JAX right-hand side with the NumPy one at the default width. As a control, it sets the JAX width to 0. This case does not test the weight exactly on a boundary: with that weight set to 1 in the NumPy evaluator it still passes, and the first case fails.
 
 **How we know the right answer.** The NumPy evaluator is the reference; both paths use the same blend formula.
 

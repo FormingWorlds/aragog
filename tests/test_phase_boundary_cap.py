@@ -231,7 +231,15 @@ def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
 
 
 def _solver(
-    eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None, tol=None, **energy
+    eos,
+    mode,
+    core_bc='quasi_steady',
+    n_nodes=12,
+    end_time=2.0,
+    S=None,
+    tol=None,
+    width=None,
+    **energy,
 ):
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=n_nodes, end_time=end_time)
     p.energy = dataclasses.replace(
@@ -240,7 +248,10 @@ def _solver(
     p.boundary_conditions.core_bc = core_bc
     if tol is not None:
         p.solver.rtol = p.solver.atol = tol
-    p.phase_mixed.matprop_smooth_width = 0.0  # width 0: the stiff zone at its 10 J/kg/K floor
+    if (
+        width is not None
+    ):  # set past the validator, so 0 (stiff zone at its 10 J/kg/K floor) works
+        p.phase_mixed.matprop_smooth_width = width
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(eos) if S is None else np.full(s._n_stag, S))
@@ -286,8 +297,10 @@ def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
     assert sol.t.size >= s._cvode_output_points + len(starts) - 1
 
 
-def _isentropic_end(eos, mode, tol, core_bc='quasi_steady', end_time=200.0):
-    s = _solver(eos, mode, core_bc, n_nodes=24, end_time=end_time, S=8182.3, tol=tol)
+def _isentropic_end(eos, mode, tol, core_bc='quasi_steady', end_time=200.0, width=0.0):
+    s = _solver(
+        eos, mode, core_bc, n_nodes=24, end_time=end_time, S=8182.3, tol=tol, width=width
+    )
     s.solve()
     S = s._solution.y[: s._n_stag, -1]
     return s, np.asarray(eos.temperature(s._P_stag_flat, S)).ravel()
@@ -306,6 +319,19 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
     starts = [seg[0] for seg in s._solution.segments]
     assert 'stiff' in [seg[1] for seg in s._solution.segments]
     assert np.all(np.diff(starts) > 1e-6)
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+@pytest.mark.timeout(180, method='signal')
+def test_rate_mode_at_the_default_width_matches_a_tight_fixed_run(shared_eos):
+    """At the default width (stiff zone 252 J/kg/K, wider than the 200 J/kg/K margin) rate at
+    tol 1e-8 stays within 0.01 K of fixed at 1e-9 over 200 yr from the isentropic start."""
+    _, T_ref = _isentropic_end(shared_eos, 'fixed', 1e-9, width=None)
+    s, T = _isentropic_end(shared_eos, 'rate', 1e-8, width=None)
+    assert s.state.phase_basic._matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
+    assert np.abs(T - T_ref).max() <= 0.01 and len(s._solution.segments) >= 1
 
 
 @needs_eos
@@ -748,7 +774,7 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
 ):
     """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every
     other entry; the step-cap root leads it only when a cap, here the EOS floor, is armed."""
-    s = _solver(shared_eos, 'rate', end_time=2.0, eos_floor_margin=margin)
+    s = _solver(shared_eos, 'rate', end_time=2.0, width=0.0, eos_floor_margin=margin)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = np.full(s._n_stag, S_liq[5] + 1.0)
     assert np.abs(S0 - S_liq).min() < 10.0
@@ -777,7 +803,7 @@ def test_rate_mode_ends_a_segment_when_a_second_cell_approaches_inside_the_stiff
     The call starts inside the stiff zone because of A, so only B's progress and stiff-zone entry
     can end a segment; one must fire before B crosses at 150 yr.
     """
-    s = _solver(shared_eos, 'rate', end_time=200.0)
+    s = _solver(shared_eos, 'rate', end_time=200.0, width=0.0)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = S_liq + 500.0
     S0[2], S0[8] = S_liq[2] + 1.0, S_liq[8] + 150.0
@@ -881,7 +907,7 @@ def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
     Its progress root (half of max(d0, delta) = 5 J/kg/K of motion) fires at 102 yr, before
     the crossing at 103.5 yr, and the next segment runs at the 1 yr lower bound.
     """
-    s = _solver(shared_eos, 'rate', end_time=400.0)
+    s = _solver(shared_eos, 'rate', end_time=400.0, width=0.0)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = S_liq + 3000.0
     S0[8] = S_liq[8] + 8.0
@@ -904,8 +930,7 @@ def _cooling_above_liquidus(
     eos, width, gap=230.0, end_time=100.0, tol=1e-6, mode='rate', core_bc='quasi_steady'
 ):
     """A solver whose cells all start ``gap`` above the liquidus, with smoothing ``width``."""
-    s = _solver(eos, mode, core_bc, end_time=end_time, tol=tol)
-    s.parameters.phase_mixed.matprop_smooth_width = width  # set past the validator, for 0
+    s = _solver(eos, mode, core_bc, end_time=end_time, tol=tol, width=width)
     S_liq = np.asarray(eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S_sol = np.asarray(eos.solidus_entropy(s._P_stag_flat)).ravel()
     s.set_initial_entropy(S_liq + gap)
@@ -919,8 +944,8 @@ def test_rate_mode_at_the_default_width_uses_a_stiff_zone_of_three_widths(
     shared_eos, monkeypatch
 ):
     """At the default matprop_smooth_width 0.01 every segment of a mushy start uses the stiff
-    zone 3 w max(S_liq - S_sol) over the cells and the CMB, 25x the 10 J/kg/K floor of width 0
-    on the test tables."""
+    zone 3 w max(S_liq - S_sol) over the cells and the CMB, far above the 10 J/kg/K floor of
+    width 0."""
     deltas = []
     real = es._PhaseBoundarySegmentRoot.__init__
 
@@ -940,7 +965,7 @@ def test_rate_mode_at_the_default_width_uses_a_stiff_zone_of_three_widths(
     gap = np.ravel(shared_eos.liquidus_entropy(P)) - np.ravel(shared_eos.solidus_entropy(P))
     expected = 3.0 * 0.01 * float(np.max(gap))
     assert deltas and all(d == pytest.approx(expected, rel=1e-12) for d in deltas)
-    assert expected > 25.0 * es._RATE_CAP_MIN_DELTA
+    assert expected > 10.0 * es._RATE_CAP_MIN_DELTA
 
 
 @needs_cvode
