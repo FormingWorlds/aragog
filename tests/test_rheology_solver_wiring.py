@@ -1814,3 +1814,21 @@ def test_mlt_factor_powers_equal_the_plain_powers_for_positive_q_and_have_a_fini
     assert np.all(np.asarray(v_025) == 0.0) and np.all(np.asarray(v_075) == 0.0)
     slope = np.asarray(jax.grad(lambda x: jnp.sum(sum(powers(x))))(zero))
     assert np.all(slope == 0.0), slope
+
+
+def test_eta_diff_is_the_solid_viscosity_in_const_properties_mode_with_rheology_off():
+    """``eta_diff()`` returns the unyielded solid viscosity, not the constant-property viscosity."""
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=None,
+        gravitational_acceleration=10.0,
+        viscosity_solid=3.0e20,
+        const_properties=True,
+        const_log10visc=2.0,
+        const_T_ref=3000.0,
+        const_S_ref=3000.0,
+    )
+    ev.set_pressure(np.array([1.0e9, 5.0e10]))
+    ev.set_entropy(np.array([2900.0, 3100.0]))
+    ev.update()
+    np.testing.assert_array_equal(ev.eta_diff(), np.full(2, 3.0e20))
+    np.testing.assert_array_equal(ev.viscosity(), np.full(2, 1.0e2))
