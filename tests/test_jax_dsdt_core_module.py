@@ -27,7 +27,6 @@ pytest.importorskip('equinox')
 
 jax.config.update('jax_enable_x64', True)
 
-from aragog.config.phases import MATPROP_SMOOTH_WIDTH_DEFAULT  # noqa: E402
 from aragog.jax.solver import _dSdt_core_module_parts, dSdt_core_module  # noqa: E402
 from tests.conftest import entropy_eos_copy, entropy_eos_jax, needs_eos  # noqa: E402
 from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build  # noqa: E402
@@ -157,9 +156,7 @@ def _build_jax_pieces(solver):
         grain_size=float(pm.grain_size),
         k_solid=float(ps.thermal_conductivity),
         k_liquid=float(pl.thermal_conductivity),
-        matprop_smooth_width=float(
-            getattr(pm, 'matprop_smooth_width', MATPROP_SMOOTH_WIDTH_DEFAULT)
-        ),
+        matprop_smooth_width=float(pm.matprop_smooth_width),
         conduction=bool(en.conduction),
         convection=bool(en.convection),
         grav_sep=bool(en.gravitational_separation),

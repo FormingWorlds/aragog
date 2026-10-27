@@ -248,9 +248,8 @@ def _solver(
     p.boundary_conditions.core_bc = core_bc
     if tol is not None:
         p.solver.rtol = p.solver.atol = tol
-    if (
-        width is not None
-    ):  # set past the validator, so 0 (stiff zone at its 10 J/kg/K floor) works
+    # Set past the validator, so 0 (stiff zone at its 10 J/kg/K floor) works.
+    if width is not None:
         p.phase_mixed.matprop_smooth_width = width
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
@@ -325,12 +324,20 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 @needs_cvode
 @pytest.mark.smoke
 @pytest.mark.timeout(180, method='signal')
-def test_rate_mode_at_the_default_width_matches_a_tight_fixed_run(shared_eos):
-    """At the default width (stiff zone 252 J/kg/K, wider than the 200 J/kg/K margin) rate at
-    tol 1e-8 stays within 0.01 K of fixed at 1e-9 over 200 yr from the isentropic start."""
+def test_rate_mode_at_the_default_width_matches_a_tight_fixed_run(shared_eos, monkeypatch):
+    """At the default width every segment uses a stiff zone wider than the 200 J/kg/K margin
+    (252 J/kg/K), and rate at tol 1e-8 stays within 0.01 K of fixed at 1e-9 over 200 yr from
+    the isentropic start."""
+    deltas, real = [], es._PhaseBoundarySegmentRoot.__init__
+    monkeypatch.setattr(
+        es._PhaseBoundarySegmentRoot,
+        '__init__',
+        lambda self, *a, **k: real(self, *a, **k) or deltas.append(self.delta),
+    )
     _, T_ref = _isentropic_end(shared_eos, 'fixed', 1e-9, width=None)
     s, T = _isentropic_end(shared_eos, 'rate', 1e-8, width=None)
-    assert s.state.phase_basic._matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
+    margin = s.parameters.energy.phase_boundary_entropy_margin
+    assert deltas and min(deltas) > margin
     assert np.abs(T - T_ref).max() <= 0.01 and len(s._solution.segments) >= 1
 
 
@@ -945,7 +952,7 @@ def test_rate_mode_at_the_default_width_uses_a_stiff_zone_of_three_widths(
 ):
     """At the default matprop_smooth_width 0.01 every segment of a mushy start uses the stiff
     zone 3 w max(S_liq - S_sol) over the cells and the CMB, far above the 10 J/kg/K floor of
-    width 0."""
+    width 0; w is the width of the evaluators, not a value set in the parameters later."""
     deltas = []
     real = es._PhaseBoundarySegmentRoot.__init__
 
@@ -960,6 +967,9 @@ def test_rate_mode_at_the_default_width_uses_a_stiff_zone_of_three_widths(
     s = EntropySolver(p, entropy_eos=shared_eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(shared_eos))
+    s.parameters.phase_mixed.matprop_smooth_width = (
+        0.5  # after the build: no evaluator reads it
+    )
     s.solve()
     P = np.append(s._P_stag_flat, s._P_basic_flat[0])
     gap = np.ravel(shared_eos.liquidus_entropy(P)) - np.ravel(shared_eos.solidus_entropy(P))
