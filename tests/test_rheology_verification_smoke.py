@@ -756,6 +756,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
 
 
 @needs_eos
+@pytest.mark.timeout(600)
 def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, capsys) -> None:
     """Execute the Python blocks in docs/Tutorials/solid_state_convection.md and verify outputs match the page."""
     import re
