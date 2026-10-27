@@ -1,8 +1,8 @@
 """Validation of the phase-boundary blend at the default matprop_smooth_width on the SPIDER P-S
 test tables: the evaluator properties are continuous across the solidus and the liquidus, equal
 the mean of the two-phase and the single-phase branch on each boundary, and do not change far
-from both boundaries; the JAX right-hand side matches the NumPy one inside the blend, and the JAX
-blend and its gradient stay finite down to the smallest kept width."""
+from both boundaries; the JAX right-hand side matches the NumPy one inside the blend, and every JAX
+phase field and its gradient stay finite down to the smallest kept width."""
 
 from __future__ import annotations
 
@@ -206,26 +206,28 @@ def test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width():
 
 
 @pytest.mark.parametrize('width', [sys.float_info.min, 1e-3, 0.05])
-def test_the_jax_blend_and_its_gradient_are_finite_down_to_the_smallest_kept_width(width):
-    """At the smallest kept width (the smallest normal float) and at both warning limits, the
-    JAX blend weight, its derivative in S and every blended property are finite on the
-    solidus, in the middle of the melting interval and on the liquidus."""
+def test_every_jax_phase_field_and_its_gradient_are_finite_down_to_the_smallest_kept_width(
+    width,
+):
+    """At the smallest kept width and at both warning limits, at 1, 50 and 135 GPa, every field
+    of the JAX phase state and its derivative in S are finite on the solidus, in the middle of
+    the melting interval and on the liquidus, and the blend weight is 0.5 on both boundaries."""
     jax = pytest.importorskip('jax')
     jnp = jax.numpy
     eos = entropy_eos_jax(EOS_DIR)
-    P = jnp.full(3, 50e9)
+    P = jnp.repeat(jnp.array([1e9, 50e9, 135e9]), 3)
+    frac = jnp.tile(jnp.array([0.0, 0.3, 1.0]), 3)
     S_sol, S_liq = eos.solidus_entropy(P), eos.liquidus_entropy(P)
-    S = jnp.where(jnp.arange(3) == 1, S_sol + 0.3 * (S_liq - S_sol), S_sol)
-    S = jnp.where(jnp.arange(3) == 2, S_liq, S)
+    S = jnp.where(frac == 1.0, S_liq, S_sol + frac * (S_liq - S_sol))
 
     def state(S):
         return eos.compute_phase_state(P, S, 4.0, 2.0, matprop_smooth_width=width)
 
     st = state(S)
-    gphi = np.asarray(st.gphi)
-    assert gphi[0] == 0.0 and gphi[2] == 1.0 and gphi[1] == pytest.approx(0.3, rel=1e-12)
-    for name, value in st._asdict().items():
-        assert np.all(np.isfinite(np.asarray(value))), name
-    np.testing.assert_allclose(np.asarray(st.smth)[[0, 2]], 0.5, rtol=1e-15)
-    dsmth = np.asarray(jax.grad(lambda S: state(S).smth.sum())(S))
-    assert np.all(np.isfinite(dsmth)), dsmth
+    np.testing.assert_allclose(np.asarray(st.gphi), np.asarray(frac), rtol=1e-12, atol=0.0)
+    edge = np.asarray(frac) != 0.3
+    np.testing.assert_allclose(np.asarray(st.smth)[edge], 0.5, rtol=1e-15)
+    for name in st._fields:
+        assert np.all(np.isfinite(np.asarray(getattr(st, name)))), name
+        grad = jax.grad(lambda S, name=name: getattr(state(S), name).sum())(S)
+        assert np.all(np.isfinite(np.asarray(grad))), (name, np.asarray(grad))
