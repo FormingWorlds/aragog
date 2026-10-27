@@ -46,6 +46,14 @@ def test_the_default_width_is_0_01(build):
     assert isinstance(width, float)
 
 
+def _kept(build, value):
+    """The width ``build`` keeps for ``value``; a refusal fails the test on its assertion path."""
+    try:
+        return build(matprop_smooth_width=value).matprop_smooth_width
+    except ValueError as err:
+        pytest.fail(f'the kept width {value!r} was refused: {err}')
+
+
 @_BUILDERS
 @given(
     value=st.floats(min_value=sys.float_info.min, max_value=1.0, exclude_max=True)
@@ -54,7 +62,7 @@ def test_the_default_width_is_0_01(build):
 def test_a_width_inside_the_open_unit_interval_is_kept(build, value):
     """Any real number strictly between 0 and 1 is kept as given, down to the smallest
     normal float and up to the largest float below 1."""
-    width = build(matprop_smooth_width=value).matprop_smooth_width
+    width = _kept(build, value)
     assert width == value
     assert 0.0 < float(width) < 1.0
 
@@ -63,7 +71,7 @@ def _warnings(caplog, build, value):
     """Width warnings logged while ``build`` keeps ``value``."""
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger='fwl.aragog.config.phases'):
-        assert build(matprop_smooth_width=value).matprop_smooth_width == value
+        assert _kept(build, value) == value
     return [r.getMessage() for r in caplog.records if 'matprop_smooth_width' in r.getMessage()]
 
 
