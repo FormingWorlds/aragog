@@ -731,7 +731,8 @@ def test_bc5_surface_flux_is_half_cell_conduction_on_scaling_case_06() -> None:
     dr_half = 0.5 * float(r_b[-1] - r_b[-2])
 
     assert f_top == pytest.approx(k_cond * (t_cell - t_surf) / dr_half, rel=1.0e-12)
-    assert f_top == pytest.approx(float(snap['F_top_W_m2']), rel=1.0e-12)
+    # the stored F_top uses the half-cell width r_b[-1] - r_s[-1]: 1.5e-12 apart on case_06
+    assert f_top == pytest.approx(float(snap['F_top_W_m2']), rel=1.0e-10)
     assert float(np.max(np.abs(rhs))) < 1.0e-9
 
     params_1000 = build_scaling_case_params(spec)

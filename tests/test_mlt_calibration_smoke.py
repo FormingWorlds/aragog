@@ -93,19 +93,19 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     by_id = {c['case_id']: c for c in cases}
     assert float(by_id['case_01']['Ra_i']) == pytest.approx(1.0e6, rel=1.0e-12)
     assert float(by_id['case_01']['Ra_i_realized_kor']) == pytest.approx(
-        244.29905754722245, rel=rel_pin
+        244.3006036264776, rel=rel_pin
     )
     assert float(by_id['case_01']['theta']) == pytest.approx(15.0, rel=1.0e-12)
     assert float(by_id['case_01']['Nu_korenaga']) == pytest.approx(
-        2.249968281583638, rel=rel_pin
+        2.249967600484156, rel=rel_pin
     )
     assert float(by_id['case_12']['Ra_i']) == pytest.approx(1.0e7, rel=1.0e-12)
     assert float(by_id['case_12']['Ra_i_realized_kor']) == pytest.approx(
-        227.89157411179806, rel=rel_pin
+        227.89185635269803, rel=rel_pin
     )
     assert float(by_id['case_12']['theta']) == pytest.approx(25.0, rel=1.0e-12)
     assert float(by_id['case_12']['Nu_korenaga']) == pytest.approx(
-        2.2508789377583125, rel=rel_pin
+        2.250878852218327, rel=rel_pin
     )
 
     ra_all = np.array([float(c['Ra_i']) for c in cases])
@@ -119,14 +119,14 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     # 2. Recompute and verify the primary 12-case design-parameter and realized-state OLS fits
     fit12_live = _ols([-np.log(theta_all), np.log(ra_all)], np.log(nu_all))
     p12 = data['primary_fit_all_12_nu_korenaga']['multilinear']
-    assert fit12_live['beta'] == pytest.approx(0.28199233476514773, rel=rel_pin)
-    assert fit12_live['std_err_beta'] == pytest.approx(0.013368393573574713, rel=rel_pin)
-    assert fit12_live['alpha'] == pytest.approx(1.0371353132596806, rel=rel_pin)
-    assert fit12_live['std_err_alpha'] == pytest.approx(0.0972550223705178, rel=rel_pin)
-    assert fit12_live['a'] == pytest.approx(0.6411234486031506, rel=rel_pin)
-    assert fit12_live['ln_a'] == pytest.approx(-0.4445332530796477, rel=rel_pin)
-    assert fit12_live['std_err_ln_a'] == pytest.approx(0.35754872383129743, rel=rel_pin)
-    assert fit12_live['r_squared'] == pytest.approx(0.9848557284223107, rel=rel_pin)
+    assert fit12_live['beta'] == pytest.approx(0.28186158894667873, rel=rel_pin)
+    assert fit12_live['std_err_beta'] == pytest.approx(0.013351344682618043, rel=rel_pin)
+    assert fit12_live['alpha'] == pytest.approx(1.036646498963267, rel=rel_pin)
+    assert fit12_live['std_err_alpha'] == pytest.approx(0.09713099174093931, rel=rel_pin)
+    assert fit12_live['a'] == pytest.approx(0.6415261595787715, rel=rel_pin)
+    assert fit12_live['ln_a'] == pytest.approx(-0.443905316991281, rel=rel_pin)
+    assert fit12_live['std_err_ln_a'] == pytest.approx(0.3570927371661273, rel=rel_pin)
+    assert fit12_live['r_squared'] == pytest.approx(0.9848798928484331, rel=rel_pin)
     for k in (
         'a',
         'ln_a',
@@ -141,12 +141,12 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
 
     fit12_real_live = _ols([-np.log(theta_real_all), np.log(ra_real_all)], np.log(nu_all))
     p12_real = data['realized_state_fits']['all_12_nu_korenaga_on_realized_kor']['multilinear']
-    assert fit12_real_live['beta'] == pytest.approx(0.11288990833184448, rel=rel_pin)
-    assert fit12_real_live['std_err_beta'] == pytest.approx(0.0286205953168069, rel=rel_pin)
-    assert fit12_real_live['alpha'] == pytest.approx(-0.07868422903802338, rel=rel_pin)
-    assert fit12_real_live['std_err_alpha'] == pytest.approx(0.44064050899447305, rel=rel_pin)
-    assert fit12_real_live['a'] == pytest.approx(0.6932068186285084, rel=rel_pin)
-    assert fit12_real_live['r_squared'] == pytest.approx(0.774431133990773, rel=rel_pin)
+    assert fit12_real_live['beta'] == pytest.approx(0.11279752704437786, rel=rel_pin)
+    assert fit12_real_live['std_err_beta'] == pytest.approx(0.028554752447007014, rel=rel_pin)
+    assert fit12_real_live['alpha'] == pytest.approx(-0.07856503123648716, rel=rel_pin)
+    assert fit12_real_live['std_err_alpha'] == pytest.approx(0.43978146759351855, rel=rel_pin)
+    assert fit12_real_live['a'] == pytest.approx(0.6939563046339903, rel=rel_pin)
+    assert fit12_real_live['r_squared'] == pytest.approx(0.7750471518801997, rel=rel_pin)
     for k in (
         'a',
         'ln_a',
@@ -163,10 +163,10 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     mask_th_12 = np.array([s == 'theta' for s in sweeps_all])
     b_sw12 = _ols([np.log10(ra_all[mask_ra_12])], np.log10(nu_all[mask_ra_12]))
     a_sw12 = _ols([-np.log10(theta_all[mask_th_12])], np.log10(nu_all[mask_th_12]))
-    assert b_sw12['slope'] == pytest.approx(0.27846707421182404, rel=rel_pin)
-    assert b_sw12['std_err_slope'] == pytest.approx(0.01723673778237447, rel=rel_pin)
-    assert a_sw12['slope'] == pytest.approx(1.0108926163649687, rel=rel_pin)
-    assert a_sw12['std_err_slope'] == pytest.approx(0.059156542457968614, rel=rel_pin)
+    assert b_sw12['slope'] == pytest.approx(0.2783343830278419, rel=rel_pin)
+    assert b_sw12['std_err_slope'] == pytest.approx(0.017210482794706376, rel=rel_pin)
+    assert a_sw12['slope'] == pytest.approx(1.0103893204049352, rel=rel_pin)
+    assert a_sw12['std_err_slope'] == pytest.approx(0.05904753866967937, rel=rel_pin)
 
     # 3. Recompute and verify the post-hoc 7-case convecting diagnostic subset (Nu_est >= 2.8)
     mask_conv7 = nu_est_all >= 2.8
@@ -176,12 +176,12 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
         np.log(nu_all[mask_conv7]),
     )
     p7 = data['diagnostic_fits']['convecting_7_cases_nu_korenaga']['multilinear']
-    assert fit7_live['beta'] == pytest.approx(0.31141624364043297, rel=rel_pin)
-    assert fit7_live['std_err_beta'] == pytest.approx(0.0026400367811558407, rel=rel_pin)
-    assert fit7_live['alpha'] == pytest.approx(1.170990332281924, rel=rel_pin)
-    assert fit7_live['std_err_alpha'] == pytest.approx(0.028832895797668207, rel=rel_pin)
-    assert fit7_live['a'] == pytest.approx(0.5414999050752781, rel=rel_pin)
-    assert fit7_live['r_squared'] == pytest.approx(0.9997126951723827, rel=rel_pin)
+    assert fit7_live['beta'] == pytest.approx(0.3112307187764146, rel=rel_pin)
+    assert fit7_live['std_err_beta'] == pytest.approx(0.002610547194991246, rel=rel_pin)
+    assert fit7_live['alpha'] == pytest.approx(1.1698459658993094, rel=rel_pin)
+    assert fit7_live['std_err_alpha'] == pytest.approx(0.028510828252598687, rel=rel_pin)
+    assert fit7_live['a'] == pytest.approx(0.5414354264977795, rel=rel_pin)
+    assert fit7_live['r_squared'] == pytest.approx(0.9997187397332614, rel=rel_pin)
     for k in ('a', 'alpha', 'beta', 'std_err_alpha', 'std_err_beta', 'r_squared'):
         assert fit7_live[k] == pytest.approx(float(p7[k]), rel=rel_pin)
 
@@ -193,10 +193,10 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
         [-np.log10(theta_all[mask_th_12 & mask_conv7])],
         np.log10(nu_all[mask_th_12 & mask_conv7]),
     )
-    assert b_sw7['slope'] == pytest.approx(0.3131675274330532, rel=rel_pin)
-    assert b_sw7['std_err_slope'] == pytest.approx(0.003756369949778376, rel=rel_pin)
-    assert a_sw7['slope'] == pytest.approx(1.1563304546538864, rel=rel_pin)
-    assert a_sw7['std_err_slope'] == pytest.approx(0.011894069031624573, rel=rel_pin)
+    assert b_sw7['slope'] == pytest.approx(0.3129646100882825, rel=rel_pin)
+    assert b_sw7['std_err_slope'] == pytest.approx(0.0037143638400270315, rel=rel_pin)
+    assert a_sw7['slope'] == pytest.approx(1.1553316795458288, rel=rel_pin)
+    assert a_sw7['std_err_slope'] == pytest.approx(0.011652301638525297, rel=rel_pin)
 
     # 4. Live EntropySolver steady-state RHS and residual bound across all 5 snapshots
     spec_by_id = {c['case_id']: c for c in data['cases_spec']}
@@ -204,11 +204,10 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
 
     def _build_case_solver(cid: str, s_top_inf_val: float = 0.25) -> EntropySolver:
         cs = spec_by_id[cid]
-        f_top_bc = float(snaps[cid]['F_top_W_m2'])
         log10_visc = float(np.log10(float(cs['eta_i_Pa_s'])))
         toml_text = f"""[boundary_conditions]
-outer_boundary_condition = 4
-outer_boundary_value = {f_top_bc}
+outer_boundary_condition = 5
+outer_boundary_value = {fp['T_surf_K']}
 inner_boundary_condition = 2
 inner_boundary_value = 0.0
 emissivity = 1.0
@@ -360,19 +359,19 @@ half_life_years = 1.0e30
         )
 
     assert float(snaps['case_01']['jconv_max_W_m2']) == pytest.approx(
-        0.0062746085758870985, rel=rel_pin
+        0.006272877371770735, rel=rel_pin
     )
     assert float(snaps['case_03']['jconv_max_W_m2']) == pytest.approx(
-        0.822944920830173, rel=rel_pin
+        0.8228812859671824, rel=rel_pin
     )
     assert float(snaps['case_06']['jconv_max_W_m2']) == pytest.approx(
-        7.06894591400015, rel=rel_pin
+        7.067637272788733, rel=rel_pin
     )
     assert float(snaps['case_07']['jconv_max_W_m2']) == pytest.approx(
-        1.9547419248964315, rel=rel_pin
+        1.9542045489456001, rel=rel_pin
     )
     assert float(snaps['case_12']['jconv_max_W_m2']) == pytest.approx(
-        0.012250557884946865, rel=rel_pin
+        0.012250231462371627, rel=rel_pin
     )
 
     # 5. Canaries: asserting pre-run acceptance bounds or perturbing inputs fails

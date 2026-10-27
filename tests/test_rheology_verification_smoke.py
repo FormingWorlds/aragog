@@ -324,16 +324,16 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     fixed_h_cases = steady_thinning['e300_n100_fixed_h']['cases']
     matched_ti_cases = steady_thinning['e300_n100_matched_ti']['cases']
     tau_d_uny_1d = float(steady_thinning['e300_n100_fixed_h']['tau_d_lid_unyielded_Pa'])
-    assert tau_d_uny_1d == pytest.approx(1956123.3776120436, rel=rel_pin)
+    assert tau_d_uny_1d == pytest.approx(1956044.9665858347, rel=rel_pin)
     assert float(steady_thinning['e300_n100_matched_ti']['T_i_lid_target_K']) == pytest.approx(
-        1666.4195750648337, rel=rel_pin
+        1666.4344006309975, rel=rel_pin
     )
 
     # Live 1-D yielded state evaluations on E300 (N = 100) and s_ref_51 (1601.47 K)
     live_vecs = data['live_yield_states']['e300_n100_steady_vectors']
 
     def _eval_live_e300_state(
-        tau_y_pa: float, h_scale: float, f_top_bc: float, s_vec_in: list[float]
+        tau_y_pa: float, h_scale: float, s_vec_in: list[float]
     ) -> dict[str, float]:
         d_m = 1.0e6
         r_out_m = 100.0 * d_m
@@ -363,8 +363,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         )
         p_e300 = Parameters(
             boundary_conditions=_BoundaryConditionsParameters(
-                outer_boundary_condition=4,
-                outer_boundary_value=float(f_top_bc),
+                outer_boundary_condition=5,
+                outer_boundary_value=t_s_m,
                 inner_boundary_condition=2,
                 inner_boundary_value=0.0,
                 emissivity=1.0,
@@ -482,38 +482,35 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     live_u = _eval_live_e300_state(
         500.0e6,
         1.0,
-        float(live_vecs['unyielded_500MPa']['F_top_W_m2']),
         live_vecs['unyielded_500MPa']['S_steady_J_kg_K'],
     )
     live_fh05 = _eval_live_e300_state(
         0.5 * tau_d_uny_1d,
         1.0,
-        float(live_vecs['fixed_h_below_0p5x_tau_d_lid']['F_top_W_m2']),
         live_vecs['fixed_h_below_0p5x_tau_d_lid']['S_steady_J_kg_K'],
     )
     live_mt05 = _eval_live_e300_state(
         0.5 * tau_d_uny_1d,
         float(live_vecs['matched_ti_below_0p5x_tau_d_lid']['h_scale']),
-        float(live_vecs['matched_ti_below_0p5x_tau_d_lid']['F_top_W_m2']),
         live_vecs['matched_ti_below_0p5x_tau_d_lid']['S_steady_J_kg_K'],
     )
     assert live_u['n_yielding_basic_nodes'] == 0.0
     assert live_fh05['n_yielding_basic_nodes'] >= 40.0
     assert live_mt05['n_yielding_basic_nodes'] >= 30.0
-    assert live_u['eta_eff_lid_over_eta_i'] == pytest.approx(15.6470507167325, rel=rel_pin)
-    assert live_fh05['eta_eff_lid_over_eta_i'] == pytest.approx(0.5029920741267555, rel=rel_pin)
-    assert live_mt05['eta_eff_lid_over_eta_i'] == pytest.approx(0.5232816199771473, rel=rel_pin)
+    assert live_u['eta_eff_lid_over_eta_i'] == pytest.approx(15.645693871705662, rel=rel_pin)
+    assert live_fh05['eta_eff_lid_over_eta_i'] == pytest.approx(0.5029843529376066, rel=rel_pin)
+    assert live_mt05['eta_eff_lid_over_eta_i'] == pytest.approx(0.5232378470376874, rel=rel_pin)
     assert (live_fh05['d_lid_pass1_m'] / live_u['d_lid_pass1_m']) == pytest.approx(
-        1.5259308431784937, rel=rel_pin
+        1.5256962173848978, rel=rel_pin
     )
     assert (live_fh05['d_lid_cond_lid_m'] / live_u['d_lid_cond_lid_m']) == pytest.approx(
-        0.9281772785559389, rel=rel_pin
+        0.928205268577179, rel=rel_pin
     )
     assert (live_mt05['d_lid_pass1_m'] / live_u['d_lid_pass1_m']) == pytest.approx(
-        1.0466365056333917, rel=rel_pin
+        1.0465491721774085, rel=rel_pin
     )
     assert (live_mt05['d_lid_cond_lid_m'] / live_u['d_lid_cond_lid_m']) == pytest.approx(
-        0.609581859649797, rel=rel_pin
+        0.6101737401157322, rel=rel_pin
     )
     # Single-RHS steady-state residual bound set at 100x the measured 5-start maximum
     # (max_over_5starts = 2.595e-12, 5.754e-13, 2.225e-15 J/(kg K yr); <= 1.0e-9 J/(kg K yr)).
@@ -574,7 +571,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     )
 
     # Live 0-D thinning check across the 5 yield multipliers at T_i = 1666.419575 K
-    ev_uny_0d = evaluate_stagnant_lid_0d(1666.4195750648337, p0d)
+    ev_uny_0d = evaluate_stagnant_lid_0d(1666.4344006309975, p0d)
     tau_d_0d_uny = float(ev_uny_0d['tau_d_lid_Pa'])
     for key, mult, exp_r0d in (
         ('above_2p0x_tau_d_lid', 2.0, 1.0),
@@ -588,7 +585,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
             yield_stress_mu=0.0,
             yield_stress_max=mult * tau_d_0d_uny,
         )
-        ev_y = evaluate_stagnant_lid_0d(1666.4195750648337, p0d_y)
+        ev_y = evaluate_stagnant_lid_0d(1666.4344006309975, p0d_y)
         r_live_0d = float(ev_y['d_lid_eff_m'] / ev_uny_0d['d_lid_eff_m'])
         assert r_live_0d == pytest.approx(exp_r0d, rel=1.0e-12)
         assert float(fixed_h_cases[key]['r_thin_0d_fixed_Ti']) == pytest.approx(
@@ -598,11 +595,11 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     # Fixed internal heating ratios: Pass-1 isotherm thickens (1.5259 / 1.7397 / 1.9118);
     # post-hoc conductive diagnostic thins weakly (0.9282 / 0.9022 / 0.8809) as interior cools
     for key, exp_p1, exp_cond, exp_ti in (
-        ('unyielded_500MPa', 1.0, 1.0, 1666.4195750648337),
-        ('above_2p0x_tau_d_lid', 1.0000000840446674, 1.00000007265864, 1666.4195526054918),
-        ('below_0p5x_tau_d_lid', 1.5259308431784937, 0.9281772785559389, 1557.004207586273),
-        ('below_0p2x_tau_d_lid', 1.739741462006333, 0.9021715533274383, 1517.8287881051435),
-        ('below_0p1x_tau_d_lid', 1.9118197399314252, 0.8809058564042608, 1485.9637158182675),
+        ('unyielded_500MPa', 1.0, 1.0, 1666.4344006309975),
+        ('above_2p0x_tau_d_lid', 1.0000000844282797, 1.0000000729366905, 1666.4343780651852),
+        ('below_0p5x_tau_d_lid', 1.5256962173848978, 0.928205268577179, 1557.0506785089283),
+        ('below_0p2x_tau_d_lid', 1.7394819726045936, 0.9022035825513467, 1517.8771596612346),
+        ('below_0p1x_tau_d_lid', 1.9115692412589953, 0.880940416077284, 1486.0124100935134),
     ):
         row = fixed_h_cases[key]
         assert float(row['R_thin_pass1']) == pytest.approx(exp_p1, rel=rel_pin)
@@ -612,11 +609,11 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     # Matched T_i = 1666.42 K ratios: Pass-1 isotherm stays flat (1.0466 / 1.0551 / 1.0581);
     # post-hoc conductive diagnostic thins (0.6096 / 0.4980 / 0.4197)
     for key, exp_p1_m, exp_cond_m, exp_ftop_m in (
-        ('unyielded_500MPa', 1.0, 1.0, 2078.9117759903147),
-        ('above_2p0x_tau_d_lid', 1.0000000840446674, 1.00000007265864, 2078.9115946414036),
-        ('below_0p5x_tau_d_lid', 1.0466365056333917, 0.6095818596497969, 3408.95295983677),
-        ('below_0p2x_tau_d_lid', 1.0551011113837658, 0.49796454730272127, 4171.834353271644),
-        ('below_0p1x_tau_d_lid', 1.0580583212570414, 0.41972455470298903, 4947.857676673418),
+        ('unyielded_500MPa', 1.0, 1.0, 2078.911776806167),
+        ('above_2p0x_tau_d_lid', 1.0000000844282797, 1.0000000729366905, 2078.9115946415836),
+        ('below_0p5x_tau_d_lid', 1.0465491721774085, 0.6101737401157322, 3407.081690489764),
+        ('below_0p2x_tau_d_lid', 1.0549490624890643, 0.49877291892998515, 4168.053391402567),
+        ('below_0p1x_tau_d_lid', 1.0578233403218287, 0.42071436770898674, 4941.3852911781),
     ):
         row_m = matched_ti_cases[key]
         assert float(row_m['R_thin_pass1']) == pytest.approx(exp_p1_m, rel=rel_pin)
