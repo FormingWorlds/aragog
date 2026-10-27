@@ -1,7 +1,7 @@
 {
   "canary": {
-    "aragog_commit": "cf0312a17427df7e8a09c1fbba62132fb3644a2b",
-    "generator_input_sha256": "39918b51c14a522c000f63706927e6978bec9f0dedc6b2d5d7d3c6d374c306cf",
+    "aragog_commit": "4962577f86bc1e70dbe17ae864ecf18ba49b085f",
+    "generator_input_sha256": "61044d8ba49eec2066b7bff5e41fc29a7ad79fe3a2e814d594f59a1c4c337a9e",
     "generator_input_files": {
       "src/aragog/__init__.py": "dc05d98b503aa6ce6f61ab234528a1fa6ee40cd54017cc7ab2499eb1e138b8bb",
       "src/aragog/cfg/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -33,12 +33,12 @@
       "src/aragog/eos/__init__.py": "fb835c17a71351fefe9461d5b19c8cede2f4dcca11f27171b30b832d66459435",
       "src/aragog/eos/consistency.py": "806399a17a4bcb638c807cafe432ccacb467bd46f4e8827dc2f0be13cc322aac",
       "src/aragog/eos/entropy.py": "afb142ada302ee56e63c001cd8a9f7bd6969247b6d1aa3b34235dbc2a3af5327",
-      "src/aragog/eos/entropy_phase.py": "175bee47e4cb9bccae61fbdba444d7b17e01bb3900bb377049c1d49f79397e02",
+      "src/aragog/eos/entropy_phase.py": "75ca0968a7713791b5be1ff0b20ae3b2e80810da7e1a8650cfc1a18865f0db97",
       "src/aragog/eos/table_cache.py": "0e80e32adf996183b8a6fdcfcbbcef440b4ab8a34fe58793367a41980111a051",
       "src/aragog/jax/__init__.py": "45574d2c7b26ddca70da1c84052a890b4977fa966c648e403278ecfe6fae6292",
       "src/aragog/jax/eos.py": "30bbc4c48947bd1e5096d7f0fe4b257a0ac9d779064714d8945f63133f07a75d",
       "src/aragog/jax/nondim.py": "8521960850b72a8bb0ba385fe1a4330b66c46925b50f7a67b0db49343c757579",
-      "src/aragog/jax/phase.py": "54834002a4b7b7f37b62b8db75caf397c6fec88a5c45c518daed7a123b1ed8c5",
+      "src/aragog/jax/phase.py": "9c5c5775b046b38be8d5e6a8226892efd0f8666a819cefb9982dca60b16132e0",
       "src/aragog/jax/solver.py": "aba7a56200bcf36c2eacd2a049cb6ea19d91ba60e6b1afc7ed79432699e2b8a7",
       "src/aragog/mesh/__init__.py": "1cc3b8fa9070573106618cd591975ed83c731254e63e3c1c5e460d57a1dfe859",
       "src/aragog/mesh/fixed_mesh.py": "17c305ccefbb275f5bd7b6acc358187123cee4951440e6fad84ad6b71ea83a38",
@@ -54,7 +54,7 @@
       "src/aragog/solver/entropy_solver.py": "9e5ba33426f7b682049c0f1a75866468cb471bba4e70a69195357220b1df5567",
       "src/aragog/solver/entropy_state.py": "e48026f4197013a585a276d75d972ad722488bf23a532c39074cee6922dea0c0",
       "src/aragog/utilities.py": "4d92a214e8c3edda11a6651fd396202de4f9869f629e77f4709a05a9187a8929",
-      "tools/verification/_ssc_helpers.py": "8a9461b86e1eeba1f9dc91003df57155a34961216f323501271bec742d50cc58",
+      "tools/verification/_ssc_helpers.py": "40fd8e1dbeb5d8f37dd1842985174b6a8dfd208280e026c758d3bf1a5283f252",
       "tools/verification/generate_ssc_solver_wiring_benchmarks.py": "9d0f2dc13ae1b2434ff8b7a2150b926c1d0753ac2d865efa97b5d689cfd0f6a0"
     },
     "table_md5": {
