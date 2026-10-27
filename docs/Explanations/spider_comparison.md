@@ -81,7 +81,7 @@ Aragog can still consume Wolf & Bower (2018) tables via `phase_solid` / `phase_l
 ### Atmosphere chemistry and escape
 
 SPIDER's `atmosphere.c` carries its own model for grey-body radiation, Zahnle steam atmosphere, Jeans escape, Zahnle XUV escape, and volatile speciation between melt, solid, and gas phases.
-Aragog deliberately does none of this; it implements only the surface boundary modes 1, 4, and 5 (grey-body with optional UTBL correction, prescribed flux, prescribed temperature).
+Aragog deliberately does none of this; it implements only the surface boundary modes 1, 4, and 5 (grey-body with optional UTBL correction, prescribed flux, prescribed temperature; see [Surface boundary conditions](surface_bc.md)).
 In a PROTEUS run the atmospheric climate is owned by JANUS or AGNI, and the volatile speciation / outgassing is owned by Atmodeller or CALLIOPE; in standalone use Aragog is run with mode 4 (prescribed flux) or mode 5 (prescribed temperature) as the upper BC.
 This is a separation-of-concerns choice, not a missing feature: it lets Aragog be paired with whichever climate and outgassing modules PROTEUS configures.
 
