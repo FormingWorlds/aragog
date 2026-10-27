@@ -98,7 +98,7 @@ liquidus = "data/lookup/liquidus.dat"
 phase = "composite"
 phase_transition_width = 0.01
 grain_size = 1.0e-3
-matprop_smooth_width = 0.0
+matprop_smooth_width = 0.01
 separation_viscosity = "melt"      # "melt" or "mixture"
 separation_buoyancy = "mixture"    # "mixture" or "solid"
 cp_blend = "latent"                # "latent" or "linear"
@@ -245,7 +245,7 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `phase` | str | -- | Phase label |
 | `phase_transition_width` | -- | -- | Legacy smoothing width |
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
-| `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
+| `matprop_smooth_width` | -- | 0.01 | Width of the blend between the two-phase and the single-phase properties at the solidus and the liquidus, in units of the melt fraction ([Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus)); a value at or below 0, at or above 1, NaN, a bool or a string is refused with a `ValueError` |
 | `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = (\rho_s - \rho_l) g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
 | `separation_buoyancy` | str | `"mixture"` | Buoyancy reference of the separation mobility $F(\phi)$: `"mixture"` (McKenzie 1984) multiplies the Blake-Kozeny-Carman and Rumpf-Gupte terms by $(1-\phi)$, and the Stokes term keeps the plain contrast, as under `"solid"` (dilute limit); `"solid"` (Abe 1995, SPIDER) uses no factor. The Abe benchmarks and the SPIDER parity runs use `"solid"` |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |

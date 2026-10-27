@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import numbers
 from typing import Any
 
 import attrs
@@ -18,6 +19,23 @@ SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 # Separation buoyancy: against the mixture (McKenzie 1984) or the solid (Abe 1995).
 SEPARATION_BUOYANCY_MODES: tuple[str, str] = ('mixture', 'solid')
 SEPARATION_BUOYANCY_DEFAULT: str = 'mixture'
+# Width of the tanh blend at the solidus and liquidus, in melt-fraction units (PROTEUS default).
+MATPROP_SMOOTH_WIDTH_DEFAULT: float = 0.01
+
+
+def check_matprop_smooth_width(value: float) -> None:
+    """Raise ``ValueError`` unless ``value`` is a real scalar strictly between 0 and 1.
+
+    At 0 the properties switch between the two-phase and the single-phase branch exactly at
+    the solidus and the liquidus; from 1 the blend spans the whole melting interval.
+    """
+    try:
+        ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
+        ok = ok and 0.0 < float(value) < 1.0
+    except OverflowError:
+        ok = False
+    if not ok:
+        raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
 
 
 @delegate_rheology
@@ -123,10 +141,10 @@ class MixedPhaseConfig:
         latent-heat-augmented) or ``'linear'`` (linear blend of
         pure-phase Cp without the latent term). Default ``'latent'``.
     matprop_smooth_width : float
-        Half-width of the tanh used to smooth phase-dependent
-        material properties around the rheological transition.
-        Default 0.0 reproduces SPIDER's convention of no smoothing
-        on the property side; 0.01 is the typical JAX setting.
+        Width of the tanh blend between the two-phase and the
+        single-phase properties at the solidus and the liquidus, in
+        melt-fraction units, strictly between 0 and 1. Default 0.01,
+        as in PROTEUS.
     const_properties : bool
         Replace the EOS-tabulated $(\rho, c_p, \alpha, k)$ and
         $\log_{10}\eta$ with the seven constant-property values
@@ -171,7 +189,10 @@ class MixedPhaseConfig:
         validator=attrs.validators.in_(SEPARATION_BUOYANCY_MODES),
     )
     cp_blend: str = 'latent'
-    matprop_smooth_width: float = 0.0
+    matprop_smooth_width: float = attrs.field(
+        default=MATPROP_SMOOTH_WIDTH_DEFAULT,
+        validator=lambda _inst, _attr, value: check_matprop_smooth_width(value),
+    )
     const_properties: bool = False
     const_rho: float = 4000.0
     const_Cp: float = 1000.0

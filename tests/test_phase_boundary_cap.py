@@ -240,6 +240,7 @@ def _solver(
     p.boundary_conditions.core_bc = core_bc
     if tol is not None:
         p.solver.rtol = p.solver.atol = tol
+    p.phase_mixed.matprop_smooth_width = 0.0  # width 0: the stiff zone at its 10 J/kg/K floor
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(eos) if S is None else np.full(s._n_stag, S))
@@ -904,13 +905,42 @@ def _cooling_above_liquidus(
 ):
     """A solver whose cells all start ``gap`` above the liquidus, with smoothing ``width``."""
     s = _solver(eos, mode, core_bc, end_time=end_time, tol=tol)
-    s.parameters.phase_mixed = dataclasses.replace(
-        s.parameters.phase_mixed, matprop_smooth_width=width
-    )
+    s.parameters.phase_mixed.matprop_smooth_width = width  # set past the validator, for 0
     S_liq = np.asarray(eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S_sol = np.asarray(eos.solidus_entropy(s._P_stag_flat)).ravel()
     s.set_initial_entropy(S_liq + gap)
     return s, S_liq, S_sol
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_at_the_default_width_uses_a_stiff_zone_of_three_widths(
+    shared_eos, monkeypatch
+):
+    """At the default matprop_smooth_width 0.01 every segment of a mushy start uses the stiff
+    zone 3 w max(S_liq - S_sol) over the cells and the CMB, 25x the 10 J/kg/K floor of width 0
+    on the test tables."""
+    deltas = []
+    real = es._PhaseBoundarySegmentRoot.__init__
+
+    def spy(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        deltas.append(self.delta)
+
+    monkeypatch.setattr(es._PhaseBoundarySegmentRoot, '__init__', spy)
+    p = _build_mushy_parameters(solver_method='cvode', n_nodes=12, end_time=2.0)
+    p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
+    assert p.phase_mixed.matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
+    s = EntropySolver(p, entropy_eos=shared_eos)
+    s.initialize()
+    s.set_initial_entropy(_pick_mushy_S(shared_eos))
+    s.solve()
+    P = np.append(s._P_stag_flat, s._P_basic_flat[0])
+    gap = np.ravel(shared_eos.liquidus_entropy(P)) - np.ravel(shared_eos.solidus_entropy(P))
+    expected = 3.0 * 0.01 * float(np.max(gap))
+    assert deltas and all(d == pytest.approx(expected, rel=1e-12) for d in deltas)
+    assert expected > 25.0 * es._RATE_CAP_MIN_DELTA
 
 
 @needs_cvode

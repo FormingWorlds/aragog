@@ -21,10 +21,11 @@ parameters are those of ``_build_mushy_parameters`` in
 ``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off,
 ``max_steps`` 1e7 and ``convective_threshold`` 0, the setting of the table. Run from the repository root::
 
-    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [A B C D]
+    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [--width=W] [A B C D]
 
 ``--check`` exits with status 1 when ``'rate'`` at 1e-8 is more than ``RATE_BOUND_K``
-from the reference in any case.
+from the reference in any case. ``--width=W`` sets w of every case. The row also prints the
+RHS evaluations of ``'rate'`` at 1e-8.
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ def run_case(eos, case, mode, tol):
         outer_boundary_value=case['flux'],
         core_bc=case['core'],
     )
-    p.phase_mixed = dataclasses.replace(p.phase_mixed, matprop_smooth_width=case['width'])
+    p.phase_mixed.matprop_smooth_width = case['width']  # past the validator: case C is width 0
     p.solver.rtol = p.solver.atol = tol
     p.solver.max_steps = 10_000_000
     s = EntropySolver(p, entropy_eos=eos)
@@ -77,10 +78,10 @@ def run_case(eos, case, mode, tol):
     if sol.status != 0:
         raise RuntimeError(f'{mode} at {tol:g}: solver status {sol.status}')
     T = np.asarray(eos.temperature(s._P_stag_flat, np.asarray(sol.y)[: s._n_stag, -1])).ravel()
-    return T, int(sol.get('cvode_nst') or 0)
+    return T, int(sol.get('cvode_nst') or 0), int(sol.nfev)
 
 
-def main(names, check=False):
+def main(names, check=False, width=None):
     """Print one markdown table row per case; return 1 when ``check`` and a bound fails."""
     eos_dir = os.environ.get('ARAGOG_TEST_EOS_DIR')
     if not eos_dir:
@@ -90,22 +91,23 @@ def main(names, check=False):
     eos = EntropyEOS(eos_dir)
     print(
         r'| Case | Call [yr] | steps fixed / rate at 1e-8 | max \|dT\| fixed 1e-8 | rate 1e-8 '
-        '| rate 1e-10 |'
+        '| rate 1e-10 | RHS rate 1e-8 |'
     )
-    print('|---|---|---|---|---|---|')
+    print('|---|---|---|---|---|---|---|')
     failed = []
     for name in names:
-        case = CASES[name]
-        T_ref, _ = run_case(eos, case, 'fixed', 1e-10)
-        dT, nst = [], []
+        case = CASES[name] if width is None else dict(CASES[name], width=width)
+        T_ref, _, _ = run_case(eos, case, 'fixed', 1e-10)
+        dT, nst, nfev = [], [], []
         for mode, tol in RUNS:
-            T, n = run_case(eos, case, mode, tol)
+            T, n, f = run_case(eos, case, mode, tol)
             dT.append(float(np.abs(T - T_ref).max()))
             nst.append(n)
+            nfev.append(f)
         print(
             f'| {name} | {case["end"]:g} | {nst[0]} / {nst[1]} | '
-            + ' | '.join(f'{d:.2g} K' for d in dT)
-            + ' |',
+            + ' | '.join(f'{d:.3g} K' for d in dT)
+            + f' | {nfev[1]} |',
             flush=True,
         )
         if dT[1] > RATE_BOUND_K:
@@ -117,5 +119,7 @@ def main(names, check=False):
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a != '--check']
-    sys.exit(main(args or list(CASES), check='--check' in sys.argv[1:]))
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+    names = [a for a in sys.argv[1:] if not a.startswith('--')]
+    widths = [float(a.split('=', 1)[1]) for a in flags if a.startswith('--width=')]
+    sys.exit(main(names or list(CASES), check='--check' in flags, width=(widths or [None])[-1]))
