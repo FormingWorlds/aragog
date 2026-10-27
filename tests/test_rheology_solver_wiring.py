@@ -811,9 +811,10 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     Reads tests/reference/ssc_solver_wiring_benchmarks.json to verify that five
     runs of abe_solid.toml from perturbed initial entropy profiles
     S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
-    Delta T_on(r) <= 3.5e-5 K on active-solid (2x margin over measured 1.751e-5 K)
-    and Delta T_on(r) <= 2.0e-6 K on the default configuration (2.6x margin over
-    measured 7.565e-7 K) across both basic and staggered radial profiles.
+    Delta T_on(r) <= 3.5e-5 K on active-solid (margin 2.0x over the basic 1.751e-5 K
+    and 1.03x over the staggered 3.389e-5 K) and Delta T_on(r) <= 2.0e-6 K on the
+    default configuration (2.6x over the basic 7.565e-7 K, 6.5x over the staggered
+    3.055e-7 K).
 
     Parameters
     ----------
@@ -828,6 +829,7 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     def_suite = data['perturbed_starts']['abe_solid_default']
 
     r_km = np.asarray(var_suite['on']['r_basic_m'], dtype=float) / 1.0e3
+    r_stag_km = np.asarray(var_suite['on']['r_stag_m'], dtype=float) / 1.0e3
     dt_var_on = np.asarray(var_suite['on']['delta_T_basic_profile_K'], dtype=float)
     dt_var_off = np.asarray(var_suite['off']['delta_T_basic_profile_K'], dtype=float)
     dt_def_on = np.asarray(def_suite['on']['delta_T_basic_profile_K'], dtype=float)
@@ -877,9 +879,12 @@ def test_perturbed_starts_spread(validation_plot) -> None:
         top.set(ylabel='T [K]')
         top.legend()
 
-        bottom.plot(r_km, np.log10(np.maximum(dt_var_on, 1.0e-12)), label='on')
+        bottom.plot(r_km, np.log10(np.maximum(dt_var_on, 1.0e-12)), label='on, basic')
+        bottom.plot(
+            r_stag_km, np.log10(np.maximum(dt_stag_var_on, 1.0e-12)), label='on, staggered'
+        )
         bottom.plot(r_km, np.log10(np.maximum(dt_var_off, 1.0e-12)), '--', label='off')
-        bottom.plot(r_km, np.log10(np.maximum(dt_def_on, 1.0e-12)), ':', label='default')
+        bottom.plot(r_km, np.log10(np.maximum(dt_def_on, 1.0e-12)), label='default')
         bottom.axhline(
             np.log10(active_spread_bound_k), color=plt.rcParams['text.color'], ls='-.'
         )
@@ -1859,6 +1864,7 @@ def test_generator_input_fingerprint_ignores_generated_and_untracked_files(
     assert sha_edit != sha_clean
 
 
+@pytest.mark.timeout(120)
 def test_jax_jacobian_is_finite_for_the_lid_closure_with_a_constant_mixing_length():
     """The JAX Jacobian stays finite when the viscous mixing-length factor is zero.
 
@@ -1882,6 +1888,17 @@ def test_jax_jacobian_is_finite_for_the_lid_closure_with_a_constant_mixing_lengt
     assert np.isfinite(jac).all(), (
         f'{int(np.isnan(jac).sum())} of {jac.size} entries are not finite'
     )
+    # Central differences on 5 columns (both boundary columns, where q = 0) check the values
+    h = 1.0e-6 * np.maximum(np.abs(np.asarray(y)), 1.0)
+    cols = [0, 1, jac.shape[1] // 2, jac.shape[1] - 2, jac.shape[1] - 1]
+    jac_fd = jac[:, cols].copy()
+    for c, j in enumerate(cols):
+        dy = jnp.zeros_like(y).at[j].set(h[j])
+        f_plus = np.asarray(dSdt(0.0, y + dy, args))
+        f_minus = np.asarray(dSdt(0.0, y - dy, args))
+        jac_fd[:, c] = (f_plus - f_minus) / (2.0 * h[j])
+    col_err = np.max(np.abs(jac[:, cols] - jac_fd), axis=0) / np.max(np.abs(jac_fd), axis=0)
+    assert np.all(col_err <= 1.0e-5), col_err
 
 
 @pytest.mark.parametrize(('width', 'expected'), [(0.05, 0.05), (0.0, 1.0e-2)])

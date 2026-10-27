@@ -137,19 +137,19 @@ When single-phase thermal expansivity $\alpha$ is harmonised between both paths 
 ![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread.svg#only-light){ width="80%" }
 ![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The top panel shows end-time radial temperature profiles for rheology on and off on the active-solid variant. The bottom panel shows the radial perturbation spreads $\Delta T(r)$ from the stored runs. A pass means the active-solid curve with rheology on stays below the dash-dot line ($3.5 \times 10^{-5}\text{ K}$) and the default curve stays below the dotted line ($2.0 \times 10^{-6}\text{ K}$).
+**How to read the plot.** The top panel shows end-time radial temperature profiles for rheology on and off on the active-solid variant. The bottom panel shows the radial perturbation spreads $\Delta T(r)$ from the stored runs. A pass means the active-solid curves with rheology on (basic and staggered nodes) stay below the dash-dot line ($3.5 \times 10^{-5}\text{ K}$) and the default curve stays below the dotted line ($2.0 \times 10^{-6}\text{ K}$). The staggered curve comes close to its bound: its margin is $1.03\times$.
 
 ??? info "Test details"
     - Reference: 5 perturbed trajectories with `rheology.enabled = false` on the active-solid variant and default `cfg/abe_solid.toml` (`tests/reference/ssc_solver_wiring_benchmarks.json`).
-    - Tolerance: $\Delta T_\text{on}(r) \le 3.5 \times 10^{-5}\text{ K}$ ($2\times$ margin over the measured basic spread $1.751 \times 10^{-5}\text{ K}$) on the active-solid variant and $\Delta T_\text{on}(r) \le 2.0 \times 10^{-6}\text{ K}$ on default, with active-solid on-vs-off relative difference $\ge 10^{-4}$.
+    - Tolerance: $\Delta T_\text{on}(r) \le 3.5 \times 10^{-5}\text{ K}$ (margin $2.0\times$ over the measured basic spread $1.751 \times 10^{-5}\text{ K}$ and $1.03\times$ over the staggered spread $3.389 \times 10^{-5}\text{ K}$) on the active-solid variant and $\Delta T_\text{on}(r) \le 2.0 \times 10^{-6}\text{ K}$ on default, with active-solid on-vs-off relative difference $\ge 10^{-4}$.
     - Test id: `tests/test_rheology_solver_wiring.py::test_perturbed_starts_spread`
     - Command: `pytest tests/test_rheology_solver_wiring.py -k test_perturbed_starts_spread` (add `--validation-plots` to write the plot pair)
 
 ### Two-pass solid rheology RHS cost
 
-**Why this check exists.** Solid rheology calculations execute inside the innermost loop of the differential equation solver. Redundant lookups or repeated compilation would make simulations run slowly. This check counts kernel executions and reads the stored execution times to confirm that two-pass solid rheology adds only the expected kernel calls and bounds JAX wall-time overhead to 25%.
+**Why this check exists.** Solid rheology calculations execute inside the innermost loop of the differential equation solver. Redundant lookups or repeated compilation would make simulations run slowly. This check counts kernel executions and reads the stored execution times to confirm that two-pass solid rheology adds only the expected kernel calls and that the recorded JAX wall-time overhead is below 25%.
 
-**What it tests.** Enabling two-pass solid rheology (`rheology.enabled = true`) reuses the basic-node solidus temperature $T_\text{sol}(P)$ already evaluated during phase lookup, skips staggered-node rheology viscosity via `defer_rheology_viscosity = True` (NumPy) and `include_rheology = False` (JAX), and calls the validation-free `_core` kernels directly inside the RHS. The test measures call-count deltas and wall times:
+**What it tests.** Enabling two-pass solid rheology (`rheology.enabled = true`) reuses the basic-node solidus temperature $T_\text{sol}(P)$ already evaluated during phase lookup, skips staggered-node rheology viscosity via `defer_rheology_viscosity = True` (NumPy) and `include_rheology = False` (JAX), and calls the validation-free `_core` kernels directly inside the RHS. The test measures the call-count deltas live and reads the recorded wall times:
 
 | Per-RHS item | Expected delta (`on - off`) | Measured `'lid'` delta (NumPy / JAX) | Measured `'local'` delta (NumPy / JAX) | Difference (`'lid'` - expected) | Reason |
 |:---|:---:|:---:|:---:|:---:|:---|
@@ -164,7 +164,7 @@ Over 1000 RHS evaluations on the 100-basic-node `cfg/abe_solid.toml` mesh (`test
 
 **How we know the right answer.** The expected call numbers come directly from code design: Pass 1 calculates unyielded convection and Pass 2 applies lid geometry and yielding. Wall times are measured by the benchmark generator against identical runs with rheology disabled and stored in the JSON; the test reads them.
 
-**Why it matters.** Coupled planetary simulations run tens of thousands of solver steps. Restricting JAX overhead to below 25% ensures solid-state convection can run in production without slowing down whole-planet models.
+**Why it matters.** Coupled planetary simulations run tens of thousands of solver steps. A JAX overhead below 25% means solid-state convection can run in production without slowing down whole-planet models; the test checks the recorded benchmark, so a new measurement needs a regeneration of the benchmark file.
 
 ![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost.svg#only-light){ width="80%" }
 ![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost_dark.svg#only-dark){ width="80%" }
