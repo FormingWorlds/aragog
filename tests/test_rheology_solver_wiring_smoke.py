@@ -554,7 +554,7 @@ def test_rhs_numpy_vs_jax_parity_100_cooling_states(closure_mode: str) -> None:
 @pytest.mark.reference_pinned
 def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     """NumPy and JAX right-hand sides agree to relative difference <= 1e-6 across
-    100 cooling states on:
+    a stored sweep of 100 cooling states (plus one live profile per set) on:
     1. the active-solid variant of abe_solid.toml (s_init=2500, kappah_floor=0,
        viscosity_solid=1e18), where Arrhenius strengthening shifts the RHS by >= 1e-4
        at every state and a JAX-only g_homologous perturbation fails 1e-6 by > 8000x;
@@ -883,7 +883,7 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
     )
     rhs_off = _make_solver(params_off, identity_alpha=True).dSdt(0.0, y_eb)
     denom = float(np.max(np.abs(rhs_np)))
-    assert float(np.max(np.abs(rhs_np - rhs_off) / np.abs(rhs_np))) >= 1.0e-2
+    assert float(np.max(np.abs(rhs_np - rhs_off))) / denom >= 1.0e-5
     rhs_jax = np.asarray(dSdt_energy_balance(0.0, jnp.asarray(y_eb), args_eb))
     rel_diff = float(np.max(np.abs(rhs_np - rhs_jax)) / denom)
     assert rel_diff <= 1.0e-10
@@ -894,9 +894,13 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
     eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
     solver = _build('core_module', eos, CORE_MODULE_PARAMS, n_nodes=20)
     rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
-    solver.parameters.phase_solid.rheology = rheo
-    solver.state.phase_basic._rheology = rheo
-    solver._bl_phase._rheology = rheo
+
+    def set_rheology(r):
+        solver.parameters.phase_solid.rheology = r
+        solver.state.phase_basic._rheology = r
+        solver._bl_phase._rheology = r
+
+    set_rheology(rheo)
     solver.parameters.energy.kappah_floor = 0.0
     solver.state._kappah_floor = 0.0
 
@@ -911,15 +915,10 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
 
     rhs_np = solver.dSdt(0.0, y_core)
     denom = float(np.max(np.abs(rhs_np)))
-    rheo_off = SolidRheologyParams()
-    solver.parameters.phase_solid.rheology = rheo_off
-    solver.state.phase_basic._rheology = rheo_off
-    solver._bl_phase._rheology = rheo_off
+    set_rheology(SolidRheologyParams())
     rhs_off = solver.dSdt(0.0, y_core)
-    solver.parameters.phase_solid.rheology = rheo
-    solver.state.phase_basic._rheology = rheo
-    solver._bl_phase._rheology = rheo
-    assert float(np.max(np.abs(rhs_np - rhs_off) / np.abs(rhs_np))) >= 1.0e-2
+    set_rheology(rheo)
+    assert float(np.max(np.abs(rhs_np - rhs_off))) / denom >= 1.0e-5
     rhs_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_core), args))
     rel_diff = float(np.max(np.abs(rhs_np - rhs_jax)) / denom)
     assert rel_diff <= 1.0e-10

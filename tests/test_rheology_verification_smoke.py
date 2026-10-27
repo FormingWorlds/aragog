@@ -35,8 +35,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
     2. In the steady-state planar internal-heating yield-ceiling sweep (E300, N = 100,
        tau_d_lid = 1.956 MPa), lowering surface cohesion to 0.5, 0.2, and 0.1 * tau_d_lid
        gives Pass-1 isotherm lid-thickness ratios d_lid(tau_y) / d_lid(unyielded) of
-       1.5259, 1.7397, and 1.9118 at fixed internal heating and 1.0466, 1.0551, and 1.0581
-       at matched T_i = 1666.42 K (against the 0-D target 0.7937, 0.5848, and 0.4642),
+       1.5257, 1.7395, and 1.9116 at fixed internal heating and 1.0465, 1.0549, and 1.0578
+       at matched T_i = 1666.43 K (against the 0-D target 0.7937, 0.5848, and 0.4642),
        because Pass-2 effective-viscosity reduction mobilizes convective heat transport
        below ~20.2 km depth (2 radial node spacings on N = 100) while steepening the
        conductive temperature gradient in the top 20.2 km, leaving the Pass-1 rheological
@@ -570,7 +570,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         0.5, rel=1.0e-5
     )
 
-    # Live 0-D thinning check across the 5 yield multipliers at T_i = 1666.419575 K
+    # Live 0-D thinning check across the 5 yield multipliers at T_i = 1666.434401 K
     ev_uny_0d = evaluate_stagnant_lid_0d(1666.4344006309975, p0d)
     tau_d_0d_uny = float(ev_uny_0d['tau_d_lid_Pa'])
     for key, mult, exp_r0d in (
@@ -592,7 +592,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
             exp_r0d, rel=rel_pin
         )
 
-    # Fixed internal heating ratios: Pass-1 isotherm thickens (1.5259 / 1.7397 / 1.9118);
+    # Fixed internal heating ratios: Pass-1 isotherm thickens (1.5257 / 1.7395 / 1.9116);
     # post-hoc conductive diagnostic thins weakly (0.9282 / 0.9022 / 0.8809) as interior cools
     for key, exp_p1, exp_cond, exp_ti in (
         ('unyielded_500MPa', 1.0, 1.0, 1666.4344006309975),
@@ -606,8 +606,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         assert float(row['R_thin_cond_lid']) == pytest.approx(exp_cond, rel=rel_pin)
         assert float(row['T_i_lid_K']) == pytest.approx(exp_ti, rel=rel_pin)
 
-    # Matched T_i = 1666.42 K ratios: Pass-1 isotherm stays flat (1.0466 / 1.0551 / 1.0581);
-    # post-hoc conductive diagnostic thins (0.6096 / 0.4980 / 0.4197)
+    # Matched T_i = 1666.43 K ratios: Pass-1 isotherm stays flat (1.0465 / 1.0549 / 1.0578);
+    # post-hoc conductive diagnostic thins (0.6102 / 0.4988 / 0.4207)
     for key, exp_p1_m, exp_cond_m, exp_ftop_m in (
         ('unyielded_500MPa', 1.0, 1.0, 2078.911776806167),
         ('above_2p0x_tau_d_lid', 1.0000000844282797, 1.0000000729366905, 2078.9115946415836),
