@@ -14,18 +14,10 @@ import pytest
 
 from aragog import CFG_DATA
 from aragog.eos.entropy import EntropyEOS
-from tools.verification._ssc_helpers import (
-    _parse,
-    _parsed,
-)
-from tools.verification._ssc_helpers import (
-    entropy_eos_copy as _entropy_eos_copy,
-)
-from tools.verification._ssc_helpers import (
-    entropy_eos_jax as _entropy_eos_jax,
-)
+from tools.verification import _ssc_helpers
+from tools.verification._ssc_helpers import _parsed
 
-__all__ = ['_parse', '_parsed', 'entropy_eos_copy', 'entropy_eos_jax']
+__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax']
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -48,17 +40,14 @@ def entropy_eos_copy(
     eos_dir: Path | str = EOS_DIR, strict_range: bool = False, identity_alpha: bool = False
 ) -> EntropyEOS:
     """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``."""
-    return _entropy_eos_copy(
-        eos_dir=eos_dir,
-        strict_range=strict_range,
-        identity_alpha=identity_alpha,
-        eos_class=EntropyEOS,
+    return _ssc_helpers.entropy_eos_copy(
+        eos_dir, strict_range, identity_alpha, eos_class=EntropyEOS
     )
 
 
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
-    return _entropy_eos_jax(eos_dir=eos_dir)
+    return _ssc_helpers.entropy_eos_jax(eos_dir)
 
 
 def make_mesh(N: int = 10, scale_p: float = 1.0):

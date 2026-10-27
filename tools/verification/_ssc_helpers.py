@@ -283,10 +283,7 @@ def unbounded_cvode_step() -> Iterator[None]:
         if self_s.entropy_eos is None and getattr(
             self_s.parameters.phase_mixed, 'const_properties', False
         ):
-            if len(a) > 5:
-                a = (*a[:5], np.inf, *a[6:])
-            else:
-                kw['max_step'] = np.inf
+            kw['max_step'] = np.inf
         return orig_cvode(self_s, *a, **kw)
 
     es_mod.EntropySolver._solve_cvode = _unclamped_cvode
@@ -361,4 +358,3 @@ def ols_fit(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
         'n_cases': int(n),
         'dof': int(dof),
     }
-
