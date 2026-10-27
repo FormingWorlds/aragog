@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import importlib.resources
+import logging
 import tomllib
 from fractions import Fraction
 
 import numpy as np
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from aragog.config import Config
-from aragog.config.phases import MixedPhaseConfig
+from aragog.config.phases import (
+    MATPROP_SMOOTH_WIDTH_WARN_MAX,
+    MATPROP_SMOOTH_WIDTH_WARN_MIN,
+    MixedPhaseConfig,
+)
 from aragog.parser import Parameters, _PhaseMixedParameters
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -51,6 +56,41 @@ def test_a_width_inside_the_open_unit_interval_is_kept(build, value):
     width = build(matprop_smooth_width=value).matprop_smooth_width
     assert width == value
     assert 0.0 < float(width) < 1.0
+
+
+def _warnings(caplog, build, value):
+    """Width warnings logged while ``build`` keeps ``value``."""
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.config.phases'):
+        assert build(matprop_smooth_width=value).matprop_smooth_width == value
+    return [r.getMessage() for r in caplog.records if 'matprop_smooth_width' in r.getMessage()]
+
+
+@_BUILDERS
+@pytest.mark.parametrize(
+    ('value', 'warns'),
+    [(9.99e-4, True), (1e-3, False), (0.01, False), (0.05, False), (0.0501, True), (0.5, True)],
+)
+def test_a_kept_width_outside_1e_3_to_0_05_logs_one_warning(build, value, warns, caplog):
+    """Below 1e-3 the properties change almost as sharply as at 0, above 0.05 they jump in the
+    middle of the melting interval: each side logs one warning that names both limits; the
+    edges and the default log none."""
+    assert (MATPROP_SMOOTH_WIDTH_WARN_MIN, MATPROP_SMOOTH_WIDTH_WARN_MAX) == (1e-3, 0.05)
+    messages = _warnings(caplog, build, value)
+    assert len(messages) == int(warns)
+    assert all('outside [0.001, 0.05]' in m and repr(value) in m for m in messages)
+
+
+@_BUILDERS
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@example(value=1e-3)
+@example(value=0.05)
+@given(value=st.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True))
+def test_a_kept_width_warns_exactly_outside_the_range(build, value, caplog):
+    """Over the whole kept interval (0, 1) a width warns exactly when it lies outside
+    [1e-3, 0.05]."""
+    messages = _warnings(caplog, build, value)
+    assert len(messages) == int(not 1e-3 <= value <= 0.05)
 
 
 @_BUILDERS

@@ -21,17 +21,33 @@ SEPARATION_BUOYANCY_MODES: tuple[str, str] = ('mixture', 'solid')
 SEPARATION_BUOYANCY_DEFAULT: str = 'mixture'
 # Width of the tanh blend at the solidus and liquidus, in melt-fraction units (PROTEUS default).
 MATPROP_SMOOTH_WIDTH_DEFAULT: float = 0.01
+# Widths that warn (test tables): at 1e-3 Cp changes by 6e-4 across the solidus (as at 0 for
+# far smaller widths); from 0.1 Cp jumps by 4.1e-5 in the middle of the melting interval.
+MATPROP_SMOOTH_WIDTH_WARN_MIN: float = 1e-3
+MATPROP_SMOOTH_WIDTH_WARN_MAX: float = 0.05
 
 
 def check_matprop_smooth_width(value: float) -> None:
     """Raise ``ValueError`` unless ``value`` is a real scalar strictly between 0 and 1.
 
     At 0 the properties switch between the two-phase and the single-phase branch exactly at
-    the solidus and the liquidus; from 1 the blend spans the whole melting interval.
+    the solidus and the liquidus; from 1 the blend spans the whole melting interval. A width
+    outside [``MATPROP_SMOOTH_WIDTH_WARN_MIN``, ``MATPROP_SMOOTH_WIDTH_WARN_MAX``] logs a
+    warning: below it the properties change almost as sharply as at 0, above it they jump in
+    the middle of the melting interval, where the single-phase value changes tables.
     """
     # The range comparison first, so float() of a huge int never overflows; a bool is 0 or 1.
     if not (isinstance(value, numbers.Real) and 0 < value < 1 and 0.0 < float(value) < 1.0):
         raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
+    if not MATPROP_SMOOTH_WIDTH_WARN_MIN <= value <= MATPROP_SMOOTH_WIDTH_WARN_MAX:
+        logger.warning(
+            'matprop_smooth_width = %r lies outside [%g, %g]: below it the properties change '
+            'almost as sharply as at 0 at the solidus and the liquidus, above it they jump in '
+            'the middle of the melting interval',
+            value,
+            MATPROP_SMOOTH_WIDTH_WARN_MIN,
+            MATPROP_SMOOTH_WIDTH_WARN_MAX,
+        )
 
 
 @delegate_rheology
