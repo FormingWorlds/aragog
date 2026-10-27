@@ -572,7 +572,8 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     Parameters
     ----------
     weights : np.ndarray
-        Weights of the top basic node on the cell entropies.
+        Weights of the watched top entropy on the cell entropies: the top basic node, or the top
+        cell with ``top_node = 'limited'`` or outer BC 5.
     S_stag : np.ndarray
         Cell entropies at the call start [J/kg/K].
     rate_fn : callable
@@ -656,7 +657,7 @@ class _PhiCapRootFunction(_CV_RootFunction):
     cap_temperature, cap_entropy : float
         Per-cell temperature [K] and entropy [J/kg/K] caps; 0 disables them.
     floor_weights : np.ndarray, optional
-        Top basic-node weights of the EOS floor (``None``: no floor).
+        Weights of the top entropy the EOS floor watches (``None``: no floor).
     floor_level : float
         Floor entropy at which the floor fires [J/kg/K].
     floor_margin : float
