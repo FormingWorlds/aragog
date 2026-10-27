@@ -295,7 +295,7 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **Reference.** The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The bound is $10^{-6}$ for a core without a layer solved alone.
 
-**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K, and grows an inner core of 244<!--k:9.r_icb_end_km--> km. At a solver rtol of $10^{-10}$ (atol stays at its floor of $10^{-8}$) the solver books the core heat change as the heat-content difference, and that change matches the CMB heat it books to 5.7e-07<!--k:9.core_vs_cmb_rel-->, within the bound. The CMB heat reconstructed from the 71<!--k:9.n_outputs--> output times by the trapezoid rule matches to 5.6e-04<!--k:9.reconstructed_cmb_max_rel-->, the error of that sampling.
+**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K, and grows an inner core of 244<!--k:9.r_icb_end_km--> km. At a solver rtol of $10^{-10}$ (atol stays at its floor of $10^{-8}$) the solver books the core heat change as the heat-content difference, and that change matches the CMB heat it books to 5.5e-07<!--k:9.core_vs_cmb_rel-->, within the bound. The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->, the error of that sampling: with 65, 130 and 260 output intervals (`item9_cvode_onset(output_points=...)`) it is 2.3e-3, 7.9e-4 and 1.9e-4, so it falls with order 1.5 and then 2.0, the order of the trapezoid rule.
 
 ![CVODE solve across the onset](../figures/vv/fig_16_cvode_onset_ledger.png)
 
@@ -303,7 +303,7 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **What the figure shows.** In (a) the core temperature crosses the onset temperature during the call. In (b) the two curves of the heat lost lie on each other, and (c) gives their difference, which is the sampling error of the trapezoid rule over the output times and is largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b). The core energy ledger of a `core_module` run rests on this closure.
 
-**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.5e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.4e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 **Pinned by** `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset` and `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`.
 
