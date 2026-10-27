@@ -8,7 +8,7 @@ When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_co
 |-----------|--------------|-------|
 | Standalone hot magma ocean with grey-body BC | `true` | Resolves the temperature drop across the unresolved UTBL. |
 | Coupled PROTEUS runs | `false` | The atmosphere module supplies a flux directly via `outer_boundary_condition = 4`; the UTBL would be applied twice. |
-| Prescribed-flux or prescribed-temperature BC modes (`4`, `5`) | `false` | The parameterisation is only consulted in the grey-body branch. |
+| Prescribed-flux or prescribed-temperature BC modes (`4`, `5`) | `false` | The parameterisation is only consulted in the grey-body branch; with mode `5`, `true` stops the setup with a `ValueError`. |
 | SPIDER-parity diagnostic runs | `true` | Required for bit-parity against SPIDER's UTBL implementation. |
 
 The parser default is `param_utbl = false` (see `src/aragog/parser.py`). Set it explicitly to `true` only in the standalone grey-body case.
@@ -53,7 +53,7 @@ For super-Earth or sub-Earth standalone runs, calibrate $b$ against a higher-res
 ```toml
 [boundary_conditions]
 outer_boundary_condition = 1      # grey-body atmosphere (UTBL applies here only)
-outer_boundary_value     = 280.0  # W/m^2 reference flux
+outer_boundary_value     = 280.0  # not used in mode 1
 emissivity               = 1.0
 equilibrium_temperature  = 273.0
 param_utbl               = true
