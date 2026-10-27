@@ -134,6 +134,11 @@ class BoundaryParams(eqx.Module):
     Surface BC types:
         1 = grey-body (F = emissivity * sigma * (T^4 - T_eq^4))
         4 = prescribed flux (from atmosphere module)
+        5 = prescribed temperature: the surface node takes the entropy ``S_surf``, which sets
+            the surface temperature, and the face flux is the kernel flux at the half-cell
+            gradient over ``surf_dr_half``; ``outer_bc_value`` [K] is only compared with the
+            temperature of ``S_surf`` (:func:`check_surface_temperature`), so a new
+            temperature needs a new ``S_surf`` (``EntropySolver.surface_temperature_bc``)
 
     CMB BC types:
         0 = insulating (F = 0)
@@ -153,7 +158,9 @@ class BoundaryParams(eqx.Module):
 
     # Surface
     outer_bc_type: int = eqx.field(static=True)
-    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4)
+    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4); type 5: [K], checked only
+    S_surf: jax.Array  # [J/kg/K], entropy of the prescribed temperature (type 5)
+    surf_dr_half: jax.Array  # [m], surface face to top cell, delta_mesh / dxidr / 2 (type 5)
     emissivity: jax.Array
     T_eq: jax.Array  # equilibrium temperature [K] (type 1)
     # UTBL (ultra-thin thermal boundary layer) Cardano correction
@@ -199,9 +206,26 @@ class BoundaryParams(eqx.Module):
         cmb_dr_cmb=0.0,
         param_utbl=False,
         param_utbl_const=0.0,
+        S_surf=None,
+        surf_dr_half=0.0,
     ):
+        if outer_bc_type == 5 and not (
+            S_surf is not None
+            and np.isfinite(float(S_surf))
+            and 0.0 < float(outer_bc_value) < np.inf
+            and 0.0 < float(surf_dr_half) < np.inf
+        ):
+            raise ValueError(
+                'outer_bc_type 5 needs a finite S_surf, an outer_bc_value > 0 K and a '
+                'surf_dr_half > 0 m, all finite (EntropySolver.surface_temperature_bc), got '
+                f'{S_surf}, {outer_bc_value}, {surf_dr_half}'
+            )
+        if outer_bc_type == 5 and param_utbl:
+            raise ValueError('param_utbl is a grey-body correction; set it false with type 5')
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
+        self.S_surf = jnp.asarray(0.0 if S_surf is None else S_surf, dtype=jnp.float64)
+        self.surf_dr_half = jnp.asarray(surf_dr_half, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
         self.T_eq = jnp.asarray(T_eq, dtype=jnp.float64)
         self.inner_bc_type = inner_bc_type
@@ -319,12 +343,58 @@ def _apply_surface_bc(
     F_prescribed = bc.outer_bc_value
 
     # Select based on BC type (static, so this traces correctly)
+    if bc.outer_bc_type == 5:  # the kernel flux at the matched surface gradient
+        return heat_flux
     if bc.outer_bc_type == 1:
         F_surf = F_grey
     else:  # type 4 (prescribed)
         F_surf = F_prescribed
 
     return heat_flux.at[-1].set(F_surf)
+
+
+def _surface_overrides(bc: BoundaryParams) -> dict:
+    """``compute_fluxes`` arguments of a prescribed surface temperature (type 5), else none."""
+    if bc.outer_bc_type != 5:
+        return {}
+    return {'surface_temperature': (bc.S_surf, bc.surf_dr_half)}
+
+
+def check_surface_temperature(
+    eos: EntropyEOS_JAX, params: PhaseParams, mesh: MeshArrays, bc: BoundaryParams
+) -> None:
+    """Refuse a type 5 setup without conduction, with an eddy flux through the surface face (a
+    mixing length that is not 0 at the surface node, an eddy_diffusivity_thermal that is negative
+    or not finite), or whose ``S_surf`` gives a temperature at the surface pressure more than
+    1e-6 relative off ``outer_bc_value``; a no-op for the other types.
+
+    ``solve_entropy`` and ``build_jax_rhs_and_jacobian`` call it; the right-hand sides
+    (``dSdt``, ``dSdt_energy_balance``, ``dSdt_core_module``) and ``step_powers`` do not.
+
+    Raises
+    ------
+    ValueError
+        For each of the refused setups above.
+    """
+    if getattr(bc, 'outer_bc_type', None) != 5:
+        return
+    if not params.conduction:
+        raise ValueError('outer_bc_type 5 needs phase_params.conduction on')
+    if float(mesh.mixing_length[-1]) != 0.0:  # 'constant' profile
+        raise ValueError('outer_bc_type 5 needs mixing length 0 at the surface node')
+    if not 0.0 <= float(params.eddy_diff_thermal) < np.inf:
+        raise ValueError('outer_bc_type 5 needs a finite eddy_diffusivity_thermal >= 0')
+    t_surf = float(bc.outer_bc_value)
+    t_node = float(
+        evaluate_phase(
+            eos, params, mesh.P_basic[-1:], jnp.reshape(bc.S_surf, (1,))
+        ).temperature[0]
+    )
+    if not abs(t_node - t_surf) <= 1e-6 * t_surf:
+        raise ValueError(
+            f'outer_bc_type 5: S_surf gives {t_node} K at the surface pressure, outer_bc_value '
+            f'{t_surf} K; take both from EntropySolver.surface_temperature_bc'
+        )
 
 
 def _apply_cmb_bc(
@@ -403,7 +473,7 @@ def _dSdt_parts(
     heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
-    flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
+    flux_out = compute_fluxes(S, t, eos, params, mesh, heating, **_surface_overrides(bc))
     heat_flux = flux_out.heat_flux
 
     # Phase properties needed for BCs
@@ -541,6 +611,7 @@ def _dSdt_energy_balance_parts(
         heating,
         S_basic_cmb_override=S_basic_cmb,
         dSdr_cmb_override=dSdr_cmb,
+        **_surface_overrides(bc),
     )
     heat_flux = flux_out.heat_flux
 
@@ -798,6 +869,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
         heating,
         S_basic_cmb_override=S_basic_cmb,
         dSdr_cmb_override=dSdr_cmb,
+        **_surface_overrides(bc),
     )
     heat_flux = flux_out.heat_flux
 
@@ -921,11 +993,19 @@ def solve_entropy(
     -------
     SolveResult
         Final entropy, time, step count, success flag.
+
+    Raises
+    ------
+    ValueError
+        For a type 5 setup that :func:`check_surface_temperature` refuses, and for an unknown
+        ``method``.
     """
     # Lazy import: keeps the rest of this module importable when
     # diffrax is not installed. Callers using only dSdt /
     # BoundaryParams / phase helpers do not need diffrax.
     import diffrax
+
+    check_surface_temperature(eos, params, mesh, bc)
 
     # Build a closure that captures the static args (eos, params, mesh, bc).
     # diffrax traces through `args` as a pytree, but RegularGridInterpolator

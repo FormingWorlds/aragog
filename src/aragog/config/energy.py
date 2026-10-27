@@ -68,7 +68,9 @@ class EnergyConfig:
         before the floor is applied. The SPIDER convention also
         permits negative values, in which case the diffusivity is
         pinned to ``|eddy_diffusivity_thermal|``. Default 1.0
-        passes the MLT-derived value through unchanged.
+        passes the MLT-derived value through unchanged. With
+        ``outer_boundary_condition = 5`` a negative, NaN or infinite
+        value is refused.
     kappah_floor : float
         Phase-dependent eddy-diffusivity floor [m^2/s]. Clamps the
         eddy diffusivity from below by ``floor * f(phi)`` where

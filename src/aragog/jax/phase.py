@@ -666,6 +666,7 @@ def compute_mlt(
     phase_basic: PhaseProperties,
     mesh: MeshArrays,
     params: PhaseParams,
+    surface_floor: bool = True,
 ) -> tuple[jax.Array, jax.Array]:
     """Compute MLT eddy diffusivity from the entropy gradient.
 
@@ -679,6 +680,9 @@ def compute_mlt(
         Mesh geometry.
     params : PhaseParams
         Static parameters.
+    surface_floor : bool
+        False under a prescribed surface temperature (outer BC 5): the kappa_h floor does
+        not act at the surface node.
 
     Returns
     -------
@@ -705,6 +709,8 @@ def compute_mlt(
     # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
     floor_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
+    if not surface_floor:  # a surface held at its temperature (outer BC 5) gets no floor
+        floor_mask = floor_mask.at[-1].set(0.0)
 
     # Viscous velocity (Re <= Re_crit)
     viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
@@ -773,6 +779,20 @@ def compute_mlt(
 # ---------------------------------------------------------------------------
 
 
+def _matched_surface_gradient(dSdr, half_cell, t_top_cell, phase_basic, mesh):
+    """dS/dr at the surface node from the half-cell temperature gradient (outer BC 5).
+
+    Mirrors ``EntropyState._match_surface_gradient``: ``(Cp_safe / T) (dT/dr - dT/dP|_S dP/dr)``
+    with ``dT/dr = (T_node - t_top_cell) / half_cell``. ``T_node``, the temperature at
+    ``S_surf``, stands for the surface temperature, so a stale ``outer_bc_value`` is unused.
+    """
+    t_node = phase_basic.temperature[-1]
+    cp = jnp.maximum(phase_basic.heat_capacity[-1], 100.0)
+    dtdr = (t_node - t_top_cell) / half_cell
+    dtdr_ad = phase_basic.dTdPs[-1] * mesh.dP_dr_basic[-1]
+    return dSdr.at[-1].set(cp / t_node * (dtdr - dtdr_ad))
+
+
 def compute_fluxes(
     S_stag: jax.Array,
     time: float,
@@ -782,6 +802,7 @@ def compute_fluxes(
     heating_rate: jax.Array,
     S_basic_cmb_override=None,
     dSdr_cmb_override=None,
+    surface_temperature=None,
 ) -> FluxOutput:
     """Compute all heat and mass fluxes from the entropy profile.
 
@@ -814,6 +835,10 @@ def compute_fluxes(
         basic node (dSdr[0]). Used by the energy_balance and
         core_module core BCs, where dSdr_cmb is a state-tracked variable. When None,
         the standard d_dr_matrix mapping is used.
+    surface_temperature : tuple or None
+        ``(S_surf, dr_half)`` of a prescribed surface temperature (outer BC 5): the surface
+        node takes ``S_surf`` [J/kg/K], which sets its temperature, and the gradient of
+        :func:`_matched_surface_gradient`. When None, the surface copy convention is used.
 
     Returns
     -------
@@ -849,13 +874,23 @@ def compute_fluxes(
         # boundary-state override; energy_balance and core_module pass one above.
         dSdr = dSdr.at[0].set(dSdr[1])
 
+    if surface_temperature is not None:
+        S_basic = S_basic.at[-1].set(surface_temperature[0])
+
     # Phase properties at basic nodes only. The SPIDER-bracket Jmix
     # is built entirely from basic-node quantities, so staggered-node
     # phase properties are not materialised here.
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+    if surface_temperature is not None:
+        t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
+        dSdr = _matched_surface_gradient(
+            dSdr, surface_temperature[1], t_top_cell, phase_basic, mesh
+        )
 
     # MLT eddy diffusivity
-    kappa_h, kappa_c = compute_mlt(dSdr, phase_basic, mesh, params)
+    kappa_h, kappa_c = compute_mlt(
+        dSdr, phase_basic, mesh, params, surface_floor=surface_temperature is None
+    )
 
     # Basic node properties
     rho = phase_basic.density

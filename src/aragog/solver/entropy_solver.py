@@ -13,7 +13,10 @@ finite-volume mesh.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import math
+import numbers
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +28,7 @@ import scipy
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.interpolate import PchipInterpolator
-from scipy.optimize import OptimizeResult
+from scipy.optimize import OptimizeResult, brentq
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -564,7 +567,8 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
 
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
     """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy
-    (the smallest cell with ``top_node = 'limited'``, where ``weights`` is the top cell)."""
+    (the smallest cell with ``top_node = 'limited'`` or outer BC 5, where ``weights`` is the top
+    cell)."""
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
@@ -585,7 +589,8 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     Parameters
     ----------
     weights : np.ndarray
-        Weights of the top basic node on the cell entropies.
+        Weights of the watched top entropy on the cell entropies: the top basic node, or the top
+        cell with ``top_node = 'limited'`` or outer BC 5.
     S_stag : np.ndarray
         Cell entropies at the call start [J/kg/K].
     rate_fn : callable
@@ -669,7 +674,7 @@ class _PhiCapRootFunction(_CV_RootFunction):
     cap_temperature, cap_entropy : float
         Per-cell temperature [K] and entropy [J/kg/K] caps; 0 disables them.
     floor_weights : np.ndarray, optional
-        Top basic-node weights of the EOS floor (``None``: no floor).
+        Weights of the top entropy the EOS floor watches (``None``: no floor).
     floor_level : float
         Floor entropy at which the floor fires [J/kg/K].
     floor_margin : float
@@ -2036,12 +2041,127 @@ class EntropySolver:
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
+        if self._outer_bc_kind == 5:
+            self._check_surface_temperature_settings()
+        self._refresh_surface_temperature()
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
         self._outer_bc_utbl = bool(bc.param_utbl)
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
+
+    @property
+    def surface_temperature_bc(self) -> tuple[float, float, float] | None:
+        """Surface entropy [J/kg/K], surface temperature [K] and face half cell [m] of BC 5,
+        the ``S_surf``, ``outer_bc_value`` and ``surf_dr_half`` of a JAX ``BoundaryParams``;
+        None for the other outer modes. A changed ``outer_boundary_value`` is inverted first,
+        and an invalid one raises ``ValueError``."""
+        self._refresh_surface_temperature()
+        return self.state._surface_temperature_bc
+
+    def _refresh_surface_temperature(self) -> None:
+        """Invert the BC 5 surface entropy at setup and after a change of
+        ``outer_boundary_value``; ValueError unless it is a positive finite real [K]."""
+        if self._outer_bc_kind != 5:
+            return
+        value = self.evaluator.boundary_conditions._settings.outer_boundary_value
+        t_surf = math.nan
+        if isinstance(value, numbers.Real) and not isinstance(value, bool):
+            with contextlib.suppress(OverflowError):
+                t_surf = float(value)
+        if not (math.isfinite(t_surf) and t_surf > 0.0):
+            raise ValueError(
+                'outer_boundary_value must be a positive finite surface temperature [K] '
+                f'with outer_boundary_condition = 5, got {value!r}'
+            )
+        current = self.state._surface_temperature_bc
+        if current is None or t_surf != current[1]:
+            s_surf, half_cell = self._invert_surface_temperature(t_surf)
+            self.state.set_surface_temperature(s_surf, t_surf, half_cell)
+
+    def _check_surface_temperature_settings(self) -> None:
+        """Refuse the settings that have no meaning with BC 5: the UTBL correction, the
+        gradient core, conduction off, and any eddy flux through the surface face (a mixing
+        length that is not 0 at the surface node, or an eddy_diffusivity_thermal that is
+        negative or not finite)."""
+        bc = self.evaluator.boundary_conditions._settings
+        if bc.param_utbl:
+            raise ValueError('param_utbl is a grey-body correction; set it false with BC 5')
+        if self._core_bc == 'gradient':
+            raise ValueError(
+                "outer_boundary_condition = 5 is not available on core_bc = 'gradient'"
+            )
+        if not self.parameters.energy.conduction:
+            raise ValueError('outer_boundary_condition = 5 needs energy.conduction = true')
+        surface_length = float(np.ravel(self.state._mixing_length)[-1])
+        if surface_length != 0.0:
+            raise ValueError(
+                'outer_boundary_condition = 5 needs the mixing length 0 at the surface node '
+                "(mixing_length_profile = 'nearest_boundary'); mixing_length_profile = "
+                f"'{self.parameters.mesh.mixing_length_profile}' gives {surface_length:.6g} m"
+            )
+        eddy = float(self.state._eddy_diff_thermal)
+        if not (math.isfinite(eddy) and eddy >= 0.0):
+            raise ValueError(
+                'outer_boundary_condition = 5 needs a finite eddy_diffusivity_thermal >= 0 '
+                f'(another value puts an eddy flux on the surface face), got {eddy!r}'
+            )
+
+    def _invert_surface_temperature(self, t_surf: float) -> tuple[float, float]:
+        """Surface entropy [J/kg/K] where ``T(P_s, S) = t_surf`` at the surface pressure, and
+        the face distance ``delta_mesh[-1] / dxidr[-1] / 2`` [m], for BC 5.
+
+        Raises
+        ------
+        ValueError
+            For a surface temperature outside the range of the phase evaluator.
+        """
+        p_surf = float(self._P_basic_flat[-1])
+        if self.entropy_eos is None:
+            pm = self.parameters.phase_mixed
+            s_surf = pm.const_S_ref + pm.const_Cp * np.log(t_surf / pm.const_T_ref)
+        else:
+            s_surf = self._surface_entropy_on_evaluator(p_surf, t_surf)
+        mesh = self.evaluator.mesh
+        half_cell = float(np.ravel(mesh.basic.delta_mesh)[-1] / np.ravel(mesh.dxidr)[-1]) / 2.0
+        return float(s_surf), half_cell
+
+    def _surface_entropy_on_evaluator(self, p_surf: float, t_surf: float) -> float:
+        """Entropy [J/kg/K] where the basic-node phase evaluator, with its property smoothing,
+        gives ``t_surf`` at ``p_surf``: a Brent search over the table entropy range. The
+        evaluator gets its profile back."""
+        eos, pb = self.entropy_eos, self.state.phase_basic
+        saved = pb.entropy  # np.array([]) before the first update; set_entropy rebinds it
+        width = getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0)
+
+        def miss(s):
+            pb.set_entropy(np.full_like(self._P_basic_flat, s))
+            pb.update()
+            return float(np.ravel(pb.temperature())[-1]) - t_surf
+
+        try:
+            lo, hi = miss(eos.S_min), miss(eos.S_max)
+            if not lo <= 0.0 <= hi:
+                raise ValueError(
+                    f'outer_boundary_value = {t_surf} K lies outside the range of the phase '
+                    f'evaluator at the surface pressure {p_surf:.6g} Pa, {t_surf + lo:.6g} to '
+                    f'{t_surf + hi:.6g} K (matprop_smooth_width = {width})'
+                )
+            s_surf = brentq(
+                miss, eos.S_min, eos.S_max, xtol=1e-12, rtol=4 * np.finfo(float).eps
+            )
+            if not abs(miss(s_surf)) <= 1e-9 * t_surf:
+                raise ValueError(
+                    f'the phase evaluator has no entropy for outer_boundary_value = {t_surf} K '
+                    f'at the surface pressure {p_surf:.6g} Pa: the temperature jumps there '
+                    f'(matprop_smooth_width = {width})'
+                )
+        finally:
+            pb.set_entropy(saved)
+            if saved.size == self._P_basic_flat.size:
+                pb.update()
+        return s_surf
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
@@ -2622,6 +2742,7 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
+        self._refresh_surface_temperature()
         # In energy_balance and core_module the first extra state is the CMB entropy
         # gradient, passed to state.update() in place of the FD estimate at that node.
         if gradient_mode:
@@ -3811,6 +3932,7 @@ class EntropySolver:
         """
         wall_start = time.perf_counter()
         self._sync_top_node()  # the EOS may have changed since the reset
+        self._refresh_surface_temperature()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -4012,7 +4134,8 @@ class EntropySolver:
             elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
                 mesh = self.evaluator.mesh
                 floor_w = np.asarray(mesh._quantity_transform)[-1]
-                if mesh.top_node == 'limited':  # the node stays in the table with its cells
+                # a limited node stays in the table with its cells; BC 5 holds it at S_surf
+                if mesh.top_node == 'limited' or self._outer_bc_kind == 5:
                     floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
                 level, refuse = _floor_start_level(
                     floor_w,

@@ -144,7 +144,7 @@ Thermal boundary conditions at the surface and CMB.
 | Key | Unit | Description |
 |-----|------|-------------|
 | `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `4` = prescribed flux, `5` = prescribed temperature |
-| `outer_boundary_value` | W/m² or K | Surface flux (modes `1`, `4`) or temperature (mode `5`) |
+| `outer_boundary_value` | W/m² or K | Surface flux (mode `4`) or temperature (mode `5`, a positive finite value inside the range the phase evaluator reaches at the surface pressure; not used in mode `1`); see [Surface boundary conditions](../Explanations/surface_bc.md) |
 | `inner_boundary_condition` | int | CMB BC mode. `1` = core cooling, `2` = prescribed flux, `3` = prescribed temperature |
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
 | `emissivity` | -- | Surface emissivity (used in mode `1`) |
@@ -165,7 +165,7 @@ Spatial discretisation and pressure-density profile.
 | `outer_radius` | m | Planet (mantle top) radius |
 | `inner_radius` | m | CMB radius |
 | `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
-| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
+| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below); with `outer_boundary_condition = 5`, `"constant"` is refused unless `mixing_length_constant_fraction = 0` |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
@@ -189,7 +189,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `mixing` | bool | -- | Chemical mixing flux (SPIDER bracket form involving $\partial S_\mathrm{liq}/\partial P$ and $\partial S_\mathrm{sol}/\partial P$) |
 | `radionuclides` | bool | -- | Internal radiogenic heating from any `[radionuclide_*]` sections |
 | `tidal` | bool | -- | Tidal heating from `tidal_array` |
-| `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
+| `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention); with `outer_boundary_condition = 5`, a negative, NaN or infinite value is refused |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
 | `convective_threshold` | J kg⁻¹ K⁻¹ m⁻¹ | 0 | Entropy gradient $D$: the mixing-length drive acts only where $\partial S/\partial r < 0$ and uses at least $D$ there, and the `kappah_floor` applies up to $\partial S/\partial r = D$, so nodes with $0 \le \partial S/\partial r < D$ get the floor alone. Finite and $\ge 0$; the default `0.0` gives the $\partial S/\partial r < 0$ switch of SPIDER; $D = 10^{-6}$ gives one end state in 3 replayed coupled calls that end in one of 2 states under that switch, but $D > 0$ can stall CVODE at a node whose gradient stays near 0, also at `rtol` = $10^{-8}$. See [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory) |
