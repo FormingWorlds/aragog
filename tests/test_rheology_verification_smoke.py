@@ -834,3 +834,16 @@ def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, 
         '1.033e+15',
     ):
         assert token in tut_text
+
+    # The Python blocks use SolidRheologyParams(enabled=True); the TOML block must give the same
+    import tomllib
+
+    toml_blocks = re.findall(r'```toml\n(.*?)```', tut_text, re.S)
+    rheo_toml = [b for b in toml_blocks if '[phase_solid.rheology]' in b]
+    assert len(rheo_toml) == 1
+    table = tomllib.loads(rheo_toml[0])['phase_solid']['rheology']
+    defaults = SolidRheologyParams()
+    assert table.pop('enabled') is True
+    assert table, 'the TOML block must list the rheology fields'
+    for key, value in table.items():
+        assert getattr(defaults, key) == value, f'{key}: TOML {value!r} != default'

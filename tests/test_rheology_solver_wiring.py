@@ -805,7 +805,6 @@ def test_public_effective_viscosity_local_delegates_to_compute_strain_rate_local
 # ============================================================================
 
 
-@pytest.mark.physics_invariant
 def test_perturbed_starts_spread(validation_plot) -> None:
     """Regression pin of the stored spread for perturbation-spread benchmarks.
 
@@ -881,7 +880,12 @@ def test_perturbed_starts_spread(validation_plot) -> None:
         bottom.plot(r_km, np.log10(np.maximum(dt_var_on, 1.0e-12)), label='on')
         bottom.plot(r_km, np.log10(np.maximum(dt_var_off, 1.0e-12)), '--', label='off')
         bottom.plot(r_km, np.log10(np.maximum(dt_def_on, 1.0e-12)), ':', label='default')
-        bottom.axhline(np.log10(0.05), color=plt.rcParams['text.color'], ls='-.')
+        bottom.axhline(
+            np.log10(active_spread_bound_k), color=plt.rcParams['text.color'], ls='-.'
+        )
+        bottom.axhline(
+            np.log10(default_spread_bound_k), color=plt.rcParams['text.color'], ls=':'
+        )
         bottom.set(xlabel='r [km]', ylabel='log10 dT [K]')
         bottom.legend()
         fig.tight_layout()
@@ -890,7 +894,6 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     validation_plot(figure, 'ssc_perturbed_spread')
 
 
-@pytest.mark.physics_invariant
 def test_rhs_call_counts_and_cost(validation_plot) -> None:
     """Enabling two-pass solid rheology adds 0 extra EOS solidus lookups,
     +2 Arrhenius viscosity calls, +2 yield stress calls, +1 stagnant-lid state call,
