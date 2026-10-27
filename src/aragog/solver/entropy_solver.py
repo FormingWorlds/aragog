@@ -550,7 +550,8 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
 
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
     """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy
-    (the smallest cell with ``top_node = 'limited'``, where ``weights`` is the top cell)."""
+    (the smallest cell with ``top_node = 'limited'`` or outer BC 5, where ``weights`` is the top
+    cell)."""
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
@@ -4098,7 +4099,8 @@ class EntropySolver:
             elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
                 mesh = self.evaluator.mesh
                 floor_w = np.asarray(mesh._quantity_transform)[-1]
-                if mesh.top_node == 'limited':  # the node stays in the table with its cells
+                # a limited node stays in the table with its cells; BC 5 holds it at S_surf
+                if mesh.top_node == 'limited' or self._outer_bc_kind == 5:
                     floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
                 level, refuse = _floor_start_level(
                     floor_w,
