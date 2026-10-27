@@ -1854,3 +1854,94 @@ def test_generator_input_fingerprint_ignores_generated_and_untracked_files(
     (repo / 'src' / 'aragog' / 'rheology.py').write_text('x = 2\n', encoding='utf-8')
     sha_edit, _ = compute_generator_input_fingerprint(('src/aragog',), repo_root=repo)
     assert sha_edit != sha_clean
+
+
+def test_jax_jacobian_is_finite_for_the_lid_closure_with_a_constant_mixing_length():
+    """The JAX Jacobian stays finite when the viscous mixing-length factor is zero.
+
+    With ``mixing_length_profile = 'constant'`` the boundary nodes keep a non-zero
+    mixing length while the viscous factor ``q`` is zero there; under the lid closure
+    ``q`` depends on the state, so ``d(q**0.25)/dq`` at ``q = 0`` must not reach the
+    Jacobian.
+    """
+    params = _make_abe_solid_params(
+        SolidRheologyParams(enabled=True, stress_closure_mode='lid'), number_of_nodes=20
+    )
+    params = replace(params, mesh=replace(params.mesh, mixing_length_profile='constant'))
+    solver = _make_solver(params)
+    assert np.all(np.asarray(solver.state._mixing_length)[[0, -1]] > 0.0)
+    _, _, _, args = _build_jax_bundle(solver)
+    y = jnp.asarray(_make_solid_profile(solver))
+    f_np = np.asarray(solver.dSdt(0.0, np.asarray(y))).ravel()
+    f_jax = np.asarray(dSdt(0.0, y, args)).ravel()
+    np.testing.assert_allclose(f_jax, f_np, rtol=1e-9, atol=1e-12 * np.max(np.abs(f_np)))
+    jac = np.asarray(jax.jacrev(lambda yy: dSdt(0.0, yy, args))(y))
+    assert np.isfinite(jac).all(), (
+        f'{int(np.isnan(jac).sum())} of {jac.size} entries are not finite'
+    )
+
+
+@pytest.mark.parametrize(('width', 'expected'), [(0.05, 0.05), (0.0, 1.0e-2)])
+def test_phase_params_from_parameters_takes_the_numpy_phase_smoothing_width(width, expected):
+    """``from_parameters`` sets the Jgrav/Jmix width as the NumPy path: ``matprop_smooth_width or 1e-2``."""
+    params = _make_abe_solid_params(SolidRheologyParams(enabled=True))
+    params = replace(
+        params, phase_mixed=replace(params.phase_mixed, matprop_smooth_width=width)
+    )
+    assert PhaseParams.from_parameters(params).phase_smoothing_width == pytest.approx(expected)
+
+
+def test_jax_rhs_matches_numpy_with_separation_mixing_and_a_wide_smoothing_width():
+    """JAX and NumPy right-hand sides agree in a mushy state at ``matprop_smooth_width = 0.05``."""
+    params = _make_abe_solid_params(
+        SolidRheologyParams(enabled=True, stress_closure_mode='lid'), number_of_nodes=20
+    )
+    params = replace(
+        params,
+        energy=replace(params.energy, gravitational_separation=True, mixing=True),
+        phase_mixed=replace(params.phase_mixed, matprop_smooth_width=0.05),
+    )
+    solver = _make_solver(params)
+    eos = solver.state.phase_basic._eos
+    p_b = np.asarray(solver.state.phase_basic.pressure, dtype=float)
+    s_sol = np.asarray(eos.solidus_entropy(p_b), dtype=float)
+    s_liq = np.asarray(eos.liquidus_entropy(p_b), dtype=float)
+    s_top = s_sol[-1] + 0.3 * (s_liq[-1] - s_sol[-1])
+    y = np.linspace(s_sol[0] + 200.0, s_top, solver._n_stag)
+    _, _, _, args = _build_jax_bundle(solver)
+    f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
+    f_jax = np.asarray(dSdt(0.0, jnp.asarray(y), args)).ravel()
+    rel = np.max(np.abs(f_jax - f_np)) / np.max(np.abs(f_np))
+    assert rel <= 1.0e-9, f'max relative JAX-NumPy difference {rel:.3e}'
+
+
+def test_mlt_factor_powers_equal_the_plain_powers_for_positive_q_and_have_a_finite_slope_at_zero():
+    """The guarded powers leave every ``q > 0`` value bitwise unchanged and give slope 0 at ``q = 0``."""
+    powers = jax_phase_mod._mlt_factor_powers
+    q = jnp.asarray(np.concatenate([np.logspace(-300, 2, 61), [0.37, 1.0, 7.5]]))
+    q_025, q_075 = powers(q)
+    np.testing.assert_array_equal(np.asarray(q_025), np.asarray(q**0.25))
+    np.testing.assert_array_equal(np.asarray(q_075), np.asarray(q**0.75))
+    zero = jnp.zeros(3)
+    v_025, v_075 = powers(zero)
+    assert np.all(np.asarray(v_025) == 0.0) and np.all(np.asarray(v_075) == 0.0)
+    slope = np.asarray(jax.grad(lambda x: jnp.sum(sum(powers(x))))(zero))
+    assert np.all(slope == 0.0), slope
+
+
+def test_eta_diff_is_the_solid_viscosity_in_const_properties_mode_with_rheology_off():
+    """``eta_diff()`` returns the unyielded solid viscosity, not the constant-property viscosity."""
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=None,
+        gravitational_acceleration=10.0,
+        viscosity_solid=3.0e20,
+        const_properties=True,
+        const_log10visc=2.0,
+        const_T_ref=3000.0,
+        const_S_ref=3000.0,
+    )
+    ev.set_pressure(np.array([1.0e9, 5.0e10]))
+    ev.set_entropy(np.array([2900.0, 3100.0]))
+    ev.update()
+    np.testing.assert_array_equal(ev.eta_diff(), np.full(2, 3.0e20))
+    np.testing.assert_array_equal(ev.viscosity(), np.full(2, 1.0e2))

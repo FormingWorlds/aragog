@@ -290,8 +290,8 @@ class PhaseParams(eqx.Module):
             'kappah_floor': float(parameters.energy.kappah_floor),
             'bottom_up_grav_sep': bool(parameters.energy.bottom_up_grav_sep),
             'phase_smoothing': str(parameters.energy.phase_smoothing),
-            'phase_smoothing_width': float(
-                getattr(parameters.energy, 'phase_smoothing_width', 0.01)
+            'phase_smoothing_width': (
+                float(parameters.phase_mixed.matprop_smooth_width) or 1.0e-2
             ),
             'separation_viscosity': str(parameters.phase_mixed.separation_viscosity),
             'convective_threshold': float(parameters.energy.convective_threshold),
@@ -880,6 +880,25 @@ def relative_velocity(
 # ---------------------------------------------------------------------------
 
 
+def _mlt_factor_powers(q_mlt: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Return ``(q**0.25, q**0.75)`` with a finite derivative at ``q = 0``.
+
+    Parameters
+    ----------
+    q_mlt : jax.Array
+        Viscous mixing-length factor [-], ``>= 0``; it is 0 where the viscous length vanishes.
+
+    Returns
+    -------
+    tuple of jax.Array
+        ``q**0.25`` and ``q**0.75``; equal to the plain powers for ``q > 0`` and 0 at ``q = 0``,
+        where the derivative is 0 instead of the NaN of ``inf * 0``.
+    """
+    q_pos = q_mlt > 0.0
+    q_safe = jnp.where(q_pos, q_mlt, 1.0)
+    return jnp.where(q_pos, q_safe**0.25, 0.0), jnp.where(q_pos, q_safe**0.75, 0.0)
+
+
 def compute_mlt(
     dSdr: jax.Array,
     phase_basic: PhaseProperties,
@@ -959,8 +978,7 @@ def compute_mlt(
             c_theta=params.rheology.c_theta,
             xp=jnp,
         )
-        q_025 = q_mlt**0.25
-        q_075 = q_mlt**0.75
+        q_025, q_075 = _mlt_factor_powers(q_mlt)
     else:
         q_025 = q_075 = jnp.ones_like(dSdr)
     viscous_velocity = (
