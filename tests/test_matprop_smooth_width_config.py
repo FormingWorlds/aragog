@@ -111,11 +111,14 @@ def test_a_width_at_or_beyond_0_or_1_or_nan_is_refused(build, value):
 
 @_BUILDERS
 @pytest.mark.parametrize(
-    'value', [True, False, np.True_, '0.01', None, np.array([0.01]), [0.01], 10**400]
+    'value',
+    [True, False, np.True_, '0.01', None, np.array([0.01]), [0.01], 10**400]
+    + [Fraction(1, 10**400), Fraction(10**400 - 1, 10**400)],
 )
 def test_a_bool_text_array_none_or_overflowing_width_is_refused(build, value):
-    """A TOML true, a string, None, an array, a list and an int too large for a float are
-    refused by name; none of them reaches the evaluator."""
+    """A TOML true, a string, None, an array, a list, an int too large for a float and a
+    fraction inside (0, 1) that rounds to the float 0 or 1 are refused by name; none of them
+    reaches the evaluator."""
     with pytest.raises(ValueError, match='matprop_smooth_width must lie in'):
         build(matprop_smooth_width=value)
 
