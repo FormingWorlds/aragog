@@ -555,6 +555,8 @@ def test_phase_params_from_parameters_and_jax_factory_rheology_mismatch_guard() 
     assert float(pp.log10_visc_solid) == pytest.approx(np.log10(params.phase_solid.viscosity))
     assert float(pp.log10_visc_liquid) == pytest.approx(np.log10(params.phase_liquid.viscosity))
     assert pp.kappah_floor == float(params.energy.kappah_floor)
+    assert pp.matprop_smooth_width == float(params.phase_mixed.matprop_smooth_width)
+    assert pp.phase_smoothing_width == (float(params.phase_mixed.matprop_smooth_width) or 1.0e-2)
 
     solver = _make_solver(params)
     solver.set_initial_entropy(2500.0)
