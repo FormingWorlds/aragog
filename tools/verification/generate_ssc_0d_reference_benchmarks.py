@@ -3,26 +3,15 @@
 Generates or checks ``tests/reference/ssc_0d_reference_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
-- In the entropy solver, ``outer_boundary_condition = 5`` is not branched in
-  ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py``), which
-  branches only on ``self._outer_bc_kind == 1`` and ``self._outer_bc_kind == 4``, and
-  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py``) copies the
-  surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
-- For steady-state internally heated benchmarks with prescribed surface temperature
-  ``T_surf = 273.0 K`` (Korenaga 2009 Table 1 ``E300`` steady states), this tool applies the
-  verification-only context manager ``half_cell_surface_flux``
-  (``tools/verification/_ssc_helpers.py``), which sets the top conductive heat flux to the
-  temperature-solver BC 5 half-cell formula ``F_top = k * (T_cell - T_surf) / (dr / 2)``
-  (whereas the 400 Myr and 4.5 Gyr secular-cooling trajectories use ``outer_boundary_condition = 1``,
-  grey-body radiative boundary condition with ``emissivity = 1.0`` and
-  ``equilibrium_temperature = 300.0 K``, in a single continuous integration over ``[0, t_end]``).
-- Because ``half_cell_surface_flux`` sets only ``_heat_flux[-1]`` after ``EntropyState.update``
-  returns, the stagnant-lid closure (``_compute_stagnant_lid_state_core`` in
-  ``src/aragog/rheology_lid.py``, called inside ``EntropyState.update`` in
-  ``src/aragog/solver/entropy_state.py``) reads the extrapolated surface
-  temperature ``T_basic[-1]`` and the unpatched surface flux ``_jcond[-1] + _jconv[-1]``,
-  so the stored ``E300`` steady states are steady for a closure fed the extrapolated
-  surface temperature and flux.
+- The steady-state internally heated benchmarks (Korenaga 2009 Table 1 ``E300`` steady states)
+  prescribe ``T_surf = 273.0 K``. ``EntropyState.update``
+  (``src/aragog/solver/entropy_state.py``) sets the surface node to the entropy whose
+  temperature is ``T_surf`` and takes the surface gradient from the half-cell temperature
+  gradient, so the top conductive flux is ``F_top = k * (T_cell - T_surf) / (dr / 2)`` and the
+  stagnant-lid closure reads ``T_surf``.
+- The 400 Myr and 4.5 Gyr secular-cooling trajectories use ``outer_boundary_condition = 1``,
+  the grey-body radiative boundary condition with ``emissivity = 1.0`` and
+  ``equilibrium_temperature = 300.0 K``, in a single continuous integration over ``[0, t_end]``.
 
 Execution modes and per-block coverage:
 - ``--full``: recomputes the secular-cooling trajectories and 0-D sweeps using the
@@ -132,8 +121,6 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     _check_generator_input_fingerprint,
     _resolve_origin_head_commit,
     compute_generator_input_fingerprint,
-    evaluate_bc5_surface_patch_state,
-    half_cell_surface_flux,
     unbounded_cvode_step,
 )
 
@@ -184,7 +171,6 @@ EXPECTED_STEADY_KEYS = (
 EXPECTED_LIVE_YIELD_KEYS = (
     'e300_n100_steady_vectors',
     's_ref_51',
-    'bc5_surface_patch_diagnostics',
 )
 EXPECTED_PROVENANCE_KEYS = (
     'a_nu_value',
@@ -627,99 +613,27 @@ def evaluate_live_e300_steady_vector(
     rheo = params.phase_solid.rheology
     k_cond = float(params.phase_solid.thermal_conductivity)
     t_s = float(params.boundary_conditions.outer_boundary_value)
-    with half_cell_surface_flux():
-        solver = EntropySolver(params, entropy_eos=None)
-        solver.initialize()
-        rhs = np.asarray(solver._dSdt_single(0.0, s_vec), dtype=float)
-        lid = solver.state.lid_state
-        f_top = float(solver.state.heat_flux[-1])
-        t_i_lid = float(lid['T_i'])
-        theta_lid = float(lid['theta'])
-        delta_l_cond = k_cond * (t_i_lid - t_s) / f_top
-        d_lid_cond = (1.0 - float(rheo.lid_contrast_coeff) / theta_lid) * delta_l_cond
-        eta_diff_b = np.asarray(solver.state.phase_basic.eta_diff(), dtype=float).ravel()
-        eta_eff_b = solver.state.eta_eff_basic
-        w_lid_b = np.asarray(lid['w_lid'], dtype=float).ravel()
-        eta_eff_lid_min = float(np.min(eta_eff_b[w_lid_b > 0.5]))
-        return {
-            'max_abs_rhs': float(np.max(np.abs(rhs))),
-            'd_lid_pass1_m': float(lid['d_lid']),
-            'd_lid_cond_lid_m': float(d_lid_cond),
-            'eta_eff_lid_over_eta_i': float(eta_eff_lid_min / float(lid['eta_i'])),
-            'T_i_lid_K': t_i_lid,
-            'F_top_W_m2': f_top,
-            'n_yielding_basic_nodes': int(np.sum(eta_eff_b < 0.999 * eta_diff_b)),
-        }
-
-
-def _bc5_tolerances(field: str) -> tuple[float, float]:
-    """Return ``(rtol, atol)`` for a BC 5 surface-patch diagnostic field.
-
-    Residuals and relative differences of nearly equal values are cancellation results, so
-    they get an absolute round-off bound; other fields use ``LIVE_RECOMPUTE_RTOL``.
-    """
-    if 'max_abs_rhs' in field:
-        return 1.0e-4, 1.0e-12
-    if 'rel_diff' in field:
-        return LIVE_RECOMPUTE_RTOL, 1.0e-10
-    return LIVE_RECOMPUTE_RTOL, 1.0e-15
-
-
-def compute_e300_bc5_surface_patch_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
-    """Compute BC 5 half-cell patch vs unpatched and surface-consistent closure diagnostics on E300 states."""
-    steady = data['steady_yield_thinning']
-    vecs = data['live_yield_states']['e300_n100_steady_vectors']
-    e300_fh = steady['e300_n100_fixed_h']['cases']
-    e300_mt = steady['e300_n100_matched_ti']['cases']
-    live_specs = (
-        ('unyielded_500MPa', e300_fh['unyielded_500MPa']),
-        ('fixed_h_below_0p5x_tau_d_lid', e300_fh['below_0p5x_tau_d_lid']),
-        ('matched_ti_below_0p5x_tau_d_lid', e300_mt['below_0p5x_tau_d_lid']),
-    )
-    states_out: dict[str, dict[str, Any]] = {}
-    for vec_key, ref_case in live_specs:
-        params = _build_e300_steady_params(
-            float(ref_case['tau_y_lid_Pa']),
-            float(ref_case['h_scale']),
-        )
-        s_vec = np.asarray(vecs[vec_key]['S_steady_J_kg_K'], dtype=float)
-        states_out[vec_key] = evaluate_bc5_surface_patch_state(params, s_vec, 0.0)
-
-    t_ext_vals = [float(st['T_basic_extrapolated_K']) for st in states_out.values()]
-    jcond_vals = [float(st['jcond_unpatched_surface_W_m2']) for st in states_out.values()]
-    ftop_vals = [float(st['with_patch_F_top_W_m2']) for st in states_out.values()]
-    dl_p1_diffs = [float(st['d_lid_pass1_rel_diff']) for st in states_out.values()]
-    dl_cond_diffs = sorted(float(st['d_lid_cond_lid_rel_diff']) for st in states_out.values())
-    theta_diffs = sorted(float(st['theta_rel_diff']) for st in states_out.values())
-    stored_rhs = [float(st['with_patch_max_abs_rhs_J_kg_K_yr']) for st in states_out.values()]
-    cons_rhs = sorted(
-        float(st['consistent_max_abs_rhs_J_kg_K_yr']) for st in states_out.values()
-    )
+    solver = EntropySolver(params, entropy_eos=None)
+    solver.initialize()
+    rhs = np.asarray(solver._dSdt_single(0.0, s_vec), dtype=float)
+    lid = solver.state.lid_state
+    f_top = float(solver.state.heat_flux[-1])
+    t_i_lid = float(lid['T_i'])
+    theta_lid = float(lid['theta'])
+    delta_l_cond = k_cond * (t_i_lid - t_s) / f_top
+    d_lid_cond = (1.0 - float(rheo.lid_contrast_coeff) / theta_lid) * delta_l_cond
+    eta_diff_b = np.asarray(solver.state.phase_basic.eta_diff(), dtype=float).ravel()
+    eta_eff_b = solver.state.eta_eff_basic
+    w_lid_b = np.asarray(lid['w_lid'], dtype=float).ravel()
+    eta_eff_lid_min = float(np.min(eta_eff_b[w_lid_b > 0.5]))
     return {
-        'states': states_out,
-        'summary_ranges': {
-            'outer_boundary_condition_5': 5,
-            'outer_boundary_condition_4': 4,
-            'T_basic_extrapolated_min_K': min(t_ext_vals),
-            'T_basic_extrapolated_max_K': max(t_ext_vals),
-            'jcond_unpatched_min_W_m2': min(jcond_vals),
-            'jcond_unpatched_max_W_m2': max(jcond_vals),
-            'F_top_patched_min_W_m2': min(ftop_vals),
-            'F_top_patched_max_W_m2': max(ftop_vals),
-            'd_lid_pass1_rel_diff_min': min(dl_p1_diffs),
-            'd_lid_pass1_rel_diff_max_abs': max(abs(v) for v in dl_p1_diffs),
-            'd_lid_cond_lid_rel_diff_min': dl_cond_diffs[0],
-            'd_lid_cond_lid_rel_diff_mid': dl_cond_diffs[1],
-            'd_lid_cond_lid_rel_diff_max': dl_cond_diffs[2],
-            'theta_rel_diff_min': theta_diffs[0],
-            'theta_rel_diff_mid': theta_diffs[1],
-            'theta_rel_diff_max': theta_diffs[2],
-            'stored_max_abs_rhs_min': min(stored_rhs),
-            'stored_max_abs_rhs_max': max(stored_rhs),
-            'consistent_max_abs_rhs_min': cons_rhs[0],
-            'consistent_max_abs_rhs_mid': cons_rhs[1],
-            'consistent_max_abs_rhs_max': cons_rhs[2],
-        },
+        'max_abs_rhs': float(np.max(np.abs(rhs))),
+        'd_lid_pass1_m': float(lid['d_lid']),
+        'd_lid_cond_lid_m': float(d_lid_cond),
+        'eta_eff_lid_over_eta_i': float(eta_eff_lid_min / float(lid['eta_i'])),
+        'T_i_lid_K': t_i_lid,
+        'F_top_W_m2': f_top,
+        'n_yielding_basic_nodes': int(np.sum(eta_eff_b < 0.999 * eta_diff_b)),
     }
 
 
@@ -1492,47 +1406,6 @@ def verify_benchmarks(
             ):
                 failures.append(f'{vec_key} {m_key} live vs live_yield_states mismatch')
 
-    live_bc5 = compute_e300_bc5_surface_patch_diagnostics(data)
-    stored_bc5 = live_states.get('bc5_surface_patch_diagnostics', {})
-    if not isinstance(stored_bc5, dict):
-        failures.append('live_yield_states.bc5_surface_patch_diagnostics is not a dict')
-    else:
-        st_states = stored_bc5.get('states', {})
-        for vec_key, l_st in live_bc5['states'].items():
-            s_st = st_states.get(vec_key) if isinstance(st_states, dict) else None
-            if not isinstance(s_st, dict):
-                failures.append(f'bc5_surface_patch_diagnostics.states missing {vec_key!r}')
-                continue
-            for fk, fv in l_st.items():
-                sv = s_st.get(fk, '__missing__')
-                if fv is None:
-                    if sv is not None:
-                        failures.append(
-                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} expected None'
-                        )
-                elif isinstance(fv, int):
-                    if int(sv) != fv:
-                        failures.append(
-                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch'
-                        )
-                else:
-                    tol_f, atol_f = _bc5_tolerances(fk)
-                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=atol_f):
-                        failures.append(
-                            f'bc5_surface_patch_diagnostics.{vec_key}.{fk} mismatch: {sv} vs {fv}'
-                        )
-        st_sum = stored_bc5.get('summary_ranges', {})
-        for sk, sv_live in live_bc5['summary_ranges'].items():
-            if not isinstance(st_sum, dict) or sk not in st_sum:
-                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges missing {sk!r}')
-                continue
-            tol_s, atol_s = _bc5_tolerances(sk)
-            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=atol_s):
-                failures.append(
-                    f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch: '
-                    f'{st_sum[sk]} vs {sv_live}'
-                )
-
     return failures
 
 
@@ -1840,9 +1713,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     data['yield_sweep_0d_at_1600K'] = compute_yield_sweep_0d_at_1600k(p0d)
     data['acceptance_summary'] = compute_acceptance_summary(data)
-    data['live_yield_states']['bc5_surface_patch_diagnostics'] = (
-        compute_e300_bc5_surface_patch_diagnostics(data)
-    )
 
     failures = verify_benchmarks(data, strict_fingerprint=True)
     if failures:

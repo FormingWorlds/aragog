@@ -3,22 +3,11 @@
 Generates or checks ``tests/reference/ssc_scaling_exponents_benchmarks.json``.
 
 Prescribed surface temperature boundary condition (``outer_boundary_condition = 5``):
-- In the entropy solver, ``outer_boundary_condition = 5`` is not branched:
-  ``EntropySolver._dSdt_single`` (``src/aragog/solver/entropy_solver.py``)
-  branches only on ``self._outer_bc_kind == 1`` and ``self._outer_bc_kind == 4``, and
-  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py``) copies the
-  surface entropy gradient from the adjacent interior node via ``dSdxi[-1] = dSdxi[-2]``.
-- For the 12 internally heated steady-state stagnant-lid cases with prescribed surface
-  temperature ``T_surf = 273.0 K``, this tool applies the verification-only context manager
-  ``half_cell_surface_flux`` (``tools/verification/_ssc_helpers.py``), which sets the top
-  conductive heat flux to the temperature-solver BC 5 half-cell formula
-  ``F_top = k * (T_cell - T_surf) / (dr / 2)``.
-- Because ``half_cell_surface_flux`` sets only ``_heat_flux[-1]`` after ``EntropyState.update``
-  returns, the stagnant-lid closure (``_compute_stagnant_lid_state_core`` in
-  ``src/aragog/rheology_lid.py``, called inside ``EntropyState.update`` in
-  ``src/aragog/solver/entropy_state.py``) reads the extrapolated surface
-  temperature ``T_basic[-1]`` and the unpatched surface flux, so the stored states are
-  steady for a closure fed the extrapolated surface temperature and flux.
+- The 12 internally heated steady-state stagnant-lid cases prescribe ``T_surf = 273.0 K``.
+  ``EntropyState.update`` (``src/aragog/solver/entropy_state.py``) sets the surface node to
+  the entropy whose temperature is ``T_surf`` and takes the surface gradient from the
+  half-cell temperature gradient, so the top conductive flux is
+  ``F_top = k * (T_cell - T_surf) / (dr / 2)`` and the stagnant-lid closure reads ``T_surf``.
 
 Execution modes and per-block coverage:
 - ``--full``: recomputes the steady-state trajectories, snapshots, conduction floors, and
@@ -93,8 +82,6 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     _check_generator_input_fingerprint,
     _resolve_origin_head_commit,
     compute_generator_input_fingerprint,
-    evaluate_bc5_surface_patch_state,
-    half_cell_surface_flux,
     korenaga_ti_fixed_point,
     unbounded_cvode_step,
 )
@@ -127,7 +114,6 @@ EXPECTED_TOP_KEYS = (
     'diagnostic_fits',
     'steady_state_snapshots',
     'realized_state_fits',
-    'bc5_surface_patch_diagnostics',
 )
 EXPECTED_META_KEYS = (
     'git_commit',
@@ -343,36 +329,35 @@ def evaluate_live_snapshot(
 ) -> dict[str, Any]:
     """Evaluate 1-D ``EntropySolver._dSdt_single`` on a steady-state entropy profile."""
     params = build_scaling_case_params(spec)
-    with half_cell_surface_flux():
-        solver = EntropySolver(params, entropy_eos=None)
-        solver.initialize()
-        rhs = np.asarray(solver._dSdt_single(float(t_end_yr), s_final), dtype=float)
-        t_stag = np.asarray(solver.state.phase_staggered.temperature(), dtype=float).ravel()
-        rb = np.asarray(solver.evaluator.mesh.basic.radii, dtype=float).ravel()
-        rs = np.asarray(solver.evaluator.mesh.staggered.radii, dtype=float).ravel()
-        k_cond = float(spec.get('k_thermal_W_per_m_K', 400.0))
-        rho = float(spec.get('rho_kg_per_m3', 4000.0))
-        d_m = float(spec['D_m'])
-        t_surf = float(spec['T_surf_K'])
-        h_heat = float(spec['H_W_per_kg'])
-        dth = rho * h_heat * d_m**2 / k_cond
-        f_top = float(k_cond * (t_stag[-1] - t_surf) / (rb[-1] - rs[-1]))
-        ti_kor = korenaga_ti_fixed_point(t_stag, (rb[-1] - rs) / d_m, t_surf, dth)
-        nu_kor = float(dth / (ti_kor - t_surf))
-        lid = solver.state._lid_state
-        return {
-            'rhs_final': rhs,
-            'max_abs_rhs_J_kg_K_yr': float(np.max(np.abs(rhs))),
-            'T_stag_final': t_stag,
-            'F_top_W_m2': f_top,
-            'jconv_max_W_m2': float(np.max(solver.state._jconv)),
-            'T_i_korenaga_K': ti_kor,
-            'Nu_korenaga': nu_kor,
-            'lid_state_T_i_K': float(lid['T_i']),
-            'lid_state_theta': float(lid['theta']),
-            'lid_state_d_lid_m': float(lid['d_lid']),
-            'lid_state_has_lid': bool(lid['has_lid']),
-        }
+    solver = EntropySolver(params, entropy_eos=None)
+    solver.initialize()
+    rhs = np.asarray(solver._dSdt_single(float(t_end_yr), s_final), dtype=float)
+    t_stag = np.asarray(solver.state.phase_staggered.temperature(), dtype=float).ravel()
+    rb = np.asarray(solver.evaluator.mesh.basic.radii, dtype=float).ravel()
+    rs = np.asarray(solver.evaluator.mesh.staggered.radii, dtype=float).ravel()
+    k_cond = float(spec.get('k_thermal_W_per_m_K', 400.0))
+    rho = float(spec.get('rho_kg_per_m3', 4000.0))
+    d_m = float(spec['D_m'])
+    t_surf = float(spec['T_surf_K'])
+    h_heat = float(spec['H_W_per_kg'])
+    dth = rho * h_heat * d_m**2 / k_cond
+    f_top = float(k_cond * (t_stag[-1] - t_surf) / (rb[-1] - rs[-1]))
+    ti_kor = korenaga_ti_fixed_point(t_stag, (rb[-1] - rs) / d_m, t_surf, dth)
+    nu_kor = float(dth / (ti_kor - t_surf))
+    lid = solver.state._lid_state
+    return {
+        'rhs_final': rhs,
+        'max_abs_rhs_J_kg_K_yr': float(np.max(np.abs(rhs))),
+        'T_stag_final': t_stag,
+        'F_top_W_m2': f_top,
+        'jconv_max_W_m2': float(np.max(solver.state._jconv)),
+        'T_i_korenaga_K': ti_kor,
+        'Nu_korenaga': nu_kor,
+        'lid_state_T_i_K': float(lid['T_i']),
+        'lid_state_theta': float(lid['theta']),
+        'lid_state_d_lid_m': float(lid['d_lid']),
+        'lid_state_has_lid': bool(lid['has_lid']),
+    }
 
 
 def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -394,7 +379,7 @@ def run_single_steady_case(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[s
     f_geom = float(spec['R_in_m']) / float(spec['R_out_m'])
     f_top_expected = rho * h_heat * d_m * (1.0 + f_geom + f_geom**2) / 3.0
 
-    with half_cell_surface_flux(), unbounded_cvode_step():
+    with unbounded_cvode_step():
         chunks = 8
         for t_end in (4.0e10, 8.0e10, 1.6e11, 3.2e11):
             params = build_scaling_case_params(spec)
@@ -653,70 +638,6 @@ def compute_realized_state_fits(cases: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             'theta_sweep_1d': _ols(
                 [-np.log10(th_real[mask_th & mask_c7])], np.log10(nu_kor[mask_th & mask_c7])
-            ),
-        },
-    }
-
-
-def compute_scaling_bc5_surface_patch_diagnostics(
-    specs_list: list[dict[str, Any]],
-    snaps: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Compute BC 5 half-cell patch vs unpatched and surface-consistent closure diagnostics on the 5 snapshots."""
-    specs_by_id = {str(s['case_id']): s for s in specs_list}
-    snaps_out: dict[str, dict[str, Any]] = {}
-    for cid in REQUIRED_SNAPSHOT_IDS:
-        params = build_scaling_case_params(specs_by_id[cid])
-        s_vec = np.asarray(snaps[cid]['S_final'], dtype=float)
-        t_yr = float(snaps[cid]['t_end_yr'])
-        snaps_out[cid] = evaluate_bc5_surface_patch_state(params, s_vec, t_yr)
-
-    t_ext_vals = [float(st['T_basic_extrapolated_K']) for st in snaps_out.values()]
-    jcond_vals = [float(st['jcond_unpatched_surface_W_m2']) for st in snaps_out.values()]
-    ftop_vals = [float(st['with_patch_F_top_W_m2']) for st in snaps_out.values()]
-    theta_diffs = [float(st['theta_rel_diff']) for st in snaps_out.values()]
-    stored_rhs = [float(st['with_patch_max_abs_rhs_J_kg_K_yr']) for st in snaps_out.values()]
-    return {
-        'snapshots': snaps_out,
-        'summary_ranges': {
-            'T_basic_extrapolated_min_K': min(t_ext_vals),
-            'T_basic_extrapolated_max_K': max(t_ext_vals),
-            'jcond_unpatched_min_W_m2': min(jcond_vals),
-            'jcond_unpatched_max_W_m2': max(jcond_vals),
-            'F_top_patched_min_W_m2': min(ftop_vals),
-            'F_top_patched_max_W_m2': max(ftop_vals),
-            'd_lid_rel_diff_case_06': float(snaps_out['case_06']['d_lid_pass1_rel_diff']),
-            'd_lid_abs_rel_diff_case_06': float(
-                snaps_out['case_06']['d_lid_pass1_abs_rel_diff']
-            ),
-            'd_lid_rel_diff_case_07': float(snaps_out['case_07']['d_lid_pass1_rel_diff']),
-            'd_lid_cond_lid_rel_diff_case_12': float(
-                snaps_out['case_12']['d_lid_cond_lid_rel_diff']
-            ),
-            'd_lid_cond_lid_rel_diff_case_01': float(
-                snaps_out['case_01']['d_lid_cond_lid_rel_diff']
-            ),
-            'd_lid_cond_lid_rel_diff_case_03': float(
-                snaps_out['case_03']['d_lid_cond_lid_rel_diff']
-            ),
-            'd_lid_cond_lid_rel_diff_case_07': float(
-                snaps_out['case_07']['d_lid_cond_lid_rel_diff']
-            ),
-            'd_lid_cond_lid_rel_diff_case_06': float(
-                snaps_out['case_06']['d_lid_cond_lid_rel_diff']
-            ),
-            'theta_rel_diff_min': min(theta_diffs),
-            'theta_rel_diff_max': max(theta_diffs),
-            'stored_max_abs_rhs_min': min(stored_rhs),
-            'stored_max_abs_rhs_max': max(stored_rhs),
-            'consistent_max_abs_rhs_min_case_12': float(
-                snaps_out['case_12']['consistent_max_abs_rhs_J_kg_K_yr']
-            ),
-            'consistent_max_abs_rhs_case_01': float(
-                snaps_out['case_01']['consistent_max_abs_rhs_J_kg_K_yr']
-            ),
-            'consistent_max_abs_rhs_max_case_06': float(
-                snaps_out['case_06']['consistent_max_abs_rhs_J_kg_K_yr']
             ),
         },
     }
@@ -1061,40 +982,6 @@ def verify_benchmarks(
             failures,
         )
 
-    live_bc5 = compute_scaling_bc5_surface_patch_diagnostics(specs_list, snaps)
-    stored_bc5 = data.get('bc5_surface_patch_diagnostics', {})
-    if not isinstance(stored_bc5, dict):
-        failures.append('bc5_surface_patch_diagnostics is not a dict')
-    else:
-        st_snaps = stored_bc5.get('snapshots', {})
-        for cid, l_st in live_bc5['snapshots'].items():
-            s_st = st_snaps.get(cid) if isinstance(st_snaps, dict) else None
-            if not isinstance(s_st, dict):
-                failures.append(f'bc5_surface_patch_diagnostics.snapshots missing {cid!r}')
-                continue
-            for fk, fv in l_st.items():
-                sv = s_st.get(fk, '__missing__')
-                if fv is None:
-                    if sv is not None:
-                        failures.append(
-                            f'bc5_surface_patch_diagnostics.{cid}.{fk} expected None'
-                        )
-                elif isinstance(fv, int):
-                    if int(sv) != fv:
-                        failures.append(f'bc5_surface_patch_diagnostics.{cid}.{fk} mismatch')
-                else:
-                    tol_f = 1.0e-4 if 'max_abs_rhs' in fk else 1.0e-9
-                    if not np.isclose(float(sv), float(fv), rtol=tol_f, atol=1.0e-15):
-                        failures.append(f'bc5_surface_patch_diagnostics.{cid}.{fk} mismatch')
-        st_sum = stored_bc5.get('summary_ranges', {})
-        for sk, sv_live in live_bc5['summary_ranges'].items():
-            if not isinstance(st_sum, dict) or sk not in st_sum:
-                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges missing {sk!r}')
-                continue
-            tol_s = 1.0e-4 if 'max_abs_rhs' in sk else 1.0e-9
-            if not np.isclose(float(st_sum[sk]), float(sv_live), rtol=tol_s, atol=1.0e-15):
-                failures.append(f'bc5_surface_patch_diagnostics.summary_ranges.{sk} mismatch')
-
     return failures
 
 
@@ -1205,9 +1092,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     data['diagnostic_fits'] = compute_diagnostic_fits(data['cases_results'], acc_win)
     data['realized_state_fits'] = compute_realized_state_fits(data['cases_results'])
-    data['bc5_surface_patch_diagnostics'] = compute_scaling_bc5_surface_patch_diagnostics(
-        data['cases_spec'], data['steady_state_snapshots']
-    )
 
     failures = verify_benchmarks(data, strict_fingerprint=True)
     if failures:

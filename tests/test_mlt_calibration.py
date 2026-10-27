@@ -703,13 +703,13 @@ def test_solid_state_convection_tutorial_registered_and_code_blocks_parse() -> N
 
 
 @pytest.mark.unit
-def test_half_cell_surface_flux_patch_pins_bc5_prescribed_surface_temperature() -> None:
-    """Pin the half_cell_surface_flux verification helper against unpatched BC 5 on case_06."""
+def test_bc5_surface_flux_is_half_cell_conduction_on_scaling_case_06() -> None:
+    """On the stored case_06 steady state, BC 5 gives the half-cell conduction flux, the stored
+    F_top and a steady right-hand side, and the prescribed surface temperature enters the RHS."""
     import json
     from pathlib import Path
 
     from aragog.solver.entropy_solver import EntropySolver
-    from tools.verification._ssc_helpers import half_cell_surface_flux
     from tools.verification.generate_ssc_scaling_exponents_benchmarks import (
         build_scaling_case_params,
     )
@@ -722,38 +722,21 @@ def test_half_cell_surface_flux_patch_pins_bc5_prescribed_surface_temperature() 
     t_surf = float(spec['T_surf_K'])
     k_cond = float(spec.get('k_thermal_W_per_m_K', 4.0))
 
-    with half_cell_surface_flux():
-        solver_patched = EntropySolver(build_scaling_case_params(spec), entropy_eos=None)
-        solver_patched.initialize()
-        rhs_patched = np.asarray(solver_patched._dSdt_single(0.0, s_final), dtype=float)
-        f_top_patched = float(solver_patched.state._heat_flux[-1])
-        t_cell = float(
-            np.asarray(solver_patched.state.phase_staggered.temperature()).ravel()[-1]
-        )
-        r_b = np.asarray(solver_patched.state._evaluator.mesh.basic.radii).ravel()
-        dr_half = 0.5 * float(r_b[-1] - r_b[-2])
+    solver = EntropySolver(build_scaling_case_params(spec), entropy_eos=None)
+    solver.initialize()
+    rhs = np.asarray(solver._dSdt_single(0.0, s_final), dtype=float)
+    f_top = float(solver.state._heat_flux[-1])
+    t_cell = float(np.asarray(solver.state.phase_staggered.temperature()).ravel()[-1])
+    r_b = np.asarray(solver.state._evaluator.mesh.basic.radii).ravel()
+    dr_half = 0.5 * float(r_b[-1] - r_b[-2])
 
-    expected_half_cell_flux = k_cond * (t_cell - t_surf) / dr_half
-    assert f_top_patched == pytest.approx(expected_half_cell_flux, rel=1.0e-14)
-    assert f_top_patched == pytest.approx(float(snap['F_top_W_m2']), rel=1.0e-12)
-    assert float(np.max(np.abs(rhs_patched))) < 1.0e-9
-
-    # Without half_cell_surface_flux, shipped EntropyState ignores outer_boundary_condition = 5:
-    # outer_boundary_value = 273 K and 1000 K yield bit-identical RHS and lower top flux.
-    params_273 = build_scaling_case_params(spec)
-    params_273.boundary_conditions.outer_boundary_value = 273.0
-    solver_273 = EntropySolver(params_273, entropy_eos=None)
-    solver_273.initialize()
-    rhs_273 = np.asarray(solver_273._dSdt_single(0.0, s_final), dtype=float)
-    f_top_unpatched = float(solver_273.state._heat_flux[-1])
+    assert f_top == pytest.approx(k_cond * (t_cell - t_surf) / dr_half, rel=1.0e-12)
+    assert f_top == pytest.approx(float(snap['F_top_W_m2']), rel=1.0e-12)
+    assert float(np.max(np.abs(rhs))) < 1.0e-9
 
     params_1000 = build_scaling_case_params(spec)
     params_1000.boundary_conditions.outer_boundary_value = 1000.0
     solver_1000 = EntropySolver(params_1000, entropy_eos=None)
     solver_1000.initialize()
     rhs_1000 = np.asarray(solver_1000._dSdt_single(0.0, s_final), dtype=float)
-
-    assert np.array_equal(rhs_273, rhs_1000)
-    assert f_top_unpatched == pytest.approx(5.387415282426097, rel=1.0e-12)
-    assert f_top_patched > f_top_unpatched * 1.5
-    assert float(np.max(np.abs(rhs_273))) > 1.0e-3
+    assert float(np.max(np.abs(rhs_1000))) > 1.0e-3
