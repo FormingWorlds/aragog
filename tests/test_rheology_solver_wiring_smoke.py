@@ -836,8 +836,8 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
     rheo = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
-        yield_stress_c=1.0e7,
-        yield_stress_mu=0.1,
+        yield_stress_c=1.0e3,
+        yield_stress_mu=0.0,
         yield_stress_max=1.0e8,
     )
     with importlib.resources.as_file(
@@ -853,6 +853,7 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
             core_bc='energy_balance',
             inner_boundary_condition=1,
         ),
+        energy=replace(base_params.energy, kappah_floor=0.0),
         phase_solid=replace(base_params.phase_solid, rheology=rheo),
     )
     solver_eb = _make_solver(params_eb, identity_alpha=True)
@@ -862,9 +863,17 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
     y_eb = np.concatenate([s_stag, [-1.0e-4]])
 
     rhs_np = solver_eb.dSdt(0.0, y_eb)
-    rhs_jax = np.asarray(dSdt_energy_balance(0.0, jnp.asarray(y_eb), args_eb))
-
+    n_yield = int(
+        np.sum(solver_eb.state._eta_eff_basic < 0.99 * solver_eb.state.phase_basic.eta_diff())
+    )
+    assert n_yield > 0, 'the yield branch must be active in this state'
+    params_off = replace(
+        params_eb, phase_solid=replace(params_eb.phase_solid, rheology=SolidRheologyParams())
+    )
+    rhs_off = _make_solver(params_off, identity_alpha=True).dSdt(0.0, y_eb)
     denom = float(np.max(np.abs(rhs_np)))
+    assert float(np.max(np.abs(rhs_np - rhs_off) / np.abs(rhs_np))) >= 1.0e-2
+    rhs_jax = np.asarray(dSdt_energy_balance(0.0, jnp.asarray(y_eb), args_eb))
     rel_diff = float(np.max(np.abs(rhs_np - rhs_jax)) / denom)
     assert rel_diff <= 1.0e-10
 
@@ -876,16 +885,31 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
     rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
     solver.parameters.phase_solid.rheology = rheo
     solver.state.phase_basic._rheology = rheo
+    solver._bl_phase._rheology = rheo
+    solver.parameters.energy.kappah_floor = 0.0
+    solver.state._kappah_floor = 0.0
 
-    args = _build_jax_pieces(solver)
+    args = list(_build_jax_pieces(solver))
+    args[1] = PhaseParams.from_parameters(solver.parameters)
+    args[2] = MeshArrays.from_numpy_mesh(solver.evaluator.mesh, validate_rheology=True)
+    assert args[1].rheology == rheo
+    args = tuple(args)
 
     s_stag = np.linspace(2950.0, 2600.0, solver._n_stag)
     y_core = np.concatenate([s_stag, [0.0, 5000.0]])
 
     rhs_np = solver.dSdt(0.0, y_core)
-    rhs_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_core), args))
-
     denom = float(np.max(np.abs(rhs_np)))
+    rheo_off = SolidRheologyParams()
+    solver.parameters.phase_solid.rheology = rheo_off
+    solver.state.phase_basic._rheology = rheo_off
+    solver._bl_phase._rheology = rheo_off
+    rhs_off = solver.dSdt(0.0, y_core)
+    solver.parameters.phase_solid.rheology = rheo
+    solver.state.phase_basic._rheology = rheo
+    solver._bl_phase._rheology = rheo
+    assert float(np.max(np.abs(rhs_np - rhs_off) / np.abs(rhs_np))) >= 1.0e-2
+    rhs_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_core), args))
     rel_diff = float(np.max(np.abs(rhs_np - rhs_jax)) / denom)
     assert rel_diff <= 1.0e-10
 

@@ -14,6 +14,7 @@ from aragog.config import Config
 from aragog.config.phases import PhaseConfig
 from aragog.parser import Parameters, _PhaseParameters
 from aragog.rheology import (
+    R_GAS,
     SolidRheologyParams,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
@@ -37,7 +38,7 @@ def _require_jax() -> tuple[Any, Any]:
     return jax, jnp
 
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 RHEOLOGY_FIELD_NAMES: tuple[str, ...] = tuple(f.name for f in fields(SolidRheologyParams))
 
@@ -657,6 +658,7 @@ def _format_rheology_section(sub_dict: dict[str, Any], *, is_toml: bool) -> str:
 
 
 @pytest.mark.unit
+@pytest.mark.timeout(300)
 @settings(max_examples=50, deadline=None)
 @given(
     rheo_dict=valid_rheology_dict_strategy(),
@@ -890,7 +892,7 @@ def test_hypothesis_arrhenius_underflow_bound_property(vs: float, temp: float) -
     tiny = np.finfo(float).tiny
     t_ref = 50.0
     g_hom = 50.0
-    r_gas = 8.314462618
+    r_gas = R_GAS
     t_sol_0 = 1400.0
     # Unclipped exponent
     h_p = g_hom * r_gas * t_sol_0
