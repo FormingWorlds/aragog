@@ -813,8 +813,8 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     runs of abe_solid.toml from perturbed initial entropy profiles
     S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
     Delta T_on(r) <= 3.5e-5 K on active-solid (2x margin over measured 1.751e-5 K)
-    and Delta T_on(r) <= 2.0e-6 K on default inert (3.6x margin over measured
-    5.557e-7 K) across both basic and staggered radial profiles.
+    and Delta T_on(r) <= 2.0e-6 K on the default configuration (2.6x margin over
+    measured 7.565e-7 K) across both basic and staggered radial profiles.
 
     Parameters
     ----------
@@ -847,20 +847,20 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     assert float(np.max(dt_def_on)) <= default_spread_bound_k
     assert float(np.max(dt_stag_var_on)) <= active_spread_bound_k
     assert float(np.max(dt_stag_def_on)) <= default_spread_bound_k
-    assert float(np.max(dt_def_on)) == pytest.approx(5.557178610615665e-07, rel=1.0e-9)
+    assert float(np.max(dt_def_on)) == pytest.approx(7.564610768895363e-07, rel=1.0e-9)
     assert float(np.max(dt_def_off)) == pytest.approx(1.034986325976206e-06, rel=1.0e-9)
     assert float(np.max(dt_stag_var_on)) == pytest.approx(3.388989807717735e-05, rel=1.0e-9)
-    assert float(np.max(dt_stag_def_on)) == pytest.approx(1.3583121472038329e-07, rel=1.0e-9)
+    assert float(np.max(dt_stag_def_on)) == pytest.approx(3.054819899261929e-07, rel=1.0e-9)
 
     var_act = var_suite['on_vs_off_activity']
     def_act = def_suite['on_vs_off_activity']
     assert var_act['max_rel_diff_T_basic_on_vs_off'] >= 1.0e-4
     assert var_act['max_rel_rhs_on_vs_off_at_t_end'] >= 1.0e-4
     assert def_act['max_rel_diff_T_basic_on_vs_off'] == pytest.approx(
-        5.27953830828029e-05, rel=1.0e-9
+        0.0020515326635735867, rel=1.0e-9
     )
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] == pytest.approx(
-        0.1938837410866654, rel=1.0e-9
+        7.533969914590898, rel=1.0e-9
     )
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_on))
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_off))
