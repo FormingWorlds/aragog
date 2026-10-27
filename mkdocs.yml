@@ -32,6 +32,7 @@ nav:
   - Tutorials:
       - First run: Tutorials/firstrun.md
       - Building a test: Tutorials/build_test.md
+      - Fixed surface temperature: Tutorials/surface_temperature.md
       - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
@@ -50,6 +51,7 @@ nav:
           - Phase transitions: Explanations/phase_transitions.md
           - Pressure EOS: Explanations/pressure_eos.md
           - Core BC modes: Explanations/core_bc.md
+          - Surface boundary conditions: Explanations/surface_bc.md
       - Numerics:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
@@ -61,6 +63,7 @@ nav:
   - Validation:
       - Overview: Validation/index.md
       - Core: Validation/core.md
+      - Surface boundary: Validation/surface.md
       - Numerics: Validation/numerics.md
 
   - Reference:
