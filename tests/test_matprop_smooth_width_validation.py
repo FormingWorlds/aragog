@@ -1,15 +1,18 @@
 """Validation of the phase-boundary blend at the default matprop_smooth_width on the SPIDER P-S
 test tables: the evaluator properties are continuous across the solidus and the liquidus, equal
 the mean of the two-phase and the single-phase branch on each boundary, and do not change far
-from both boundaries; the JAX right-hand side matches the NumPy one inside the blend."""
+from both boundaries; the JAX right-hand side matches the NumPy one inside the blend, and the JAX
+blend and its gradient stay finite down to the smallest kept width."""
 
 from __future__ import annotations
+
+import sys
 
 import numpy as np
 import pytest
 
 from aragog.solver.entropy_solver import EntropySolver
-from tests.conftest import EOS_DIR, entropy_eos_copy, needs_eos
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
 from tests.test_entropy_solver_core_module_smoke import _build
 from tests.test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
@@ -200,3 +203,29 @@ def test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width():
     sharp = eqx.tree_at(lambda q: q.matprop_smooth_width, args[1], 0.0)
     f_sharp = np.ravel(dSdt(0.0, jnp.asarray(y), (args[0], sharp, *args[2:])))
     assert np.max(np.abs(f_sharp[:n] / f_np[:n] - 1.0)) > 1e-6
+
+
+@pytest.mark.parametrize('width', [sys.float_info.min, 1e-3, 0.05])
+def test_the_jax_blend_and_its_gradient_are_finite_down_to_the_smallest_kept_width(width):
+    """At the smallest kept width (the smallest normal float) and at both warning limits, the
+    JAX blend weight, its derivative in S and every blended property are finite on the
+    solidus, in the middle of the melting interval and on the liquidus."""
+    jax = pytest.importorskip('jax')
+    jnp = jax.numpy
+    eos = entropy_eos_jax(EOS_DIR)
+    P = jnp.full(3, 50e9)
+    S_sol, S_liq = eos.solidus_entropy(P), eos.liquidus_entropy(P)
+    S = jnp.where(jnp.arange(3) == 1, S_sol + 0.3 * (S_liq - S_sol), S_sol)
+    S = jnp.where(jnp.arange(3) == 2, S_liq, S)
+
+    def state(S):
+        return eos.compute_phase_state(P, S, 4.0, 2.0, matprop_smooth_width=width)
+
+    st = state(S)
+    gphi = np.asarray(st.gphi)
+    assert gphi[0] == 0.0 and gphi[2] == 1.0 and gphi[1] == pytest.approx(0.3, rel=1e-12)
+    for name, value in st._asdict().items():
+        assert np.all(np.isfinite(np.asarray(value))), name
+    np.testing.assert_allclose(np.asarray(st.smth)[[0, 2]], 0.5, rtol=1e-15)
+    dsmth = np.asarray(jax.grad(lambda S: state(S).smth.sum())(S))
+    assert np.all(np.isfinite(dsmth)), dsmth

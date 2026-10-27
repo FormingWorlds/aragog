@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+import sys
 import tomllib
 from fractions import Fraction
 
@@ -47,12 +48,12 @@ def test_the_default_width_is_0_01(build):
 
 @_BUILDERS
 @given(
-    value=st.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True)
-    | st.sampled_from([Fraction(1, 2), np.float64(0.2), 5e-324, 1.0 - 2.0**-53])
+    value=st.floats(min_value=sys.float_info.min, max_value=1.0, exclude_max=True)
+    | st.sampled_from([Fraction(1, 2), np.float64(0.2), sys.float_info.min, 1.0 - 2.0**-53])
 )
 def test_a_width_inside_the_open_unit_interval_is_kept(build, value):
     """Any real number strictly between 0 and 1 is kept as given, down to the smallest
-    subnormal and up to the largest float below 1."""
+    normal float and up to the largest float below 1."""
     width = build(matprop_smooth_width=value).matprop_smooth_width
     assert width == value
     assert 0.0 < float(width) < 1.0
@@ -85,9 +86,9 @@ def test_a_kept_width_outside_1e_3_to_0_05_logs_one_warning(build, value, warns,
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 @example(value=1e-3)
 @example(value=0.05)
-@given(value=st.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True))
+@given(value=st.floats(min_value=sys.float_info.min, max_value=1.0, exclude_max=True))
 def test_a_kept_width_warns_exactly_outside_the_range(build, value, caplog):
-    """Over the whole kept interval (0, 1) a width warns exactly when it lies outside
+    """Over the whole kept interval a width warns exactly when it lies outside
     [1e-3, 0.05]."""
     messages = _warnings(caplog, build, value)
     assert len(messages) == int(not 1e-3 <= value <= 0.05)
@@ -123,7 +124,20 @@ def test_a_bool_text_array_none_or_overflowing_width_is_refused(build, value):
         build(matprop_smooth_width=value)
 
 
-@pytest.mark.parametrize('value', [0.0, 1.0, True, 'x'])
+@_BUILDERS
+@settings(deadline=None)
+@example(value=np.nextafter(sys.float_info.min, 0.0))
+@example(value=np.float64(1e-310))
+@example(value=Fraction(1, 10**310))
+@given(value=st.floats(min_value=5e-324, max_value=np.nextafter(sys.float_info.min, 0.0)))
+def test_a_subnormal_width_is_refused(build, value):
+    """A width below the smallest normal float is refused with its reason: the JAX blend at
+    such a width is NaN on both boundaries."""
+    with pytest.raises(ValueError, match='subnormal width gives NaN in the JAX blend'):
+        build(matprop_smooth_width=value)
+
+
+@pytest.mark.parametrize('value', [0.0, 1.0, True, 'x', 1e-310])
 def test_the_dict_loader_refuses_a_bad_width_in_phase_mixed(value):
     """Config.from_dict, the path of a TOML file, refuses the width before a solver is built."""
     with importlib.resources.as_file(
