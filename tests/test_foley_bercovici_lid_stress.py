@@ -20,6 +20,7 @@ from aragog.rheology import SolidRheologyParams, _softmax2
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
     SOLIDUS_MELT_FRACTION_WIDTH,
+    _compute_stagnant_lid_state_core,
     compute_stagnant_lid_state,
 )
 
@@ -142,6 +143,41 @@ def test_fb2014_earth_reference_state():
     # Regression pin: on 50 nodes d_lid = 378391.41 m, giving tau_d_lid ~ 1.774 MPa.
     assert state['tau_d_lid'] == pytest.approx(1774312.943961, rel=1.0e-6)
     assert state['eta_contrast'] == pytest.approx(expected_eta_contrast, rel=1.0e-6)
+
+
+@pytest.mark.unit
+def test_core_lid_state_matches_the_public_lid_state_on_every_key():
+    """The unchecked core path, which the solver calls, gives the public result."""
+    inputs = _make_earth_reference_inputs()
+    public = compute_stagnant_lid_state(**inputs)
+    core = _compute_stagnant_lid_state_core(**inputs)
+    assert core.keys() == public.keys()
+    for key, value in public.items():
+        np.testing.assert_allclose(
+            np.asarray(core[key], dtype=float),
+            np.asarray(value, dtype=float),
+            rtol=1.0e-12,
+            err_msg=key,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('flux_scale', [1.0e-5, 1.0e-4])
+def test_interior_pressure_on_a_non_monotone_profile_ignores_temperature(flux_scale):
+    """On a non-monotone T profile, P_T_i and r_i are flux-weighted means with no T input.
+
+    The weak convective flux puts the interior weight between its two end values.
+    """
+    states = []
+    for bump in (0.0, 50.0):
+        inputs = _make_earth_reference_inputs()
+        inputs['temperature'] = inputs['temperature'].copy()
+        inputs['temperature'][2:40] += bump
+        inputs['convective_flux'] = inputs['convective_flux'] * flux_scale
+        states.append(_compute_stagnant_lid_state_core(**inputs))
+    assert float(states[1]['T_i']) > float(states[0]['T_i'])
+    assert float(states[1]['P_T_i']) == float(states[0]['P_T_i'])
+    assert float(states[1]['r_i']) == float(states[0]['r_i'])
 
 
 @pytest.mark.unit
