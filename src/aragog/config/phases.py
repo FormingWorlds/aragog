@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import numbers
-import sys
 from typing import Any
 
 import attrs
@@ -26,25 +25,29 @@ MATPROP_SMOOTH_WIDTH_DEFAULT: float = 0.01
 # 1e-12 (as at 0); mid-band Cp starts to jump from about 0.03 (2e-9 at 0.05, 4e-5 at 0.1).
 MATPROP_SMOOTH_WIDTH_WARN_MIN: float = 1e-3
 MATPROP_SMOOTH_WIDTH_WARN_MAX: float = 0.05
+# Smallest kept width: the JAX gradient of the blended Cp stays finite for a Cp jump up to 3.6e8.
+MATPROP_SMOOTH_WIDTH_MIN: float = 1e-300
 
 
 def check_matprop_smooth_width(value: float) -> None:
-    """Raise ``ValueError`` unless ``value`` is a real scalar strictly between 0 and 1 and not
-    below the smallest normal float.
+    """Raise ``ValueError`` unless ``value`` is a real scalar in [``MATPROP_SMOOTH_WIDTH_MIN``, 1).
 
     At 0 the properties switch between the two-phase and the single-phase branch exactly at
-    the solidus and the liquidus; from 1 the blend spans the whole melting interval. A
-    subnormal width makes the JAX blend weight NaN on the solidus and the liquidus. A width
-    outside [``MATPROP_SMOOTH_WIDTH_WARN_MIN``, ``MATPROP_SMOOTH_WIDTH_WARN_MAX``] is kept and
-    logs a warning.
+    the solidus and the liquidus; from 1 the blend spans the whole melting interval. The JAX
+    gradient in S of the blended heat capacity on both boundaries passes through
+    0.5 * (Cp_mixed - Cp_single) / width, which overflows the largest float below about
+    8e-305 for the Cp jump of up to 3.0e4 J/kg/K on the SPIDER test tables; at 1e-300 it
+    stays finite for a jump up to 3.6e8 J/kg/K. A subnormal width also makes the blend
+    weight NaN. A width outside [``MATPROP_SMOOTH_WIDTH_WARN_MIN``,
+    ``MATPROP_SMOOTH_WIDTH_WARN_MAX``] is kept and logs a warning.
     """
     # The range comparison first, so float() of a huge int never overflows; a bool is 0 or 1.
     if not (isinstance(value, numbers.Real) and 0 < value < 1 and 0.0 < float(value) < 1.0):
         raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
-    if float(value) < sys.float_info.min:
+    if float(value) < MATPROP_SMOOTH_WIDTH_MIN:
         raise ValueError(
-            f'matprop_smooth_width must lie in [{sys.float_info.min!r}, 1): a subnormal width '
-            f'gives NaN in the JAX blend, got {value!r}'
+            f'matprop_smooth_width must lie in [{MATPROP_SMOOTH_WIDTH_MIN!r}, 1): below it the '
+            f'JAX gradient of the blended heat capacity overflows, got {value!r}'
         )
     if not MATPROP_SMOOTH_WIDTH_WARN_MIN <= value <= MATPROP_SMOOTH_WIDTH_WARN_MAX:
         logger.warning(

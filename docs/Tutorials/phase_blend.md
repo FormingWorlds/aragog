@@ -75,7 +75,7 @@ The width is a fraction of the melting interval $S_\mathrm{liq} - S_\mathrm{sol}
 
 ## 3. Check which widths the configuration accepts
 
-The configuration classes refuse a width that is not strictly between 0 and 1, and a width below the smallest normal float (2.2 × 10⁻³⁰⁸).
+The configuration classes refuse a width that is not strictly between 0 and 1, and a width below 10⁻³⁰⁰, where the JAX gradient of the blended heat capacity overflows.
 
 ```python
 from aragog.config.phases import MixedPhaseConfig

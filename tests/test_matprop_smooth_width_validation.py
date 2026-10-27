@@ -6,11 +6,10 @@ phase field and its gradient stay finite down to the smallest kept width."""
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 
+from aragog.config.phases import MATPROP_SMOOTH_WIDTH_MIN
 from aragog.solver.entropy_solver import EntropySolver
 from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
 from tests.test_entropy_solver_core_module_smoke import _build
@@ -205,7 +204,7 @@ def test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width():
     assert np.max(np.abs(f_sharp[:n] / f_np[:n] - 1.0)) > 1e-6
 
 
-@pytest.mark.parametrize('width', [sys.float_info.min, 1e-3, 0.05])
+@pytest.mark.parametrize('width', [MATPROP_SMOOTH_WIDTH_MIN, 1e-3, 0.05])
 def test_every_jax_phase_field_and_its_gradient_are_finite_down_to_the_smallest_kept_width(
     width,
 ):
