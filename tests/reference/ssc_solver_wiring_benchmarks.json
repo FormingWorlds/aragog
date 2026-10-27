@@ -1,7 +1,7 @@
 {
   "canary": {
-    "aragog_commit": "b0a0c4d3758ec71164cc52328b2ff0e3f4dc9242",
-    "generator_input_sha256": "7a71a057114329638ebb862f2cc72d06b135bd834f087e6fc71494a4f6a4940d",
+    "aragog_commit": "fbf1bef13db5db66a06df0bff3fdac8a05f9e2cb",
+    "generator_input_sha256": "f3d7718281f79ffe780f5effe8f391082ee3106593401ca38c16de0d7ac22fd1",
     "generator_input_files": {
       "src/aragog/__init__.py": "dc05d98b503aa6ce6f61ab234528a1fa6ee40cd54017cc7ab2499eb1e138b8bb",
       "src/aragog/cfg/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -33,12 +33,12 @@
       "src/aragog/eos/__init__.py": "fb835c17a71351fefe9461d5b19c8cede2f4dcca11f27171b30b832d66459435",
       "src/aragog/eos/consistency.py": "806399a17a4bcb638c807cafe432ccacb467bd46f4e8827dc2f0be13cc322aac",
       "src/aragog/eos/entropy.py": "afb142ada302ee56e63c001cd8a9f7bd6969247b6d1aa3b34235dbc2a3af5327",
-      "src/aragog/eos/entropy_phase.py": "d606881feee355b917c8185ceb0534bc2b5b147b048341e39673e99569c429da",
+      "src/aragog/eos/entropy_phase.py": "0a737c80d55a4f8c4ecb76e6c7ab361b897512820d275cb69647b31d1a881afb",
       "src/aragog/eos/table_cache.py": "0e80e32adf996183b8a6fdcfcbbcef440b4ab8a34fe58793367a41980111a051",
       "src/aragog/jax/__init__.py": "45574d2c7b26ddca70da1c84052a890b4977fa966c648e403278ecfe6fae6292",
       "src/aragog/jax/eos.py": "30bbc4c48947bd1e5096d7f0fe4b257a0ac9d779064714d8945f63133f07a75d",
       "src/aragog/jax/nondim.py": "8521960850b72a8bb0ba385fe1a4330b66c46925b50f7a67b0db49343c757579",
-      "src/aragog/jax/phase.py": "239fcf334fbf4f57153b93cb763257998157b70376b62e2860abb3c78aba4ec3",
+      "src/aragog/jax/phase.py": "bbf0629465dd567a0b6cad1f52783f3bd4f6b5ded510b1896fb24132549a4569",
       "src/aragog/jax/solver.py": "aba7a56200bcf36c2eacd2a049cb6ea19d91ba60e6b1afc7ed79432699e2b8a7",
       "src/aragog/mesh/__init__.py": "1cc3b8fa9070573106618cd591975ed83c731254e63e3c1c5e460d57a1dfe859",
       "src/aragog/mesh/fixed_mesh.py": "17c305ccefbb275f5bd7b6acc358187123cee4951440e6fad84ad6b71ea83a38",
