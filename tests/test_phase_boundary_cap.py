@@ -1352,7 +1352,11 @@ def test_rate_mode_boundary_landing_does_not_pin_cap_to_floor_across_segments(sh
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eos):
-    """Mechanism 2: the 100 yr ceiling relaxes to inf once phi_max reaches zero."""
+    """Mechanism 2: the 100 yr ceiling relaxes to inf once phi_max reaches zero.
+
+    The case needs ``matprop_smooth_width = 0``: at the default width 0.01 the
+    run ends after 3 segments, and max_step stays finite after the ceiling lifts.
+    """
     s = _solver(
         shared_eos,
         'rate',
@@ -1363,7 +1367,9 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
         max_steps=300,
         tol=1e-8,
         convective_threshold=0.0,
+        width=0.0,
     )
+    assert s.parameters.phase_mixed.matprop_smooth_width == 0.0
     S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
     S0 = np.full_like(S_sol, S_sol[-1] + 5.0)
     s.set_initial_entropy(S0)
