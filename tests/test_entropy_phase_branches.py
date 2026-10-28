@@ -182,7 +182,6 @@ def test_eos_update_with_scalar_input_flattens_arrays():
     assert ev.temperature().ndim == 1
 
 
-@needs_eos
 def _alpha_with_and_without_thermal_exp(cp_blend, S_of):
     """Evaluator alpha at 50 GPa and the entropies ``S_of(S_sol, S_liq)``, with the
     thermal_exp tables loaded and with them dropped."""
@@ -204,26 +203,20 @@ def _alpha_with_and_without_thermal_exp(cp_blend, S_of):
 
 
 @needs_eos
-def test_eos_update_alpha_does_not_depend_on_the_thermal_exp_tables():
-    """``_update_eos`` takes the single-phase alpha from the identity
-    ``rho * Cp * dTdPs / T``, so dropping the thermal_exp tables changes no value,
-    at a solid node and a mushy node (latent blend).
+@pytest.mark.parametrize(
+    ('cp_blend', 'S_of'),
+    [
+        ('latent', lambda s, l: [0.5 * (s + l), s - 500.0]),
+        ('linear', lambda s, l: [0.4 * s + 0.6 * l]),
+    ],
+)
+def test_eos_update_alpha_does_not_depend_on_the_thermal_exp_tables(cp_blend, S_of):
+    """``_update_eos`` takes the single-phase alpha and, under ``cp_blend='linear'``, the
+    boundary alphas of the mixed band from the identity ``rho * Cp * dTdPs / T``, so dropping
+    the thermal_exp tables changes no value at a mushy and a solid node.
     """
-    loaded, dropped = _alpha_with_and_without_thermal_exp(
-        'latent', lambda s, l: [0.5 * (s + l), s - 500.0]
-    )
+    loaded, dropped = _alpha_with_and_without_thermal_exp(cp_blend, S_of)
     assert np.all(np.isfinite(loaded)) and np.all(loaded > 0.0)
-    np.testing.assert_array_equal(loaded, dropped)
-
-
-@needs_eos
-def test_eos_update_linear_blend_alpha_does_not_depend_on_the_thermal_exp_tables():
-    """With ``cp_blend='linear'`` the boundary alphas of the mixed band come from the
-    identity, so dropping the thermal_exp tables changes no value at a mushy node."""
-    loaded, dropped = _alpha_with_and_without_thermal_exp(
-        'linear', lambda s, l: [0.4 * s + 0.6 * l]
-    )
-    assert np.all(np.isfinite(loaded)) and float(loaded.item()) > 0.0
     np.testing.assert_array_equal(loaded, dropped)
 
 

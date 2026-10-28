@@ -74,8 +74,9 @@ def test_composite_thermal_expansivity_returns_finite_positive_in_pure_solid(eos
 
     Discriminator: a bug that flipped the smoothing weight (mixed when
     pure was wanted) would surface here as either a NaN (from
-    Clausius-Clapeyron 0/0) or an alpha 5x larger than the table value.
-    Compare against the direct ``thermal_expansivity`` lookup.
+    Clausius-Clapeyron 0/0) or an alpha 5x larger than the pure-phase
+    value. Compare against the identity ``rho * Cp * |dTdPs| / T``
+    computed from the EOS lookups.
     """
     P = np.array([5.0e10])
     S_sol = float(eos.solidus_entropy(P).item())
@@ -85,7 +86,12 @@ def test_composite_thermal_expansivity_returns_finite_positive_in_pure_solid(eos
     S_below = np.array([S_sol - 800.0])
 
     alpha_blend = eos.thermal_expansivity_composite_blend(P, S_below, width=0.005)
-    alpha_pure = eos.thermal_expansivity(P, S_below)
+    alpha_pure = np.asarray(
+        eos.density(P, S_below)
+        * eos.heat_capacity(P, S_below)
+        * np.abs(eos.dTdPs(P, S_below))
+        / eos.temperature(P, S_below)
+    )
 
     assert np.all(np.isfinite(alpha_blend)), (
         'composite alpha returned non-finite values in the pure-solid regime'
@@ -169,7 +175,7 @@ def test_thermal_expansivity_is_the_identity_on_tables_with_alpha_files(eos):
     P = np.array([3.0e10])
     S = np.array([3300.0])
     assert 'thermal_exp_solid' in eos._tables
-    alpha_fallback = eos.thermal_expansivity(P, S)
+    alpha = eos.thermal_expansivity(P, S)
 
     # Recompute by hand from the same EOS to confirm the formula.
     T = np.asarray(eos.temperature(P, S)).item()
@@ -179,7 +185,7 @@ def test_thermal_expansivity_is_the_identity_on_tables_with_alpha_files(eos):
     expected = rho * Cp * abs(dTdPs_val) / max(T, 1.0)
 
     np.testing.assert_allclose(
-        np.asarray(alpha_fallback).item(),
+        np.asarray(alpha).item(),
         expected,
         rtol=1e-12,
         atol=0.0,

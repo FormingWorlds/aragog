@@ -56,12 +56,7 @@ def _clear_cache():
 @pytest.fixture(scope='module')
 def eos_np():
     """Return numpy EntropyEOS without the thermal_exp tables."""
-    eos = entropy_eos_copy(EOS_DIR)
-    eos._has_alpha_tables = False
-    eos._tables.pop('thermal_exp_solid', None)
-    eos._tables.pop('thermal_exp_melt', None)
-    assert not eos._has_alpha_tables
-    return eos
+    return entropy_eos_copy(EOS_DIR, identity_alpha=True)
 
 
 @pytest.fixture(scope='module')

@@ -134,10 +134,13 @@ def _single_phase_alphas(eos, P, S_b, side):
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
-    """At melt fractions 0.1, 0.5 and 0.9 under ``cp_blend = 'latent'``, the two-phase alpha
-    (width 0) equals the value written by tools/verification/generate_alpha_mush_reference.py
-    at 2d1af473 bit for bit. At width 0.01 the alpha changes by at most (1 - smth) times the
-    gap between the table and the identity single-phase alpha, plus 1e-15 relative."""
+    """At melt fractions 0.002, 0.1, 0.5, 0.9 and 0.998 under ``cp_blend = 'latent'``, the
+    two-phase alpha (width 0) equals the value written by
+    tools/verification/generate_alpha_mush_reference.py at 2d1af473 bit for bit, and NumPy
+    equals JAX at widths 0 and 0.01. At width 0.01 the alpha changes by at most (1 - smth)
+    times the gap between the table and the identity single-phase alpha, plus 1e-13 relative;
+    at 0.002 and 0.998, where that weight is 0.40, it changes by exactly that amount wherever
+    the clamp is inactive (alpha above 1e-8 1/K)."""
     data = np.loadtxt(_MUSH, delimiter=',')
     P, S, phi, base0, base1 = data.T
     eos = entropy_eos_copy(EOS_DIR)
@@ -152,8 +155,14 @@ def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
     for side, sel in (('melt', melt), ('solid', ~melt)):
         tab, ident = _single_phase_alphas(eos, P[sel], S_b[sel], side)
         gap[sel] = np.abs(tab - ident)
-    bound = (1.0 - _smth(eos, P, S, 0.01)) * gap + 1e-15 * np.abs(base1)
-    assert np.all(np.abs(tip1 - base1) <= bound)
+    change, weighted = np.abs(tip1 - base1), (1.0 - _smth(eos, P, S, 0.01)) * gap
+    assert np.all(change <= weighted + 1e-13 * np.abs(base1))
+    edge = np.isin(phi, (0.002, 0.998)) & (base1 > 1e-8)
+    assert edge.sum() >= 16
+    np.testing.assert_allclose(change[edge], weighted[edge], rtol=1e-6)
+    for width in (0.0, 0.01):
+        alpha_np = np.ravel(_numpy_evaluator(P, S, width).thermal_expansivity())
+        np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, width), rtol=1e-12, atol=0)
 
 
 @pytest.mark.smoke
@@ -189,7 +198,8 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
 ):
     """At the solid and melt test states the thermal_exp table alpha differs from the identity
     alpha by 1e-7 to 1e-3 relative, a gap that does not enter a run because both paths take
-    the identity. The plot shows the gap per state against pressure, with the 1e-12 tolerance
+    the identity; the pinned range 7.56e-7 to 7.87e-4 holds for the CI tables of release
+    test-data-v1. The plot shows the gap per state against pressure, with the 1e-12 tolerance
     of the NumPy and JAX agreement above."""
     P, S, side = states
     eos = entropy_eos_copy(EOS_DIR)
@@ -263,28 +273,27 @@ def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
+@pytest.mark.timeout(30)
 def test_numpy_and_jax_alpha_agree_at_one_solid_and_one_melt_state():
     """Fast guard for the PR tier: 200 J/kg/K below the solidus and above the liquidus at
     50 GPa, on tables that ship ``thermal_exp`` files, the NumPy evaluator alpha equals the JAX
     alpha to 1e-12 relative (the table alpha differs from it by more than 1e-6 there)."""
     eos = entropy_eos_copy(EOS_DIR)
     P = np.full(2, 50e9)
-    S = np.array(
-        [eos.solidus_entropy(P[:1])[0] - 200.0, eos.liquidus_entropy(P[:1])[0] + 200.0]
-    )
+    S = np.array([eos.solidus_entropy(P)[0] - 200.0, eos.liquidus_entropy(P)[0] + 200.0])
     alpha_np = np.ravel(_numpy_evaluator(P, S, 1e-6).thermal_expansivity())
     np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, 1e-6), rtol=1e-12, atol=0)
     for i, ph in enumerate(('solid', 'melt')):
-        tab, _ = _single_phase_alphas(eos, P[i : i + 1], S[i : i + 1], ph)
-        assert abs(tab[0] - alpha_np[i]) > 1e-6 * alpha_np[i]
+        tab, _ = _single_phase_alphas(eos, P, S, ph)
+        assert abs(tab[i] - alpha_np[i]) > 1e-6 * alpha_np[i]
 
 
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 def test_the_sign_conventions_of_the_identity_on_a_negative_gradient():
     """With the solid adiabatic gradient of a table copy made negative, the evaluator keeps
-    the sign of (dT/dP)_S, so the clamp lifts alpha to about 0, while the EOS methods take
-    |(dT/dP)_S|, as the JAX EOS does. The test tables hold no negative gradient, so this copy
+    the sign of (dT/dP)_S, so the clamp lifts alpha to about 0, while the three EOS methods
+    (thermal, material and composite-blend expansivity) take |(dT/dP)_S|, as the JAX EOS does. The test tables hold no negative gradient, so this copy
     is the only state that separates the two conventions."""
     eos = entropy_eos_copy(EOS_DIR)
     tbl = eos._tables['dTdPs_solid']
@@ -292,12 +301,17 @@ def test_the_sign_conventions_of_the_identity_on_a_negative_gradient():
     tbl['interp'] = lambda pts: -positive(pts)
     P = np.array([50e9])
     S = np.ravel(eos.solidus_entropy(P)) - 500.0
-    alpha_ev = float(np.ravel(_numpy_evaluator(P, S, 1e-6, eos).thermal_expansivity())[0])
-    alpha_eos = float(np.ravel(eos.thermal_expansivity(P, S))[0])
-    rho, cp, T = (
-        float(np.ravel(f(P, S))[0]) for f in (eos.density, eos.heat_capacity, eos.temperature)
+    alpha_ev = np.ravel(_numpy_evaluator(P, S, 1e-6, eos).thermal_expansivity())
+    identity = (
+        eos.density(P, S) * eos.heat_capacity(P, S) * eos.dTdPs(P, S) / eos.temperature(P, S)
     )
-    identity = rho * cp * float(np.ravel(eos.dTdPs(P, S))[0]) / T
-    assert identity < 0.0
-    assert alpha_ev == pytest.approx(_clamp(identity), rel=1e-6) and alpha_ev < 1e-10
-    assert alpha_eos == pytest.approx(-identity, rel=1e-12)
+    identity = np.ravel(identity)
+    assert np.all(identity < 0.0)
+    np.testing.assert_allclose(alpha_ev, _clamp(identity), rtol=1e-6)
+    assert np.all(alpha_ev < 1e-10)
+    for alpha_eos in (
+        eos.thermal_expansivity(P, S),
+        eos.material_expansivity(P, S),
+        eos.thermal_expansivity_composite_blend(P, S, width=1e-6),
+    ):
+        np.testing.assert_allclose(np.ravel(alpha_eos), -identity, rtol=1e-12)
