@@ -20,42 +20,37 @@ from pathlib import Path
 import numpy as np
 
 
-def _resolve_commit_sha(main_tree: Path | None, explicit_sha: str | None) -> str:
+def _resolve_commit_sha(main_tree: Path, explicit_sha: str | None) -> str:
     """Resolve the git commit SHA of the reference main tree.
 
     Parameters
     ----------
-    main_tree : Path or None
-        Path to main branch tree or archive.
+    main_tree : Path
+        Root of the aragog git tree at the main commit to record.
     explicit_sha : str or None
-        Explicitly provided SHA.
+        SHA to record instead, for a tree that is not a git checkout.
 
     Returns
     -------
     str
         Full 40-character commit SHA.
+
+    Raises
+    ------
+    ValueError
+        If ``main_tree`` is not the root of a git tree and no SHA is given.
     """
     if explicit_sha:
         return explicit_sha.strip()
-    if main_tree is not None:
-        try:
-            res = subprocess.run(
-                ['git', '-C', str(main_tree), 'rev-parse', 'HEAD'],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return res.stdout.strip()
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    # Fallback to merge-base of current repository with origin/main
     res = subprocess.run(
-        ['git', 'merge-base', 'HEAD', 'origin/main'],
+        ['git', '-C', str(main_tree), 'rev-parse', '--show-toplevel', 'HEAD'],
         capture_output=True,
         text=True,
-        check=True,
     )
-    return res.stdout.strip()
+    out = res.stdout.split()
+    if res.returncode != 0 or len(out) != 2 or Path(out[0]).resolve() != main_tree.resolve():
+        raise ValueError(f'{main_tree} is not the root of a git tree; pass --commit-sha')
+    return out[1]
 
 
 def generate_reference(
@@ -362,7 +357,11 @@ def main() -> int:
         print(f'Error: EOS directory does not exist: {eos_dir}', file=sys.stderr)
         return 1
 
-    commit_sha = _resolve_commit_sha(args.main_tree, args.commit_sha)
+    try:
+        commit_sha = _resolve_commit_sha(args.main_tree, args.commit_sha)
+    except ValueError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
     print(f'Generating reference using commit {commit_sha}...')
     generate_reference(args.main_tree, eos_dir, args.output, commit_sha)
     return 0
