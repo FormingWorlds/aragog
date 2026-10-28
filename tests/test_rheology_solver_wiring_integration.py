@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.resources
+import logging
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -70,7 +71,7 @@ def _assert_matches_main_reference(
     )
 
 
-def test_rheology_off_preserves_main_rhs_and_solve() -> None:
+def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     """When rheology is disabled, zero rheology core functions are invoked,
     and RHS and solve outputs match the pinned main reference across all 54 arrays
     (tolerance 1e-12 per RHS and 1e-9 per solve, relative to each value or to the
@@ -337,7 +338,12 @@ def test_rheology_off_preserves_main_rhs_and_solve() -> None:
     s_jax.set_jax_cvode_factory(lambda slv: build_jax_rhs_and_jacobian(slv, eos_jx_inst))
     s_jax.initialize()
     s_jax.set_initial_entropy(2500.0)
-    s_jax.solve()
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        s_jax.solve()
+    # solve() catches a factory error and continues on the NumPy RHS.
+    assert 'JAX CVODE factory failed' not in caplog.text, caplog.text
+    assert 'option Z active' in caplog.text, 'the JAX solve did not run on the JAX RHS'
     out_jax = s_jax.get_state()
     _assert_matches_main_reference(
         np.asarray(out_jax.S_final),
