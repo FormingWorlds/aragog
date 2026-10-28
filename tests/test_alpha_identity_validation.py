@@ -164,3 +164,47 @@ def test_the_linear_blend_meets_the_single_phase_alpha_at_each_boundary(states, 
     ev.update()
     _, ident = _single_phase_alphas(eos, P, S_b, side)
     np.testing.assert_allclose(np.ravel(ev.thermal_expansivity()), _clamp(ident), rtol=1e-12)
+
+
+@pytest.mark.reference_pinned
+def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
+    states, validation_plot
+):
+    """At the solid and melt test states the thermal_exp table alpha differs from the identity
+    alpha by 1e-7 to 1e-3 relative: the gap that NumPy runs integrated before both paths took
+    the identity. The plot shows the gap per state against pressure, with the 1e-12 tolerance
+    of the NumPy and JAX agreement above."""
+    P, S, side = states
+    eos = entropy_eos_copy(EOS_DIR)
+    gap = np.empty_like(P)
+    for ph in ('solid', 'melt'):
+        sel = side == ph
+        tab, ident = _single_phase_alphas(eos, P[sel], S[sel], ph)
+        gap[sel] = np.abs(tab - ident) / np.abs(ident)
+    assert gap.max() < 1e-3 and np.median(gap) > 1e-7
+
+    def figure():
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import LogLocator
+
+        fig, ax = plt.subplots(figsize=(6.4, 4.2))
+        n = P.size // (2 * len(_DS))
+        for i, d in enumerate(_DS):  # colour: entropy offset; line style: phase
+            for j, ls in enumerate(('-', '--')):
+                s = slice((j * len(_DS) + i) * n, (j * len(_DS) + i + 1) * n)
+                ax.semilogy(
+                    P[s] / 1e9, gap[s], ls=ls, color=f'C{i + 1}', label=f'{d:g}' * (j == 0)
+                )
+        ink = plt.rcParams['text.color']
+        ax.plot([], [], ls='-', color=ink, label='solid')
+        ax.plot([], [], ls='--', color=ink, label='melt')
+        ax.axhline(1e-12, color=ink, ls=':', label='tolerance')
+        ax.set(xlabel='Pressure [GPa]', ylabel='Relative alpha gap')
+        ax.yaxis.set_major_locator(LogLocator(numticks=4))
+        ax.legend(
+            fontsize=7, ncol=2, frameon=False, title='S offset [J/kg/K]', title_fontsize=7
+        )
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'alpha_identity_gap')
