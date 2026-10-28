@@ -109,12 +109,12 @@ With the CI test EOS tables, the two runs produce:
 | Surface viscosity $\eta_\mathrm{surf}$ (`phase_basic.viscosity()[-1]`) [Pa s] | `$3.000e+17$` | `$9.352e+27$` |
 | Bulk CMB viscosity $\eta_\mathrm{cmb}$ (`phase_basic.viscosity()[0]`) [Pa s] | `$1.664e+17$` | `$1.916e+18$` |
 | Solid CMB diffusion viscosity $\eta_\mathrm{diff,cmb}$ (`phase_basic.eta_diff()[0]`) [Pa s] | `$3.000e+17$` | `$3.601e+18$` |
-| Peak convective heat flux $\max(F_\mathrm{conv})$ (`np.max(out.jconv_b)`) [W/m$^2$] | `$166020.23$` | `$249.54$` |
+| Peak convective heat flux $\max(F_\mathrm{conv})$ (`np.max(out.jconv_b)`) [W/m$^2$] | `$166020.15$` | `$249.52$` |
 | Peak eddy diffusivity $\max(\kappa_h)$ (`np.max(out.eddy_diff)`) [m$^2$/s] | `$16.3075$` | `$0.0422$` |
 | Near-surface magma temperature $T_\mathrm{magma}$ (`out.T_magma`) [K] | `$781.64$` | `$781.55$` |
 | Core temperature $T_\mathrm{core}$ (`out.T_core`) [K] | `$3563.96$` | `$3563.96$` |
 
-With `enabled = False`, the cold upper boundary layer keeps the uniform solid viscosity ($\eta_\mathrm{surf} = 3.000e+17\,\mathrm{Pa\,s}$), allowing vigorous near-surface overturn ($\max(F_\mathrm{conv}) = 166020.23\,\mathrm{W/m^2}$). With `enabled = True`, Arrhenius stiffening raises the surface viscosity to $\eta_\mathrm{surf} = 9.352e+27\,\mathrm{Pa\,s}$ and forms a conductive stagnant lid that suppresses convective transport in the cold upper shell ($\max(F_\mathrm{conv}) = 249.54\,\mathrm{W/m^2}$). At the partially molten CMB node, `phase_basic.eta_diff()[0]` reports the pure solid-phase diffusion viscosity ($3.000e+17\,\mathrm{Pa\,s}$ vs $3.601e+18\,\mathrm{Pa\,s}$), whereas `phase_basic.viscosity()[0]` blends that solid viscosity with the liquid phase across the melt fraction ($1.664e+17\,\mathrm{Pa\,s}$ vs $1.916e+18\,\mathrm{Pa\,s}$).
+With `enabled = False`, the cold upper boundary layer keeps the uniform solid viscosity ($\eta_\mathrm{surf} = 3.000e+17\,\mathrm{Pa\,s}$), allowing vigorous near-surface overturn ($\max(F_\mathrm{conv}) = 166020.15\,\mathrm{W/m^2}$). With `enabled = True`, Arrhenius stiffening raises the surface viscosity to $\eta_\mathrm{surf} = 9.352e+27\,\mathrm{Pa\,s}$ and forms a conductive stagnant lid that suppresses convective transport in the cold upper shell ($\max(F_\mathrm{conv}) = 249.52\,\mathrm{W/m^2}$). At the partially molten CMB node, `phase_basic.eta_diff()[0]` reports the pure solid-phase diffusion viscosity ($3.000e+17\,\mathrm{Pa\,s}$ vs $3.601e+18\,\mathrm{Pa\,s}$), whereas `phase_basic.viscosity()[0]` blends that solid viscosity with the liquid phase across the melt fraction ($1.664e+17\,\mathrm{Pa\,s}$ vs $1.916e+18\,\mathrm{Pa\,s}$).
 
 ## 3. Read the stagnant-lid diagnostics
 
@@ -137,14 +137,14 @@ print(f"w_y:         {float(lid['w_y']):.3e}")
 
 For the `enabled = True` run at $t = 10.0\,\mathrm{yr}$, these diagnostics evaluate to:
 
-- `has_lid = True`, with conductive lid thickness $d_\mathrm{lid} = 31.53\,\mathrm{km}$ ($d_\mathrm{lid} = 31534.83\,\mathrm{m}$) and lid-base radius $r_\mathrm{lid,base} = 6339.47\,\mathrm{km}$.
-- Convecting interior temperature $T_i = 1962.84\,\mathrm{K}$, lid temperature $T_\mathrm{lid} = 1441.97\,\mathrm{K}$, and lid-base isotherm target $T_\mathrm{lid,iso} = 1788.91\,\mathrm{K}$.
-- Frank-Kamenetskii parameter $\theta = 14.942$, rheological temperature scale $\Delta T_\mathrm{rh} = 79.06\,\mathrm{K}$, and interior viscosity $\eta_i = 4.494e+18\,\mathrm{Pa\,s}$.
-- Lid-scaled convective driving stress $\tau_{d,\mathrm{lid}} = 653.04\,\mathrm{kPa}$ ($653043.19\,\mathrm{Pa}$) against a Byerlee lid yield strength of $\tau_{y,\mathrm{lid}} = 500.00\,\mathrm{MPa}$, so the plastic yielding weight is $w_y = 2.116e-09$ (`0` yielding basic nodes) and the lid remains in the unyielded stagnant-lid regime.
+- `has_lid = True`, with conductive lid thickness $d_\mathrm{lid} = 31.45\,\mathrm{km}$ ($d_\mathrm{lid} = 31450.12\,\mathrm{m}$) and lid-base radius $r_\mathrm{lid,base} = 6339.55\,\mathrm{km}$.
+- Convecting interior temperature $T_i = 1962.65\,\mathrm{K}$, lid temperature $T_\mathrm{lid} = 1441.79\,\mathrm{K}$, and lid-base isotherm target $T_\mathrm{lid,iso} = 1788.75\,\mathrm{K}$.
+- Frank-Kamenetskii parameter $\theta = 14.942$, rheological temperature scale $\Delta T_\mathrm{rh} = 79.05\,\mathrm{K}$, and interior viscosity $\eta_i = 4.521e+18\,\mathrm{Pa\,s}$.
+- Lid-scaled convective driving stress $\tau_{d,\mathrm{lid}} = 672.09\,\mathrm{kPa}$ ($672086.85\,\mathrm{Pa}$) against a Byerlee lid yield strength of $\tau_{y,\mathrm{lid}} = 500.00\,\mathrm{MPa}$, so the plastic yielding weight is $w_y = 2.117e-09$ (`0` yielding basic nodes) and the lid remains in the unyielded stagnant-lid regime.
 
 ## 4. Modify yield parameters to trigger plastic lid mobilisation
 
-To observe plastic yielding in Pass 2 of the stress closure, lower the cohesion `yield_stress_c` below $\tau_{d,\mathrm{lid}} = 653.04\,\mathrm{kPa}$ and set `yield_stress_mu = 0.0`:
+To observe plastic yielding in Pass 2 of the stress closure, lower the cohesion `yield_stress_c` below $\tau_{d,\mathrm{lid}} = 672.09\,\mathrm{kPa}$ and set `yield_stress_mu = 0.0`:
 
 ```python
 solver_yield = run_case(
@@ -166,9 +166,9 @@ print(f"Surface eta_diff = {eta_diff[-1]:.3e} Pa s -> eta_eff = {eta_eff[-1]:.3e
 
 With `yield_stress_c = 150.0` Pa and `yield_stress_mu = 0.0`:
 
-- The lid yield strength is $\tau_{y,\mathrm{lid}} = 150.0\,\mathrm{Pa}$, below $\tau_{d,\mathrm{lid}} = 652.85\,\mathrm{kPa}$.
+- The lid yield strength is $\tau_{y,\mathrm{lid}} = 150.0\,\mathrm{Pa}$, below $\tau_{d,\mathrm{lid}} = 671.79\,\mathrm{kPa}$.
 - The yielding blend weight reaches $w_y = 1.0$, and `10` basic nodes inside the upper boundary layer yield plastically (`eta_eff < eta_diff`).
-- At the surface basic node, plastic yielding reduces the effective viscosity from $\eta_\mathrm{diff,surf} = 9.193e+27\,\mathrm{Pa\,s}$ to $\eta_\mathrm{eff,surf} = 1.033e+15\,\mathrm{Pa\,s}$, increasing the peak convective heat flux from $249.54\,\mathrm{W/m^2}$ to $249.69\,\mathrm{W/m^2}$.
+- At the surface basic node, plastic yielding reduces the effective viscosity from $\eta_\mathrm{diff,surf} = 9.189e+27\,\mathrm{Pa\,s}$ to $\eta_\mathrm{eff,surf} = 1.010e+15\,\mathrm{Pa\,s}$, increasing the peak convective heat flux from $249.52\,\mathrm{W/m^2}$ to $249.68\,\mathrm{W/m^2}$.
 
 ![Radial profiles of viscosity and convective heat flux for rheology-off, default stagnant-lid, and plastic-yielding cases](../assets/tutorials/ssc_tutorial_profiles.svg#only-light)
 ![Radial profiles of viscosity and convective heat flux for rheology-off, default stagnant-lid, and plastic-yielding cases](../assets/tutorials/ssc_tutorial_profiles_dark.svg#only-dark)
