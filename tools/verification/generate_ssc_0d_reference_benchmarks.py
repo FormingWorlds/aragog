@@ -124,6 +124,7 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     _resolve_origin_head_commit,
     compute_generator_input_fingerprint,
     unbounded_cvode_step,
+    write_compact_json,
 )
 
 SECS_PER_YR = 31557600.0
@@ -1738,7 +1739,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(f'  - {f}\n')
         return 1
 
-    output_path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+    write_compact_json(output_path, data)
     print(f'Benchmarks written to {output_path}')
     return 0
 

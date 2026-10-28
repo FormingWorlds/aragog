@@ -78,6 +78,7 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     _resolve_origin_head_commit,
     compute_generator_input_fingerprint,
     korenaga_ti_fixed_point,
+    write_compact_json,
 )
 
 DEFAULT_OUT = REPO_ROOT / 'tests' / 'reference' / 'ssc_mlt_top_slope_calibration.json'
@@ -1108,7 +1109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = args.output.with_suffix(args.output.suffix + '.tmp')
-    tmp_path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+    write_compact_json(tmp_path, payload)
     os.replace(tmp_path, args.output)
     print(f'Wrote verified calibration benchmarks to {args.output}')
     return 0

@@ -6,6 +6,7 @@ import contextlib
 import copy
 import functools
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -358,3 +359,14 @@ def ols_fit(x_cols: list[np.ndarray], y_vec: np.ndarray) -> dict[str, Any]:
         'n_cases': int(n),
         'dof': int(dof),
     }
+
+
+def write_compact_json(path: Path, data: Mapping[str, Any]) -> None:
+    """Write ``data`` to ``path`` as JSON with one compact top-level block per line."""
+    blocks = []
+    for key, value in data.items():
+        if not isinstance(key, str):
+            raise TypeError(f'top-level JSON keys must be str, got {type(key).__name__}')
+        blocks.append(f'{json.dumps(key)}: {json.dumps(value, separators=(",", ":"))}')
+    text = '{\n' + ',\n'.join(blocks) + '\n}\n' if blocks else '{}\n'
+    path.write_text(text, encoding='utf-8')

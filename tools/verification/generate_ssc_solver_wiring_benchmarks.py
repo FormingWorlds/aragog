@@ -83,6 +83,7 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     compute_generator_input_fingerprint,
     entropy_eos_copy,
     entropy_eos_jax,
+    write_compact_json,
 )
 
 DEFAULT_BENCHMARK_PATH = REPO_ROOT / 'tests' / 'reference' / 'ssc_solver_wiring_benchmarks.json'
@@ -2342,7 +2343,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+    write_compact_json(output_path, data)
     print(f'Benchmarks written to {output_path}')
     return 0
 

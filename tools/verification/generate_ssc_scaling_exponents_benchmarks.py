@@ -88,6 +88,7 @@ from tools.verification._ssc_helpers import (  # noqa: E402
     compute_generator_input_fingerprint,
     korenaga_ti_fixed_point,
     unbounded_cvode_step,
+    write_compact_json,
 )
 from tools.verification._ssc_helpers import (  # noqa: E402
     ols_fit as _ols,
@@ -1104,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(f'  - {f}\n')
         return 1
 
-    output_path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+    write_compact_json(output_path, data)
     print(f'Benchmarks written to {output_path}')
     return 0
 
