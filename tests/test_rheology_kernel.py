@@ -3155,6 +3155,39 @@ def test_cross_field_viscosity_max_and_boundary_checks(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('bad', [False, 5, 'x'], ids=['bool', 'int', 'str'])
+def test_jax_phase_params_rheology_of_the_wrong_type_names_the_field(bad):
+    """The JAX PhaseParams refuses a rheology that is not a mapping, a
+    SolidRheologyParams or None with a TypeError naming the field and the type."""
+    from aragog.jax.phase import PhaseParams
+
+    try:
+        PhaseParams(
+            phi_rheo=0.4,
+            phi_width=0.15,
+            viscosity_solid=1.0e22,
+            viscosity_liquid=1.0e2,
+            grain_size=1.0e-3,
+            k_solid=4.0,
+            k_liquid=4.0,
+            matprop_smooth_width=0.01,
+            conduction=True,
+            convection=True,
+            grav_sep=False,
+            mixing=False,
+            eddy_diff_thermal=1.0,
+            eddy_diff_chemical=1.0,
+            kappah_floor=0.0,
+            rheology=bad,
+        )
+    except Exception as exc:
+        assert isinstance(exc, TypeError), f'expected TypeError, got {exc!r}'
+        assert 'rheology' in str(exc) and type(bad).__name__ in str(exc)
+    else:
+        pytest.fail(f'PhaseParams accepted rheology={bad!r}')
+
+
+@pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_saturating_activation_enthalpy_and_viscosity():
     """Verify saturating integral activation law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)), limits, validation, and solver wiring."""

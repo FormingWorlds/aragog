@@ -12,7 +12,6 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -35,6 +34,7 @@ from aragog.config.phases import (
     _compute_yield_stress_core,
     _viscous_mixing_length_factor_core,
     check_viscosity_ceiling,
+    merge_rheology,
 )
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.mesh import top_node_entropy
@@ -231,12 +231,7 @@ class PhaseParams(eqx.Module):
                 f'got {separation_buoyancy!r}'
             )
         self.separation_buoyancy_mixture = {'mixture': 1.0, 'solid': 0.0}[separation_buoyancy]
-        if isinstance(rheology, Mapping):
-            rheo_obj = SolidRheologyParams(**rheology)
-        elif rheology is None:
-            rheo_obj = SolidRheologyParams()
-        else:
-            rheo_obj = rheology
+        rheo_obj = merge_rheology(rheology, {})
         rheo_obj.__post_init__()
         check_viscosity_ceiling(viscosity_solid, rheo_obj)
         if rheo_obj.enabled:
