@@ -143,15 +143,15 @@ The composite expansivity of the mantle model, which holds the density change of
 
 ### NumPy and JAX right-hand sides
 
-NumPy reads each $\alpha_i$ from the `thermal_exp` tables when they are present, and JAX always takes
+NumPy and JAX both take
 
 $$
 \alpha_i = \frac{\rho_i\, c_{p,i}}{T} \left|\frac{\partial T}{\partial P}\right|_S
 $$
 
-of each phase. At the CMB pressure of the test tables and a layer mean temperature below 20000 K the two differ by up to $1.8 \times 10^{-4}$ in the solid and $8 \times 10^{-6}$ in the mush, which moves the flux by up to $6 \times 10^{-5}$. At that pressure, in the melt near the 22400 K edge of the tables, they differ by $8.7 \times 10^{-4}$, and the flux by $2.9 \times 10^{-4}$.
+of each phase, also when the table directory carries `thermal_exp` files (see [thermal expansivity of a single phase](phase_transitions.md#thermal-expansivity-of-a-single-phase)).
 
-The NumPy and JAX right-hand sides apply the same flux law and differ by this expansivity source and, at a mean temperature within rounding of a phase-boundary temperature, by the entropy that each temperature inversion picks in the flat band, which changes the flux by up to the step above.
+The NumPy and JAX right-hand sides apply the same flux law. At a mean temperature within rounding of a phase-boundary temperature they can differ by the entropy that each temperature inversion picks in the flat band, which changes the flux by up to the step above.
 
 CVODE integrates the JAX one when `use_jax_jacobian` is set (the default) and a JAX CVODE factory is registered, as PROTEUS does, and the NumPy one otherwise; the NumPy one also gives the output flux, and the per-call energy terms where the JAX batch evaluation fails. In each, the bottom cell and the core see the same flux, so the CMB exchange conserves energy.
 

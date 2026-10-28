@@ -171,7 +171,7 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
     states, validation_plot
 ):
     """At the solid and melt test states the thermal_exp table alpha differs from the identity
-    alpha by 1e-7 to 1e-3 relative: the gap that NumPy runs integrated before both paths took
+    alpha by 1e-7 to 1e-3 relative, a gap that does not enter a run because both paths take
     the identity. The plot shows the gap per state against pressure, with the 1e-12 tolerance
     of the NumPy and JAX agreement above."""
     P, S, side = states
