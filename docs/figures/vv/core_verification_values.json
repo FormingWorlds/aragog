@@ -183,10 +183,10 @@
   "jac_tcore_min_rel_above_onset": 4.440892098500626e-16,
   "jac_tcore_min_rel_nucleating": 1.605626742673394e-11,
   "jac_tcore_min_rel_stratified": 1.4562129280193403e-11,
-  "rhs_liquid_max_rel_identity": 2.7717500622423888e-14,
-  "rhs_liquid_max_rel_tables": 0.00016665689450172565,
-  "rhs_max_rel_above_onset": 1.3611134445627987e-12,
-  "rhs_max_rel_nucleating": 1.3611134445627987e-12,
+  "rhs_liquid_max_rel_identity": 2.748545203741329e-14,
+  "rhs_liquid_max_rel_tables": 2.748545203741329e-14,
+  "rhs_max_rel_above_onset": 1.4014828459387456e-12,
+  "rhs_max_rel_nucleating": 1.4014828459387456e-12,
   "rhs_max_rel_stratified": 1.981196161109541e-10
  },
  "13": {
@@ -403,13 +403,13 @@
   "t_melt_330GPa": 6229.18378136264
  },
  "9": {
-  "core_vs_cmb_rel": 5.545446422061673e-07,
-  "core_vs_cmb_rel_rtol1e-8": 1.3565930558900874e-06,
+  "core_vs_cmb_rel": 5.612550637579261e-07,
+  "core_vs_cmb_rel_rtol1e-8": 1.332126472464168e-06,
   "n_outputs": 131.0,
-  "r_icb_end_km": 244.39461920330604,
-  "reconstructed_cmb_max_rel": 0.0007905484617307668,
-  "step_dE_core_J": -1.0046180805458656e+28,
-  "t_core_end": 6409.5428848234305,
+  "r_icb_end_km": 244.3947456871846,
+  "reconstructed_cmb_max_rel": 0.0007905487139381329,
+  "step_dE_core_J": -1.004618798179154e+28,
+  "t_core_end": 6409.542881888639,
   "t_core_start": 6414.377415509878,
   "t_onset": 6412.377415509878
  }
