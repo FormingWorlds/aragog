@@ -72,8 +72,9 @@ def _assert_matches_main_reference(
 
 def test_rheology_off_preserves_main_rhs_and_solve() -> None:
     """When rheology is disabled, zero rheology core functions are invoked,
-    and RHS and solve outputs match the pinned main reference bitwise across
-    all 54 arrays."""
+    and RHS and solve outputs match the pinned main reference across all 54 arrays
+    (tolerance 1e-12 per RHS and 1e-9 per solve, relative to each value or to the
+    largest value of the array)."""
     counts_off = _measure_numpy_rhs_counts(SolidRheologyParams(enabled=False))
     assert counts_off['arrhenius_viscosity_core'] == 0
     assert counts_off['yield_stress_core'] == 0
