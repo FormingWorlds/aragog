@@ -89,9 +89,9 @@ This case has no plot: it checks the agreement of two arrays to round-off.
 
 **What it tests.** The test puts the mantle at 72 states: 50, 200 and 500 J/kg/K below the solidus and above the liquidus, at the 12 node pressures from 0 to 146 GPa, all inside the tables. It compares the expansivity of the NumPy evaluator with that of the JAX `evaluate_phase`, at width 0.01 (where the two-phase weight reaches 0.23 at 50 J/kg/K from a boundary) and at width $10^{-6}$ (where the weight is 0). At width $10^{-6}$ it also compares the NumPy expansivity with the identity of the evaluator's own density, heat capacity, adiabatic gradient and temperature. A second test compares `EntropyEOS.thermal_expansivity` and `material_expansivity` with the JAX methods at the same states.
 
-**How we know the right answer.** The identity follows from the Maxwell relation $(\partial T/\partial P)_S = (\partial V/\partial S)_P$, and the JAX path is an independent implementation of it. Agreement to round-off shows that both paths take $\alpha$ from the same source.
+**How we know the right answer.** The identity follows from the Maxwell relation $(\partial T/\partial P)_S = (\partial V/\partial S)_P$, and the JAX path is a second implementation of it. Agreement to round-off shows that both paths take $\alpha$ from the same source.
 
-**Why it matters.** The JAX Jacobian of the solver is the derivative of the JAX right-hand side; it is correct for the NumPy right-hand side only when both use the same expansivity.
+**Why it matters.** With a JAX factory, CVODE integrates the JAX right-hand side and Aragog reports the heat flux of the NumPy one; the two agree only when both use the same expansivity.
 
 ![Relative difference between the thermal_exp table expansivity and the identity expansivity against pressure, at 3 entropy offsets in the solid and the melt](../assets/validation/alpha_identity_gap.svg#only-light){ width="80%" }
 ![Relative difference between the thermal_exp table expansivity and the identity expansivity against pressure, at 3 entropy offsets in the solid and the melt](../assets/validation/alpha_identity_gap_dark.svg#only-dark){ width="80%" }
@@ -101,25 +101,27 @@ This case has no plot: it checks the agreement of two arrays to round-off.
 ??? info "Test details"
     - Reference: the identity $\alpha = \rho\, c_p\, (\partial T/\partial P)_S / T$ and the JAX implementation of it.
     - Tolerance: 10⁻¹² relative at all 72 states (measured: 4.3 × 10⁻¹⁵ at width 0.01, 6.5 × 10⁻¹⁶ at width 10⁻⁶, 6.9 × 10⁻¹⁶ for both `EntropyEOS` methods).
-    - Discrimination: with the NumPy expansivity from the `thermal_exp` tables all 4 comparisons fail, by up to 8.0 × 10⁻⁴.
-    - Test ids: `tests/test_alpha_identity_validation.py::test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp`, `::test_numpy_and_jax_eos_expansivity_methods_agree_on_tables_with_thermal_exp`, `::test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity` (the plot)
+    - Discrimination: with the NumPy expansivity from the `thermal_exp` tables all 4 comparisons fail, by up to 8.0 × 10⁻⁴. The plot test pins the gap range of the plot, 7.56 × 10⁻⁷ to 7.87 × 10⁻⁴, to 1 %, and checks the evaluator against JAX at width 10⁻⁶.
+    - Sign convention: on a table copy with a negative solid gradient, the evaluator clamps $\alpha$ to about 0 and the `EntropyEOS` methods give $|\alpha|$ (the test tables hold no negative gradient).
+    - PR tier: one unit test checks the NumPy and JAX agreement at a solid and a melt state at 50 GPa.
+    - Test ids: `tests/test_alpha_identity_validation.py::test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp`, `::test_numpy_and_jax_eos_expansivity_methods_agree_on_tables_with_thermal_exp`, `::test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity` (the plot), `::test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface`, `::test_the_composite_blend_takes_the_identity_alpha_outside_the_mush`, `::test_the_sign_conventions_of_the_identity_on_a_negative_gradient`, `::test_numpy_and_jax_alpha_agree_at_one_solid_and_one_melt_state`
     - Command: `pytest tests/test_alpha_identity_validation.py` (add `--validation-plots` to write the plot pair)
 
 ## The mushy-zone expansivity keeps its two-phase value
 
-**Why this check exists.** Under the default `cp_blend = "latent"` the two-phase expansivity of the mushy zone is the composite formula of SPIDER, the same in NumPy and JAX. The source of the single-phase expansivity must not enter it.
+**Why this check exists.** Under the default `cp_blend = "latent"` the two-phase expansivity of the mushy zone is the composite formula of SPIDER, the same in NumPy and JAX. The source of the single-phase expansivity must not change that value; it enters the blended expansivity only through the weight $1 - \mathrm{smth}$, which is close to $\tfrac{1}{2}$ within about one width of each boundary and close to 0 deeper in the mushy zone.
 
-**What it tests.** The test reads 36 states at melt fractions 0.1, 0.5 and 0.9 at 12 pressures from 0 to 145 GPa, with their expansivity at width 0 and 0.01 written by `tools/verification/generate_alpha_mush_reference.py` at commit 2d1af473 (commit and table checksums in the file header, `tests/validation/data/alpha_mush_2d1af473.csv`). At width 0 the expansivity is the two-phase value alone and must be equal bit for bit. At width 0.01 the single-phase value enters with the weight $1 - \mathrm{smth}$, so the expansivity may change by at most that weight times the gap between the table and the identity value, plus 10⁻¹⁵ relative.
+**What it tests.** The test reads 60 states at melt fractions 0.002, 0.1, 0.5, 0.9 and 0.998 at 12 pressures from 0 to 145 GPa, with their expansivity at width 0 and 0.01 written by `tools/verification/generate_alpha_mush_reference.py` at commit 2d1af473 (commit and table checksums in the file header, `tests/validation/data/alpha_mush_2d1af473.csv`). At width 0 the expansivity is the two-phase value alone and must be equal bit for bit. At width 0.01 the single-phase value enters with the weight $1 - \mathrm{smth}$, so the expansivity may change by at most that weight times the gap between the table and the identity value, plus 10⁻¹⁵ relative.
 
 **How we know the right answer.** The blend is linear in the single-phase value, and the clamp of negative values after it does not increase a difference.
 
 **Why it matters.** A cooling magma ocean passes through the mushy zone, where this expansivity sets the buoyancy of the convective flux.
 
-This case has no plot: it checks equality and a bound on 36 numbers.
+This case has no plot: it checks equality and a bound on 60 numbers.
 
 ??? info "Test details"
     - Reference: the expansivity of the same states at commit 2d1af473, where the two-phase formula is the same.
-    - Tolerance: bit for bit at width 0; at width 0.01 the bound above (measured: largest change 1.7 × 10⁻¹⁷ 1/K, at most 0.98 of the bound, at 22 of 36 states; the single-phase weight is at most 2.1 × 10⁻⁹).
+    - Tolerance: bit for bit at width 0; at width 0.01 the bound above (measured: 46 of 60 states change, by up to 3.4 × 10⁻⁹ 1/K or 1.0 × 10⁻⁵ relative, at melt fraction 0.998, where the single-phase weight is 0.40; the change equals the bound to rounding, because the blend is linear in the single-phase value).
     - Test id: `tests/test_alpha_identity_validation.py::test_the_mush_alpha_changes_only_through_the_single_phase_weight`
     - Command: `pytest tests/test_alpha_identity_validation.py -k mush`
 
@@ -127,7 +129,7 @@ This case has no plot: it checks equality and a bound on 36 numbers.
 
 **Why this check exists.** Under `cp_blend = "linear"` the two-phase expansivity interpolates between the values of the two phases on the solidus and the liquidus. If those values came from a different source than the single-phase expansivity, $\alpha$ would step on each boundary.
 
-**What it tests.** The test puts every node exactly on the solidus, then exactly on the liquidus, at width 0 under `cp_blend = "linear"`, at the 12 node pressures. It compares the expansivity with the identity value of that phase from the tables, after the clamp.
+**What it tests.** The test puts every node exactly on the solidus, then exactly on the liquidus, at width 0 under `cp_blend = "linear"`, at the 12 node pressures. It compares the expansivity with the identity value of that phase from the tables, after the clamp. At melt fraction 0.3 it compares the expansivity with $0.3$ times the liquidus value plus $0.7$ times the solidus value.
 
 **How we know the right answer.** At melt fraction 0 or 1 the linear blend is the value of one phase, and both come from the identity.
 

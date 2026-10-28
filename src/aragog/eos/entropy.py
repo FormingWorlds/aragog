@@ -393,8 +393,8 @@ class EntropyEOS:
                 eos_dir / f'adiabat_temp_grad_{phase}.dat'
             )
 
-            # thermal_exp tables feed the P-S consistency check only; alpha
-            # is derived from the thermodynamic identity.
+            # thermal_exp tables are kept when present; the solver derives
+            # alpha from the thermodynamic identity and does not read them.
             alpha_file = eos_dir / f'thermal_exp_{phase}.dat'
             if alpha_file.is_file():
                 self._tables[f'thermal_exp_{phase}'] = _load_spider_ps_table(alpha_file)

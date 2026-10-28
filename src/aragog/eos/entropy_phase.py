@@ -306,8 +306,8 @@ class EntropyPhaseEvaluator:
         T_liq = _lookup('temperature', P_arr, 'melt')
         rho_sol = _lookup('density', P_arr, 'solid')
         rho_liq = _lookup('density', P_arr, 'melt')
-        # Cp and alpha are derived from T, rho, S at boundaries (below)
-        # dTdPs at boundaries not needed (computed analytically)
+        # Cp and alpha at the boundaries follow below: latent from T, rho, S; linear
+        # from the boundary Cp and dTdPs tables through the identity
 
         # ── Step 3: intermediate two-phase properties (SPIDER 222-249) ──
         dT_phase = np.maximum(T_liq - T_sol, 1e-10)
