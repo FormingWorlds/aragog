@@ -865,6 +865,7 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     assert def_act['max_rel_diff_T_basic_on_vs_off'] == pytest.approx(
         0.0020515371830963575, rel=1.0e-9
     )
+    # 7.534 K: 7.485 K from the solid-cell floor switch, at most 0.199 K from the viscosity law
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] == pytest.approx(
         7.533986511913099, rel=1.0e-9
     )
