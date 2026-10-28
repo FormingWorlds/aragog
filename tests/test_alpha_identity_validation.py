@@ -5,6 +5,7 @@ alpha = rho c_p (dT/dP)_S / T, the same source as the JAX path, at solid and mel
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -139,12 +140,18 @@ def _single_phase_alphas(eos, P, S_b, side):
 @pytest.mark.reference_pinned
 def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
     """At melt fractions 0.002, 0.1, 0.5, 0.9 and 0.998 under ``cp_blend = 'latent'``, the
-    two-phase alpha (width 0) equals the value written by
-    tools/verification/generate_alpha_mush_reference.py at 2d1af473 to rounding, and NumPy
-    equals JAX at widths 0 and 0.01. At width 0.01 the alpha changes by at most (1 - smth)
+    two-phase alpha (width 0) equals the stored value to rounding, and NumPy equals JAX at
+    widths 0 and 0.01. The CSV of tools/verification/generate_alpha_mush_reference.py names
+    commit 2d1af473 and the sha256 of each table in its header; the test checks both. At width 0.01 the alpha changes by at most (1 - smth)
     times the gap between the table and the identity single-phase alpha, plus 1e-13 relative;
     at 0.002 and 0.998, where that weight is 0.40, it changes by exactly that amount wherever
     the clamp is inactive (alpha above 1e-8 1/K)."""
+    head = [ln[2:].split() for ln in _MUSH.read_text().splitlines() if ln.startswith('# ')]
+    assert ['aragog', 'commit', '2d1af473b35d189c76f2e8dcfcd7af075cf4de6a'] in head
+    sums = {r[1]: r[2] for r in head if r[0] == 'sha256'}
+    assert len(sums) == 12
+    for name, digest in sums.items():
+        assert hashlib.sha256((Path(EOS_DIR) / name).read_bytes()).hexdigest() == digest, name
     data = np.loadtxt(_MUSH, delimiter=',')
     P, S, phi, base0, base1 = data.T
     eos = entropy_eos_copy(EOS_DIR)
@@ -200,14 +207,11 @@ def test_the_linear_blend_meets_the_single_phase_alpha_at_each_boundary(states, 
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
-    states, validation_plot
-):
+def test_the_thermal_exp_table_alpha_differs_from_the_identity(states, validation_plot):
     """At the solid and melt test states the thermal_exp table alpha differs from the identity
-    alpha by 1e-7 to 1e-3 relative, a gap that does not enter a run because both paths take
-    the identity; the pinned range 7.56e-7 to 7.87e-4 holds for the CI tables of release
-    test-data-v1. The plot shows the gap per state against pressure, with the 1e-12 tolerance
-    of the NumPy and JAX agreement above."""
+    alpha by 7.56e-7 to 7.87e-4 relative (to 1 %) on the CI tables of release test-data-v1.
+    The plot shows the gap per state against pressure, with the 1e-12 tolerance of the NumPy
+    and JAX agreement of the other tests."""
     P, S, side = states
     eos = entropy_eos_copy(EOS_DIR)
     gap = np.empty_like(P)
@@ -262,9 +266,9 @@ def test_the_composite_blend_takes_the_identity_alpha_outside_the_mush(states):
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
-    """At P = 0 the solid tables span 320 to 1439 K; the 3 states sit at 320, 530 and 883 K, below the
-    temperatures of the other states;
-    there the NumPy evaluator alpha equals the JAX alpha to 1e-12 relative."""
+    """At P = 0 the solid branch runs from 320 K at the lowest entropy to 1439 K at the solidus.
+    The 3 states sit at 320, 530 and 883 K, below the other states (at least 1000 K).
+    There the NumPy evaluator alpha equals the JAX alpha to 1e-12 relative."""
     eos = entropy_eos_copy(EOS_DIR)
     S = np.array([-1500.0, -800.0, -200.0])
     P = np.zeros_like(S)
