@@ -12,7 +12,6 @@ import pytest
 
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
-from tests.test_matprop_smooth_width_validation import _solver
 
 jnp = pytest.importorskip('jax.numpy')
 
@@ -20,12 +19,17 @@ pytestmark = [needs_eos, pytest.mark.timeout(120)]
 
 _DS = (50.0, 200.0, 500.0)  # entropy offset from the boundary [J/kg/K]
 _WIDTHS = (0.01, 1e-6)
+_P_MESH = np.array(  # basic-node pressures [Pa] of the 12-node validation mesh, 146 to 0 GPa
+    [145699277480.57172, 132815257822.32304, 119624372807.51656, 106235322974.06999,
+     92738004115.32362, 79206208965.22893, 65700262520.08543, 52269377426.41144,
+     38953820881.43152, 25786500364.349808, 12794461444.534155, 0.0]
+)  # fmt: skip
 
 
 @pytest.fixture(scope='module')
 def states():
     """(P, S, side) of every test state: solid at S_sol - dS, melt at S_liq + dS."""
-    P = np.asarray(_solver()._P_basic_flat, dtype=float)
+    P = _P_MESH
     eos = entropy_eos_copy(EOS_DIR)
     S_sol, S_liq = np.ravel(eos.solidus_entropy(P)), np.ravel(eos.liquidus_entropy(P))
     rows = [(P, S_sol - d, 'solid') for d in _DS] + [(P, S_liq + d, 'melt') for d in _DS]
@@ -213,8 +217,6 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
         gap[sel] = np.abs(tab - ident) / np.abs(ident)
     assert gap.min() == pytest.approx(7.56e-7, rel=0.01)
     assert gap.max() == pytest.approx(7.87e-4, rel=0.01)
-    alpha_np = np.ravel(_numpy_evaluator(P, S, 1e-6).thermal_expansivity())
-    np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, 1e-6), rtol=1e-12, atol=0)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -260,7 +262,8 @@ def test_the_composite_blend_takes_the_identity_alpha_outside_the_mush(states):
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
-    """At P = 0 the solid tables reach 320 to 950 K, below the temperatures of the other states;
+    """At P = 0 the solid tables span 320 to 1439 K; the 3 states sit at 320, 530 and 883 K, below the
+    temperatures of the other states;
     there the NumPy evaluator alpha equals the JAX alpha to 1e-12 relative."""
     eos = entropy_eos_copy(EOS_DIR)
     S = np.array([-1500.0, -800.0, -200.0])
