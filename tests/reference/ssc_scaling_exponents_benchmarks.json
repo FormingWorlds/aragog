@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "git_commit": "f32e9463203352a801d8c4b51f818702a39f92ac",
-    "generator_input_sha256": "f566ce9668a4ab551156c383e2850ecb8a3ada04da8dc84ff218b9a2622d4fe0",
+    "git_commit": "55b7ca6a3ab8d709a2d2ef9fbee5abdf04bc8800",
+    "generator_input_sha256": "374a9cd973d67b18c81615662e9b6c912bb15a3ec56a3e31aaba6094999e41bf",
     "generator_input_files": {
       "src/aragog/__init__.py": "dc05d98b503aa6ce6f61ab234528a1fa6ee40cd54017cc7ab2499eb1e138b8bb",
       "src/aragog/cfg/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -11,7 +11,7 @@
       "src/aragog/cfg/abe_mixed_lookup.cfg": "7c39e497be05d5dee1506ad968ef672631517128bc481ec314693f3d64bc286c",
       "src/aragog/cfg/abe_solid.cfg": "10daf09f273ead5875d467ed90913f48aa17ec27a17ad5dd74722e7fd23ba8f6",
       "src/aragog/cfg/abe_solid.toml": "336e4e9e0c7f82f817ee85bde63315292a3e047d9d4dc0baa5727b549320e87b",
-      "src/aragog/cli.py": "5ee51772aaeeeecf7d22b9a58e540de23806fa949ac3f92f50331d879546a997",
+      "src/aragog/cli.py": "d72ee28c2d0439b8971e0b7147330596aba2fff566d4265af9aa1f32e21acab8",
       "src/aragog/config/__init__.py": "5c6227562ce1610f22d25991810e6d41943f18f54802f550cee47f66e8954cbd",
       "src/aragog/config/boundary.py": "1b73b90cc91616bd9ff55bf56f31870272bcf9744abed36fc23bc4e02f6dd53e",
       "src/aragog/config/energy.py": "5a38a0591819837092dd389a97462d4087e5b3d0c45924991ed052cc065bd552",
@@ -38,7 +38,7 @@
       "src/aragog/jax/__init__.py": "45574d2c7b26ddca70da1c84052a890b4977fa966c648e403278ecfe6fae6292",
       "src/aragog/jax/eos.py": "30bbc4c48947bd1e5096d7f0fe4b257a0ac9d779064714d8945f63133f07a75d",
       "src/aragog/jax/nondim.py": "8521960850b72a8bb0ba385fe1a4330b66c46925b50f7a67b0db49343c757579",
-      "src/aragog/jax/phase.py": "9c5c5775b046b38be8d5e6a8226892efd0f8666a819cefb9982dca60b16132e0",
+      "src/aragog/jax/phase.py": "45355a1068dc99624bf0450b8fa45e67b302def5a6ae78d111f471b3864d38b3",
       "src/aragog/jax/solver.py": "aba7a56200bcf36c2eacd2a049cb6ea19d91ba60e6b1afc7ed79432699e2b8a7",
       "src/aragog/mesh/__init__.py": "1cc3b8fa9070573106618cd591975ed83c731254e63e3c1c5e460d57a1dfe859",
       "src/aragog/mesh/fixed_mesh.py": "17c305ccefbb275f5bd7b6acc358187123cee4951440e6fad84ad6b71ea83a38",
@@ -46,16 +46,16 @@
       "src/aragog/output/__init__.py": "36a3f5ecfc461caf61fbe2aadc18c2fdcf25d408550622de65f79c90ce1c1dd1",
       "src/aragog/output/diagnostics.py": "71748477095544a387178ab627b74ff7522425f259c1c4487983566cd34ce89d",
       "src/aragog/parser.py": "11d32155db781937e5f21df8d8baf8f2f3ce638214727e76a2bd10c82e9707e2",
-      "src/aragog/rheology.py": "dd3bfd53496280ec6eb072f0f8e606278658ee317a7472bca41f204c209ca945",
+      "src/aragog/rheology.py": "5a810c9d5797b9ef880d543622873411ac5a2695e0212599a45adb56bd3ce7a9",
       "src/aragog/rheology_lid.py": "d3558189d613710ca15864cd299e49405896bed0ca18df8cc7053709df031da0",
       "src/aragog/solver/__init__.py": "e56b859de006e1db63a78f367a92dccbb5fffb89e3ac5ae258ec8a0a9f8caf49",
       "src/aragog/solver/boundary.py": "c52d1d2e3ab192ca19d8db69dc1019cf4b3aa54d4abcea85c7b6eeb2875a4b85",
       "src/aragog/solver/cvode_jax.py": "64e934cc9d1d1e75af40f4de11e66f82fe35d130bb45f54eb18cb87b7b484f67",
-      "src/aragog/solver/entropy_solver.py": "22afb6ee2ca7cb7ae1030b40b202f4c920e6e61652b7e90c7a97451b1b5e4f0e",
+      "src/aragog/solver/entropy_solver.py": "fc6ff5e2c084b114ff2426ba3d850fad14b11467252ef845b317b641d5df58b4",
       "src/aragog/solver/entropy_state.py": "e48026f4197013a585a276d75d972ad722488bf23a532c39074cee6922dea0c0",
       "src/aragog/utilities.py": "4d92a214e8c3edda11a6651fd396202de4f9869f629e77f4709a05a9187a8929",
       "tools/verification/_ssc_helpers.py": "40fd8e1dbeb5d8f37dd1842985174b6a8dfd208280e026c758d3bf1a5283f252",
-      "tools/verification/generate_ssc_scaling_exponents_benchmarks.py": "c6443dbba75396b402e0c4154879a6ad81a701a0337e9177646426a1bb5da39b"
+      "tools/verification/generate_ssc_scaling_exponents_benchmarks.py": "1da42b28401068f335510a5e41f81af74bd7308de501ba6637299017c1c53a17"
     },
     "eos_tables": "no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)",
     "rheology_calibration": {
