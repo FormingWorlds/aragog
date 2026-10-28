@@ -1390,6 +1390,40 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+def test_rate_mode_lifts_hundred_year_cap_at_default_width_after_solidification(shared_eos):
+    """At the default width 0.01, a segment that starts with phi_max = 0 takes max_step > 100 yr."""
+    s = _solver(
+        shared_eos,
+        'rate',
+        n_nodes=12,
+        end_time=2.0e5,
+        outer_bc=4,
+        outer_value=200.0,
+        max_steps=300,
+        tol=1e-8,
+        convective_threshold=0.0,
+    )
+    assert s.parameters.phase_mixed.matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
+    S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
+    s.set_initial_entropy(np.full_like(S_sol, S_sol[-1] + 5.0))
+    s.solve()
+    sol = s._solution
+    assert sol.status == 0, f'Solver aborted with status {sol.status}'
+    t = np.asarray(sol.t)
+    S_all = np.asarray(sol.y)[: s._n_stag, :]
+    lifted = [seg for seg in getattr(sol, 'segments', []) if seg[2] > 100.0]
+    assert lifted, 'max_step never above 100 yr'
+    for seg in lifted:
+        (i,) = np.flatnonzero(t == seg[0])
+        phi = np.asarray(shared_eos.melt_fraction(s._P_stag_flat, S_all[:, i])).ravel()
+        assert phi.max() == 0.0, (
+            f'max_step {seg[2]} yr at t {seg[0]} yr with phi_max {phi.max()}'
+        )
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
 def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos):
     """Regime 4 segments use rtol 1e-9 and atol 1e-8 while super-solidus keep caller tolerances."""
     s = _solver(shared_eos, 'rate', tol=1.0e-7, end_time=100.0)
