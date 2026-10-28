@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -87,6 +88,8 @@ def test_aragog_imported_outside_main_tree_is_refused(
 ) -> None:
     """The run stops before any array when aragog does not come from the main tree."""
     monkeypatch.setattr(sys, 'path', list(sys.path))
+    # generate_reference sets this variable; setenv records the old state for teardown.
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', os.environ.get('ARAGOG_TEST_EOS_DIR', ''))
     out = tmp_path / 'ref.npz'
     try:
         gen.generate_reference(git_tree, tmp_path, out, 'f' * 40)
