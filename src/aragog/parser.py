@@ -580,9 +580,6 @@ class Parameters:
                         f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
                         f'{r.half_life_years}); check the amplitude and t0_years'
                     )
-        for r, r_scaled in zip(self.radionuclides, scaled):
-            r.concentration = r_scaled.concentration
-
         if self.phase_liquid.rheology != SolidRheologyParams():
             raise ValueError(
                 'Solid-state rheology is only supported on phase_solid; '
@@ -590,6 +587,9 @@ class Parameters:
             )
         check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
         check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
+
+        for r, r_scaled in zip(self.radionuclides, scaled):
+            r.concentration = r_scaled.concentration
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
