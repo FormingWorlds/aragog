@@ -38,7 +38,8 @@ def _resolve_commit_sha(main_tree: Path, explicit_sha: str | None) -> str:
     Raises
     ------
     ValueError
-        If ``main_tree`` is not the root of a git tree and no SHA is given.
+        If ``main_tree`` is not the root of a git tree and no SHA is given,
+        or if the tree has uncommitted changes or untracked files.
     """
     if explicit_sha:
         return explicit_sha.strip()
@@ -50,6 +51,16 @@ def _resolve_commit_sha(main_tree: Path, explicit_sha: str | None) -> str:
     out = res.stdout.split()
     if res.returncode != 0 or len(out) != 2 or Path(out[0]).resolve() != main_tree.resolve():
         raise ValueError(f'{main_tree} is not the root of a git tree; pass --commit-sha')
+    status = subprocess.run(
+        ['git', '-C', str(main_tree), 'status', '--porcelain'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if status.stdout.strip():
+        raise ValueError(
+            f'{main_tree} has uncommitted changes; the SHA would not match the arrays'
+        )
     return out[1]
 
 
@@ -71,10 +82,22 @@ def generate_reference(
         Destination .npz file path.
     commit_sha : str
         Commit SHA corresponding to the main tree.
+
+    Raises
+    ------
+    RuntimeError
+        If the imported ``aragog`` package does not lie inside ``main_tree``.
     """
     sys.path.insert(0, str(main_tree / 'src'))
     sys.path.insert(0, str(main_tree))
     os.environ['ARAGOG_TEST_EOS_DIR'] = str(eos_dir)
+
+    import aragog
+
+    aragog_file = Path(aragog.__file__).resolve()
+    print(f'aragog imported from {aragog_file}')
+    if main_tree.resolve() not in aragog_file.parents:
+        raise RuntimeError(f'aragog at {aragog_file} is not inside the main tree {main_tree}')
 
     import jax
     import jax.numpy as jnp
@@ -363,7 +386,11 @@ def main() -> int:
         print(f'Error: {exc}', file=sys.stderr)
         return 1
     print(f'Generating reference using commit {commit_sha}...')
-    generate_reference(args.main_tree, eos_dir, args.output, commit_sha)
+    try:
+        generate_reference(args.main_tree, eos_dir, args.output, commit_sha)
+    except RuntimeError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
     return 0
 
 
