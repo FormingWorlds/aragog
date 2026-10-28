@@ -388,12 +388,7 @@ def run_rhs_cost_benchmarks(
     eos_jax: Any,
     table_hashes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Measure per-RHS call counts and the minimum wall time over 7 repeats of 1000 evals.
-
-    The minimum is the least load-sensitive estimate: the median of 3 spreads by +-0.15 in the
-    JAX lid/off ratio at a 1-minute load of 15-22. The minimum gives a JAX lid/off ratio of 1.26 to
-    1.31 at a load of 17-26; the verify bound 1.5 guards against a gross regression only.
-    """
+    """Measure per-RHS call counts and the minimum wall time over 7 repeats of 1000 evals."""
     import jax
     import jax.numpy as jnp
 
@@ -1725,8 +1720,10 @@ def _verify_parity_block(
             )
 
     kfl = parity_block['abe_solid_kappah_floor_0']
-    if float(kfl.get('min_rel_rhs_on_vs_off', 0.0)) < 1.0e-4:
-        failures.append('abe_solid_kappah_floor_0 min_rel_rhs_on_vs_off < 1e-4')
+    if float(kfl.get('min_rel_rhs_on_vs_off', 0.0)) < 4.0e-3:
+        failures.append('abe_solid_kappah_floor_0 min_rel_rhs_on_vs_off < 4e-3')
+    if float(kfl.get('max_rel_rhs_on_vs_off', 1.0)) > 2.0e-2:
+        failures.append('abe_solid_kappah_floor_0 max_rel_rhs_on_vs_off > 2e-2')
     if float(kfl.get('canary_jax_broken_min_rel_rhs_diff', 0.0)) < 1.0e-3:
         failures.append('abe_solid_kappah_floor_0 canary_jax_broken_min_rel_rhs_diff < 1e-3')
 
@@ -1833,6 +1830,8 @@ def _verify_cost_block(
         if n_eval != 1000:
             failures.append(f"modes['{m_key}'].n_eval={n_eval} != 1000")
             continue
+        if m_rec.get('n_repeats') != 7:
+            failures.append(f"modes['{m_key}'].n_repeats={m_rec.get('n_repeats')} != 7")
         dt_np = float(m_rec.get('numpy_total_s', -1.0))
         dt_jx = float(m_rec.get('jax_total_s', -1.0))
         if dt_np <= 0.0 or dt_jx <= 0.0:

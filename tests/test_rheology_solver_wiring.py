@@ -816,10 +816,8 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     Reads tests/reference/ssc_solver_wiring_benchmarks.json to verify that five
     runs of abe_solid.toml from perturbed initial entropy profiles
     S_0(r)(1 + k * 1e-12) for k in {-2, -1, 0, +1, +2} over 100 yr satisfy
-    Delta T_on(r) <= 3.5e-5 K on active-solid (margin 2.0x over the basic 1.751e-5 K
-    and 1.03x over the staggered 3.389e-5 K) and Delta T_on(r) <= 2.0e-6 K on the
-    default configuration (2.6x over the basic 7.565e-7 K, 6.5x over the staggered
-    3.055e-7 K).
+    Delta T_on(r) <= 3.5e-5 K on active-solid and Delta T_on(r) <= 2.0e-6 K on the
+    default configuration, on basic and staggered nodes.
 
     Parameters
     ----------
@@ -865,7 +863,7 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     assert def_act['max_rel_diff_T_basic_on_vs_off'] == pytest.approx(
         0.0020515371830963575, rel=1.0e-9
     )
-    # 7.534 K: 7.485 K from the solid-cell floor switch, at most 0.199 K from the viscosity law
+    # 7.534 K: floor switch alone 7.485 K, law added to it 0.199 K (maxima, not additive)
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] == pytest.approx(
         7.533986511913099, rel=1.0e-9
     )
@@ -910,8 +908,8 @@ def test_rhs_call_counts_and_cost(validation_plot) -> None:
     +2 Arrhenius viscosity calls, +2 yield stress calls, +1 stagnant-lid state call,
     +1 effective viscosity call, and +2 viscous MLT factor calls per RHS on both
     NumPy and JAX (measured live), while asserting stored-data consistency for the
-    JIT-compiled JAX per-RHS wall-time ratio <= 1.5 (minimum over 7 repeats; measured 1.26 to 1.31
-    in 'lid' mode at a load of 17-26, so 1.5 guards against a gross regression only)."""
+    JIT-compiled JAX per-RHS wall-time ratio <= 1.5 (minimum over 7 repeats, read from the
+    stored benchmark)."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     cost_block = data['rhs_wall_time']
     ratios = cost_block['ratios']
@@ -1943,9 +1941,15 @@ def test_jax_jacobian_is_finite_for_the_lid_closure_with_a_constant_mixing_lengt
 
 @pytest.mark.parametrize(('width', 'expected'), [(0.05, 0.05), (None, 1.0e-2)])
 def test_phase_params_from_parameters_takes_the_numpy_phase_smoothing_width(width, expected):
-    """``from_parameters`` sets the Jgrav/Jmix width to ``matprop_smooth_width`` (``None``: the default)."""
-    params = _make_abe_solid_params(SolidRheologyParams(enabled=True))
-    if width is not None:
+    """``from_parameters`` sets the Jgrav/Jmix width to ``matprop_smooth_width``
+    (``None``: ``abe_solid.toml`` as loaded, which leaves the 0.01 default in place)."""
+    if width is None:
+        with importlib.resources.as_file(
+            importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+        ) as p:
+            params = Parameters.from_file(p)
+    else:
+        params = _make_abe_solid_params(SolidRheologyParams(enabled=True))
         params = replace(
             params, phase_mixed=replace(params.phase_mixed, matprop_smooth_width=width)
         )

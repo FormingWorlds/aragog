@@ -570,9 +570,9 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
        solid-cell floor switch at kappah_floor 10 (rheology on gives a fully solid cell no floor),
        not the viscosity law, which item 1 guards.
 
-    The live yield-active state needs yield on vs off >= 5e-5 (9.52e-5 at width 0.01, 3.99e-4 at
-    width 0): the blend gives the two solid nodes above the solidus the two-phase thermal expansivity
-    of the test tables, so their mixing-length diffusivity is near 0 with and without yield."""
+    The live yield-active state needs yield on vs off >= 5e-5 (measured 9.52e-5): the blend
+    gives the two solid nodes above the solidus the two-phase thermal expansivity of the test
+    tables, so their mixing-length diffusivity is near 0 with and without yield."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     parity_block = data['rhs_parity_and_activity']
     var_rec = parity_block['abe_solid_kappah_floor_0']
