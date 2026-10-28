@@ -136,7 +136,11 @@ class SolidRheologyParams:
             val = getattr(self, name)
             if isinstance(val, (bool, np.bool_)):
                 raise TypeError(f'{name} must be a real number, got {val!r}')
-            if math.isnan(val) or not in_range(val):
+            try:
+                out_of_range = math.isnan(val) or not in_range(val)
+            except TypeError as exc:
+                raise TypeError(f'{name} must be a real number, got {val!r}') from exc
+            if out_of_range:
                 raise ValueError(f'{name} must be {expected}, got {val}')
         if self.activation_energy is None:
             if self.activation_volume != 0.0:
@@ -184,6 +188,8 @@ def merge_rheology(
 
     Raises
     ------
+    TypeError
+        If ``rheology`` is not a :class:`SolidRheologyParams`, a mapping or None.
     TypeError, ValueError
         If any field in ``rheology`` or ``overrides`` violates the type or range
         constraints of :class:`SolidRheologyParams`.
@@ -192,13 +198,21 @@ def merge_rheology(
         base = SolidRheologyParams(**rheology)
     elif rheology is None:
         base = SolidRheologyParams()
-    else:
+    elif isinstance(rheology, SolidRheologyParams):
         base = rheology
+    else:
+        raise TypeError(
+            'rheology must be a table of SolidRheologyParams fields, a SolidRheologyParams '
+            f'or None, got {type(rheology).__name__} ({rheology!r})'
+        )
     return replace(base, **overrides) if overrides else base
 
 
 def check_viscosity_ceiling(viscosity: Any, rheology: SolidRheologyParams) -> None:
     """Raise ValueError when a numeric ``viscosity`` is not below ``10**viscosity_max_log10``.
+
+    The ceiling applies only when ``rheology.enabled`` is True; with the rheology
+    off any ``viscosity`` passes.
 
     Parameters
     ----------
@@ -207,21 +221,22 @@ def check_viscosity_ceiling(viscosity: Any, rheology: SolidRheologyParams) -> No
         in ``(0, 10**viscosity_max_log10)`` are accepted, while non-scalar or
         boolean values are ignored by this scalar ceiling check.
     rheology : SolidRheologyParams
-        Rheology parameter set providing ``viscosity_max_log10`` (dimensionless,
-        valid range ``(20, 300]``).
+        Rheology parameter set providing ``enabled`` and ``viscosity_max_log10``
+        (dimensionless, valid range ``(20, 300]``).
 
     Returns
     -------
     None
-        Returns ``None`` when ``viscosity`` satisfies the ceiling.
+        Returns ``None`` when ``viscosity`` satisfies the ceiling or the rheology
+        is disabled.
 
     Raises
     ------
     ValueError
-        If ``viscosity`` overflows ``float`` or if ``viscosity > 0`` is finite
-        and ``rheology.viscosity_max_log10 <= log10(viscosity)``.
+        If the rheology is enabled and ``viscosity`` overflows ``float``, or
+        ``viscosity > 0`` is finite and ``rheology.viscosity_max_log10 <= log10(viscosity)``.
     """
-    if isinstance(viscosity, (bool, np.bool_)):
+    if not rheology.enabled or isinstance(viscosity, (bool, np.bool_)):
         return
     is_num_scalar = isinstance(viscosity, (int, float, np.number)) or (
         getattr(viscosity, 'ndim', None) == 0
