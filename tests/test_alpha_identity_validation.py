@@ -136,7 +136,7 @@ def _single_phase_alphas(eos, P, S_b, side):
 def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
     """At melt fractions 0.002, 0.1, 0.5, 0.9 and 0.998 under ``cp_blend = 'latent'``, the
     two-phase alpha (width 0) equals the value written by
-    tools/verification/generate_alpha_mush_reference.py at 2d1af473 bit for bit, and NumPy
+    tools/verification/generate_alpha_mush_reference.py at 2d1af473 to rounding, and NumPy
     equals JAX at widths 0 and 0.01. At width 0.01 the alpha changes by at most (1 - smth)
     times the gap between the table and the identity single-phase alpha, plus 1e-13 relative;
     at 0.002 and 0.998, where that weight is 0.40, it changes by exactly that amount wherever
@@ -144,8 +144,11 @@ def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
     data = np.loadtxt(_MUSH, delimiter=',')
     P, S, phi, base0, base1 = data.T
     eos = entropy_eos_copy(EOS_DIR)
-    np.testing.assert_array_equal(
-        np.ravel(_numpy_evaluator(P, S, 0.0).thermal_expansivity()), base0
+    np.testing.assert_allclose(  # 1e-14: Linux and macOS differ by up to 2 ulp
+        np.ravel(_numpy_evaluator(P, S, 0.0).thermal_expansivity()),
+        base0,
+        rtol=1e-14,
+        atol=1e-20,
     )
 
     tip1 = np.ravel(_numpy_evaluator(P, S, 0.01).thermal_expansivity())
