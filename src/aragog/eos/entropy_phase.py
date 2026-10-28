@@ -504,6 +504,12 @@ class EntropyPhaseEvaluator:
         return self._thermal_conductivity_val
 
     def thermal_expansivity(self) -> FloatOrArray:
+        """Thermal expansivity [1/K] at each node, from the last :meth:`update`.
+
+        The blend of the two-phase value and the single-phase identity
+        ``rho cp (dT/dP)_S / T``, mapped by ``0.5 (a + sqrt(a^2 + 1e-16))`` so that it is
+        positive: a negative blend gives a value near 0.
+        """
         return self._thermal_expansivity
 
     def viscosity(self) -> FloatOrArray:
