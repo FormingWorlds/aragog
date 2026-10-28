@@ -29,12 +29,48 @@ There is no separate `SinglePhaseEvaluator` / `MixedPhaseEvaluator` / `Composite
 
 ## Two-stage SPIDER-parity blend
 
-For each cell at $(P, S)$, the phase evaluator computes a blending weight in two stages:
+For each cell at $(P, S)$, the phase evaluator computes two values of each property and blends them:
 
-1. **Stage 1 - mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$, and the property reduces to the relevant single-phase value.
-2. **Stage 2 - SPIDER `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width`. This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity across the solidus and liquidus.
+1. **Two values.** The two-phase (lever-rule) value comes from the solidus and liquidus values at that pressure. The single-phase value comes from the solid table in the lower half of the melting interval and below it, and from the melt table in the upper half and above it; the table is read at the cell entropy outside the melting interval and at the solidus or liquidus entropy inside it.
+2. **Blend (SPIDER `combine_matprop`).** The property is `smth*mixed + (1-smth)*single`. The weight $\mathrm{smth}$ is close to 1 inside the mushy band and close to 0 outside it, and it changes over the width `matprop_smooth_width` at the solidus and the liquidus ([width of the blend](#width-of-the-blend-at-the-solidus-and-the-liquidus)).
 
-The same two-stage blend is applied to density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
+The phase-boundary smoothing function of [Heat transport](heat_transport.md) (`phase_smoothing`, tanh or cubic Hermite) is a different weight: it acts on the gravitational-separation and chemical-mixing fluxes, not on the properties. Its tanh form takes its width from the same `matprop_smooth_width` (0.01 when that width is 0).
+
+The same blend is applied to temperature, density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
+
+## Width of the blend at the solidus and the liquidus
+
+How does a property change when the entropy of a node crosses the solidus or the liquidus?
+
+On each side of a phase boundary the evaluator has two values of every property: the two-phase value of the mushy zone and the single-phase value from the solid or the melt table. The weight $\mathrm{smth}$ moves from one value to the other over a width $w$, the setting `matprop_smooth_width` in `[phase_mixed]`. The default is $w = 0.01$, the value PROTEUS uses, so the properties change smoothly at both boundaries.
+
+The weight uses the melt coordinate $g = (S - S_\mathrm{sol}) / (S_\mathrm{liq} - S_\mathrm{sol})$, which is not clipped: $g < 0$ below the solidus and $g > 1$ above the liquidus. SPIDER's `get_smoothing` (`util.c`) gives
+
+$$
+\mathrm{smth}(g) =
+\begin{cases}
+\tfrac{1}{2}\left[1 + \tanh(g / w)\right], & g \le 0.5,\\
+\tfrac{1}{2}\left[1 - \tanh((g - 1) / w)\right], & g > 0.5,
+\end{cases}
+\qquad
+X = \mathrm{smth}\,X_\mathrm{two\text{-}phase} + (1 - \mathrm{smth})\,X_\mathrm{single},
+$$
+
+for each property $X$. On a boundary ($g = 0$ or $g = 1$) the weight is exactly $\tfrac{1}{2}$, so the property is the mean of the two values.
+
+With $w = 0$ the weight is 1 inside the mushy zone and 0 outside it, so the properties jump at the boundary. Example from the SPIDER test tables at 65.7 GPa: the melting interval is $S_\mathrm{liq} - S_\mathrm{sol}$ = 8148 J/kg/K, so $w = 0.01$ spreads the change over about 81 J/kg/K. At $w = 0$ the heat capacity jumps by a factor of 7.9 to 23 at the solidus, at the 12 pressures from 0 to 146 GPa of the validation mesh. The convective heat flux through a cell face depends on the heat capacity, the expansivity and the viscosity, so the flux jumps when one node crosses the boundary, and the time stepper must take very small steps there.
+
+Limits:
+
+- `matprop_smooth_width` must lie strictly between 0 and 1. When the configuration is built, a value at or below 0, at or above 1, NaN, an infinity, a bool or a string stops it with a `ValueError` that names the setting. A width below $10^{-300}$ stops it too. On the solidus and the liquidus the JAX gradient of the heat capacity in $S$ is $0.5\,\Delta c_p / (w\,\Delta S)$, with $\Delta c_p$ the jump of $c_p$ across the boundary and $\Delta S$ the width of the melting interval in entropy. Its intermediate $0.5\,\Delta c_p / w$ overflows to infinity below about $8 \times 10^{-305}$ on the test tables, where $\Delta c_p$ is up to $3.0 \times 10^{4}$ J kg$^{-1}$ K$^{-1}$; at $10^{-300}$ it stays finite for a jump up to $3.6 \times 10^{8}$ J kg$^{-1}$ K$^{-1}$. Below the smallest normal float, $2.2 \times 10^{-308}$, the JAX blend weight itself is NaN.
+- A positive width far below 0.01 brings the jump back: on the test tables the heat capacity changes between $10^{-3}$ J/kg/K below and above the solidus by the same factor (7.9 to 23) at $w = 10^{-12}$ as at $w = 0$, and by up to a factor of 1.8 at $w = 10^{-6}$.
+- From a width of about 0.03 the weight is no longer exactly 1 in the middle of the melting interval ($g = 0.5$), where the single-phase value switches from the solid to the melt table, so the properties start to jump there: on the test tables the heat capacity by a relative $2 \times 10^{-9}$ at $w = 0.05$, $4 \times 10^{-5}$ at 0.1 and 0.12 at 0.5, and the viscosity by a factor of 242 at $w = 0.5$.
+- A width that is kept but lies outside \[$10^{-3}$, 0.05\] logs the warning "matprop_smooth_width = <value> lies outside \[0.001, 0.05\]: below it the blend at the solidus and the liquidus is narrow and approaches the switch at 0, above it the properties start to jump in the middle of the melting interval". At $10^{-3}$ the heat capacity changes by $6 \times 10^{-4}$ between $10^{-3}$ J/kg/K below and above the solidus, and at 0.05 its jump in the middle of the interval is $2 \times 10^{-9}$.
+- More than 0.2 in $g$ from both boundaries, $\tanh$ rounds to 1 in double precision at $w = 0.01$: the weight is exactly 0 or 1, and the properties are the same as at $w = 0$.
+- `EntropyPhaseEvaluator` and the JAX `PhaseParams` keep a default of 0 when a test or script calls them directly; a run built from a configuration passes the width of the configuration.
+- PROTEUS passes its own setting `interior_energetics.spider.matprop_smooth_width` (default 0.01, also strictly between 0 and 1).
+
+**Where this is checked.** [Validation: Phase transitions](../Validation/phase_transitions.md). The tutorial [Properties at the solidus](../Tutorials/phase_blend.md) evaluates the blend step by step.
 
 ## Density and heat capacity in the mushy zone
 

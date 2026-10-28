@@ -104,9 +104,9 @@ with $c_{p,i}$, $\alpha_i$ and $\rho_i$ the heat capacity, expansivity and densi
 
 ### Flux at the phase boundaries
 
-The heat capacity and the expansivity of the layer are continuous at the solidus and the liquidus. The viscosity is continuous in entropy too when `matprop_smooth_width` is positive (PROTEUS sets $10^{-2}$ by default).
+The heat capacity and the expansivity of the layer are continuous at the solidus and the liquidus. The viscosity is continuous in entropy too when `matprop_smooth_width` is positive (the default is $10^{-2}$, in Aragog and in PROTEUS).
 
-With a width of 0, as in the tests, it is not: the rheological blend of the mantle model gives the melt viscosity a weight of 0.5 % in $\log_{10}\eta$ already at zero melt fraction (transition at a melt fraction of 0.4, width 0.15). This takes the solid viscosity of the tests, $10^{21}$ Pa s, to $8.0\times10^{20}$ Pa s, so the flux steps up by the cube root of that ratio where the mean temperature crosses the solidus. At the liquidus the viscosity steps from 10.16 Pa s to the melt viscosity of 10 Pa s, and the flux steps with it.
+With a width of 0 it is not: the rheological blend of the mantle model gives the melt viscosity a weight of 0.5 % in $\log_{10}\eta$ already at zero melt fraction (transition at a melt fraction of 0.4, width 0.15). This takes the solid viscosity of the tests, $10^{21}$ Pa s, to $8.0\times10^{20}$ Pa s, so the flux steps up by the cube root of that ratio where the mean temperature crosses the solidus. At the liquidus the viscosity steps from 10.16 Pa s to the melt viscosity of 10 Pa s, and the flux steps with it.
 
 The flux steps at a positive width too, because the tables hold the temperature constant over a band of entropy next to each phase boundary, so the layer's entropy jumps across that band where its mean temperature crosses the boundary. The widths of that band, in J kg$^{-1}$ K$^{-1}$, are:
 

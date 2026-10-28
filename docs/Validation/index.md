@@ -4,6 +4,7 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 
 - [Core](core.md): the core module against Nimmo (2015), the `leeds` and `leeds_thermal` models of thermal_history (Greenwood et al. 2021) and analytical limits.
 - [Surface boundary](surface.md): the prescribed surface temperature (`outer_boundary_condition = 5`) against closed-form conduction solutions and a grid-convergence study.
+- [Phase transitions](phase_transitions.md): the blend of the material properties at the solidus and the liquidus against the blend formula of SPIDER, and the NumPy and JAX right-hand sides inside the blend.
 - [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides; these are checks, not `reference_pinned` cases.
 
 ## Cases by process
@@ -24,10 +25,11 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 | Surface boundary | Steady heated shell | `tests/test_entropy_bc5_validation.py::test_the_steady_heated_shell_matches_the_closed_form` | Turcotte and Schubert (2014), eq. 4.40 | surface flux 1e-8 relative; temperature order 2.0 ± 0.2; N² times the top-cell error 0.159 of the rise ± 10 % (a pin of the scheme, measured) | [Surface boundary](surface.md#a-heated-shell-in-steady-state) |
 | Surface boundary | Cooling below a fixed surface temperature | `tests/test_entropy_bc5_validation.py::test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux` | Turcotte and Schubert (2014), eq. 4.116 | 1 % at every output time; signed error within 5e-4 of the grid and curvature estimates | [Surface boundary](surface.md#cooling-below-a-fixed-surface-temperature) |
 | Surface boundary | Grid convergence with convection | `tests/test_entropy_bc5_validation.py::test_the_convecting_shell_converges_with_second_order` | convergence order and Richardson extrapolation | order 2.0 ± 0.4; 1e-3 of the rise from the extrapolation | [Surface boundary](surface.md#grid-convergence-with-convection) |
+| Phase transitions | Properties on the solidus and the liquidus | `tests/test_matprop_smooth_width_validation.py::test_on_each_boundary_every_property_is_the_mean_of_the_two_branches` | SPIDER `get_smoothing` (`util.c`): weight 1/2 on each boundary | 1e-12 relative | [Phase transitions](phase_transitions.md#on-each-boundary-a-property-is-the-mean-of-its-two-values) |
 | Mantle heat transport | Theta-dependent top slope of the mixing length | `tests/test_mlt_calibration.py::test_theta_dependent_top_slope_hand_values_and_limits` | hand values and limits | 1e-15 to 1e-13 relative | no page section yet |
 | Mantle rheology | Arrhenius viscosity, yield stress, NumPy and JAX kernels | `tests/test_rheology_verification.py` (its `reference_pinned` tests) | reference limits, NumPy implementation | 1e-12 relative (one bound 1e-9) | no page section yet ([Solid-state convection](../Explanations/solid_state_convection.md) explains the rheology) |
 
-The command of a case is `pytest <test>`; the young-layer case and the surface-boundary cases have sections with their own reference, tolerance, test id and command, and the other cases are described by the prose of their linked section.
+The command of a case is `pytest <test>`; the young-layer case, the surface-boundary cases and the phase-transition case have sections with their own reference, tolerance, test id and command, and the other cases are described by the prose of their linked section.
 
 `pytest -m reference_pinned` runs every case. The core-page tests need the SPIDER P-S tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](../How-to/build_tests.md)); the stable-layer and Earth-budget cases take minutes.
 
