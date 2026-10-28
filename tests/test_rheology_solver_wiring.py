@@ -853,20 +853,20 @@ def test_perturbed_starts_spread(validation_plot) -> None:
     assert float(np.max(dt_def_on)) <= default_spread_bound_k
     assert float(np.max(dt_stag_var_on)) <= active_spread_bound_k
     assert float(np.max(dt_stag_def_on)) <= default_spread_bound_k
-    assert float(np.max(dt_def_on)) == pytest.approx(7.564610768895363e-07, rel=1.0e-9)
-    assert float(np.max(dt_def_off)) == pytest.approx(1.034986325976206e-06, rel=1.0e-9)
-    assert float(np.max(dt_stag_var_on)) == pytest.approx(3.388989807717735e-05, rel=1.0e-9)
-    assert float(np.max(dt_stag_def_on)) == pytest.approx(3.054819899261929e-07, rel=1.0e-9)
+    assert float(np.max(dt_def_on)) == pytest.approx(5.94591483604745e-07, rel=1.0e-9)
+    assert float(np.max(dt_def_off)) == pytest.approx(1.0892613317992073e-06, rel=1.0e-9)
+    assert float(np.max(dt_stag_var_on)) == pytest.approx(2.1778111658932175e-05, rel=1.0e-9)
+    assert float(np.max(dt_stag_def_on)) == pytest.approx(2.675492396519985e-07, rel=1.0e-9)
 
     var_act = var_suite['on_vs_off_activity']
     def_act = def_suite['on_vs_off_activity']
     assert var_act['max_rel_diff_T_basic_on_vs_off'] >= 1.0e-4
     assert var_act['max_rel_rhs_on_vs_off_at_t_end'] >= 1.0e-4
     assert def_act['max_rel_diff_T_basic_on_vs_off'] == pytest.approx(
-        0.0020515326635735867, rel=1.0e-9
+        0.0020515371830963575, rel=1.0e-9
     )
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] == pytest.approx(
-        7.533969914590898, rel=1.0e-9
+        7.533986511913099, rel=1.0e-9
     )
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_on))
     assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_off))
