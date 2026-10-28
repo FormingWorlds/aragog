@@ -27,6 +27,10 @@ Execution modes and per-block coverage:
      computes the ordinary least-squares multilinear and 1-D sweep power-law fits on design
      parameters ``(Ra_i, theta)``, alternative Nusselt diagnostics, and realized steady-state
      parameters ``(Ra_i_realized_kor, theta_realized_kor)``.
+  The inputs come from the stored benchmark file: the case list ``cases_spec``,
+  ``metadata.rheology_calibration``, ``metadata.acceptance_window``, and the
+  ``metadata.fixed_parameters`` entries other than the conduction floors and the steady
+  residual bound. For this reason ``--full`` refuses a missing output file.
 - ``--check``: verifies expected schema keys, the no-table constant-property record
   (``eos_tables``), and compares every stored field across all blocks, combining live 1-D
   evaluations on the 5 stored snapshots with algebraic and regression checks on the

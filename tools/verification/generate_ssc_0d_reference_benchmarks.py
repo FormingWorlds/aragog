@@ -27,10 +27,11 @@ Execution modes and per-block coverage:
   2. ``trajectory_calibrated_400Myr`` and ``trajectory_default_400Myr``:
      integrates the 400 Myr 1-D ``EntropySolver`` secular-cooling trajectories at
      ``(s_top_inf, c_theta) = (0.25, 0.25)`` and ``(0.22, 0.15)`` and the 400 Myr 0-D
-     ODE trajectories, updating the stored 1-D snapshot states and window error metrics.
+     ODE trajectories, recording the 1-D state at fixed output points and the window
+     error metrics.
   3. ``trajectory_calibrated_4p5Gyr`` and ``trajectory_default_4p5Gyr``:
      integrates the 4.5 Gyr 1-D ``EntropySolver`` and 0-D ODE trajectories (129 output
-     points), updates the stored 1-D snapshot states, computes the linear crossing times
+     points), records the 1-D state at fixed output points, computes the linear crossing times
      ``t_cross_rel_err_d_lid_0p22_yr`` and ``t_cross_rel_err_T_i_0p05_yr``, and records
      ``t_nu_0d_clamp_1_yr``, ``max_rel_err_T_i_valid_nu_ge_1``, and
      ``max_rel_err_d_lid_valid_nu_ge_1_post_relax`` on the strict window ``t < t_clamp``.
@@ -40,9 +41,10 @@ Execution modes and per-block coverage:
   5. Fixed-input 1-D blocks (``steady_yield_thinning``, ``live_yield_states``,
      ``yield_sweep_reference_state``, ``yield_sweep_1d_by_dt``,
      ``yield_sweep_1d_equal_Ti_from_S_ref``, ``yield_sweep_1d_equal_Ti_1600K_from_init``,
-     ``segment_25Myr_spread_5starts``): refreshes 0-D fixed-``T_i`` and fixed-``H``
-     steady-state predictions and stamps ``source_git_commit`` and ``eos_tables`` on each
-     fixed-input block.
+     ``segment_25Myr_spread_5starts``): this tool does not compute their 1-D values. It
+     copies them from the stored benchmark file without a commit stamp and refreshes only
+     the 0-D fixed-``T_i`` and fixed-``H`` steady-state predictions in
+     ``steady_yield_thinning``. For this reason ``--full`` refuses a missing output file.
 - ``--check``: verifies expected schema keys, 40-hex commit-SHA format, the SHA-256
   generator-input fingerprint (``generator_input_sha256``), and the no-table
   constant-property record (``eos_tables``), combining live 0-D and 1-D solver
@@ -139,6 +141,9 @@ SSC_0D_INPUT_PATHS: tuple[str, ...] = (
 NO_TABLE_RECORD = (
     'no table (constant properties: eos_method=1, const_properties=True, entropy_eos=None)'
 )
+# Initial interior temperature and relaxation time of the secular-cooling trajectories.
+TRAJECTORY_T_INIT_K = 1800.0
+TRAJECTORY_T_RELAX_YR = 2.5e7
 
 EXPECTED_TOP_KEYS = (
     'metadata',
@@ -649,7 +654,7 @@ def _compute_trajectory_metrics_from_arrays(
 ) -> dict[str, Any]:
     """Recompute 0-D ODE trajectory, error series, window maxima, and crossing times."""
     ode_0d = integrate_stagnant_lid_0d(
-        1800.0,
+        TRAJECTORY_T_INIT_K,
         t_1d * SECS_PER_YR,
         p0d,
         conduction_geometry='spherical',
@@ -666,10 +671,10 @@ def _compute_trajectory_metrics_from_arrays(
     err_dl = np.abs(s_err_dl)
     err_dl_cond = np.abs(dl_cond_1d - dl_0d) / dl_0d
 
-    mask_post = t_1d >= 2.5e7
+    mask_post = t_1d >= TRAJECTORY_T_RELAX_YR
     mask_10m = t_1d >= 1.0e7
     mask_16p5m = t_1d >= 1.65e7
-    mask_25_400 = (t_1d >= 2.5e7) & (t_1d <= 4.0e8)
+    mask_25_400 = (t_1d >= TRAJECTORY_T_RELAX_YR) & (t_1d <= 4.0e8)
     mask_1600_1800 = (ti_0d >= 1600.0) & (ti_0d <= 1800.0) & mask_post
 
     metrics: dict[str, Any] = {
@@ -1412,14 +1417,18 @@ def verify_benchmarks(
 def _recompute_trajectory_block(
     base_params: Parameters,
     p0d: Any,
-    existing_block: dict[str, Any],
     *,
     s_top_inf: float,
     c_theta: float,
     t_end_yr: float,
     n_output_points: int,
+    snapshot_indices: tuple[int, ...],
 ) -> dict[str, Any]:
-    """Integrate the 1-D ``EntropySolver`` and 0-D ODE over ``[0, t_end_yr]``."""
+    """Integrate the 1-D ``EntropySolver`` and 0-D ODE over ``[0, t_end_yr]``.
+
+    The block is built from this run alone; no key comes from a stored block.
+    ``snapshot_indices`` are the output points whose 1-D state is recorded.
+    """
     rheo = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
@@ -1434,7 +1443,7 @@ def _recompute_trajectory_block(
         solver = build_const_prop_1d_solver(
             base_params, rheo, p0d, t_end_yr=t_end_yr, n_output_points=n_output_points
         )
-        s_init = float(3000.0 + p0d.c_p * np.log(1800.0 / 3500.0))
+        s_init = float(3000.0 + p0d.c_p * np.log(TRAJECTORY_T_INIT_K / 3500.0))
         solver.set_initial_entropy(s_init)
         solver.solve()
         t_1d = np.asarray(solver.solution.t, dtype=float)
@@ -1465,7 +1474,14 @@ def _recompute_trajectory_block(
         is_4p5gyr=is_4p5,
     )
 
-    out = dict(existing_block)
+    out: dict[str, Any] = {
+        's_top_inf': s_top_inf,
+        'c_theta': c_theta,
+        'n_steps': n_output_points,
+        't_init_K': TRAJECTORY_T_INIT_K,
+        't_end_yr': t_end_yr,
+        't_relax_yr': TRAJECTORY_T_RELAX_YR,
+    }
     for mk in (
         'max_rel_err_T_i_all',
         'max_rel_err_T_i_post_relax',
@@ -1481,26 +1497,6 @@ def _recompute_trajectory_block(
         't_cross_rel_err_d_lid_0p22_yr',
     ):
         out[mk] = m_live[mk]
-    if is_4p5:
-        out['t_cross_rel_err_T_i_0p05_yr'] = m_live['t_cross_rel_err_T_i_0p05_yr']
-        out['t_nu_0d_clamp_1_yr'] = m_live['t_nu_0d_clamp_1_yr']
-        out['max_rel_err_T_i_valid_nu_ge_1'] = m_live['max_rel_err_T_i_valid_nu_ge_1']
-        out['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = m_live[
-            'max_rel_err_d_lid_valid_nu_ge_1_post_relax'
-        ]
-    out['solver_last_S'] = y_1d[:, -1].tolist()
-    if isinstance(out.get('states_1d_snapshots'), dict):
-        snaps_updated = dict(out['states_1d_snapshots'])
-        for k_str, snap_val in snaps_updated.items():
-            idx_k = int(k_str)
-            if 0 <= idx_k < len(t_1d) and isinstance(snap_val, dict):
-                snap_copy = dict(snap_val)
-                snap_copy['T_i_K'] = float(ti_1d[idx_k])
-                snap_copy['d_lid_pass1_m'] = float(dl_1d[idx_k])
-                snap_copy['d_lid_cond_m'] = float(dl_cond_1d[idx_k])
-                snap_copy['F_top_W_m2'] = float(ft_1d[idx_k])
-                snaps_updated[k_str] = snap_copy
-        out['states_1d_snapshots'] = snaps_updated
     out['trajectory'] = {
         't_yr': t_1d.tolist(),
         'T_i_1d_K': ti_1d,
@@ -1515,6 +1511,27 @@ def _recompute_trajectory_block(
         'rel_err_T_i': m_live['err_ti'].tolist(),
         'rel_err_d_lid': m_live['err_dl'].tolist(),
     }
+    out['solver_last_S'] = y_1d[:, -1].tolist()
+    if any(not 0 <= k < len(t_1d) for k in snapshot_indices):
+        raise RuntimeError(
+            f'snapshot indices {snapshot_indices} outside {len(t_1d)} output points'
+        )
+    out['states_1d_snapshots'] = {
+        str(k): {
+            'T_i_K': float(ti_1d[k]),
+            'd_lid_pass1_m': float(dl_1d[k]),
+            'd_lid_cond_m': float(dl_cond_1d[k]),
+            'F_top_W_m2': float(ft_1d[k]),
+        }
+        for k in snapshot_indices
+    }
+    if is_4p5:
+        out['t_cross_rel_err_T_i_0p05_yr'] = m_live['t_cross_rel_err_T_i_0p05_yr']
+        out['t_nu_0d_clamp_1_yr'] = m_live['t_nu_0d_clamp_1_yr']
+        out['max_rel_err_T_i_valid_nu_ge_1'] = m_live['max_rel_err_T_i_valid_nu_ge_1']
+        out['max_rel_err_d_lid_valid_nu_ge_1_post_relax'] = m_live[
+            'max_rel_err_d_lid_valid_nu_ge_1_post_relax'
+        ]
     return out
 
 
@@ -1596,38 +1613,38 @@ def main(argv: list[str] | None = None) -> int:
         data['trajectory_calibrated_400Myr'] = _recompute_trajectory_block(
             base_params,
             p0d,
-            data['trajectory_calibrated_400Myr'],
             s_top_inf=0.25,
             c_theta=0.25,
             t_end_yr=4.0e8,
             n_output_points=65,
+            snapshot_indices=(0, 12, 64),
         )
         data['trajectory_default_400Myr'] = _recompute_trajectory_block(
             base_params,
             p0d,
-            data['trajectory_default_400Myr'],
             s_top_inf=0.22,
             c_theta=0.15,
             t_end_yr=4.0e8,
             n_output_points=65,
+            snapshot_indices=(0, 64),
         )
         data['trajectory_calibrated_4p5Gyr'] = _recompute_trajectory_block(
             base_params,
             p0d,
-            data['trajectory_calibrated_4p5Gyr'],
             s_top_inf=0.25,
             c_theta=0.25,
             t_end_yr=4.5e9,
             n_output_points=129,
+            snapshot_indices=(0, 10, 115, 128),
         )
         data['trajectory_default_4p5Gyr'] = _recompute_trajectory_block(
             base_params,
             p0d,
-            data['trajectory_default_4p5Gyr'],
             s_top_inf=0.22,
             c_theta=0.15,
             t_end_yr=4.5e9,
             n_output_points=129,
+            snapshot_indices=(0, 10, 114, 128),
         )
     else:
         for blk_key, is_4p5 in (
