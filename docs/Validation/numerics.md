@@ -164,7 +164,7 @@ Each wall time is the minimum over 7 blocks of 1000 RHS evaluations on the 100-b
 
 **How we know the right answer.** The expected call numbers come directly from code design: Pass 1 calculates unyielded convection and Pass 2 applies lid geometry and yielding. Wall times are measured by the benchmark generator against identical runs with rheology disabled and stored in the JSON; the test reads them.
 
-**Why it matters.** Coupled planetary simulations run tens of thousands of solver steps. The JAX ratio of $1.211$ in `'lid'` mode means solid-state convection adds about $21\%$ to the cost of the right-hand side; the test checks the recorded benchmark, so a new measurement needs a regeneration of the benchmark file.
+**Why it matters.** Coupled planetary simulations run tens of thousands of solver steps. In the recorded benchmark, the JAX ratio of $1.211$ in `'lid'` mode means that solid-state convection adds about $21\%$ to the cost of the right-hand side. The ratios depend on the machine load at generation time. The test checks the recorded benchmark, so a new measurement needs a regeneration of the benchmark file.
 
 ![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost.svg#only-light){ width="80%" }
 ![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost_dark.svg#only-dark){ width="80%" }
