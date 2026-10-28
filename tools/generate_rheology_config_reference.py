@@ -75,6 +75,8 @@ RANGES: dict[str, str] = {
 }
 for _name, _pred, _text in _BOUNDS:
     RANGES[_name] = _range_from_bounds_text(_text)
+# SolidRheologyParams.__post_init__ refuses 0 with enabled = true and no activation_energy.
+RANGES['g_homologous'] = '[0, inf); (0, inf) when enabled and activation_energy is unset'
 
 EFFECTS: dict[str, str] = {
     'enabled': 'Enable solid-state mantle rheology and variable viscosity',
@@ -96,7 +98,7 @@ EFFECTS: dict[str, str] = {
     'phi_visc_single': 'Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`)',
     'mlt_bottom_slope': 'Mixing-length boundary slope factor at core-mantle boundary (bottom boundary)',
     's_top_inf': 'Asymptotic top mixing-length slope at infinite viscosity contrast',
-    'c_theta': 'Sensitivity of top mixing-length slope to rheological temperature contrast scale theta',
+    'c_theta': 'Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local"',
     'activation_energy': 'Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset',
     'activation_volume': 'Zero-pressure activation volume V0 in saturating integral enthalpy law',
     'activation_volume_decay_pressure': 'Pressure decay scale P_decay for activation volume saturation; linear when inf',

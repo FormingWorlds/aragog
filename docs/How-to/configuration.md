@@ -248,7 +248,7 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | Key | Type | Unit | Default | Range | Effect |
 |-----|------|------|---------|-------|--------|
 | `enabled` | `bool` | -- | `false` | `true` \| `false` | Enable solid-state mantle rheology and variable viscosity |
-| `g_homologous` | `float` | -- | `25.0` | \[0, inf) | Homologous temperature scaling factor in activation enthalpy H(P) |
+| `g_homologous` | `float` | -- | `25.0` | \[0, inf); (0, inf) when enabled and activation_energy is unset | Homologous temperature scaling factor in activation enthalpy H(P) |
 | `t_sol_0` | `float` | K | `1400.0` | (0, inf) | Zero-pressure solidus temperature for linear solidus and enthalpy normalization |
 | `dt_sol_dp` | `float` | K/Pa | `2.4e-08` | \[0, inf) | Linear solidus Clapeyron slope when table solidus is absent |
 | `arrhenius_t_ref` | `float` | K | `1600.0` | (0, inf) | Reference temperature where mantle viscosity equals reference value at P=0 |
@@ -266,7 +266,7 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
 | `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
-| `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta |
+| `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local" |
 | `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
 | `activation_volume` | `float` | m³/mol | `0.0` | \[0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
 | `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |

@@ -137,7 +137,7 @@ When single-phase thermal expansivity $\alpha$ is harmonised between both paths 
 ![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread.svg#only-light){ width="80%" }
 ![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The top panel shows end-time radial temperature profiles for rheology on and off on the active-solid variant. The bottom panel shows the radial perturbation spreads $\Delta T(r)$ from the stored runs. A pass means the active-solid curves with rheology on (basic and staggered nodes) stay below the dash-dot line ($3.5 \times 10^{-5}\text{ K}$) and the default curve stays below the dotted line ($2.0 \times 10^{-6}\text{ K}$). The staggered curve comes close to its bound: its margin is $1.03\times$.
+**How to read the plot.** The top panel shows end-time radial temperature profiles for rheology on and off on the active-solid variant. The bottom panel shows the radial perturbation spreads $\Delta T(r)$ from the stored runs. A pass means the active-solid curves with rheology on (basic and staggered nodes) stay below the dash-dot line ($3.5 \times 10^{-5}\text{ K}$) and the default curve stays below the dotted line ($2.0 \times 10^{-6}\text{ K}$). The active-solid staggered curve comes closest to its bound: its margin is $1.61\times$.
 
 ??? info "Test details"
     - Reference: 5 perturbed trajectories with `rheology.enabled = false` on the active-solid variant and default `cfg/abe_solid.toml` (`tests/reference/ssc_solver_wiring_benchmarks.json`).
