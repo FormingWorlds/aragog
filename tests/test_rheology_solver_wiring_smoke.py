@@ -556,17 +556,19 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     """NumPy and JAX right-hand sides agree to relative difference <= 1e-6 across
     a stored sweep of 100 cooling states (plus one live profile per set) on:
     1. the active-solid variant of abe_solid.toml (s_init=2500, kappah_floor=0,
-       viscosity_solid=1e18), where Arrhenius strengthening shifts the RHS by >= 1e-4
-       at every state and a JAX-only g_homologous perturbation fails 1e-6 by > 8000x;
+       viscosity_solid=1e18), where the viscosity law alone (Arrhenius strengthening and the
+       viscous mixing-length factor) shifts the RHS by 8.4e-3 to 1.07e-2 (law-only guard: 4e-3 to
+       2e-2) and a JAX-only g_homologous perturbation fails 1e-6 by > 8000x;
     2. the yield-active lid state set (s_init=2150, s_bot in [1950, 2150], delta_s in [1620, 1820],
        kappah_floor=0, viscosity_solid=3e17, yield_stress_c=150 Pa, yield_stress_mu=0),
        where plastic yielding acts in 9..13 nodes across all 100/100 states, changes the RHS
-       relative to yield-off (tau_y -> infinity) by >= 1e-4 at every state, agrees between NumPy
-       and JAX to <= 1.95e-7 <= 1e-6, and a JAX-only yield-stress perturbation fails 1e-6 by > 230x;
+       relative to yield-off (tau_y -> infinity) by 8.5e-5 to 1.3e-4, agrees between NumPy
+       and JAX to <= 1.3e-7 <= 1e-6, and a JAX-only yield-stress perturbation fails 1e-6 by > 80x;
     3. the default abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21),
-       where solid kappah_floor zeroing shifts the RHS relative to rheology-off by
-       8.1e-5 to 1.3e-3 across all 100 cooling states while preserving NumPy-vs-JAX parity
-       to <= 1e-14.
+       where rheology on vs off shifts the RHS by 8.1e-5 to 1.3e-3 across all 100 cooling states
+       while preserving NumPy-vs-JAX parity to <= 1e-14. This activity guard measures mostly the
+       solid-cell floor switch at kappah_floor 10 (rheology on gives a fully solid cell no floor),
+       not the viscosity law, which item 1 guards.
 
     The live yield-active state needs yield on vs off >= 5e-5 (9.52e-5 at width 0.01, 3.99e-4 at
     width 0): the blend gives the two solid nodes above the solidus the two-phase thermal expansivity
@@ -606,7 +608,9 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     # At two-phase node 98 (rho_sol < rho_liq), a 1 ULP JIT division shift in unclamped alpha_mixed < 0
     # is amplified by the smooth positivity clamp to 3.859e-7 in alpha and 4.584e-10 in dS/dt (2.18x / 2 ULP below 1e-9).
     assert float(np.max(rel_np_jax_harm)) <= 1.0e-9
-    assert float(np.min(rel_on_off)) >= 100.0 * 1.0e-6
+    # Law-only guard: at kappah_floor 0 the on/off change is the viscosity law alone
+    assert float(np.min(rel_on_off)) >= 4.0e-3
+    assert float(np.max(rel_on_off)) <= 2.0e-2
     assert float(np.min(rel_canary)) > 100.0 * 1.0e-6
     assert var_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
     assert var_rec['n_nodes_kappah_on_ne_kappah_off_min'] >= 90
@@ -714,7 +718,8 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         float(np.max(np.abs(rhs_var_np_on_unharm - rhs_var_jax_on)) / denom_var_on_unharm)
         <= 1.0e-6
     )
-    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_np_off)) / denom_var_off) >= 1.0e-4
+    rel_var_on_off = float(np.max(np.abs(rhs_var_np_on - rhs_var_np_off)) / denom_var_off)
+    assert 5.0e-3 <= rel_var_on_off <= 2.0e-2
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_broken)) / denom_var_on) > 1.0e-3
 
     # Live solver verification of the yield-active state set + JAX-only yield canary
