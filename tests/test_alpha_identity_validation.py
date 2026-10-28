@@ -208,3 +208,40 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
         return fig
 
     validation_plot(figure, 'alpha_identity_gap')
+
+
+@pytest.mark.physics_invariant
+def test_the_composite_blend_takes_the_identity_alpha_outside_the_mush(states):
+    """Far from the mushy band (blend width 1e-6) ``thermal_expansivity_composite_blend`` is the
+    single-phase alpha of ``thermal_expansivity``, also on tables that ship ``thermal_exp``."""
+    P, S, _ = states
+    eos = entropy_eos_copy(EOS_DIR)
+    np.testing.assert_allclose(
+        eos.thermal_expansivity_composite_blend(P, S, width=1e-6),
+        np.ravel(eos.thermal_expansivity(P, S)),
+        rtol=1e-12,
+    )
+
+
+@pytest.mark.physics_invariant
+def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
+    """At P = 0 the solid tables reach 320 to 950 K, below the temperatures of the other states;
+    there the NumPy evaluator alpha equals the JAX alpha to 1e-12 relative."""
+    from aragog.jax.phase import PhaseParams, evaluate_phase
+
+    eos = entropy_eos_copy(EOS_DIR)
+    S = np.array([-1500.0, -800.0, -200.0])
+    P = np.zeros_like(S)
+    assert np.all(S < np.ravel(eos.solidus_entropy(P)) - 500.0)
+    ev = _numpy_evaluator(P, S, 1e-6)
+    T = np.ravel(ev.temperature())
+    assert np.all((T > 300.0) & (T < 1000.0)), T
+    alpha_jax = evaluate_phase(
+        entropy_eos_jax(EOS_DIR),
+        PhaseParams(matprop_smooth_width=1e-6),
+        jnp.asarray(P),
+        jnp.asarray(S),
+    ).thermal_expansivity
+    np.testing.assert_allclose(
+        np.ravel(ev.thermal_expansivity()), np.asarray(alpha_jax), rtol=1e-12, atol=0
+    )
