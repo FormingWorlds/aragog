@@ -6,15 +6,10 @@ Three public methods sit in the coverage shadow of the tests in
 
 * ``thermal_expansivity_composite_blend`` (lines 964-1008): the
   SPIDER-parity composite alpha including the Clausius-Clapeyron
-  contribution. Never called from the production solver path (the
-  table-backed ``thermal_expansivity`` short-circuits via
-  ``_has_alpha_tables``), so the body is dead code in coverage terms
-  unless invoked directly.
-* ``thermal_expansivity`` fallback path (lines 1042-1050): the
-  ``alpha = rho * Cp * |dTdPs| / T`` derivation that fires only when
-  the EOS directory does not ship pre-computed ``thermal_exp_*.dat``.
-  Production tables include alpha tables, so this path is similarly
-  dead code under the test fixture.
+  contribution. Never called from the production solver path, so the
+  body is dead code in coverage terms unless invoked directly.
+* ``thermal_expansivity``: the ``alpha = rho * Cp * |dTdPs| / T``
+  identity, also on table directories that ship ``thermal_exp_*.dat``.
 * ``invert_temperature`` (lines 1078-1103): T -> S inversion via
   brentq with explicit bracket-error message. The CLI exercises it
   through ``_derive_initial_entropy_from_config``, but only the
@@ -101,9 +96,9 @@ def test_composite_thermal_expansivity_returns_finite_positive_in_pure_solid(eos
     rel = abs(float(alpha_blend.item()) - float(alpha_pure.item())) / abs(
         float(alpha_pure.item())
     )
-    assert rel < 0.10, (
+    assert rel < 1e-12, (
         f'pure-solid composite alpha {float(alpha_blend.item()):.3e} '
-        f'differs by {rel:.2%} from the table-based alpha {float(alpha_pure.item()):.3e}; '
+        f'differs by {rel:.2e} from the identity alpha {float(alpha_pure.item()):.3e}; '
         'smoothing weight is leaking the mixed-phase contribution.'
     )
 
@@ -118,7 +113,7 @@ def test_composite_thermal_expansivity_inside_mushy_exceeds_pure_phase_alpha(eos
     Discriminator: a regression that lost the (rho_solid - rho_melt)
     numerator or used (rho_solid + rho_melt) would either zero the
     enhancement or flip its sign. We require the composite alpha to
-    be strictly greater than the table-based alpha at a point in the
+    be strictly greater than the pure-phase alpha at a point in the
     middle of the mushy band.
     """
     P = np.array([5.0e10])
@@ -157,24 +152,23 @@ def test_composite_thermal_expansivity_array_input_preserves_shape(eos):
 
 
 # ──────────────────────────────────────────────────────────────────────
-#                       thermal_expansivity fallback
+#                       thermal_expansivity identity
 # ──────────────────────────────────────────────────────────────────────
 
 
 @needs_eos
-def test_thermal_expansivity_fallback_when_alpha_tables_absent(eos, monkeypatch):
-    """The thermodynamic-identity fallback ``alpha = rho * Cp * |dTdPs| / T``
-    fires when the EOS directory has no ``thermal_exp_*.dat`` files.
+def test_thermal_expansivity_is_the_identity_on_tables_with_alpha_files(eos):
+    """``thermal_expansivity`` is ``alpha = rho * Cp * |dTdPs| / T`` on a table
+    directory that ships ``thermal_exp_*.dat`` files.
 
-    Discriminator: the fallback's value must equal that closed-form
+    Discriminator: the value must equal that closed-form
     expression to machine precision against the EOS's own ``rho``,
     ``Cp``, ``dTdPs``, ``temperature`` calls. A regression that
     dropped the ``rho`` factor would surface as a 4000x error.
     """
     P = np.array([3.0e10])
     S = np.array([3300.0])
-    # Force the fallback path by flipping the flag.
-    monkeypatch.setattr(eos, '_has_alpha_tables', False)
+    assert 'thermal_exp_solid' in eos._tables
     alpha_fallback = eos.thermal_expansivity(P, S)
 
     # Recompute by hand from the same EOS to confirm the formula.

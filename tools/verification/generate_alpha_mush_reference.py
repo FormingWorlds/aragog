@@ -1,6 +1,6 @@
 """Write the mush-state thermal expansivity of the NumPy phase evaluator to a CSV.
 
-The states are melt fractions 0.1, 0.5 and 0.9 at 12 pressures from 0 to 145 GPa under
+The states are melt fractions 0.002, 0.1, 0.5, 0.9 and 0.998 at 12 pressures from 0 to 145 GPa under
 ``cp_blend = 'latent'``. Each row holds alpha at ``matprop_smooth_width`` 0 (the two-phase
 value alone, clamped) and at 0.01 (blended with the single-phase value). The header records
 the commit of the aragog tree that ran and the sha256 of every table file read.
@@ -29,9 +29,10 @@ def main(eos_dir: str, out: str) -> None:
     eos = EntropyEOS(eos_dir)
     P1 = np.linspace(0.0, 145e9, 12)
     S_sol, S_liq = np.ravel(eos.solidus_entropy(P1)), np.ravel(eos.liquidus_entropy(P1))
-    phi = np.repeat([0.1, 0.5, 0.9], P1.size)
-    P = np.tile(P1, 3)
-    S = np.tile(S_sol, 3) + phi * np.tile(S_liq - S_sol, 3)
+    fractions = [0.002, 0.1, 0.5, 0.9, 0.998]
+    phi = np.repeat(fractions, P1.size)
+    P = np.tile(P1, len(fractions))
+    S = np.tile(S_sol, len(fractions)) + phi * np.tile(S_liq - S_sol, len(fractions))
     alpha = {}
     for width in (0.0, 0.01):
         ev = EntropyPhaseEvaluator(eos, 10.0, matprop_smooth_width=width)
@@ -60,4 +61,6 @@ def main(eos_dir: str, out: str) -> None:
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    main(*sys.argv[1:])

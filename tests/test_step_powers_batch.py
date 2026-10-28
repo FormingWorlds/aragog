@@ -55,7 +55,7 @@ def _clear_cache():
 
 @pytest.fixture(scope='module')
 def eos_np():
-    """Return numpy EntropyEOS with alpha derived from thermodynamic identity."""
+    """Return numpy EntropyEOS without the thermal_exp tables."""
     eos = entropy_eos_copy(EOS_DIR)
     eos._has_alpha_tables = False
     eos._tables.pop('thermal_exp_solid', None)
@@ -66,7 +66,7 @@ def eos_np():
 
 @pytest.fixture(scope='module')
 def eos_np_table():
-    """Return numpy EntropyEOS retaining tabulated thermal expansivity."""
+    """Return numpy EntropyEOS with the thermal_exp tables loaded."""
     eos = entropy_eos_copy(EOS_DIR)
     assert eos._has_alpha_tables
     return eos
@@ -1325,8 +1325,9 @@ def test_step_powers_batch_interface(eos_np):
 
 
 @pytest.mark.smoke
-def test_step_powers_table_alpha_cmb_bound(eos_np_table, eos_jax):
-    """Verify F_cmb difference between JAX and numpy path with table alpha is bounded."""
+def test_step_powers_match_jax_with_thermal_exp_tables_loaded(eos_np_table, eos_jax):
+    """With the thermal_exp tables loaded, the numpy and JAX F_cmb agree to rounding: both
+    paths take alpha from the identity."""
     assert eos_np_table._has_alpha_tables
 
     n_nodes = 15
@@ -1400,9 +1401,7 @@ def test_step_powers_table_alpha_cmb_bound(eos_np_table, eos_jax):
     max_abs = float(np.max(diff))
     max_rel = max_abs / col1_max
 
-    # Measured difference is 2.44e-7 (> 0 and <= 3x measured = 7.32e-7)
-    assert max_rel > 0.0, f'Expected non-zero difference from table alpha, got {max_rel}'
-    assert max_rel <= 7.32e-07, f'Relative difference {max_rel:.4e} exceeds 7.32e-07'
+    assert max_rel <= 1e-10, f'Relative difference {max_rel:.4e} exceeds 1e-10'
 
 
 @pytest.mark.smoke

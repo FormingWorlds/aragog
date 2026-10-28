@@ -16,7 +16,7 @@ from tests.test_matprop_smooth_width_validation import _solver
 
 jnp = pytest.importorskip('jax.numpy')
 
-pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(120)]
+pytestmark = [needs_eos, pytest.mark.timeout(120)]
 
 _DS = (50.0, 200.0, 500.0)  # entropy offset from the boundary [J/kg/K]
 _WIDTHS = (0.01, 1e-6)
@@ -49,14 +49,29 @@ def _smth(eos, P, S, width):
     )
 
 
-def _numpy_evaluator(P, S, width):
-    ev = EntropyPhaseEvaluator(entropy_eos_copy(EOS_DIR), 10.0, matprop_smooth_width=width)
+def _jax_alpha(P, S, width):
+    """The expansivity of the JAX ``evaluate_phase`` at (P, S)."""
+    from aragog.jax.phase import PhaseParams, evaluate_phase
+
+    props = evaluate_phase(
+        entropy_eos_jax(EOS_DIR),
+        PhaseParams(matprop_smooth_width=width),
+        jnp.asarray(P),
+        jnp.asarray(S),
+    )
+    return np.asarray(props.thermal_expansivity)
+
+
+def _numpy_evaluator(P, S, width, eos=None):
+    eos = entropy_eos_copy(EOS_DIR) if eos is None else eos
+    ev = EntropyPhaseEvaluator(eos, 10.0, matprop_smooth_width=width)
     ev.set_pressure(P)
     ev.set_entropy(S)
     ev.update()
     return ev
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize('width', _WIDTHS)
@@ -65,8 +80,6 @@ def test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp(state
     ``evaluate_phase`` alpha to 1e-12 relative at every solid and melt state, at the default
     width 0.01 and at 1e-6. At width 1e-6 the two-phase weight is below 1e-15, so the alpha is
     the single-phase identity rho c_p dT/dP_S / T of the evaluator's own fields, clamped."""
-    from aragog.jax.phase import PhaseParams, evaluate_phase
-
     P, S, _ = states
     eos = entropy_eos_copy(EOS_DIR)
     assert eos._has_alpha_tables, 'the test tables must carry thermal_exp files'
@@ -75,15 +88,7 @@ def test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp(state
 
     ev = _numpy_evaluator(P, S, width)
     alpha_np = np.ravel(ev.thermal_expansivity())
-    props = evaluate_phase(
-        entropy_eos_jax(EOS_DIR),
-        PhaseParams(matprop_smooth_width=width),
-        jnp.asarray(P),
-        jnp.asarray(S),
-    )
-    np.testing.assert_allclose(
-        alpha_np, np.asarray(props.thermal_expansivity), rtol=1e-12, atol=0
-    )
+    np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, width), rtol=1e-12, atol=0)
 
     if width == 1e-6:
         assert smth.max() < 1e-15
@@ -92,6 +97,7 @@ def test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp(state
         np.testing.assert_allclose(alpha_np, _clamp(a), rtol=1e-12, atol=0)
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize('method', ['thermal_expansivity', 'material_expansivity'])
@@ -124,6 +130,7 @@ def _single_phase_alphas(eos, P, S_b, side):
     return table('thermal_exp'), a / np.maximum(table('temperature'), 1.0)
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
@@ -149,6 +156,7 @@ def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
     assert np.all(np.abs(tip1 - base1) <= bound)
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('boundary', ['solidus', 'liquidus'])
 def test_the_linear_blend_meets_the_single_phase_alpha_at_each_boundary(states, boundary):
@@ -164,8 +172,17 @@ def test_the_linear_blend_meets_the_single_phase_alpha_at_each_boundary(states, 
     ev.update()
     _, ident = _single_phase_alphas(eos, P, S_b, side)
     np.testing.assert_allclose(np.ravel(ev.thermal_expansivity()), _clamp(ident), rtol=1e-12)
+    if boundary == 'liquidus':  # inside: the lever rule between the two boundary values
+        S_sol = np.ravel(eos.solidus_entropy(P))
+        _, ident_sol = _single_phase_alphas(eos, P, S_sol, 'solid')
+        ev.set_entropy(S_sol + 0.3 * (S_b - S_sol))
+        ev.update()
+        want = _clamp(0.3 * ident + 0.7 * ident_sol)
+        np.testing.assert_allclose(np.ravel(ev.thermal_expansivity()), want, rtol=1e-12)
 
 
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
     states, validation_plot
@@ -181,7 +198,10 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
         sel = side == ph
         tab, ident = _single_phase_alphas(eos, P[sel], S[sel], ph)
         gap[sel] = np.abs(tab - ident) / np.abs(ident)
-    assert gap.max() < 1e-3 and np.median(gap) > 1e-7
+    assert gap.min() == pytest.approx(7.56e-7, rel=0.01)
+    assert gap.max() == pytest.approx(7.87e-4, rel=0.01)
+    alpha_np = np.ravel(_numpy_evaluator(P, S, 1e-6).thermal_expansivity())
+    np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, 1e-6), rtol=1e-12, atol=0)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -210,6 +230,7 @@ def test_the_table_alpha_leaves_the_numpy_path_with_its_gap_to_the_identity(
     validation_plot(figure, 'alpha_identity_gap')
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 def test_the_composite_blend_takes_the_identity_alpha_outside_the_mush(states):
     """Far from the mushy band (blend width 1e-6) ``thermal_expansivity_composite_blend`` is the
@@ -223,12 +244,11 @@ def test_the_composite_blend_takes_the_identity_alpha_outside_the_mush(states):
     )
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
     """At P = 0 the solid tables reach 320 to 950 K, below the temperatures of the other states;
     there the NumPy evaluator alpha equals the JAX alpha to 1e-12 relative."""
-    from aragog.jax.phase import PhaseParams, evaluate_phase
-
     eos = entropy_eos_copy(EOS_DIR)
     S = np.array([-1500.0, -800.0, -200.0])
     P = np.zeros_like(S)
@@ -236,12 +256,48 @@ def test_numpy_and_jax_alpha_agree_in_the_cold_solid_at_the_surface():
     ev = _numpy_evaluator(P, S, 1e-6)
     T = np.ravel(ev.temperature())
     assert np.all((T > 300.0) & (T < 1000.0)), T
-    alpha_jax = evaluate_phase(
-        entropy_eos_jax(EOS_DIR),
-        PhaseParams(matprop_smooth_width=1e-6),
-        jnp.asarray(P),
-        jnp.asarray(S),
-    ).thermal_expansivity
     np.testing.assert_allclose(
-        np.ravel(ev.thermal_expansivity()), np.asarray(alpha_jax), rtol=1e-12, atol=0
+        np.ravel(ev.thermal_expansivity()), _jax_alpha(P, S, 1e-6), rtol=1e-12, atol=0
     )
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_numpy_and_jax_alpha_agree_at_one_solid_and_one_melt_state():
+    """Fast guard for the PR tier: 200 J/kg/K below the solidus and above the liquidus at
+    50 GPa, on tables that ship ``thermal_exp`` files, the NumPy evaluator alpha equals the JAX
+    alpha to 1e-12 relative (the table alpha differs from it by more than 1e-6 there)."""
+    eos = entropy_eos_copy(EOS_DIR)
+    P = np.full(2, 50e9)
+    S = np.array(
+        [eos.solidus_entropy(P[:1])[0] - 200.0, eos.liquidus_entropy(P[:1])[0] + 200.0]
+    )
+    alpha_np = np.ravel(_numpy_evaluator(P, S, 1e-6).thermal_expansivity())
+    np.testing.assert_allclose(alpha_np, _jax_alpha(P, S, 1e-6), rtol=1e-12, atol=0)
+    for i, ph in enumerate(('solid', 'melt')):
+        tab, _ = _single_phase_alphas(eos, P[i : i + 1], S[i : i + 1], ph)
+        assert abs(tab[0] - alpha_np[i]) > 1e-6 * alpha_np[i]
+
+
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+def test_the_sign_conventions_of_the_identity_on_a_negative_gradient():
+    """With the solid adiabatic gradient of a table copy made negative, the evaluator keeps
+    the sign of (dT/dP)_S, so the clamp lifts alpha to about 0, while the EOS methods take
+    |(dT/dP)_S|, as the JAX EOS does. The test tables hold no negative gradient, so this copy
+    is the only state that separates the two conventions."""
+    eos = entropy_eos_copy(EOS_DIR)
+    tbl = eos._tables['dTdPs_solid']
+    positive = tbl['interp']
+    tbl['interp'] = lambda pts: -positive(pts)
+    P = np.array([50e9])
+    S = np.ravel(eos.solidus_entropy(P)) - 500.0
+    alpha_ev = float(np.ravel(_numpy_evaluator(P, S, 1e-6, eos).thermal_expansivity())[0])
+    alpha_eos = float(np.ravel(eos.thermal_expansivity(P, S))[0])
+    rho, cp, T = (
+        float(np.ravel(f(P, S))[0]) for f in (eos.density, eos.heat_capacity, eos.temperature)
+    )
+    identity = rho * cp * float(np.ravel(eos.dTdPs(P, S))[0]) / T
+    assert identity < 0.0
+    assert alpha_ev == pytest.approx(_clamp(identity), rel=1e-6) and alpha_ev < 1e-10
+    assert alpha_eos == pytest.approx(-identity, rel=1e-12)
