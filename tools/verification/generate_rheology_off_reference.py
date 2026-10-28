@@ -330,7 +330,7 @@ def main() -> int:
     parser.add_argument(
         '--main-tree',
         type=Path,
-        default=Path('/Users/timlichtenberg/work/dev3-lead/rip/rip.prb1.pvCu/tmp_2/main'),
+        required=True,
         help='Path to aragog source tree at main branch.',
     )
     parser.add_argument(
@@ -343,7 +343,7 @@ def main() -> int:
         '--eos-dir',
         type=Path,
         default=None,
-        help='Directory containing EOS tables.',
+        help='Directory containing EOS tables (default: $ARAGOG_TEST_EOS_DIR).',
     )
     parser.add_argument(
         '--output',
@@ -353,12 +353,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    eos_dir = args.eos_dir or Path(
-        os.environ.get(
-            'ARAGOG_TEST_EOS_DIR',
-            '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
-        )
-    )
+    env_eos = os.environ.get('ARAGOG_TEST_EOS_DIR', '').strip()
+    eos_dir = args.eos_dir or (Path(env_eos) if env_eos else None)
+    if eos_dir is None:
+        print('Error: pass --eos-dir or set ARAGOG_TEST_EOS_DIR', file=sys.stderr)
+        return 1
     if not eos_dir.exists():
         print(f'Error: EOS directory does not exist: {eos_dir}', file=sys.stderr)
         return 1
