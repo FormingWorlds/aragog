@@ -286,7 +286,7 @@ def test_mixed_phase_config_const_properties_defaults_match_legacy_parser():
         grain_size=0.001,
     )
     assert mp.const_properties is False
-    assert mp.matprop_smooth_width == pytest.approx(0.0, abs=1e-15)
+    assert mp.matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
     assert mp.const_rho == pytest.approx(4000.0, rel=1e-12)
     assert mp.const_Cp == pytest.approx(1000.0, rel=1e-12)
     assert mp.const_alpha == pytest.approx(1e-5, rel=1e-12)

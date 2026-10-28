@@ -33,6 +33,7 @@ nav:
       - First run: Tutorials/firstrun.md
       - Building a test: Tutorials/build_test.md
       - Fixed surface temperature: Tutorials/surface_temperature.md
+      - Properties at the solidus: Tutorials/phase_blend.md
       - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
@@ -64,6 +65,7 @@ nav:
       - Overview: Validation/index.md
       - Core: Validation/core.md
       - Surface boundary: Validation/surface.md
+      - Phase transitions: Validation/phase_transitions.md
       - Numerics: Validation/numerics.md
 
   - Reference:

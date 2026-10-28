@@ -403,13 +403,13 @@
   "t_melt_330GPa": 6229.18378136264
  },
  "9": {
-  "core_vs_cmb_rel": 5.703334937656734e-07,
-  "core_vs_cmb_rel_rtol1e-8": 1.5334940994815582e-06,
-  "n_outputs": 71.0,
-  "r_icb_end_km": 244.39450997737353,
-  "reconstructed_cmb_max_rel": 0.0005550499056818925,
-  "step_dE_core_J": -1.004617460829615e+28,
-  "t_core_end": 6409.542887357787,
+  "core_vs_cmb_rel": 5.545446422061673e-07,
+  "core_vs_cmb_rel_rtol1e-8": 1.3565930558900874e-06,
+  "n_outputs": 131.0,
+  "r_icb_end_km": 244.39461920330604,
+  "reconstructed_cmb_max_rel": 0.0007905484617307668,
+  "step_dE_core_J": -1.0046180805458656e+28,
+  "t_core_end": 6409.5428848234305,
   "t_core_start": 6414.377415509878,
   "t_onset": 6412.377415509878
  }
