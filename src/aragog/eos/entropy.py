@@ -393,18 +393,15 @@ class EntropyEOS:
                 eos_dir / f'adiabat_temp_grad_{phase}.dat'
             )
 
-            # Thermal expansivity: load from table if available (matches
-            # SPIDER exactly), otherwise derived from thermodynamic identity.
+            # thermal_exp tables feed the P-S consistency check only; alpha
+            # is derived from the thermodynamic identity.
             alpha_file = eos_dir / f'thermal_exp_{phase}.dat'
             if alpha_file.is_file():
                 self._tables[f'thermal_exp_{phase}'] = _load_spider_ps_table(alpha_file)
         self._has_alpha_tables = (
             'thermal_exp_solid' in self._tables and 'thermal_exp_melt' in self._tables
         )
-        if self._has_alpha_tables:
-            logger.info('Thermal expansivity loaded from P-S tables (SPIDER parity)')
-        else:
-            logger.info('Thermal expansivity will be derived from T, rho, Cp, dTdPs')
+        logger.info('Thermal expansivity will be derived from T, rho, Cp, dTdPs')
 
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
@@ -1144,7 +1141,7 @@ class EntropyEOS:
         transition (Clausius-Clapeyron contribution), which dominates
         over the single-phase alpha by a factor of ~5 in the deep
         mushy zone. Outside the mushy band the result reduces to the
-        pure-phase alpha from the P-S tables via tanh smoothing
+        pure-phase alpha of :meth:`thermal_expansivity` via tanh smoothing
         (SPIDER ``eos_composite.c:279``).
 
         Parameters
@@ -1190,8 +1187,7 @@ class EntropyEOS:
         safe_dT = np.where(np.abs(dT) > 1e-10, dT, 1e-10)
         alpha_mix = (rho_sol - rho_liq) / safe_dT / rho_comp
 
-        # Pure-phase alpha from the linear-blend tables
-        alpha_pure = self._lookup_phase_weighted('thermal_exp', P, S)
+        alpha_pure = self.thermal_expansivity(P, S)
 
         # SPIDER-parity tanh smoothing (same as heat_capacity_latent_blend)
         dS = S_liq - S_sol
@@ -1236,16 +1232,14 @@ class EntropyEOS:
 
         The volume-weighted blend ``rho sum_i x_i alpha_i / rho_i`` of each phase's
         expansivity, with ``x_i`` the Lever-rule mass fractions and ``rho`` the harmonic
-        mixture density of ``density``. Each ``alpha_i`` is from the thermal_exp tables when
-        present, otherwise ``rho cp |dT/dP|_S / T`` of the phase at its own entropy.
+        mixture density of ``density``. Each ``alpha_i`` is ``rho cp |dT/dP|_S / T`` of the
+        phase at its own entropy, as in the JAX EOS.
         """
         phi = self._melt_fraction(P, S)
         melt = phi / self._lookup_at_phase_boundary('density', P, 'melt')
         volume = melt / (
             melt + (1.0 - phi) / self._lookup_at_phase_boundary('density', P, 'solid')
         )
-        if self._has_alpha_tables:
-            return self._lookup_phase_weighted('thermal_exp', P, S, melt_weight=volume)
         return self._lookup_phase_weighted(
             ('density', 'heat_capacity', 'dTdPs', 'temperature'),
             P,
@@ -1259,14 +1253,9 @@ class EntropyEOS:
     ) -> npt.NDArray:
         """Thermal expansivity alpha(P, S) [1/K].
 
-        When P-S thermal_exp tables are available (generated alongside
-        SPIDER tables), uses them directly for exact parity with SPIDER.
-        Otherwise, derives alpha from the thermodynamic identity:
-        alpha = rho * Cp * |dT/dP|_S| / T.
+        Derived from the thermodynamic identity alpha = rho * Cp * |dT/dP|_S / T,
+        as in the JAX EOS. The thermal_exp tables are not read here.
         """
-        if self._has_alpha_tables:
-            return self._lookup_phase_weighted('thermal_exp', P, S)
-
         T = self.temperature(P, S)
         rho = self.density(P, S)
         Cp = self.heat_capacity(P, S)

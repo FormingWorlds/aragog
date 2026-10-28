@@ -334,17 +334,12 @@ class EntropyPhaseEvaluator:
             Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
             Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
             Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
-            if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
-                alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
-                alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
-            else:
-                # Derive from thermodynamic identity
-                dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
-                dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
-                alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
-                alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+            # Boundary alphas from the identity, as the single-phase alpha below
+            dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
+            dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
+            alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
+            alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
+            alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
 
         # dTdPs: analytical from intermediates (line 249)
         dTdPs_mixed = (
@@ -393,11 +388,8 @@ class EntropyPhaseEvaluator:
         rho_single = _table_lookup('density')
         Cp_single = _table_lookup('heat_capacity')
         dTdPs_single = _table_lookup('dTdPs')
-        # alpha: use table if available, else derive from thermodynamic identity
-        if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
-            alpha_single = _table_lookup('thermal_exp')
-        else:
-            alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
+        # alpha: thermodynamic identity rho Cp (dT/dP)_S / T, as the JAX evaluator
+        alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
         cond_single = np.where(gphi > 0.5, self._k_liquid, self._k_solid)
 
         # ── Step 5: combine_matprop blend (SPIDER 278-285) ──────────

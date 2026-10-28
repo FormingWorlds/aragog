@@ -5,6 +5,8 @@ alpha = rho c_p (dT/dP)_S / T, the same source as the JAX path, at solid and mel
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -87,8 +89,7 @@ def test_numpy_and_jax_single_phase_alpha_agree_on_tables_with_thermal_exp(state
         assert smth.max() < 1e-15
         T, rho = np.ravel(ev.temperature()), np.ravel(ev.density())
         a = np.ravel(ev.dTdPs()) * rho * np.ravel(ev.heat_capacity()) / np.maximum(T, 1.0)
-        identity = 0.5 * (a + np.sqrt(a * a + 1e-16))
-        np.testing.assert_allclose(alpha_np, identity, rtol=1e-12, atol=0)
+        np.testing.assert_allclose(alpha_np, _clamp(a), rtol=1e-12, atol=0)
 
 
 @pytest.mark.physics_invariant
@@ -101,3 +102,65 @@ def test_numpy_and_jax_eos_expansivity_methods_agree_on_tables_with_thermal_exp(
     got = np.ravel(getattr(entropy_eos_copy(EOS_DIR), method)(P, S))
     want = np.asarray(getattr(entropy_eos_jax(EOS_DIR), method)(jnp.asarray(P), jnp.asarray(S)))
     np.testing.assert_allclose(got, want, rtol=1e-12, atol=0)
+
+
+_MUSH = Path(__file__).parent / 'validation' / 'data' / 'alpha_mush_2d1af473.csv'
+
+
+def _clamp(a):
+    return 0.5 * (a + np.sqrt(a * a + 1e-16))
+
+
+def _single_phase_alphas(eos, P, S_b, side):
+    """Table alpha and identity alpha of one phase at (P, S_b), clipped as the evaluator does."""
+
+    def table(name):
+        tbl = eos._tables[f'{name}_{side}']
+        P_c = np.clip(P, tbl['P'][0], tbl['P'][-1])
+        S_c = np.clip(S_b, tbl['S'][0], tbl['S'][-1])
+        return tbl['interp'](np.column_stack([P_c, S_c]))
+
+    a = table('dTdPs') * table('density') * table('heat_capacity')
+    return table('thermal_exp'), a / np.maximum(table('temperature'), 1.0)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
+def test_the_mush_alpha_changes_only_through_the_single_phase_weight():
+    """At melt fractions 0.1, 0.5 and 0.9 under ``cp_blend = 'latent'``, the two-phase alpha
+    (width 0) equals the value written by tools/verification/generate_alpha_mush_reference.py
+    at 2d1af473 bit for bit. At width 0.01 the alpha changes by at most (1 - smth) times the
+    gap between the table and the identity single-phase alpha, plus 1e-15 relative."""
+    data = np.loadtxt(_MUSH, delimiter=',')
+    P, S, phi, base0, base1 = data.T
+    eos = entropy_eos_copy(EOS_DIR)
+    np.testing.assert_array_equal(
+        np.ravel(_numpy_evaluator(P, S, 0.0).thermal_expansivity()), base0
+    )
+
+    tip1 = np.ravel(_numpy_evaluator(P, S, 0.01).thermal_expansivity())
+    melt = phi > 0.5
+    S_b = np.where(melt, eos.liquidus_entropy(P), eos.solidus_entropy(P))
+    gap = np.zeros_like(P)
+    for side, sel in (('melt', melt), ('solid', ~melt)):
+        tab, ident = _single_phase_alphas(eos, P[sel], S_b[sel], side)
+        gap[sel] = np.abs(tab - ident)
+    bound = (1.0 - _smth(eos, P, S, 0.01)) * gap + 1e-15 * np.abs(base1)
+    assert np.all(np.abs(tip1 - base1) <= bound)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('boundary', ['solidus', 'liquidus'])
+def test_the_linear_blend_meets_the_single_phase_alpha_at_each_boundary(states, boundary):
+    """Under ``cp_blend = 'linear'`` the two-phase alpha at melt fraction 0 or 1 is the
+    identity alpha of that phase on the boundary, so alpha has no step there (1e-12)."""
+    P = np.unique(states[0])
+    eos = entropy_eos_copy(EOS_DIR)
+    side = 'solid' if boundary == 'solidus' else 'melt'
+    S_b = np.ravel(getattr(eos, f'{boundary}_entropy')(P))
+    ev = EntropyPhaseEvaluator(eos, 10.0, cp_blend='linear', matprop_smooth_width=0.0)
+    ev.set_pressure(P)
+    ev.set_entropy(S_b)
+    ev.update()
+    _, ident = _single_phase_alphas(eos, P, S_b, side)
+    np.testing.assert_allclose(np.ravel(ev.thermal_expansivity()), _clamp(ident), rtol=1e-12)
