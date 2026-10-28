@@ -492,8 +492,10 @@ def _solver_helpers():
     return CORE_MODULE_PARAMS, _build, entropy_eos_copy
 
 
-def item9_cvode_onset() -> None:
-    """Core heat across the inner-core onset: solver ledger, heat content and CMB heat."""
+def item9_cvode_onset(output_points: int = 130) -> None:
+    """Core heat across the inner-core onset: solver ledger, heat content and CMB heat, on
+    ``output_points`` CVODE output intervals (the reconstruction error converges with order 2
+    from about 130)."""
     params0, build, eos_copy = _solver_helpers()
     params = {
         k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
@@ -501,7 +503,14 @@ def item9_cvode_onset() -> None:
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     # The figure and the other values come from the last, rtol 1e-10, solve; atol has a 1e-8 floor.
     for rtol, key in ((1e-8, 'core_vs_cmb_rel_rtol1e-8'), (1e-10, 'core_vs_cmb_rel')):
-        solver = build('core_module', eos_copy(), params, end_time=4.0, solver_method='cvode')
+        solver = build(
+            'core_module',
+            eos_copy(),
+            params,
+            end_time=4.0,
+            solver_method='cvode',
+            cvode_output_points=output_points,
+        )
         solver.parameters.solver.rtol = rtol
         budget, n = solver._core_module_budget, solver._n_stag
         t_on = float(budget.t_onset)
@@ -512,6 +521,8 @@ def item9_cvode_onset() -> None:
         record(9, key, abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1))
     sol = solver._solution
     t_yr, t_core = np.asarray(sol.t), np.asarray(sol.y[n + 1])
+    if t_yr.size != output_points + 1:
+        raise RuntimeError(f'item 9 has {t_yr.size} output times, not {output_points + 1}')
     content = np.array([float(budget.heat_content(x)) for x in t_core]) - float(
         budget.heat_content(t_core[0])
     )

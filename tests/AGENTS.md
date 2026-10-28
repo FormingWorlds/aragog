@@ -43,5 +43,5 @@ Aragog has no `tools/check_test_quality.py`; `bash tools/validate_test_structure
 - `tests/conftest.py` holds the table helpers (`entropy_eos_copy`, `entropy_eos_jax`, `make_mesh`) and the `helper` fixture (the bundled configs and the reference data in `tests/reference/`); other fixtures are in the test files.
 - `tests/test_core_verification_page.py` checks each tagged number of `docs/Validation/core.md` against `docs/figures/vv/core_verification_values.json` and reruns the items of `tools/verification/run_core_verification.py` it names; a change to the page, the values file or the script goes with that test.
 - The smoke tests of the JAX solver need `diffrax`, which the nightly installs and no extra lists.
-- The shared rule pairs `reference_pinned` with `physics_invariant`; 8 of the 23 `reference_pinned` tests here carry `reference_pinned` alone (the core page tests, a JAX parity test and three single-value pins).
+- The shared rule pairs `reference_pinned` with `physics_invariant`; 8 of the 27 `reference_pinned` tests here carry `reference_pinned` alone (the core page tests, a JAX parity test and three single-value pins).
 - Tests that take the `validation_plot` fixture need `proteus-mpl` (in the `test` extra and in the CI installs); `pytest -m reference_pinned --validation-plots` writes their plot pairs to `docs/assets/validation/`.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import numbers
 from typing import Any
 
 import attrs
@@ -56,6 +57,45 @@ SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 # Separation buoyancy: against the mixture (McKenzie 1984) or the solid (Abe 1995).
 SEPARATION_BUOYANCY_MODES: tuple[str, str] = ('mixture', 'solid')
 SEPARATION_BUOYANCY_DEFAULT: str = 'mixture'
+# Width of the tanh blend at the solidus and liquidus, in melt-fraction units (PROTEUS default).
+MATPROP_SMOOTH_WIDTH_DEFAULT: float = 0.01
+# Widths that warn. Test tables: Cp changes over S_sol +- 1e-3 J/kg/K by 6e-4 at 1e-3, by 22x at
+# 1e-12 (as at 0); mid-band Cp starts to jump from about 0.03 (2e-9 at 0.05, 4e-5 at 0.1).
+MATPROP_SMOOTH_WIDTH_WARN_MIN: float = 1e-3
+MATPROP_SMOOTH_WIDTH_WARN_MAX: float = 0.05
+# Smallest kept width: the JAX gradient of the blended Cp stays finite for a Cp jump up to 3.6e8.
+MATPROP_SMOOTH_WIDTH_MIN: float = 1e-300
+
+
+def check_matprop_smooth_width(value: float) -> None:
+    """Raise ``ValueError`` unless ``value`` is a real scalar in [``MATPROP_SMOOTH_WIDTH_MIN``, 1).
+
+    At 0 the properties switch between the two-phase and the single-phase branch exactly at
+    the solidus and the liquidus; from 1 the blend spans the whole melting interval. The JAX
+    gradient in S of the blended heat capacity on both boundaries passes through
+    0.5 * (Cp_mixed - Cp_single) / width, which overflows the largest float below about
+    8e-305 for the Cp jump of up to 3.0e4 J/kg/K on the SPIDER test tables; at 1e-300 it
+    stays finite for a jump up to 3.6e8 J/kg/K. A subnormal width also makes the blend
+    weight NaN. A width outside [``MATPROP_SMOOTH_WIDTH_WARN_MIN``,
+    ``MATPROP_SMOOTH_WIDTH_WARN_MAX``] is kept and logs a warning.
+    """
+    # The range comparison first, so float() of a huge int never overflows; a bool is 0 or 1.
+    if not (isinstance(value, numbers.Real) and 0 < value < 1 and 0.0 < float(value) < 1.0):
+        raise ValueError(f'matprop_smooth_width must lie in (0, 1), got {value!r}')
+    if float(value) < MATPROP_SMOOTH_WIDTH_MIN:
+        raise ValueError(
+            f'matprop_smooth_width must lie in [{MATPROP_SMOOTH_WIDTH_MIN!r}, 1): below it the '
+            f'JAX gradient of the blended heat capacity overflows, got {value!r}'
+        )
+    if not MATPROP_SMOOTH_WIDTH_WARN_MIN <= value <= MATPROP_SMOOTH_WIDTH_WARN_MAX:
+        logger.warning(
+            'matprop_smooth_width = %r lies outside [%g, %g]: below it the blend at the solidus '
+            'and the liquidus is narrow and approaches the switch at 0, above it the properties '
+            'start to jump in the middle of the melting interval',
+            float(value),
+            MATPROP_SMOOTH_WIDTH_WARN_MIN,
+            MATPROP_SMOOTH_WIDTH_WARN_MAX,
+        )
 
 
 @delegate_rheology
@@ -161,10 +201,10 @@ class MixedPhaseConfig:
         latent-heat-augmented) or ``'linear'`` (linear blend of
         pure-phase Cp without the latent term). Default ``'latent'``.
     matprop_smooth_width : float
-        Half-width of the tanh used to smooth phase-dependent
-        material properties around the rheological transition.
-        Default 0.0 reproduces SPIDER's convention of no smoothing
-        on the property side; 0.01 is the typical JAX setting.
+        Width of the tanh blend between the two-phase and the
+        single-phase properties at the solidus and the liquidus, in
+        melt-fraction units, strictly between 0 and 1. Default 0.01,
+        as in PROTEUS.
     const_properties : bool
         Replace the EOS-tabulated $(\rho, c_p, \alpha, k)$ and
         $\log_{10}\eta$ with the seven constant-property values
@@ -209,7 +249,10 @@ class MixedPhaseConfig:
         validator=attrs.validators.in_(SEPARATION_BUOYANCY_MODES),
     )
     cp_blend: str = 'latent'
-    matprop_smooth_width: float = 0.0
+    matprop_smooth_width: float = attrs.field(
+        default=MATPROP_SMOOTH_WIDTH_DEFAULT,
+        validator=lambda _inst, _attr, value: check_matprop_smooth_width(value),
+    )
     const_properties: bool = False
     const_rho: float = 4000.0
     const_Cp: float = 1000.0
