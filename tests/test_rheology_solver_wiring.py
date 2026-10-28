@@ -1919,13 +1919,14 @@ def test_jax_jacobian_is_finite_for_the_lid_closure_with_a_constant_mixing_lengt
     )
 
 
-@pytest.mark.parametrize(('width', 'expected'), [(0.05, 0.05), (0.0, 1.0e-2)])
+@pytest.mark.parametrize(('width', 'expected'), [(0.05, 0.05), (None, 1.0e-2)])
 def test_phase_params_from_parameters_takes_the_numpy_phase_smoothing_width(width, expected):
-    """``from_parameters`` sets the Jgrav/Jmix width as the NumPy path: ``matprop_smooth_width or 1e-2``."""
+    """``from_parameters`` sets the Jgrav/Jmix width to ``matprop_smooth_width`` (``None``: the default)."""
     params = _make_abe_solid_params(SolidRheologyParams(enabled=True))
-    params = replace(
-        params, phase_mixed=replace(params.phase_mixed, matprop_smooth_width=width)
-    )
+    if width is not None:
+        params = replace(
+            params, phase_mixed=replace(params.phase_mixed, matprop_smooth_width=width)
+        )
     assert PhaseParams.from_parameters(params).phase_smoothing_width == pytest.approx(expected)
 
 
