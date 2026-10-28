@@ -1422,6 +1422,12 @@ ITEMS = {
 }
 
 
+def dump_values(values: dict) -> str:
+    """The values file text: one top-level item per line, keys sorted, no indentation."""
+    rows = (f'{json.dumps(k)}: {json.dumps(values[k], sort_keys=True)}' for k in sorted(values))
+    return '{\n' + ',\n'.join(rows) + '\n}\n'
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--only', default='', help='comma list of item numbers')
@@ -1434,7 +1440,7 @@ def main(argv=None) -> None:
     for i in wanted:
         t0, VALUES[str(i)] = time.perf_counter(), {}
         ITEMS[i]()
-        VALUES_FILE.write_text(json.dumps(VALUES, indent=1, sort_keys=True) + '\n')
+        VALUES_FILE.write_text(dump_values(VALUES))
         print(f'item {i}: {time.perf_counter() - t0:.1f} s', flush=True)
     print(
         f'total {time.perf_counter() - start:.1f} s; values in {VALUES_FILE.relative_to(ROOT)}'
