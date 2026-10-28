@@ -102,6 +102,8 @@ Whenever any cell sits within `phase_boundary_entropy_margin` (default $200\ \ma
 
 $\Delta T$ is the largest cell difference at the call end against `fixed` at $10^{-10}$; $F$ is the prescribed surface flux. The table was computed with `convective_threshold = 0`. In the second case `fixed` does not arm (the cells start beyond the 200 J kg$^{-1}$ K$^{-1}$ margin) and takes fewer steps.
 
+At the default `matprop_smooth_width` $w = 0.01$ the stiff zone is $\delta = 3w\max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j})$ = 252 J kg$^{-1}$ K$^{-1}$ on the test tables, 25 times the floor of 10 J kg$^{-1}$ K$^{-1}$ that sets $\delta$ at $w = 0$. The rows at $w = 0.01$ use this zone; in the second case `rate` at $10^{-8}$ is $1.27 \times 10^{-4}$ K from the reference, 2 % below the bound of $1.3 \times 10^{-4}$ K. Against $w = 0$, the first case needs 308 in place of 1348 CVODE steps (4.4 times fewer) and 618 in place of 2906 RHS evaluations. The second case needs 4238 in place of 2839 steps (49 % more) and 5053 in place of 4033 RHS evaluations (25 % more): at $w = 0$ its cells, 230 J kg$^{-1}$ K$^{-1}$ above the liquidus, lie outside both the zone and the 200 J kg$^{-1}$ K$^{-1}$ margin, so `rate` does not arm. `python tools/verification/run_phase_boundary_cap_accuracy.py --width=0 A B` prints the numbers at $w = 0$.
+
 The gradient core and the scipy integrators use 1 yr in both modes; `rate` then logs one line per solver, at INFO when it is the default and at WARNING when it is set. Once the mantle is fully solid (mean $\phi < 0.01$), the absolute tolerance is relaxed by a factor of ten so the integrator does not stall on a stiff residual.
 
 ### Retry ladder hooks

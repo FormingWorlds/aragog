@@ -30,10 +30,12 @@ from aragog.config.energy import (
     check_eos_floor_margin,
 )
 from aragog.config.phases import (
+    MATPROP_SMOOTH_WIDTH_DEFAULT,
     SEPARATION_BUOYANCY_DEFAULT,
     SEPARATION_BUOYANCY_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
+    check_matprop_smooth_width,
 )
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -307,7 +309,7 @@ class _PhaseMixedParameters:
     phase: str
     phase_transition_width: float
     grain_size: float
-    matprop_smooth_width: float = 0.0
+    matprop_smooth_width: float = MATPROP_SMOOTH_WIDTH_DEFAULT
     # Separation-drag viscosity source: "melt" (SPIDER-parity single-
     # phase liquid viscosity, default) or "mixture" (the rheological-
     # transition-blended bulk viscosity). Consumed by
@@ -331,6 +333,7 @@ class _PhaseMixedParameters:
     const_S_ref: float = 3000.0
 
     def __post_init__(self):
+        check_matprop_smooth_width(self.matprop_smooth_width)
         if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
             raise ValueError(
                 'separation_viscosity must be one of '
