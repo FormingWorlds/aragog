@@ -69,6 +69,7 @@ def _build(
     core_offset: float | None = None,
     radionuclides=(),
     tidal_array=None,
+    cvode_output_points: int | None = None,
 ):
     from aragog.parser import (
         Parameters,
@@ -149,6 +150,7 @@ def _build(
         atol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
         rtol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
         tsurf_poststep_change=30.0,
+        **({} if cvode_output_points is None else {'cvode_output_points': cvode_output_points}),
     )
     params = Parameters(
         boundary_conditions=bc,

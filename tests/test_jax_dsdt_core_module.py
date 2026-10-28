@@ -156,7 +156,7 @@ def _build_jax_pieces(solver):
         grain_size=float(pm.grain_size),
         k_solid=float(ps.thermal_conductivity),
         k_liquid=float(pl.thermal_conductivity),
-        matprop_smooth_width=float(getattr(pm, 'matprop_smooth_width', 0.0)),
+        matprop_smooth_width=float(pm.matprop_smooth_width),
         conduction=bool(en.conduction),
         convection=bool(en.convection),
         grav_sep=bool(en.gravitational_separation),

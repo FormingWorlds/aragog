@@ -1,0 +1,163 @@
+"""Property tests of the matprop_smooth_width config field over its whole input domain."""
+
+from __future__ import annotations
+
+import importlib.resources
+import logging
+import sys
+import tomllib
+from fractions import Fraction
+
+import numpy as np
+import pytest
+from hypothesis import HealthCheck, example, given, settings
+from hypothesis import strategies as st
+
+from aragog.config import Config
+from aragog.config.phases import (
+    MATPROP_SMOOTH_WIDTH_WARN_MAX,
+    MATPROP_SMOOTH_WIDTH_WARN_MIN,
+    MixedPhaseConfig,
+)
+from aragog.parser import Parameters, _PhaseMixedParameters
+
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
+
+_REQUIRED = dict(
+    latent_heat_of_fusion=4e5, rheological_transition_melt_fraction=0.4,
+    rheological_transition_width=0.15, solidus='solidus.dat', liquidus='liquidus.dat',
+    phase='mixed', phase_transition_width=0.01, grain_size=1e-3,
+)  # fmt: skip
+_BUILDERS = pytest.mark.parametrize(
+    'build',
+    [
+        lambda **kw: _PhaseMixedParameters(**_REQUIRED, **kw),
+        lambda **kw: MixedPhaseConfig(**_REQUIRED, **kw),
+    ],
+    ids=['_PhaseMixedParameters', 'MixedPhaseConfig'],
+)
+
+
+@_BUILDERS
+def test_the_default_width_is_0_01(build):
+    """Without the key the width is 0.01, the PROTEUS default, not 0 (the hard phase switch)."""
+    width = build().matprop_smooth_width
+    assert width == pytest.approx(0.01, rel=1e-15)
+    assert isinstance(width, float)
+
+
+def _kept(build, value):
+    """The width ``build`` keeps for ``value``; a refusal fails the test on its assertion path."""
+    try:
+        return build(matprop_smooth_width=value).matprop_smooth_width
+    except ValueError as err:
+        pytest.fail(f'the kept width {value!r} was refused: {err}')
+
+
+@_BUILDERS
+@given(
+    value=st.floats(min_value=1e-300, max_value=1.0, exclude_max=True)
+    | st.sampled_from([Fraction(1, 2), np.float64(0.2), 1e-300, 1.0 - 2.0**-53])
+)
+def test_a_width_inside_the_open_unit_interval_is_kept(build, value):
+    """Any real number from 1e-300 up to the largest float below 1 is kept as given."""
+    width = _kept(build, value)
+    assert width == value
+    assert 0.0 < float(width) < 1.0
+
+
+def _warnings(caplog, build, value):
+    """Width warnings logged while ``build`` keeps ``value``."""
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.config.phases'):
+        assert _kept(build, value) == value
+    return [r.getMessage() for r in caplog.records if 'matprop_smooth_width' in r.getMessage()]
+
+
+@_BUILDERS
+@pytest.mark.parametrize(
+    ('value', 'warns'),
+    [(9.99e-4, True), (1e-3, False), (0.01, False), (0.05, False), (0.0501, True), (0.5, True)],
+)
+def test_a_kept_width_outside_1e_3_to_0_05_logs_one_warning(build, value, warns, caplog):
+    """Below 1e-3 the properties change almost as sharply as at 0, above 0.05 they jump in the
+    middle of the melting interval: each side logs one warning that names both limits; the
+    edges and the default log none."""
+    assert (MATPROP_SMOOTH_WIDTH_WARN_MIN, MATPROP_SMOOTH_WIDTH_WARN_MAX) == (1e-3, 0.05)
+    messages = _warnings(caplog, build, value)
+    assert len(messages) == int(warns)
+    assert all('outside [0.001, 0.05]' in m and repr(value) in m for m in messages)
+
+
+@_BUILDERS
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@example(value=1e-3)
+@example(value=0.05)
+@given(value=st.floats(min_value=1e-300, max_value=1.0, exclude_max=True))
+def test_a_kept_width_warns_exactly_outside_the_range(build, value, caplog):
+    """Over the whole kept interval a width warns exactly when it lies outside
+    [1e-3, 0.05]."""
+    messages = _warnings(caplog, build, value)
+    assert len(messages) == int(not 1e-3 <= value <= 0.05)
+
+
+@_BUILDERS
+@given(
+    value=st.floats(max_value=0.0)
+    | st.floats(min_value=1.0)
+    | st.floats(allow_nan=True).filter(lambda x: x != x)
+    | st.integers(max_value=0)
+    | st.integers(min_value=1)
+)
+def test_a_width_at_or_beyond_0_or_1_or_nan_is_refused(build, value):
+    """0, a negative width, 1, a width above 1, an infinity and NaN are refused by name: 0
+    is the hard switch at the solidus and liquidus, and from 1 the blend covers the whole
+    melting interval."""
+    with pytest.raises(ValueError, match='matprop_smooth_width must lie in'):
+        build(matprop_smooth_width=value)
+
+
+@_BUILDERS
+@pytest.mark.parametrize(
+    'value',
+    [True, False, np.True_, '0.01', None, np.array([0.01]), [0.01], 10**400]
+    + [Fraction(1, 10**400), Fraction(10**400 - 1, 10**400)],
+)
+def test_a_bool_text_array_none_or_overflowing_width_is_refused(build, value):
+    """A TOML true, a string, None, an array, a list, an int too large for a float and a
+    fraction inside (0, 1) that rounds to the float 0 or 1 are refused by name; none of them
+    reaches the evaluator."""
+    with pytest.raises(ValueError, match='matprop_smooth_width must lie in'):
+        build(matprop_smooth_width=value)
+
+
+@_BUILDERS
+@settings(deadline=None)
+@example(value=np.nextafter(1e-300, 0.0))
+@example(value=1e-304)
+@example(value=sys.float_info.min)
+@example(value=np.float64(1e-310))
+@example(value=Fraction(1, 10**301))
+@given(value=st.floats(min_value=5e-324, max_value=np.nextafter(1e-300, 0.0)))
+def test_a_width_below_1e_300_is_refused(build, value):
+    """A width below 1e-300 is refused with its reason: the JAX gradient of the blended heat
+    capacity overflows on both boundaries from about 1e-305 down, and a subnormal width makes
+    the blend itself NaN."""
+    with pytest.raises(ValueError, match='gradient of the blended heat capacity overflows'):
+        build(matprop_smooth_width=value)
+
+
+@pytest.mark.parametrize('value', [0.0, 1.0, True, 'x', 1e-310, 1e-301])
+def test_the_dict_loader_refuses_a_bad_width_in_phase_mixed(value):
+    """Config.from_dict, the path of a TOML file, refuses the width before a solver is built."""
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as path:
+        good = Parameters.from_file(path)
+        assert good.phase_mixed.matprop_smooth_width == pytest.approx(0.01, rel=1e-15)
+        text = path.read_text(encoding='utf-8')
+    assert 'matprop_smooth_width' not in text
+    data = tomllib.loads(text)
+    data['phase_mixed']['matprop_smooth_width'] = value
+    with pytest.raises(ValueError, match='matprop_smooth_width must lie in'):
+        Config.from_dict(data)
