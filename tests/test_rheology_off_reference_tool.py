@@ -96,3 +96,36 @@ def test_aragog_imported_outside_main_tree_is_refused(
     else:
         pytest.fail('generate_reference did not refuse an aragog outside the main tree')
     assert not out.exists()
+
+
+def test_recorded_factory_passes_after_a_build() -> None:
+    """A factory that builds the callbacks passes the option Z check."""
+    factory = gen._RecordedFactory(lambda scales, core_bc_mode: ('rhs', 'jac'))
+    assert factory('scales', 'quasi_steady') == ('rhs', 'jac')
+    assert (factory.built, factory.failed) == (1, 0)
+    try:
+        factory.require_option_z()
+    except RuntimeError as exc:
+        pytest.fail(f'require_option_z raised {exc!r} after a build')
+
+
+@pytest.mark.parametrize('outcomes', [(), ('fail',), ('build', 'fail')])
+def test_recorded_factory_refuses_a_numpy_solve(outcomes: tuple[str, ...]) -> None:
+    """No call, or any failed call (a 1-argument factory), fails the option Z check."""
+
+    def build(scales, core_bc_mode):
+        if next(steps) == 'fail':
+            raise TypeError('build() takes 1 positional argument but 2 were given')
+        return 'rhs', 'jac'
+
+    steps = iter(outcomes)
+    factory = gen._RecordedFactory(build)
+    for step in outcomes:
+        if step == 'fail':
+            with pytest.raises(TypeError):
+                factory('scales', 'quasi_steady')
+        else:
+            factory('scales', 'quasi_steady')
+    assert (factory.built, factory.failed) == (outcomes.count('build'), outcomes.count('fail'))
+    with pytest.raises(RuntimeError, match='did not run on the JAX RHS'):
+        factory.require_option_z()

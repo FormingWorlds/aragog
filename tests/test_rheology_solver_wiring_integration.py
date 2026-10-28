@@ -75,7 +75,8 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     """When rheology is disabled, zero rheology core functions are invoked,
     and RHS and solve outputs match the pinned main reference across all 54 arrays
     (tolerance 1e-12 per RHS and 1e-9 per solve, relative to each value or to the
-    largest value of the array)."""
+    largest value of the array). The JAX solve, here and in the reference, runs on the
+    JAX RHS with the analytic Jacobian (option Z)."""
     counts_off = _measure_numpy_rhs_counts(SolidRheologyParams(enabled=False))
     assert counts_off['arrhenius_viscosity_core'] == 0
     assert counts_off['yield_stress_core'] == 0
@@ -334,16 +335,33 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     )
 
     s_jax = EntropySolver(c_solve, entropy_eos=eos_inst)
-    eos_jx_inst = entropy_eos_jax(str(eos_dir))
-    s_jax.set_jax_cvode_factory(lambda slv: build_jax_rhs_and_jacobian(slv, eos_jx_inst))
     s_jax.initialize()
     s_jax.set_initial_entropy(2500.0)
+    mesh_jx, eos_jx, pp_jx, args_jx = _build_jax_bundle(s_jax)
+    built = []
+
+    def _solve_factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jx,
+            phase_params=pp_jx,
+            mesh_arrays=mesh_jx,
+            boundary_params=args_jx[3],
+            heating_array=np.zeros(s_jax._n_stag),
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
+        built.append(core_bc_mode)
+        return rhs_fn, jac_fn
+
+    s_jax.set_jax_cvode_factory(_solve_factory)
     caplog.clear()
     with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
         s_jax.solve()
     # solve() catches a factory error and continues on the NumPy RHS.
     assert 'JAX CVODE factory failed' not in caplog.text, caplog.text
     assert 'option Z active' in caplog.text, 'the JAX solve did not run on the JAX RHS'
+    assert built, 'solve() never built the JAX callbacks'
+    assert bool(ref['solve/jax/option_z_active']), 'the stored JAX solve ran on the NumPy RHS'
     out_jax = s_jax.get_state()
     _assert_matches_main_reference(
         np.asarray(out_jax.S_final),
