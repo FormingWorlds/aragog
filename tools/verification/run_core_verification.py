@@ -631,8 +631,8 @@ def item12_jax_parity() -> None:
         record(12, f'jac_tcore_min_rel_{key}', errs.min())
         record(12, f'jac_tcore_best_step_{key}', steps[np.argmin(errs)])
         ax2.loglog(steps, np.maximum(errs, 1e-17), color=col, label=state)
-    # Over a mantle above its liquidus the single-phase expansivity enters: the tables against
-    # the identity rho cp |dT/dP_S| / T that the JAX EOS uses.
+    # Over a mantle above its liquidus the single-phase expansivity enters: with and without the
+    # thermal_exp tables loaded, both paths take the identity rho cp dT/dP_S / T.
     for identity, key in ((True, 'identity'), (False, 'tables')):
         eos = eos_copy(identity_alpha=identity)
         solver = build('core_module', eos, core_params)
