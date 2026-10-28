@@ -1551,15 +1551,25 @@ class EntropySolver:
         self._check_jax_factory_rheology(factory)
         self._jax_cvode_factory = factory
 
+    def _solid_rheology(self) -> SolidRheologyParams | None:
+        """Return ``parameters.phase_solid.rheology``, or None when any link is missing."""
+        return getattr(
+            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
+        )
+
+    @property
+    def _rheology_enabled(self) -> bool:
+        """True when the solid rheology is present and enabled."""
+        rheo = self._solid_rheology()
+        return bool(rheo is not None and rheo.enabled)
+
     def _check_jax_factory_rheology(
         self, candidate, *, require_when_enabled: bool = False
     ) -> None:
         """Raise ValueError if a JAX factory or RHS carries a mismatched SolidRheologyParams."""
         if candidate is None:
             return
-        solver_rheo = getattr(
-            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
-        )
+        solver_rheo = self._solid_rheology()
         if solver_rheo is None:
             return
         cand_rheo = getattr(candidate, 'rheology', None)
@@ -1785,7 +1795,7 @@ class EntropySolver:
             cp_blend=cp_blend,
             separation_viscosity=separation_viscosity,
             separation_buoyancy=separation_buoyancy,
-            rheology=getattr(self.parameters.phase_solid, 'rheology', None),
+            rheology=self._solid_rheology(),
         )
 
         # Get viscosity and thermal conductivity from config.
@@ -1912,9 +1922,9 @@ class EntropySolver:
         liq_rheo = getattr(self.parameters.phase_liquid, 'rheology', None)
         if liq_rheo is not None and liq_rheo != SolidRheologyParams():
             raise ValueError('phase_liquid.rheology must keep default (disabled) values')
-        rheo = getattr(self.parameters.phase_solid, 'rheology', None)
-        if rheo is None or not rheo.enabled:
+        if not self._rheology_enabled:
             return
+        rheo = self._solid_rheology()
         rheo.__post_init__()
         r_b = self._r_basic_flat
         if r_b.ndim != 1 or r_b.size < 3:
@@ -1975,11 +1985,9 @@ class EntropySolver:
         accepted step on both branches, while RHS-state invariants run on the final step on the
         JAX batch branch and on every step on the NumPy loop branch.
         """
-        params = getattr(self, 'parameters', None)
-        phase_solid = getattr(params, 'phase_solid', None)
-        rheo = getattr(phase_solid, 'rheology', None)
-        if rheo is None or not rheo.enabled:
+        if not self._rheology_enabled:
             return
+        rheo = self._solid_rheology()
         if trace_y is not None:
             y_pts = np.asarray(trace_y, dtype=float)
             if y_pts.ndim == 1:
@@ -3545,11 +3553,8 @@ class EntropySolver:
         # Gradient mode: the reconstruction couples all gradients to all
         # staggered nodes, making the Jacobian dense. Use no sparsity
         # hint (scipy will do full finite-difference Jacobian).
-        rheo = getattr(
-            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
-        )
         if self._core_bc == 'gradient' or (
-            rheo is not None and rheo.enabled and rheo.stress_closure_mode == 'lid'
+            self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
         ):
             return None
 
@@ -3836,11 +3841,8 @@ class EntropySolver:
             'max_nonlin_iters': 10,
             'max_conv_fails': 25,
         }
-        rheo = getattr(
-            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
-        )
         lid_nonlocal = bool(
-            rheo is not None and rheo.enabled and rheo.stress_closure_mode == 'lid'
+            self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
         )
         if self._core_bc == 'quasi_steady' and not lid_nonlocal:
             cvode_options['linsolver'] = 'band'
@@ -4693,16 +4695,10 @@ class EntropySolver:
                         cap=phi_cap_rootfn,
                     )
 
-                rheo_seg = getattr(
-                    getattr(getattr(self, 'parameters', None), 'phase_solid', None),
-                    'rheology',
-                    None,
-                )
                 eos_seg = getattr(self, 'entropy_eos', None)
                 eos_s_nd_bounds = None
                 if (
-                    rheo_seg is not None
-                    and rheo_seg.enabled
+                    self._rheology_enabled
                     and eos_seg is not None
                     and not getattr(self.parameters.phase_mixed, 'const_properties', False)
                     and self._core_bc != 'gradient'
@@ -4976,20 +4972,19 @@ class EntropySolver:
             ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
-        rheo = getattr(
-            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
-        )
-        check_rheo = rheo is not None and rheo.enabled
+        rheo = self._solid_rheology()
+        check_rheo = self._rheology_enabled
         if self.entropy_eos is None or sol is None or sol.t.size < 2:
+            if not check_rheo:
+                return dict(_ZERO_ENERGY_INTEGRALS)
             if sol is not None and sol.t.size > 0 and sol.y.size > 0:
                 y_last = sol.y[:, -1] if sol.y.ndim == 2 else sol.y
                 t_last = float(sol.t[-1])
-                if check_rheo:
-                    self._check_rheology_eos_range(
-                        self._stag_entropy(y_last),
-                        step_idx=int(sol.t.size - 1),
-                        time_yr=t_last,
-                    )
+                self._check_rheology_eos_range(
+                    self._stag_entropy(y_last),
+                    step_idx=int(sol.t.size - 1),
+                    time_yr=t_last,
+                )
                 counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
                 try:
                     self._dSdt_single(t_last, y_last)
@@ -5571,12 +5566,9 @@ class EntropySolver:
         else:
             # const_properties: analytical T, phi=0 when rheology.enabled else 1, rho=const
             pm = self.parameters.phase_mixed
-            rheo = getattr(self.parameters.phase_solid, 'rheology', None)
             T_stag = pm.const_T_ref * np.exp((S_final - pm.const_S_ref) / pm.const_Cp)
             phi_stag = (
-                np.zeros_like(S_final)
-                if (rheo is not None and rheo.enabled)
-                else np.ones_like(S_final)
+                np.zeros_like(S_final) if self._rheology_enabled else np.ones_like(S_final)
             )
             rho_stag = np.full_like(S_final, pm.const_rho)
 
@@ -5752,8 +5744,7 @@ class EntropySolver:
             porosity = np.clip((rho_sol - rho_bulk) / safe_drho, 0, 1)
             Phi_global_vol = float(np.sum(porosity * vol) / np.sum(vol))
         else:
-            rheo = getattr(self.parameters.phase_solid, 'rheology', None)
-            Phi_global_vol = 0.0 if (rheo is not None and rheo.enabled) else 1.0
+            Phi_global_vol = 0.0 if self._rheology_enabled else 1.0
 
         # Heating flux
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2

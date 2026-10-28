@@ -1379,8 +1379,15 @@ def test_update_stores_the_pass_two_viscosity_when_yielding_is_active() -> None:
     np.testing.assert_allclose(np.asarray(phase.viscosity()).ravel(), pass_two, rtol=1.0e-12)
 
 
+@pytest.mark.physics_invariant
 def test_compute_stagnant_lid_state_fixed_mode_melt_ramp_transition() -> None:
-    """Verify compute_stagnant_lid_state in fixed mode uses a finite melt ramp width."""
+    """In fixed mode the lid weight follows the compact quintic ramp in the convective
+    flux fraction f, centred at interior_flux_fraction with half-width 0.2 of it.
+
+    Nodes 8 (f = 0.05, below the ramp) and 12 (f = 0.5, above it) give the end values
+    1 and 0; node 10 (f = 0.11) sits at 3/4 of the ramp. A changed ramp width or
+    threshold moves the node-10 value off the hand value.
+    """
     from aragog.rheology_lid import compute_stagnant_lid_state
 
     n = 20
@@ -1391,7 +1398,8 @@ def test_compute_stagnant_lid_state_fixed_mode_melt_ramp_transition() -> None:
     ft = np.ones(n)
     f_thresh = 0.10
     fc = np.full(n, 0.5)
-    fc[10] = f_thresh * ft[10]
+    fc[8] = 0.5 * f_thresh
+    fc[10] = 1.1 * f_thresh
 
     st = compute_stagnant_lid_state(
         radii=r,
@@ -1414,7 +1422,12 @@ def test_compute_stagnant_lid_state_fixed_mode_melt_ramp_transition() -> None:
     )
     w_lid = np.asarray(st['w_lid'])
     assert np.all(np.isfinite(w_lid))
-    assert not np.isnan(w_lid[10])
+    # t = (0.11 - 0.08) / (2 * 0.02) = 0.75; T = 1400 K lies far below the 2000 K lid base
+    # and phi = 0, so w_lid = 1 - t^3 (10 - 15 t + 6 t^2) = 0.103515625.
+    assert w_lid[10] == pytest.approx(0.103515625, rel=1.0e-9)
+    assert w_lid[8] == pytest.approx(1.0, rel=1.0e-12)
+    assert w_lid[12] == pytest.approx(0.0, abs=1.0e-12)
+    assert w_lid[12] < w_lid[10] < w_lid[8]
 
 
 # Targeted tests covering nightly selection coverage gaps
@@ -1561,11 +1574,12 @@ def test_check_viscosity_ceiling_handles_boolean() -> None:
     """check_viscosity_ceiling returns immediately when viscosity is a boolean."""
     from aragog.rheology import check_viscosity_ceiling
 
-    p = SolidRheologyParams(viscosity_max_log10=22.0)
+    p = SolidRheologyParams(enabled=True, viscosity_max_log10=22.0)
     with pytest.raises(ValueError, match='viscosity_max_log10'):
         check_viscosity_ceiling(10**23, p)
     assert check_viscosity_ceiling(True, p) is None
     assert check_viscosity_ceiling(np.bool_(False), p) is None
+    assert check_viscosity_ceiling(10**23, replace(p, enabled=False)) is None
 
 
 def test_check_rheology_eos_range_returns_when_s_bounds_none() -> None:
@@ -1761,6 +1775,58 @@ def test_compute_step_energy_integrals_early_return_reports_last_step_index(
     monkeypatch.setattr(solver, '_dSdt_single', _corrupt_always)
     with pytest.raises(RuntimeError, match=r'at step 3, node 0'):
         solver._compute_step_energy_integrals()
+
+
+@pytest.mark.parametrize(('enabled', 'calls_per_replay'), [(False, 0), (True, 1)])
+def test_compute_step_energy_integrals_early_return_replays_the_rhs_only_with_rheology_on(
+    monkeypatch, enabled, calls_per_replay
+) -> None:
+    """The early-return branch of _compute_step_energy_integrals (one output point, or no
+    entropy EOS) returns zero integrals and evaluates the RHS only when the rheology is on.
+
+    Edge cases: a single output point with the EOS present, two points without an EOS,
+    and an empty solution, which replays nothing in either mode.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import _ZERO_ENERGY_INTEGRALS
+
+    params = _make_abe_solid_params(SolidRheologyParams(enabled=enabled), number_of_nodes=20)
+    solver = _make_solver(params)
+    s_stag = _make_solid_profile(solver)
+    solver.state.update(s_stag, 0.0)
+    counters = (solver.state._pb_cache_hits, solver.state._pb_cache_misses)
+    calls: list[float] = []
+    orig_dSdt = solver._dSdt_single
+
+    def _counted(t_val, y_val):
+        calls.append(float(t_val))
+        return orig_dSdt(t_val, y_val)
+
+    monkeypatch.setattr(solver, '_dSdt_single', _counted)
+
+    def _no_trace(key, default=None):
+        return None
+
+    solver._solution = SimpleNamespace(
+        t=np.array([15.0]), y=s_stag[:, None].copy(), get=_no_trace
+    )
+    assert solver._compute_step_energy_integrals() == _ZERO_ENERGY_INTEGRALS
+    assert calls == [15.0] * calls_per_replay
+
+    solver.entropy_eos = None
+    solver._solution = SimpleNamespace(
+        t=np.array([0.0, 7.0]), y=np.tile(s_stag[:, None], (1, 2)), get=_no_trace
+    )
+    assert solver._compute_step_energy_integrals() == _ZERO_ENERGY_INTEGRALS
+    assert calls == [15.0, 7.0][: 2 * calls_per_replay]
+
+    solver._solution = SimpleNamespace(
+        t=np.array([]), y=np.empty((s_stag.size, 0)), get=_no_trace
+    )
+    assert solver._compute_step_energy_integrals() == _ZERO_ENERGY_INTEGRALS
+    assert len(calls) == 2 * calls_per_replay
+    assert (solver.state._pb_cache_hits, solver.state._pb_cache_misses) == counters
 
 
 def test_generator_input_fingerprint_guard(
