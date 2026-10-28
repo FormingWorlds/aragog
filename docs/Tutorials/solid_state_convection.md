@@ -2,7 +2,7 @@
 
 This tutorial walks through running Aragog with temperature-, pressure-, and stress-dependent solid-state mantle rheology (`[phase_solid.rheology]`). Starting from the bundled `abe_solid.toml` template, we compare a constant-viscosity solid mantle (`enabled = false`) against an Arrhenius diffusion-creep mantle (`enabled = true`), inspect the stagnant-lid boundary-layer diagnostics on `solver.state.lid_state`, and lower the Byerlee yield stress to observe plastic yielding in the cold upper boundary layer.
 
-For the mathematical formulation and benchmark comparisons, see [Solid-state convection](../Explanations/solid_state_convection.md) and [Configuration: `[phase_solid.rheology]`](../How-to/configuration.md#phase_solidrheology).
+For the mathematical formulation and benchmark comparisons, see [Solid-state convection](../Explanations/solid_state_convection.md) and [Configuration: `phase_solid.rheology`](../How-to/configuration.md#phase_solidrheology).
 
 ## Prerequisites
 
@@ -106,13 +106,13 @@ With the CI test EOS tables, the two runs produce:
 | Quantity | `enabled = False` (default) | `enabled = True` (`stress_closure_mode = "lid"`) |
 |---|---|---|
 | Solver status (`out.status`) | `0` | `0` |
-| Surface viscosity $\eta_\mathrm{surf}$ (`phase_basic.viscosity()[-1]`) [Pa s] | `$3.000e+17$` | `$9.352e+27$` |
-| Bulk CMB viscosity $\eta_\mathrm{cmb}$ (`phase_basic.viscosity()[0]`) [Pa s] | `$1.664e+17$` | `$1.916e+18$` |
-| Solid CMB diffusion viscosity $\eta_\mathrm{diff,cmb}$ (`phase_basic.eta_diff()[0]`) [Pa s] | `$3.000e+17$` | `$3.601e+18$` |
-| Peak convective heat flux $\max(F_\mathrm{conv})$ (`np.max(out.jconv_b)`) [W/m$^2$] | `$166020.15$` | `$249.52$` |
-| Peak eddy diffusivity $\max(\kappa_h)$ (`np.max(out.eddy_diff)`) [m$^2$/s] | `$16.3075$` | `$0.0422$` |
-| Near-surface magma temperature $T_\mathrm{magma}$ (`out.T_magma`) [K] | `$781.64$` | `$781.55$` |
-| Core temperature $T_\mathrm{core}$ (`out.T_core`) [K] | `$3563.96$` | `$3563.96$` |
+| Surface viscosity $\eta_\mathrm{surf}$ (`phase_basic.viscosity()[-1]`) \[Pa s\] | `$3.000e+17$` | `$9.352e+27$` |
+| Bulk CMB viscosity $\eta_\mathrm{cmb}$ (`phase_basic.viscosity()[0]`) \[Pa s\] | `$1.664e+17$` | `$1.916e+18$` |
+| Solid CMB diffusion viscosity $\eta_\mathrm{diff,cmb}$ (`phase_basic.eta_diff()[0]`) \[Pa s\] | `$3.000e+17$` | `$3.601e+18$` |
+| Peak convective heat flux $\max(F_\mathrm{conv})$ (`np.max(out.jconv_b)`) \[W/m$^2$\] | `$166020.15$` | `$249.52$` |
+| Peak eddy diffusivity $\max(\kappa_h)$ (`np.max(out.eddy_diff)`) \[m$^2$/s\] | `$16.3075$` | `$0.0422$` |
+| Near-surface magma temperature $T_\mathrm{magma}$ (`out.T_magma`) \[K\] | `$781.64$` | `$781.55$` |
+| Core temperature $T_\mathrm{core}$ (`out.T_core`) \[K\] | `$3563.96$` | `$3563.96$` |
 
 With `enabled = False`, the cold upper boundary layer keeps the uniform solid viscosity ($\eta_\mathrm{surf} = 3.000e+17\,\mathrm{Pa\,s}$), allowing vigorous near-surface overturn ($\max(F_\mathrm{conv}) = 166020.15\,\mathrm{W/m^2}$). With `enabled = True`, Arrhenius stiffening raises the surface viscosity to $\eta_\mathrm{surf} = 9.352e+27\,\mathrm{Pa\,s}$ and forms a conductive stagnant lid that suppresses convective transport in the cold upper shell ($\max(F_\mathrm{conv}) = 249.52\,\mathrm{W/m^2}$). At the partially molten CMB node, `phase_basic.eta_diff()[0]` reports the pure solid-phase diffusion viscosity ($3.000e+17\,\mathrm{Pa\,s}$ vs $3.601e+18\,\mathrm{Pa\,s}$), whereas `phase_basic.viscosity()[0]` blends that solid viscosity with the liquid phase across the melt fraction ($1.664e+17\,\mathrm{Pa\,s}$ vs $1.916e+18\,\mathrm{Pa\,s}$).
 

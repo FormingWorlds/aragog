@@ -612,7 +612,7 @@ Both the design-value regression and the realized-state regression fall below th
     Because $T_{i,\text{kor}}$ enters both the dependent variable $\mathrm{Nu} = \Delta T_H / (T_{i,\text{kor}} - T_\text{surf})$ and the realized regressors $(\mathrm{Ra}_{i,\text{realized,kor}}, \theta_\text{realized,kor})$, variations in $T_{i,\text{kor}}$ couple the response and predictor axes in the realized-state regression.
     Arrhenius cooling $T_{i,\text{kor}} < T_{i,\text{nom}}$ increases $\eta_\text{diff}(T_{i,\text{kor}})$ by up to $4.5$ orders of magnitude and shifts 10 of the 12 cases below the $\mathrm{Ra}_{i,\text{realized,kor}} \ge 10^7$ asymptotic stagnant-lid regime:
 
-    | Case | Design $\mathrm{Ra}_i$ | Design $\theta$ | Realized $T_{i,\text{kor}}$ [K] | Realized $\theta_\text{realized,kor}$ | Realized $\mathrm{Ra}_{i,\text{realized,kor}}$ | $\mathrm{Nu}_\text{kor}$ |
+    | Case | Design $\mathrm{Ra}_i$ | Design $\theta$ | Realized $T_{i,\text{kor}}$ \[K\] | Realized $\theta_\text{realized,kor}$ | Realized $\mathrm{Ra}_{i,\text{realized,kor}}$ | $\mathrm{Nu}_\text{kor}$ |
     |:---|---:|---:|---:|---:|---:|---:|
     | `case_01` | $1.00 \times 10^6$ | $15.0$ | $1228.14$ | $19.91$ | $2.44 \times 10^2$ | $2.2500$ |
     | `case_02` | $3.16 \times 10^6$ | $15.0$ | $1501.99$ | $17.13$ | $1.06 \times 10^5$ | $2.5666$ |

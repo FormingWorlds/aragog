@@ -248,17 +248,17 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | Key | Type | Unit | Default | Range | Effect |
 |-----|------|------|---------|-------|--------|
 | `enabled` | `bool` | -- | `false` | `true` \| `false` | Enable solid-state mantle rheology and variable viscosity |
-| `g_homologous` | `float` | -- | `25.0` | [0, inf) | Homologous temperature scaling factor in activation enthalpy H(P) |
+| `g_homologous` | `float` | -- | `25.0` | \[0, inf) | Homologous temperature scaling factor in activation enthalpy H(P) |
 | `t_sol_0` | `float` | K | `1400.0` | (0, inf) | Zero-pressure solidus temperature for linear solidus and enthalpy normalization |
-| `dt_sol_dp` | `float` | K/Pa | `2.4e-08` | [0, inf) | Linear solidus Clapeyron slope when table solidus is absent |
+| `dt_sol_dp` | `float` | K/Pa | `2.4e-08` | \[0, inf) | Linear solidus Clapeyron slope when table solidus is absent |
 | `arrhenius_t_ref` | `float` | K | `1600.0` | (0, inf) | Reference temperature where mantle viscosity equals reference value at P=0 |
 | `viscosity_max_log10` | `float` | log10(Pa·s) | `40.0` | (20, 300] | Logarithmic viscosity ceiling preventing numerical overflow in cold lithosphere |
 | `water_prefactor` | `float` | -- | `1.0` | (0, inf) | Viscosity multiplier accounting for mantle hydration and volatile content |
-| `yield_stress_c` | `float` | Pa | `50000000.0` | [0, inf) | Cohesion intercept in Byerlee brittle frictional yielding criterion |
-| `yield_stress_mu` | `float` | -- | `0.6` | [0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
+| `yield_stress_c` | `float` | Pa | `50000000.0` | \[0, inf) | Cohesion intercept in Byerlee brittle frictional yielding criterion |
+| `yield_stress_mu` | `float` | -- | `0.6` | \[0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
 | `yield_stress_max` | `float` | Pa | `500000000.0` | (0, inf) | Maximum ductile yield stress ceiling capping frictional strength at depth |
 | `stress_closure_mode` | `str` | -- | `"lid"` | `"lid"` \| `"local"` | Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress |
-| `interior_flux_fraction` | `float` | -- | `0.05` | [0.05, 0.5] | Threshold on the convective flux fraction F_conv/F_tot (f_conv,min) |
+| `interior_flux_fraction` | `float` | -- | `0.05` | \[0.05, 0.5] | Threshold on the convective flux fraction F_conv/F_tot (f_conv,min) |
 | `lid_base_mode` | `str` | -- | `"rheological"` | `"rheological"` \| `"fixed"` | Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm |
 | `lid_base_temperature` | `float` | K | `1400.0` | (0, inf) | Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed" |
 | `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
@@ -266,9 +266,9 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
 | `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
-| `c_theta` | `float` | -- | `0.15` | [0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta |
+| `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta |
 | `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
-| `activation_volume` | `float` | m³/mol | `0.0` | [0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
+| `activation_volume` | `float` | m³/mol | `0.0` | \[0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
 | `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |
 <!-- rheology-config-reference:end -->
 

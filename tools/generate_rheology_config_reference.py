@@ -138,7 +138,8 @@ def generate_table() -> str:
             dstr = f'`{val}`'
 
         unit = UNITS.get(f.name, '--')
-        rng = RANGES.get(f.name, '--')
+        # A leading '[' would read as a Markdown link reference
+        rng = RANGES.get(f.name, '--').replace('[', '\\[')
         eff = EFFECTS.get(f.name, '')
         lines.append(f'| `{f.name}` | `{tname}` | {unit} | {dstr} | {rng} | {eff} |')
 
