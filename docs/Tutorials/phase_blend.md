@@ -109,7 +109,7 @@ A TOML file read by `Parameters.from_file` refuses the same values.
 
 ## 4. See where the expansivity of a single phase comes from
 
-Outside the mushy zone the evaluator derives the thermal expansivity $\alpha$ \[1/K\] from the density, the heat capacity, the temperature and the adiabatic gradient of the same phase, $\alpha = \rho\, c_p\, (\partial T/\partial P)_S / T$. The test tables also carry a `thermal_exp` table, which the solver does not read. We evaluate a melt state 200 J/kg/K above the liquidus with a width of 10⁻⁶, so that the blend does not enter.
+Outside the mushy zone the evaluator derives the thermal expansivity $\alpha$ \[1/K\] from the density, the heat capacity, the temperature and the adiabatic gradient of the same phase, $\alpha = \rho\, c_p\, (\partial T/\partial P)_S / T$. The test tables also carry two `thermal_exp` tables, one per phase, which the solver does not read. We evaluate a melt state 200 J/kg/K above the liquidus with a width of 10⁻⁶, so that the blend does not enter.
 
 ```python
 S = np.array([S_liq + 200.0])  # in the melt, outside the blend
