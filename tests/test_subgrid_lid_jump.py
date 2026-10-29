@@ -3,6 +3,8 @@ it joins the lid, ``int_{S_b}^{S_f} rho T dS`` at the top-cell pressure."""
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 from scipy.integrate import quad
@@ -187,6 +189,7 @@ def test_heat_table_is_zero_at_the_solidus_and_rises(eos):
     knots = s._lid_W_of_S.x
     assert float(s._lid_W(s._lid_S_sol)) == 0.0
     assert np.all(np.diff(s._lid_W(knots)) > 0.0)
+    assert s._lid_S_sol in knots and s._lid_S_liq in knots
 
 
 def test_heat_table_continues_linearly_on_both_paths(eos):
@@ -204,3 +207,20 @@ def test_heat_table_continues_linearly_on_both_paths(eos):
         assert got == pytest.approx(linear, rel=1e-12)
         want = float(jl.enthalpy_H(s.jax_lid_params().hs, edge + dS))
         assert got == pytest.approx(want, rel=1e-12)
+
+
+@pytest.mark.parametrize(('dS', 'warns'), [(0.1, True), (5.0, False)])
+def test_step_check_warns_on_a_jump_below_the_floor(eos, monkeypatch, caplog, dS, warns):
+    """The step check warns when the jump per mass ``(W_f - W_b) / rho_b`` falls below
+    ``LID_DH_MIN``: a lid base 0.1 J/kg/K below the fluid in the solid regime gives about
+    150 J/kg, 5 J/kg/K gives several times the floor."""
+    s, y = _solver(eos, True, lambda s: s._lid_S_sol - 0.3 * (s._lid_S_sol - float(eos.S_min)))
+    base_state = s._lid_base_state
+    monkeypatch.setattr(s, '_lid_base_state', lambda *a: {**base_state(*a), 'S_b': a[0] - dS})
+    s._dSdt_single(0.0, y)
+    ev = s._lid_last
+    dh = (float(s._lid_W(ev.S_f)) - float(s._lid_W(ev.S_b))) / ev.rho
+    assert (dh < sl.LID_DH_MIN) is warns
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        s._check_lid_step(0.0, 1, 0.0)
+    assert any('below the floor' in r.getMessage() for r in caplog.records) is warns

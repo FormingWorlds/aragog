@@ -495,29 +495,28 @@ def test_root_equals_the_full_rhs_root(eos, kw):
 
 
 @pytest.mark.physics_invariant
-def test_merge_is_energy_exact(eos):
+@pytest.mark.parametrize('hot', [False, True])
+def test_merge_is_energy_exact(eos, hot):
     """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - H(S_f) delta),
-    with H checked by an independent adaptive quadrature of rho T dS."""
-    from scipy.integrate import quad
+    with H checked by an independent adaptive quadrature of rho T dS; ``hot`` puts the top
+    cell high above the liquidus, in the upper half of the table."""
+    from tests.test_subgrid_lid_jump import _reference
 
     s = _cold_top_solver(eos)
     y = s._S0.copy()
+    if hot:
+        y[s._n_stag - 1] = s._lid_S_liq + 0.8 * (float(eos.S_max) - s._lid_S_liq)
     y[-2:] = (20.0, 40.0 * y[-1])  # a 20 m lid with 40 times the phantom energy
     y_new, resid = s._lid_merge(y)
-    eos_, P = s.entropy_eos, s._lid_P
 
     def H(S):
-        def f(x):
-            return float(eos_.density(P, x) * eos_.temperature(P, x))
-
-        pts = [p for p in (s._lid_S_liq,) if min(s._lid_S_sol, S) < p < max(s._lid_S_sol, S)]
-        return quad(f, s._lid_S_sol, S, points=pts or None, epsrel=1e-12, limit=200)[0]
+        return _reference(s, s._lid_S_sol, S)
 
     i = s._n_stag - 1
     V, A = float(s._volume_flat[-1]), s._lid_area
     before = V * H(float(y[i])) + A * (y[-1] - H(float(y[i])) * y[-2])
     after = V * H(float(y_new[i]))
-    assert after == pytest.approx(before, rel=1e-7)
+    assert after == pytest.approx(before, rel=1e-9)
     assert resid <= 1e-10
     np.testing.assert_array_equal(y_new[-2:], [0.0, 0.0])
     np.testing.assert_array_equal(y_new[:i], y[:i])
