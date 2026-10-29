@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 
 import attrs
 
@@ -33,6 +35,61 @@ def _check_top_node_pair(instance, attribute, value) -> None:
         check_top_node(value, instance.core_bc)
     else:
         check_top_node(instance.top_node, value)
+
+
+def _is_real(value) -> bool:
+    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+
+
+def check_subgrid_lid(
+    subgrid_lid,
+    lid_delta_on,
+    lid_delta_lo,
+    lid_handover_cells,
+    lid_ra_crit,
+    outer_boundary_condition: int,
+    core_bc: str,
+) -> None:
+    """Refuse invalid sub-grid lid settings, and the lid on a boundary setup it does not support.
+
+    ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
+    positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
+    ``lid_handover_cells`` an integer of at least 1. With the lid on, the outer boundary must
+    be the grey body (1) and the core boundary not ``'gradient'``. The check against the
+    top-cell width needs the mesh and runs at solver setup.
+
+    Raises
+    ------
+    ValueError
+        Naming the field and the value.
+    """
+    if not isinstance(subgrid_lid, bool):
+        raise ValueError(f'subgrid_lid must be true or false, got {subgrid_lid!r}')
+    for name, value in (('lid_delta_on', lid_delta_on), ('lid_ra_crit', lid_ra_crit)):
+        if not _is_real(value) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f'{name} must be a finite number > 0, got {value!r}')
+    if lid_delta_lo is not None and (
+        not _is_real(lid_delta_lo)
+        or not math.isfinite(lid_delta_lo)
+        or not 0 < lid_delta_lo < lid_delta_on
+    ):
+        raise ValueError(
+            f'lid_delta_lo must be a finite number in (0, lid_delta_on = {lid_delta_on!r}), '
+            f'got {lid_delta_lo!r}'
+        )
+    if not isinstance(lid_handover_cells, numbers.Integral) or isinstance(
+        lid_handover_cells, bool
+    ):
+        raise ValueError(f'lid_handover_cells must be an integer, got {lid_handover_cells!r}')
+    if lid_handover_cells < 1:
+        raise ValueError(f'lid_handover_cells must be >= 1, got {lid_handover_cells!r}')
+    if subgrid_lid and outer_boundary_condition != 1:
+        raise ValueError(
+            'subgrid_lid needs the grey-body outer boundary (outer_boundary_condition = 1), '
+            f'got {outer_boundary_condition}'
+        )
+    if subgrid_lid and core_bc == 'gradient':
+        raise ValueError("subgrid_lid is not available on core_bc = 'gradient'")
 
 
 def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
@@ -106,6 +163,20 @@ class BoundaryConfig:
         reduces that half step smoothly near a table edge, so the node rises with the top cell
         and stays in the table (``aragog.mesh.top_node_entropy``; not on the 'gradient' core,
         checked also on assignment).
+    subgrid_lid : bool
+        Carry a conductive lid thinner than the top cell as two extra states (thickness and
+        energy per area); ``aragog.surface_lid``. Off by default.
+    lid_delta_on : float
+        Quasi-steady crust thickness [m] above which the lid acts; a thinner crust is left to
+        the mesh. Must stay below 0.8 of the top-cell width (checked at solver setup).
+    lid_delta_lo : float or None
+        Thickness [m] of the hidden (phantom) lid and of the melt-back stop; None gives
+        ``lid_delta_on / 2``.
+    lid_handover_cells : int
+        The lid hands over to the mesh when the lid base reaches the face below this many top
+        cells.
+    lid_ra_crit : float
+        Critical Rayleigh number of the boundary-layer flux under the lid [-].
     """
 
     outer_boundary_condition: int
@@ -124,6 +195,20 @@ class BoundaryConfig:
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
     top_node: str = attrs.field(default='linear', validator=_check_top_node_pair)
+    subgrid_lid: bool = False
+    lid_delta_on: float = 1.0
+    lid_delta_lo: float | None = None
+    lid_handover_cells: int = 3
+    lid_ra_crit: float = 450.0
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_subgrid_lid(
+            self.subgrid_lid,
+            self.lid_delta_on,
+            self.lid_delta_lo,
+            self.lid_handover_cells,
+            self.lid_ra_crit,
+            self.outer_boundary_condition,
+            self.core_bc,
+        )
