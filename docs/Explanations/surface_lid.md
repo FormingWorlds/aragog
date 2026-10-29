@@ -58,6 +58,6 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`.
 - The heat jump $\Delta h$ has a floor of 10³ J/kg (one logged warning when it acts).
 - The hand-over needs the solid rheology with `stress_closure_mode = 'lid'`; with another closure, or without the rheology, the lid never hands over.
-- The lid runs on the NumPy right-hand side; a registered JAX factory with the lid on is refused.
+- The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
 
 **Where this is checked.** [Surface lid](../Validation/surface_lid.md) compares the lid with the freezing lava layer, a cooling half-space and a steady crust, and lists the solver tests of the energy budget and the hand-over.

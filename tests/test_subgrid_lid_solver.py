@@ -220,20 +220,6 @@ def test_handover_cells_must_fit_the_mesh(eos):
         _solver(eos, lid_handover_cells=9)
 
 
-def test_jax_factory_refused_with_the_lid(eos):
-    """The lid has no JAX right-hand side: a registered factory with the lid on is refused."""
-    s = _solver(eos)
-    s.parameters.energy.solver_method = 'cvode'
-    s.parameters.energy.use_jax_jacobian = True
-    s._jax_cvode_factory = lambda *a, **k: pytest.fail('factory must not be called')
-    from aragog.solver import entropy_solver as es
-
-    if not es._CVODE_AVAILABLE:
-        pytest.skip('scikits.odes is not installed')
-    with pytest.raises(ValueError, match='no JAX right-hand side'):
-        s.solve()
-
-
 def _phantom_energy(s, delta, T_m):
     s._dSdt_single(0.0, s._S0)
     ev = s._lid_last

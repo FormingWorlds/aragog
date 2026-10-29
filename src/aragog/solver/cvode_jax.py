@@ -193,6 +193,10 @@ def _get_or_create_jitted(
     return entry, hit
 
 
+class LidFactoryMismatch(ValueError):
+    """The JAX factory and the solver disagree on the sub-grid lid."""
+
+
 def build_jax_rhs_and_jacobian(
     eos_jax,
     phase_params,
@@ -205,6 +209,7 @@ def build_jax_rhs_and_jacobian(
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
     core_module_ra_crit_cmb: float | None = None,
+    lid_params=None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -254,6 +259,10 @@ def build_jax_rhs_and_jacobian(
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; required for
         core_module and checked with ``aragog.core.check_ra_crit``.
+    lid_params : aragog.jax.surface_lid.LidParams, optional
+        The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
+        ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
+        True; None, the default, builds the RHS without the lid.
 
     Returns
     -------
@@ -335,13 +344,31 @@ def build_jax_rhs_and_jacobian(
         getattr(core_module_budget, 'shell', None) if core_bc_mode == 'core_module' else None
     )
     n_extra += 0 if shell is None else shell.n_cells
+    n_extra += 0 if lid_params is None else 2
+    if lid_params is not None:
+        import equinox as eqx
+
+        boundary_params = eqx.tree_at(
+            lambda b: b.lid, boundary_params, lid_params, is_leaf=lambda x: x is None
+        )
     expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
-        raise ValueError(
+        msg = (
             f'state_scale length {scales.n} is incompatible '
             f'with core_bc_mode={core_bc_mode!r} and heating_array length '
             f'{heating_np.size}; expected {expected_size}.'
         )
+        if lid_params is None and scales.n == expected_size + 2:
+            raise LidFactoryMismatch(
+                f'{msg} If the solver runs the sub-grid lid (2 more states), pass '
+                'lid_params=solver.jax_lid_params() to build_jax_rhs_and_jacobian.'
+            )
+        if lid_params is not None and scales.n == expected_size - 2:
+            raise LidFactoryMismatch(
+                f'{msg} lid_params is given but the solver runs without the sub-grid lid; '
+                'pass lid_params=None.'
+            )
+        raise ValueError(msg)
 
     state_scale_jax = jnp.asarray(scales.state_scale)
     rhs_scale_jax = jnp.asarray(scales.rhs_scale)
@@ -391,6 +418,7 @@ def build_jax_rhs_and_jacobian(
     jac_jit = entry.jac_jit
 
     info = {
+        'lid': lid_params is not None,
         'rhs_calls': 0,
         'jac_calls': 0,
         'first_rhs_compile_done': False,
@@ -504,6 +532,7 @@ def build_jax_rhs_and_jacobian(
         mesh_arrays.validate_for_rheology()
     rhs_fn.phase_params = phase_params
     rhs_fn.rheology = getattr(phase_params, 'rheology', None)
+    rhs_fn.lid = lid_params is not None
 
     return rhs_fn, jacfn, info
 

@@ -379,8 +379,10 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     Returns
     -------
     tuple
-        ``(F_top, F_fluid, V_fluid, ddelta, dE)``: the surface loss and the fluid flux
-        [W/m^2], the fluid volume of the top cell [m^3] and the lid rates [m/s, W/m^2].
+        ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger)``: the surface loss and the fluid flux
+        [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], and the
+        ledger terms ``(rho, h_f, m_lid)``: base density, fluid heat content [J/kg] and lid
+        mass per area [kg/m^2].
     """
     from aragog.surface_lid import LID_DELTA_FLOOR
 
@@ -417,4 +419,6 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         delta_lo=lp.delta_lo,
         heating=heating,
     )
-    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE
+    m_lid = delta * profile_density(lp.e, surf[3], surf[0], base['T_b'])
+    ledger = (base['rho'], base['h_f'], m_lid)
+    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger

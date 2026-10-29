@@ -19,7 +19,7 @@ Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 from __future__ import annotations
 
 import logging
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 import equinox as eqx
 import jax
@@ -189,6 +189,10 @@ class BoundaryParams(eqx.Module):
     core_M: jax.Array
     cmb_dr_cmb: jax.Array
 
+    # Sub-grid lid (aragog.jax.surface_lid.LidParams), or None without the lid; with it the
+    # state ends with the lid thickness [m] and energy [J/m^2].
+    lid: Any
+
     def __init__(
         self,
         *,
@@ -208,6 +212,7 @@ class BoundaryParams(eqx.Module):
         param_utbl_const=0.0,
         S_surf=None,
         surf_dr_half=0.0,
+        lid=None,
     ):
         if outer_bc_type == 5 and not (
             S_surf is not None
@@ -238,6 +243,7 @@ class BoundaryParams(eqx.Module):
         self.cmb_dr_cmb = jnp.asarray(cmb_dr_cmb, dtype=jnp.float64)
         self.param_utbl = bool(param_utbl)
         self.param_utbl_const = jnp.asarray(param_utbl_const, dtype=jnp.float64)
+        self.lid = lid
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +276,7 @@ class RhsParts(NamedTuple):
     rate: jax.Array
     heat_flux: jax.Array
     phase_stag: PhaseProperties
+    lid: tuple | None = None  # (V_fluid, ddelta, dE, rho, h_f, m_lid) with the lid [SI]
 
 
 class StepPowersAux(NamedTuple):
@@ -436,6 +443,66 @@ def _apply_cmb_bc(
     return heat_flux.at[0].set(F_cmb)
 
 
+def _lid_split(state: jax.Array, bc: BoundaryParams) -> tuple:
+    """The state without the lid and the lid states ``(delta, E_lid)``, or None without it."""
+    if bc.lid is None:
+        return state, None
+    return state[:-2], state[-2:]
+
+
+def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out):
+    """The lid at the top cell, as the NumPy RHS: the surface loss in ``heat_flux[-1]``, and
+    the top-face energy flux [W] and top-cell capacitance volume [m^3] of the fluid under the
+    lid. A handed-over lid (thickness 0) leaves the mesh as it is and has zero rates.
+
+    Returns ``(heat_flux, top_energy_flux, top_volume, lid_terms)``.
+    """
+    from aragog.jax import surface_lid as jl
+
+    T_iso = flux_out.T_lid_iso if flux_out.T_lid_iso is not None else jnp.nan
+    top = dict(
+        T=phase_stag.temperature[-1],
+        rho=phase_stag.density[-1],
+        cp=phase_stag.heat_capacity[-1],
+        k=phase_stag.thermal_conductivity[-1],
+        alpha=phase_stag.thermal_expansivity[-1],
+        g=mesh.gravity_stag[-1],
+        eta=phase_stag.viscosity[-1],
+        phi=phase_stag.melt_fraction[-1],
+    )
+    if params.rheology.enabled:  # the creep-law viscosity, as the NumPy staggered phase
+        top['eta'] = evaluate_phase(eos, params, mesh.P_stag[-1:], S[-1:]).viscosity[0]
+    F_grid = heat_flux[-1]
+    F_top, F_fluid, V_fluid, ddelta, dE, (rho, h_f, m_lid) = jl.lid_top(
+        bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
+    )
+    on = y_lid[0] != 0.0
+    zero = jnp.zeros_like(F_top)
+    heat_flux = heat_flux.at[-1].set(jnp.where(on, F_top, F_grid))
+    top_energy_flux = jnp.where(on, F_fluid, F_grid) * mesh.area[-1]
+    V = jnp.where(on, V_fluid, mesh.volume[-1])
+    terms = tuple(jnp.where(on, v, zero) for v in (ddelta, dE, rho, h_f, m_lid))
+    return heat_flux, top_energy_flux, V, (V, *terms)
+
+
+def _lid_divergence(heat_flux, mesh, cap, lid_fix):
+    """Flux divergence and capacitance, with the top cell under the lid when ``lid_fix`` is
+    ``(top_energy_flux, top_volume)``."""
+    energy_flux = heat_flux * mesh.area
+    capacitance = cap * mesh.volume
+    if lid_fix is not None:
+        energy_flux = energy_flux.at[-1].set(lid_fix[0])
+        capacitance = capacitance.at[-1].set(cap[-1] * lid_fix[1])
+    return jnp.diff(energy_flux), capacitance
+
+
+def _lid_rates(rate, lid_terms):
+    """The rate with the lid rates [m/yr, W/m^2/yr] appended, or the rate without the lid."""
+    if lid_terms is None:
+        return rate
+    return jnp.concatenate([rate, jnp.stack([lid_terms[1], lid_terms[2]]) * SECS_PER_YEAR])
+
+
 def _dSdt_parts(
     t: float,
     S: jax.Array,
@@ -448,7 +515,8 @@ def _dSdt_parts(
     t : float
         Current time [yr].
     S : jax.Array
-        Entropy at staggered nodes [J/kg/K], shape (N_stag,).
+        Entropy at staggered nodes [J/kg/K], shape (N_stag,); with ``bc.lid`` followed by
+        the lid thickness [m] and energy [J/m^2].
     args : tuple
         (eos, params, mesh, bc, heating_static, H_radio_fn) where:
         - eos: EntropyEOS_JAX
@@ -468,6 +536,7 @@ def _dSdt_parts(
         NamedTuple with rate, heat_flux, and phase_stag.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
+    S, y_lid = _lid_split(S, bc)
 
     # Time-dependent radio heating evaluated at the live integrator time.
     heating = heating_static + H_radio_fn(t)
@@ -496,14 +565,15 @@ def _dSdt_parts(
         phase_stag.heat_capacity,
         flux_out.heating[0],
     )
+    lid_fix = lid_terms = None
+    if y_lid is not None:
+        heat_flux, *lid_fix, lid_terms = _lid_apply(
+            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+        )
 
-    # Flux divergence at staggered nodes
-    energy_flux = heat_flux * mesh.area
-    delta_energy_flux = jnp.diff(energy_flux)
-
-    # Capacitance: rho * T * volume
+    # Flux divergence at staggered nodes; capacitance rho * T * volume
     cap = phase_stag.capacitance
-    capacitance = cap * mesh.volume
+    delta_energy_flux, capacitance = _lid_divergence(heat_flux, mesh, cap, lid_fix)
 
     # dS/dt from flux divergence [J/kg/K/s]
     dsdt = -delta_energy_flux / capacitance
@@ -518,9 +588,10 @@ def _dSdt_parts(
     rate = dsdt * SECS_PER_YEAR
 
     return RhsParts(
-        rate=rate,
+        rate=_lid_rates(rate, lid_terms),
         heat_flux=heat_flux,
         phase_stag=phase_stag,
+        lid=lid_terms,
     )
 
 
@@ -536,7 +607,8 @@ def dSdt(
     t : float
         Current time [yr].
     S : jax.Array
-        Entropy at staggered nodes [J/kg/K], shape (N_stag,).
+        Entropy at staggered nodes [J/kg/K], shape (N_stag,); with ``bc.lid`` followed by
+        the lid thickness [m] and energy [J/m^2].
     args : tuple
         (eos, params, mesh, bc, heating_static, H_radio_fn) where:
         - eos: EntropyEOS_JAX
@@ -575,6 +647,7 @@ def _dSdt_energy_balance_parts(
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
+        With ``bc.lid`` the state ends with the lid thickness [m] and energy [J/m^2].
 
     Parameters
     ----------
@@ -595,6 +668,7 @@ def _dSdt_energy_balance_parts(
     eos, params, mesh, bc, heating_static, H_radio_fn = args
     # Live radio heating, broadcast to per-cell uniform.
     heating = heating_static + H_radio_fn(t)
+    state_ext, y_lid = _lid_split(state_ext, bc)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
     dSdr_cmb = state_ext[n_stag]
@@ -634,12 +708,15 @@ def _dSdt_energy_balance_parts(
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
     F_cmb_from_dSdr = heat_flux[0]
+    lid_fix = lid_terms = None
+    if y_lid is not None:
+        heat_flux, *lid_fix, lid_terms = _lid_apply(
+            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+        )
 
     # Flux divergence (entropy derivatives, same as dSdt).
-    energy_flux = heat_flux * mesh.area
-    delta_energy_flux = jnp.diff(energy_flux)
     cap = phase_stag.capacitance
-    capacitance = cap * mesh.volume
+    delta_energy_flux, capacitance = _lid_divergence(heat_flux, mesh, cap, lid_fix)
     dSdt_per_s = -delta_energy_flux / capacitance
     dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
     dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
@@ -665,9 +742,10 @@ def _dSdt_energy_balance_parts(
     )
 
     return RhsParts(
-        rate=rate,
+        rate=_lid_rates(rate, lid_terms),
         heat_flux=heat_flux,
         phase_stag=phase_stag,
+        lid=lid_terms,
     )
 
 
@@ -683,6 +761,7 @@ def dSdt_energy_balance(
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
+        With ``bc.lid`` the state ends with the lid thickness [m] and energy [J/m^2].
 
     Returns d/dt of the same layout. The dSdr_cmb evolution is the
     SPIDER bc.c:76-131 closure equation (also in numpy as
@@ -749,13 +828,9 @@ def step_powers(
             f'one of {list(_PARTS_REGISTRY.keys())}.'
         )
     parts = parts_fn(t, y, args)
-    if mode == 'quasi_steady':
-        S_stag = y
-        dSdt_stag = parts.rate / SECS_PER_YEAR
-    else:
-        n_stag = aux.volume.shape[0]
-        S_stag = y[:n_stag]
-        dSdt_stag = parts.rate[:n_stag] / SECS_PER_YEAR
+    n_stag = aux.volume.shape[0]
+    S_stag = y[:n_stag]
+    dSdt_stag = parts.rate[:n_stag] / SECS_PER_YEAR
 
     p_int = -parts.heat_flux[-1] * aux.A_int
     p_cmb = parts.heat_flux[0] * aux.A_cmb
@@ -772,10 +847,18 @@ def step_powers(
     cap = phase_stag.capacitance
     T_phase = phase_stag.temperature
     rho_phase = phase_stag.density
-    heat_mass = rho_phase * aux.volume * (T_phase / jnp.maximum(T_phase, 1.0))
-    lhs = jnp.sum(cap * dSdt_stag * aux.volume)
-    Q_radio_resid = H_radio * jnp.sum(heat_mass)
-    Q_tidal_resid = jnp.dot(heating_static, heat_mass)
+    vol = aux.volume
+    lid_power = lid_mass = 0.0
+    if parts.lid is not None:
+        # the fluid part of the top cell, the lid energy net of the fluid it takes, its mass
+        V, ddelta, dE, rho_b, h_f, m_lid = parts.lid
+        vol = vol.at[-1].set(V)
+        lid_power = aux.A_int * (dE - rho_b * h_f * ddelta)
+        lid_mass = aux.A_int * m_lid
+    heat_mass = rho_phase * vol * (T_phase / jnp.maximum(T_phase, 1.0))
+    lhs = jnp.sum(cap * dSdt_stag * vol) + lid_power
+    Q_radio_resid = H_radio * (jnp.sum(heat_mass) + lid_mass)
+    Q_tidal_resid = jnp.dot(heating_static, heat_mass) + heating_static[-1] * lid_mass
     rhs = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
     residual = lhs - rhs
 
@@ -818,6 +901,7 @@ def dSdt_core_module(
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
         state_ext[N+1] = T_core, the integrated CMB temperature [K]
         state_ext[N+2:] = shell cell temperatures [K] of a stratified budget
+        With ``bc.lid`` the state ends with the lid thickness [m] and energy [J/m^2].
 
     Parameters
     ----------
@@ -851,6 +935,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     core_budget, q_radio_core, ra_crit = args[6:9]
     shell = core_budget.stratification
     heating = heating_static + H_radio_fn(t)
+    state_ext, y_lid = _lid_split(state_ext, bc)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
     dSdr_cmb = state_ext[n_stag]
@@ -906,11 +991,14 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
 
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
+    lid_fix = lid_terms = None
+    if y_lid is not None:
+        heat_flux, *lid_fix, lid_terms = _lid_apply(
+            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+        )
 
-    energy_flux = heat_flux * mesh.area
-    delta_energy_flux = jnp.diff(energy_flux)
     cap = phase_stag.capacitance
-    capacitance = cap * mesh.volume
+    delta_energy_flux, capacitance = _lid_divergence(heat_flux, mesh, cap, lid_fix)
     dSdt_per_s = -delta_energy_flux / capacitance
     dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
     dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
@@ -941,7 +1029,12 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             d_shell * SECS_PER_YEAR,
         ]
     )
-    return RhsParts(rate=rate, heat_flux=heat_flux, phase_stag=phase_stag)
+    return RhsParts(
+        rate=_lid_rates(rate, lid_terms),
+        heat_flux=heat_flux,
+        phase_stag=phase_stag,
+        lid=lid_terms,
+    )
 
 
 _PARTS_REGISTRY: dict[str, Callable] = {

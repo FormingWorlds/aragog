@@ -5232,11 +5232,6 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'use_jax_jacobian', False)
                 and self._jax_cvode_factory is not None
             )
-            if use_jax_jac and self._n_lid:
-                raise ValueError(
-                    'subgrid_lid has no JAX right-hand side; set energy.use_jax_jacobian = '
-                    'false or register no JAX CVODE factory'
-                )
             if use_jax_jac:
                 try:
                     # Pass the NonDimScales instance, which bundles
@@ -5253,6 +5248,10 @@ class EntropySolver:
                         '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
                     )
                 except Exception as exc:  # pragma: no cover - fallback path
+                    from aragog.solver.cvode_jax import LidFactoryMismatch
+
+                    if isinstance(exc, LidFactoryMismatch):
+                        raise ValueError(f'JAX CVODE factory: {exc}') from exc
                     logger.warning(
                         'EntropySolver: JAX CVODE factory failed (%s); '
                         'falling back to numpy RHS + FD Jacobian',
@@ -5264,6 +5263,12 @@ class EntropySolver:
                     self._check_jax_factory_rheology(
                         cvode_rhs_override, require_when_enabled=True
                     )
+                    if bool(self._n_lid) != bool(getattr(cvode_rhs_override, 'lid', False)):
+                        raise ValueError(
+                            'JAX CVODE factory: its right-hand side and the solver disagree '
+                            'on the sub-grid lid; build it with lid_params='
+                            'solver.jax_lid_params() when subgrid_lid is on, else lid_params=None'
+                        )
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
