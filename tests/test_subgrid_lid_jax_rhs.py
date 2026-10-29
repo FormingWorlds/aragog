@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from aragog import surface_lid as sl
 from tests.conftest import entropy_eos_copy, entropy_eos_jax
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
@@ -367,3 +368,66 @@ def test_jax_step_powers_match_the_numpy_ledger_with_the_lid(core_bc, rheology, 
     np.testing.assert_allclose(got[:, :6], want[:, :6], rtol=1e-10, atol=1e-300)
     scale = np.abs(want[:, :6]).max(axis=1)
     assert np.all(np.abs(got[:, 6]) <= 1e-12 * scale)
+
+
+def _jax_cvode_lid_solver(end=1.0):
+    """A lid solver on CVODE with the JAX factory built with the lid."""
+    from aragog.solver import entropy_solver as es
+
+    if not es._CVODE_AVAILABLE:
+        pytest.skip('scikits.odes is not installed')
+    s = _lid_solver()
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = True
+    s.parameters.solver.end_time = end
+    s.set_jax_cvode_factory(lambda scales, mode: _factory_rhs(s, s.jax_lid_params())[:2])
+    return s
+
+
+def test_lid_step_check_runs_on_the_jax_batch_path():
+    """The lid invariant fails an accepted state past the growth stop on the JAX batch path,
+    as on the NumPy loop."""
+    from tests.test_subgrid_lid_solver import _phantom_energy
+
+    s = _jax_cvode_lid_solver()
+    d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with pytest.raises(RuntimeError, match='lid invariant violated at step') as err:
+        s.solve()
+    assert 'outside' in str(err.value)
+    assert s._batch_powers_calls >= 1
+
+
+def test_growth_stop_warns_once_on_the_jax_batch_path(caplog):
+    """A lid held at the growth stop warns once on the JAX batch path, as on the NumPy loop."""
+    import logging
+
+    from tests.test_subgrid_lid_solver import _phantom_energy
+
+    s = _jax_cvode_lid_solver(end=10.0)
+    d = (sl.LID_CAP_FRAC - 0.5 * sl.LID_CAP_WIDTH) * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 257.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    assert s._batch_powers_calls > 0
+    msgs = [r.getMessage() for r in caplog.records if 'growth stop holds' in r.getMessage()]
+    assert len(msgs) == 1
+
+
+def test_enthalpy_floor_warns_on_the_jax_batch_path(caplog):
+    """A top cell below the lid-base entropy puts the Stefan enthalpy jump under its floor;
+    the JAX batch path warns once, as the NumPy loop does."""
+    import logging
+
+    s = _jax_cvode_lid_solver()
+    s.set_initial_lid(30.0, 30.0 * float(s._lid_hv.H(900.0)))
+    s.set_initial_entropy(s._lid_S_sol - 300.0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    assert s._batch_powers_calls > 0
+    msgs = [r.getMessage() for r in caplog.records if 'below the floor' in r.getMessage()]
+    assert len(msgs) == 1
