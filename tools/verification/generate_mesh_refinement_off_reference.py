@@ -31,19 +31,28 @@ from tests.conftest import entropy_eos_copy, entropy_eos_jax  # noqa: E402
 from tests.test_step_powers_batch import _make_phase_params, _set_initial_entropy  # noqa: E402
 
 CFG = ROOT / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml'
-MESH_ARRAYS = ('basic.radii', 'staggered.radii', 'basic.volume', 'basic.mixing_length',
-               'basic_pressure', 'staggered_pressure', 'staggered_effective_density',
-               '_d_dr_transform')
+MESH_ARRAYS = (
+    'basic.radii',
+    'staggered.radii',
+    'basic.volume',
+    'basic.mixing_length',
+    'basic_pressure',
+    'staggered_pressure',
+    'staggered_effective_density',
+    '_d_dr_transform',
+)
 
 
 def _commit() -> str:
     """Commit SHA of the clean tree at ``ROOT``; refuses a tree with changes."""
     git = ['git', '-C', str(ROOT)]
-    if subprocess.run([*git, 'status', '--porcelain'], capture_output=True, text=True,
-                      check=True).stdout.strip():
+    if subprocess.run(
+        [*git, 'status', '--porcelain'], capture_output=True, text=True, check=True
+    ).stdout.strip():
         raise SystemExit(f'{ROOT} has uncommitted changes')
-    return subprocess.run([*git, 'rev-parse', 'HEAD'], capture_output=True, text=True,
-                          check=True).stdout.strip()
+    return subprocess.run(
+        [*git, 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def _parameters(mass_coordinates: bool) -> Parameters:
@@ -71,19 +80,32 @@ def _jax_factory(s: EntropySolver, p: Parameters, calls: list[int]):
     mesh = MeshArrays.from_numpy_mesh(s.evaluator.mesh)
     r = np.asarray(mesh.radii_basic)
     bc = BoundaryParams(
-        outer_bc_type=int(b.outer_boundary_condition), outer_bc_value=float(b.outer_boundary_value),
-        emissivity=float(b.emissivity), T_eq=float(b.equilibrium_temperature),
-        inner_bc_type=int(b.inner_boundary_condition), inner_bc_value=float(b.inner_boundary_value),
-        core_density=float(p.mesh.core_density), core_heat_capacity=float(b.core_heat_capacity),
-        tfac_core_avg=float(s._core_tfac), cmb_area=4.0 * np.pi * float(r[0]) ** 2,
-        core_M=float(s._core_cap / b.core_heat_capacity), cmb_dr_cmb=float(r[1] - r[0]),
-        param_utbl=bool(b.param_utbl), param_utbl_const=float(b.param_utbl_const))
+        outer_bc_type=int(b.outer_boundary_condition),
+        outer_bc_value=float(b.outer_boundary_value),
+        emissivity=float(b.emissivity),
+        T_eq=float(b.equilibrium_temperature),
+        inner_bc_type=int(b.inner_boundary_condition),
+        inner_bc_value=float(b.inner_boundary_value),
+        core_density=float(p.mesh.core_density),
+        core_heat_capacity=float(b.core_heat_capacity),
+        tfac_core_avg=float(s._core_tfac),
+        cmb_area=4.0 * np.pi * float(r[0]) ** 2,
+        core_M=float(s._core_cap / b.core_heat_capacity),
+        cmb_dr_cmb=float(r[1] - r[0]),
+        param_utbl=bool(b.param_utbl),
+        param_utbl_const=float(b.param_utbl_const),
+    )
 
     def factory(scales, core_bc_mode):
         rhs, jac, _ = build_jax_rhs_and_jacobian(
-            eos_jax=entropy_eos_jax(), phase_params=_make_phase_params(p), mesh_arrays=mesh,
-            boundary_params=bc, heating_array=np.zeros(s._n_stag), scales=scales,
-            core_bc_mode=core_bc_mode)
+            eos_jax=entropy_eos_jax(),
+            phase_params=_make_phase_params(p),
+            mesh_arrays=mesh,
+            boundary_params=bc,
+            heating_array=np.zeros(s._n_stag),
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
 
         def rhs_counted(*a, **k):
             calls[0] += 1
