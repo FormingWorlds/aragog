@@ -100,6 +100,23 @@ def test_mesh_rejects_a_cell_thicker_than_the_uniform_cell():
         type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': -1.0})
 
 
+def test_mass_mode_refuses_a_cmb_cell_between_its_uniform_cell_and_the_radial_bound():
+    """abe_solid in mass-coordinate mode has a uniform CMB cell of 9.33 km, below the
+    10.1 km radial cell the parser checks: 9.5 km passes the parser and the mesh refuses
+    it with both field values. In radius mode 9.5 km is the CMB cell."""
+    p = Parameters.from_file(CFG)
+    radial = (p.mesh.outer_radius - p.mesh.inner_radius) / (p.mesh.number_of_nodes - 1)
+    assert np.diff(_radii(_mesh(mass_coordinates=True)))[0] < 9.5e3 < radial
+    type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': 9.5e3})
+    with pytest.raises(
+        ValueError,
+        match='mesh.cmb_cell_thickness = 9500.0 m and '
+        'mesh.surface_cell_thickness = 0.0 m give no refined grid',
+    ):
+        _mesh(0.0, 9.5e3, mass_coordinates=True)
+    assert np.diff(_radii(_mesh(0.0, 9.5e3)))[0] == pytest.approx(9.5e3, abs=1e-3)
+
+
 @pytest.mark.physics_invariant
 def test_derivative_operator_is_exact_for_a_linear_field_on_the_refined_grid():
     """d/dr of a staggered field linear in radius equals the slope at the basic
@@ -140,3 +157,25 @@ def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):
     np.testing.assert_allclose(
         np.asarray(ma.gravity), PchipInterpolator(tab[:, 0], tab[:, 3])(r), rtol=1e-12
     )
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+@pytest.mark.parametrize(
+    ('grid', 'message'),
+    [
+        (lambda n, first, last: np.linspace(0.0, 1.0, n), 'gives an end cell of'),
+        (lambda n, first, last: np.r_[0.0, 0.5, 0.4, np.linspace(0.6, 1.0, n - 3)],
+         'not strictly increasing|Non-monotonic basic mesh'),
+        (lambda n, first, last: np.linspace(0.0, 1.0 - 1e-9, n), 'end radii'),
+    ],
+    ids=['end_cell', 'monotone', 'end_radii'],
+)  # fmt: skip
+def test_a_refined_mesh_that_breaks_an_invariant_is_refused(
+    monkeypatch, mass_coordinates, grid, message
+):
+    """A refined grid whose end cells miss their thickness, whose radii do not increase,
+    or whose end radii are not the shell radii raises a ValueError in Mesh."""
+    monkeypatch.setattr('aragog.mesh.stretched_unit_grid', grid)
+    with pytest.raises(ValueError, match=message):
+        _mesh(1e3, 2e3, mass_coordinates)
