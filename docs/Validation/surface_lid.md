@@ -61,12 +61,12 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 | time (yr) | lid / 4000 nodes | bound of the 4000-node mesh |
 |---|---|---|
 | 300 | 1.0046 | 1.79 % |
-| 448 | 1.0037 | 1.30 % |
+| 448 | 1.0038 | 1.30 % |
 | 670 | 1.0036 | 0.92 % |
 | 1002 | 1.0035 | 0.71 % |
 | 1497 | 1.0034 | 0.46 % |
 | 2238 | 1.0034 | 0.36 % |
-| 3345 | 1.0033 | 0.24 % |
+| 3345 | 1.0034 | 0.24 % |
 | 5000 | 1.0033 | 0.17 % |
 
 **Why it matters.** The lid exists so that a coarse mesh loses heat as a fine one would. Without the lid, the 10-node shell loses only 8 to 30 % of the heat the fine mesh loses over these times.
