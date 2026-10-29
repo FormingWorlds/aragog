@@ -5773,6 +5773,9 @@ class EntropySolver:
                 if check_rheo:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
+                if self._n_lid and self._lid_active:
+                    lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
+                    self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
                 if check_rheo:
                     self._check_rheology_step_invariants(
                         rheo, step_idx=int(t_pts.size - 1), time_yr=float(t_pts[-1])
