@@ -301,7 +301,7 @@ def existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on):
 
 
 def lid_rates(
-    *, delta, E_lid, surf, F_b, F_grid, w, rho, h_f, T_b, H_b, e, h_top, delta_lo, heating
+    *, delta, E_lid, surf, F_b, F_grid, w, rho, H_f, T_b, H_b, e, h_top, delta_lo, heating
 ):
     """Lid rates and the fluid flux, as :func:`aragog.surface_lid.lid_rates`; ``surf`` is the
     tuple of :func:`surface_state`.
@@ -314,14 +314,14 @@ def lid_rates(
     from aragog.surface_lid import LID_TAU_HIDDEN
 
     T_s, F_s, q_b, s = surf[0], surf[1], surf[2], surf[3]
-    r, stop = stefan_rate(q_b, F_b, rho, h_f - H_b / rho, delta, h_top, delta_lo)
+    r, stop = stefan_rate(q_b, F_b, rho, (H_f - H_b) / rho, delta, h_top, delta_lo)
     E_ph = delta_lo * profile_heat(e, 0.0, T_s, T_b)
     relax = (1.0 - w) / LID_TAU_HIDDEN
     ddelta = w * r - relax * (delta - delta_lo)
     H_lid = heating * delta * profile_density(e, s, T_s, T_b)
     dE = w * (q_b - F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
     F_top = w * F_s + (1.0 - w) * F_grid
-    F_fluid = F_top + dE - H_lid - rho * h_f * ddelta
+    F_fluid = F_top + dE - H_lid - H_f * ddelta
     return ddelta, dE, F_top, F_fluid, w, stop, H_lid
 
 
@@ -356,25 +356,10 @@ class LidParams(NamedTuple):
     H_arr: float
     phi_rheo: float
     phi_width: float
-    gl_x: jax.Array
-    gl_w: jax.Array
-
-
-def _heat_content(lp: LidParams, eos, S):
-    """Specific heat content [J/kg] from the solidus entropy, ``int T dS`` at the top-cell
-    pressure, 8-point Gauss-Legendre split at the liquidus (as the NumPy ``_lid_enthalpy``)."""
-    knee = jnp.minimum(S, lp.S_liq)
-    total = 0.0
-    for lo, hi in ((lp.S_sol, knee), (knee, S)):
-        mid, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
-        pts = mid + half * lp.gl_x
-        total = total + half * jnp.dot(lp.gl_w, eos.temperature(jnp.full(pts.shape, lp.P), pts))
-    return total
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
-    """Lid-base entropy, temperature, density and the heat contents of base and fluid, as the
-    NumPy ``_lid_base_state``: the solidus above the rheological transition, below it the
+    """Lid-base entropy, temperature and density, as the NumPy ``_lid_base_state``: the solidus above the rheological transition, below it the
     rheological lid-base temperature on the EOS, capped at the solidus, blended in entropy."""
     from aragog.rheology import R_GAS
     from aragog.rheology_lid import _melt_ramp
@@ -395,7 +380,6 @@ def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
         S_b=S_b,
         T_b=eos.temperature(lp.P, S_b),
         rho=eos.density(lp.P, S_b),
-        h_f=_heat_content(lp, eos, S_f),
     )
 
 
@@ -411,13 +395,14 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     tuple
         ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger)``: the surface loss and the fluid flux
         [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], and the
-        ledger terms ``(rho, h_f, m_lid)``: base density, fluid heat content [J/kg] and lid
+        ledger terms ``(H_f, m_lid)``: the fluid heat content per volume [J/m^3] and the lid
         mass per area [kg/m^2].
     """
     from aragog.surface_lid import LID_DELTA_FLOOR
 
     delta, E = y_lid[0], y_lid[1]
     base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
+    H_f = enthalpy_H(lp.hs, S_f)
     q_conv = convective_base_flux(
         top['T'] - base['T_b'],
         top['k'],
@@ -441,7 +426,7 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         F_grid=F_grid,
         w=w,
         rho=base['rho'],
-        h_f=base['h_f'],
+        H_f=H_f,
         T_b=base['T_b'],
         H_b=enthalpy_H(lp.hs, base['S_b']),
         e=lp.e,
@@ -450,5 +435,5 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         heating=heating,
     )
     m_lid = delta * profile_density(lp.e, surf[3], surf[0], base['T_b'])
-    ledger = (base['rho'], base['h_f'], m_lid)
+    ledger = (H_f, m_lid)
     return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger

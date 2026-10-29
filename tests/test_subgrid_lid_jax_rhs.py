@@ -94,7 +94,7 @@ def test_lid_top_matches_the_numpy_lid(case):
             top(s.state.heating),
         )
         r = ev.rates
-        want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.rho, ev.h_f, ev.m_lid)
+        want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.H_f, ev.m_lid)
         got = np.array([*got[:5], *got[5]], dtype=float)
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
 

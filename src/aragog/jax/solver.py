@@ -276,7 +276,7 @@ class RhsParts(NamedTuple):
     rate: jax.Array
     heat_flux: jax.Array
     phase_stag: PhaseProperties
-    lid: tuple | None = None  # (V_fluid, ddelta, dE, rho, h_f, m_lid) with the lid [SI]
+    lid: tuple | None = None  # (V_fluid, ddelta, dE, H_f, m_lid) with the lid [SI]
 
 
 class StepPowersAux(NamedTuple):
@@ -473,7 +473,7 @@ def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out)
     if params.rheology.enabled:  # the creep-law viscosity, as the NumPy staggered phase
         top['eta'] = evaluate_phase(eos, params, mesh.P_stag[-1:], S[-1:]).viscosity[0]
     F_grid = heat_flux[-1]
-    F_top, F_fluid, V_fluid, ddelta, dE, (rho, h_f, m_lid) = jl.lid_top(
+    F_top, F_fluid, V_fluid, ddelta, dE, (H_f, m_lid) = jl.lid_top(
         bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
     )
     on = y_lid[0] != 0.0
@@ -481,7 +481,7 @@ def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out)
     heat_flux = heat_flux.at[-1].set(jnp.where(on, F_top, F_grid))
     top_energy_flux = jnp.where(on, F_fluid, F_grid) * mesh.area[-1]
     V = jnp.where(on, V_fluid, mesh.volume[-1])
-    terms = tuple(jnp.where(on, v, zero) for v in (ddelta, dE, rho, h_f, m_lid))
+    terms = tuple(jnp.where(on, v, zero) for v in (ddelta, dE, H_f, m_lid))
     return heat_flux, top_energy_flux, V, (V, *terms)
 
 
@@ -851,9 +851,9 @@ def step_powers(
     lid_power = lid_mass = 0.0
     if parts.lid is not None:
         # the fluid part of the top cell, the lid energy net of the fluid it takes, its mass
-        V, ddelta, dE, rho_b, h_f, m_lid = parts.lid
+        V, ddelta, dE, H_f, m_lid = parts.lid
         vol = vol.at[-1].set(V)
-        lid_power = aux.A_int * (dE - rho_b * h_f * ddelta)
+        lid_power = aux.A_int * (dE - H_f * ddelta)
         lid_mass = aux.A_int * m_lid
     heat_mass = rho_phase * vol * (T_phase / jnp.maximum(T_phase, 1.0))
     lhs = jnp.sum(cap * dSdt_stag * vol) + lid_power

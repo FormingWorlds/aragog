@@ -14,10 +14,11 @@ with the shape parameter ``s`` and the surface temperature ``T_s`` fixed by the 
 ``E_lid = delta int_0^1 H(T(x)) dx`` with ``H`` the heat content per volume of the lid material
 (:class:`LidEnthalpy`), and by the grey-body balance at the surface. The family holds the
 Neumann growth exactly (``s = lambda^2``) and reduces to the linear profile in steady state.
-Material joins the lid at its base by the Stefan condition ``(rho h_f - H(T_b)) d(delta)/dt =
+Material joins the lid at its base by the Stefan condition ``(W(S_f) - W(S_b)) d(delta)/dt =
 q_b - F_b``, where ``q_b`` is the conduction into the lid at its base, ``F_b`` the flux the
-fluid below delivers, ``rho`` the density at the lid base and ``h_f`` the specific heat content
-of the fluid.
+fluid below delivers and ``W(S) = int rho T dS`` the heat content per volume at the top-cell
+pressure, the measure the mesh and the lid store heat in, at the fluid entropy ``S_f`` and the
+lid-base entropy ``S_b``.
 
 The functions here are pure: the solver evaluates the material properties, passes them in and
 assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, kg/m^3, s).
@@ -453,7 +454,7 @@ def lid_rates(
     F_grid: float,
     w: float,
     rho: float,
-    h_f: float,
+    H_f: float,
     T_b: float,
     H_b: float,
     hv: LidEnthalpy,
@@ -463,27 +464,27 @@ def lid_rates(
 ) -> LidRates:
     """Assemble the lid rates and the fluid flux at one state.
 
-    Fluid of density ``rho`` (the lid base) and heat content ``h_f`` [J/kg] joins the lid at
-    ``T_b`` with heat content ``H_b`` [J/m^3] per volume, so the Stefan rate releases
-    ``rho h_f - H_b`` per volume. The lid acts with weight ``w``; the hidden part ``1 - w``
+    Fluid of heat content ``H_f`` [J/m^3] per volume joins the lid at ``T_b`` with heat content
+    ``H_b`` [J/m^3] per volume, so the Stefan rate releases ``H_f - H_b`` per volume; ``rho`` is
+    the density at the lid base, which scales the floor of that jump. The lid acts with weight ``w``; the hidden part ``1 - w``
     relaxes to the phantom lid (thickness ``delta_lo``, linear profile) over
     ``LID_TAU_HIDDEN``, and the surface then sees the grid flux ``F_grid``. The fluid flux
     follows from the conservation of the energy of the fluid and the lid:
-    ``F_fluid = F_top + dE - H_lid - rho h_f d(delta)/dt``. Exact for any ``w`` and any stop.
+    ``F_fluid = F_top + dE - H_lid - H_f d(delta)/dt``. Exact for any ``w`` and any stop.
 
     Parameters
     ----------
     heating : float
         Internal heating per mass [W/kg] of the top cell, applied to the lid mass.
     """
-    r, stop = stefan_rate(surf.q_b, F_b, rho, h_f - H_b / rho, delta, h_top, delta_lo)
+    r, stop = stefan_rate(surf.q_b, F_b, rho, (H_f - H_b) / rho, delta, h_top, delta_lo)
     E_ph = delta_lo * hv.profile_heat(0.0, surf.T_s, T_b)
     relax = (1.0 - w) / LID_TAU_HIDDEN
     ddelta = w * r - relax * (delta - delta_lo)
     H_lid = heating * delta * hv.profile_density(surf.s, surf.T_s, T_b)
     dE = w * (surf.q_b - surf.F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
     F_top = w * surf.F_s + (1.0 - w) * F_grid
-    F_fluid = F_top + dE - H_lid - rho * h_f * ddelta
+    F_fluid = F_top + dE - H_lid - H_f * ddelta
     return LidRates(
         ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop, H_lid=H_lid
     )

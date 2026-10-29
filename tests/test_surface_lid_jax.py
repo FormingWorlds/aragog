@@ -263,7 +263,7 @@ def test_lid_rates_match_numpy(name):
             F_grid=rng.uniform(0.0, 1e4),
             w=[1.0, 0.0, 0.37][i % 3],
             rho=3100.0,
-            h_f=rng.uniform(-1e5, 6e5),
+            H_f=3100.0 * rng.uniform(-1e5, 6e5),
             T_b=T_b,
             H_b=float(hv.H(T_b)),
             h_top=2.0e3,
@@ -277,7 +277,7 @@ def test_lid_rates_match_numpy(name):
         got = np.array(got, dtype=float)
         np.testing.assert_allclose(got[[0, 1, 2, 4, 5, 6]], want, rtol=1e-11, atol=1e-25)
         # F_fluid sums terms that can cancel to round-off: bound it by their size
-        terms = max(abs(ref.F_top), abs(ref.dE), abs(kw['rho'] * kw['h_f'] * ref.ddelta))
+        terms = max(abs(ref.F_top), abs(ref.dE), abs(kw['H_f'] * ref.ddelta))
         assert abs(got[3] - ref.F_fluid) <= 1e-11 * terms
 
 

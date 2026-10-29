@@ -50,7 +50,7 @@ def _evolve(y0, t0, t_out, *, dh, F_b, surface):
             F_grid=0.0,
             w=1.0,
             rho=RHO,
-            h_f=h_b + dh,
+            H_f=RHO * (h_b + dh),
             T_b=T_B,
             H_b=RHO * h_b,
             hv=HV,

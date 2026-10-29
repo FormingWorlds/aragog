@@ -28,15 +28,15 @@ with $\varepsilon$ the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T_\m
 
 At the base the crust conducts $q_b = k (T_b - T_s) f_s'(1) / \delta$ upward, and the melt delivers $F_b$. The difference freezes new crust:
 
-$$\left(\rho\, h_f - H_b\right) \frac{d\delta}{dt} = q_b - F_b.$$
+$$\left(W(S_f) - W(S_b)\right) \frac{d\delta}{dt} = q_b - F_b, \qquad W(S) = \int_{S_\mathrm{sol}}^{S} \rho\, T\, dS'.$$
 
-Here $\rho$ is the density at the lid base, $h_f$ \[J/kg\] the heat content of the melt and $H_b$ \[J/m³\] the heat content per volume of the crust at its base, so the left side is the heat released when melt joins the crust, latent heat of the melt fraction included. All heat contents are integrals of $T\,dS$ at the top-cell pressure from the solidus entropy. The melt delivers $F_b$, the larger of the heat flux into the top cell from below and the flux of a boundary layer at the critical Rayleigh number `lid_ra_crit`.
+Here $W$ \[J/m³\] is the heat content per volume at the top-cell pressure, counted from the solidus entropy $S_\mathrm{sol}$. It is the measure the mesh stores heat in, since the entropy equation has the capacitance $\rho T$. $S_f$ is the entropy of the melt and $S_b$ that of the crust at its base. The left side is the heat released when melt joins the crust, latent heat of the melt fraction included; a melt at the base entropy releases none. The density sits inside the integral because it changes along the way from $S_b$ to $S_f$. The melt delivers $F_b$, the larger of the heat flux into the top cell from below and the flux of a boundary layer at the critical Rayleigh number `lid_ra_crit`.
 
 ## Energy
 
 The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
 
-The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$. The melt loses the mass that freezes, and the crust gains it. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
+The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
 
 ## When the crust exists, and when it goes
 
@@ -56,7 +56,7 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - `lid_handover_cells` (integer ≥ 1, default 3): must leave at least one cell below the hand-over face.
 - `lid_ra_crit` (default 450): positive and finite.
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`.
-- The heat jump $\Delta h$ has a floor of 10³ J/kg (one logged warning when it acts).
+- The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (47,107 against 9,366).
 - The hand-over needs the solid rheology with `stress_closure_mode = 'lid'`; with another closure, or without the rheology, the lid never hands over.
 - The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.

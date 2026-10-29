@@ -223,9 +223,8 @@ def test_lid_growth_sanity_against_quasi_static_neumann(eos, n_nodes, monkeypatc
     for k in range(t_nd.size):
         s._dSdt_single(t_nd[k], y[:, k])
         ev = s._lid_last
-        H_b = float(s._lid_H_of_S(ev.S_b))
-        cp = (H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
-        St = cp * (ev.T_b - ev.surf.T_s) / (ev.h_f - H_b / ev.rho)
+        cp = (ev.H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
+        St = cp * (ev.T_b - ev.surf.T_s) / ((ev.H_f - ev.H_b) / ev.rho)
         lam = brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
         kappa_lam2.append(s._lid_k / (ev.rho * cp) * lam**2)
     span = (s._solution.t[-1] - s._solution.t[0]) * 3.15576e7
@@ -377,6 +376,7 @@ def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8
             phase_staggered=SimpleNamespace(temperature=lambda: T[::-1].copy()),
         ),
         _lid_last=SimpleNamespace(delta=0.5, T_b=T_b, surf=SimpleNamespace(T_s=T_s)),
+        _lid_active=True,
         _lid_z_stag=np.asarray(z_cells, dtype=float),
     )
     return EntropySolver._lid_depth(c)
@@ -496,7 +496,7 @@ def test_root_equals_the_full_rhs_root(eos, kw):
 
 @pytest.mark.physics_invariant
 def test_merge_is_energy_exact(eos):
-    """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - rho h_f delta),
+    """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - H(S_f) delta),
     with H checked by an independent adaptive quadrature of rho T dS."""
     from scipy.integrate import quad
 
@@ -514,12 +514,8 @@ def test_merge_is_energy_exact(eos):
         return quad(f, s._lid_S_sol, S, points=pts or None, epsrel=1e-12, limit=200)[0]
 
     i = s._n_stag - 1
-    T, phi = (
-        float(np.asarray(fn(P, y[i])).item()) for fn in (eos_.temperature, eos_.melt_fraction)
-    )
-    base = s._lid_base_state(float(y[i]), T, phi)
     V, A = float(s._volume_flat[-1]), s._lid_area
-    before = V * H(float(y[i])) + A * (y[-1] - base['rho'] * base['h_f'] * y[-2])
+    before = V * H(float(y[i])) + A * (y[-1] - H(float(y[i])) * y[-2])
     after = V * H(float(y_new[i]))
     assert after == pytest.approx(before, rel=1e-7)
     assert resid <= 1e-10
@@ -876,7 +872,7 @@ def test_lid_step_check_refuses_bad_states(eos, change, match):
 
 @pytest.mark.parametrize(
     ('change', 'text'),
-    [({'h_f': -1.0e6}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],
+    [({'H_f': -1.0e12}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],
     ids=['enthalpy_floor', 'shape_bound'],
 )
 def test_lid_step_check_warns_once(eos, caplog, change, text):
