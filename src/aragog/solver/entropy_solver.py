@@ -2988,10 +2988,11 @@ class EntropySolver:
 
     def _lid_enthalpy_table(self) -> '_lid.LidEnthalpy':
         """Heat content per volume ``W(S) = integral of rho T dS`` at the top-cell pressure,
-        zero at the solidus: the heat per volume the mesh stores, and the lid where the
-        temperature rises with entropy. It runs over the whole table, on 2048, 512 and 2048
-        entropy intervals (4-point Gauss-Legendre each) from the table floor to the solidus, the
-        liquidus and the table top. Sets ``_lid_W_of_S``, ``W`` in entropy, and returns ``W``
+        zero at the solidus: the heat per volume of the reported state heat (the mesh
+        capacitance blends the phases near the solidus and liquidus and differs there by under
+        1e-3), and of the lid where the temperature rises with entropy. It runs over the whole
+        table, on 2048, 512 and 2048 entropy intervals (4-point Gauss-Legendre each) from the
+        table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W`` in entropy, and returns ``W``
         and the density of the solid in temperature between the flat floor of the table and the
         band below the solidus where the temperature stays at the solidus.
 
