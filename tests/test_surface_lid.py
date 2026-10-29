@@ -303,3 +303,28 @@ def test_lid_rates_hidden_lid_relaxes_to_phantom():
     H_lid = 1e-9 * 3000.0 * 5.0
     lhs = rates.F_fluid + 3000.0 * 1.4e6 * rates.ddelta - rates.dE + H_lid
     assert lhs == pytest.approx(rates.F_top, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('St', [0.1, 3.381])
+def test_fixed_surface_recovers_the_neumann_shape(St):
+    """With the surface temperature fixed, the mean of the Neumann profile gives s = lambda^2
+    and the Neumann base and surface fluxes."""
+    c = _neumann_case(St)
+    out = sl.fixed_surface_state(c['delta'], c['T_m'], c['T_b'], c['k'], c['T_s'], 0.0)
+    assert out.clipped == 0
+    assert out.s == pytest.approx(c['s'], rel=1e-9)
+    assert out.T_s == pytest.approx(c['T_s'], abs=0)
+    assert out.q_b == pytest.approx(
+        c['k'] * (c['T_b'] - c['T_s']) * c['f1'] / c['delta'], rel=1e-9
+    )
+
+
+@pytest.mark.physics_invariant
+def test_fixed_surface_reports_a_mean_outside_the_family():
+    """A mean at the base or at the surface temperature uses the bound of the family and says so."""
+    hot = sl.fixed_surface_state(10.0, 1399.9999, 1400.0, 4.0, 300.0, 0.0)
+    cold = sl.fixed_surface_state(10.0, 300.0001, 1400.0, 4.0, 300.0, 0.0)
+    assert (hot.clipped, cold.clipped) == (1, -1)
+    assert hot.s == pytest.approx(sl.LID_SHAPE_MAX, rel=1e-9)
+    assert cold.s == pytest.approx(sl.LID_SHAPE_MIN, rel=1e-9)
