@@ -110,7 +110,8 @@ class _BoundaryConditionsParameters:
     core_module_params: dict | None = None
     # Top basic-node entropy, 'linear' or 'limited' (see the BoundaryConfig docstring).
     top_node: str = 'linear'
-    # Sub-grid surface lid (see the BoundaryConfig docstring); off by default.
+    # Sub-grid surface lid (see the BoundaryConfig docstring); off by default. The hand-over
+    # to the mesh needs the solid rheology in the 'lid' stress closure.
     subgrid_lid: bool = False
     lid_delta_on: float = 1.0
     lid_delta_lo: float | None = None

@@ -360,3 +360,29 @@ def test_resume_after_handover_matches_the_lid_off_run(eos):
     )
     np.testing.assert_array_equal(s._solution.y[-2:, -1], [0.0, 0.0])
     assert s.get_state().lid_delta == pytest.approx(0.0, abs=0)
+
+
+@pytest.mark.parametrize('closure', ['local', None])
+def test_no_handover_without_the_lid_closure(eos, closure):
+    """The hand-over needs the stagnant-lid state of the 'lid' stress closure: with the 'local'
+    closure, or without the rheology, the column whose trigger has passed keeps its lid."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = 1
+    p.boundary_conditions.normalize()
+    if closure is not None:
+        p.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode=closure)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.linspace(3150.0, 3000.0, s._n_stag)
+    S[-2:] = 1500.0
+    s.set_initial_entropy(S)
+    assert not s._lid_handover_armed()
+    assert s._lid_root_value(0.0, s._S0) == pytest.approx(-1.0, abs=0)
+    s.solve()
+    out = s.get_state()
+    assert np.isnan(out.lid_handover_time)
+    assert out.lid_delta > 0.0

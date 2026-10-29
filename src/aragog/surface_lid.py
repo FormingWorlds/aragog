@@ -182,6 +182,28 @@ def surface_state(
     return LidSurface(T_s=T_s, F_s=k * dT * f0 / d, q_b=k * dT * f1 / d, s=s, clipped=clipped)
 
 
+def fixed_surface_state(
+    delta: float, T_m: float, T_b: float, k: float, T_s: float, delta_floor: float
+) -> LidSurface:
+    """Lid with a fixed surface temperature ``T_s`` [K]: the shape follows from the mean,
+    ``m(s) = (T_m - T_s) / (T_b - T_s)``, held inside the bounds of the profile family.
+
+    Parameters and the result as :func:`surface_state`; ``clipped`` is +1 (-1) when the mean
+    lies above (below) the family.
+    """
+    d = float(np.hypot(delta, delta_floor))
+    m = (T_m - T_s) / max(T_b - T_s, LID_DT_MIN)
+    if m >= LID_MEAN_RATIO_MAX:
+        s, clipped = LID_SHAPE_MAX, 1
+    elif m <= LID_MEAN_RATIO_MIN:
+        s, clipped = LID_SHAPE_MIN, -1
+    else:
+        s, clipped = _shape_of_mean(m), 0
+    f0, f1, _ = shape(s)
+    dT = T_b - T_s
+    return LidSurface(T_s=T_s, F_s=k * dT * f0 / d, q_b=k * dT * f1 / d, s=s, clipped=clipped)
+
+
 def linear_lid_surface(
     delta: float, T_b: float, k: float, emissivity: float, T_eq: float
 ) -> float:
