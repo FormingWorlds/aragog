@@ -352,6 +352,62 @@ def test_lid_depth_is_the_isotherm_depth(eos):
     assert g == pytest.approx((z - s._lid_handover_depth) / s._lid_handover_depth, rel=1e-12)
 
 
+def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8638394321628):
+    """``_lid_depth`` of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    T = np.asarray(T_cells, dtype=float)
+    c = SimpleNamespace(
+        state=SimpleNamespace(
+            lid_state={'T_lid_iso': T_iso},
+            phase_staggered=SimpleNamespace(temperature=lambda: T[::-1].copy()),
+        ),
+        _lid_last=SimpleNamespace(delta=0.5, T_b=T_b, surf=SimpleNamespace(T_s=T_s)),
+        _lid_z_stag=np.asarray(z_cells, dtype=float),
+    )
+    return EntropySolver._lid_depth(c)
+
+
+V4_Z = (5435.244756473228, 16294.031285804696, 27137.215143142268, 37964.79998192191)
+
+
+def _crossing(z, T, i, T_iso=1331.3940372709967):
+    return z[i] + (T_iso - T[i]) * (z[i + 1] - z[i]) / (T[i + 1] - T[i])
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('T_cells', 'T_b', 'i'),
+    [
+        (
+            (1161.9146656681962, 1669.6789976162477, 1683.0972310119064, 1681.7076358411152),
+            1331.394037270997,
+            0,
+        ),
+        ((1100.0, 1500.0, 1200.0, 1700.0), 1331.394037270997, 2),
+        ((1200.0, 1600.0, 1700.0, 1750.0), 1100.0, 0),
+    ],
+    ids=['v4_state_3e3_yr', 'two_cold_regions', 'monotone'],
+)
+def test_lid_depth_is_the_base_of_the_cold_region(T_cells, T_b, i):
+    """The hand-over depth is the deepest point where the column rises through T_lid_iso, the
+    base of the cold region. In the solid regime the lid base sits at T_lid_iso, so the profile
+    only touches the isotherm there and the crossing lies in the cells: 9.07 km in the V4
+    state at 3e3 yr, not the 0.5 m lid base. Of two cold regions the deeper base counts."""
+    got = _depth_on_profile(T_cells, T_b, V4_Z)
+    assert got == pytest.approx(_crossing(V4_Z, T_cells, i), rel=1e-12)
+    assert got > V4_Z[0]
+
+
+def test_lid_depth_without_a_crossing_is_none():
+    """A column that stays below T_lid_iso has no base of a cold region: no depth, so the
+    hand-over root is -1."""
+    assert _depth_on_profile((1000.0, 1100.0, 1200.0, 1300.0), 1331.0, V4_Z) is None
+    assert _depth_on_profile((1500.0, 1600.0, 1700.0, 1800.0), 1400.0, V4_Z, T_s=1400.0) == 0.0
+
+
 @pytest.mark.physics_invariant
 def test_merge_is_energy_exact(eos):
     """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - rho h_f delta),
