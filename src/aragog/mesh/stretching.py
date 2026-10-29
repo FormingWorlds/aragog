@@ -15,6 +15,9 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import brentq, fsolve
 
+# Smallest end cell, as a fraction of the span; below it the maps lose the end cell.
+MIN_CELL_FRACTION = 1e-7
+
 
 def _one_sided_outer(xi: npt.NDArray, last: float) -> npt.NDArray:
     h = xi[1] - xi[0]
@@ -62,8 +65,8 @@ def stretched_unit_grid(n: int, first: float = 0.0, last: float = 0.0) -> npt.ND
         Number of nodes (at least 3).
     first, last : float
         Thickness of the first (inner) and last (outer) cell as a fraction of the
-        span; 0 leaves that end free. A non-zero value must be below the uniform
-        cell ``1 / (n - 1)``.
+        span; 0 leaves that end free. A non-zero value must lie in
+        [``MIN_CELL_FRACTION``, ``1 / (n - 1)``).
 
     Returns
     -------
@@ -73,14 +76,16 @@ def stretched_unit_grid(n: int, first: float = 0.0, last: float = 0.0) -> npt.ND
     Raises
     ------
     ValueError
-        For a target that is negative or not below the uniform cell, or a
+        For a target outside 0 and [``MIN_CELL_FRACTION``, ``1 / (n - 1)``), or a
         two-sided solve that does not converge to a monotone grid.
     """
     xi = np.linspace(0.0, 1.0, n)
     h = 1.0 / (n - 1)
     for name, val in (('first', first), ('last', last)):
-        if not (np.isfinite(val) and 0.0 <= val < h):
-            raise ValueError(f'{name} cell fraction must be in [0, {h:.6g}), got {val}')
+        if not (val == 0.0 or (np.isfinite(val) and MIN_CELL_FRACTION <= val < h)):
+            raise ValueError(
+                f'{name} cell fraction must be 0 or in [{MIN_CELL_FRACTION:g}, {h:.6g}), got {val}'
+            )
     if first == 0.0 and last == 0.0:
         return xi
     if first == 0.0:
