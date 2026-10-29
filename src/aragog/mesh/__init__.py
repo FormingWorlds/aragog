@@ -327,8 +327,18 @@ class Mesh:
                     self.settings.cmb_cell_thickness / (r_out - r_in),
                     self.settings.surface_cell_thickness / (r_out - r_in),
                 ).reshape(-1, 1)
+                initial_spatial[[0, -1], 0] = r_in, r_out
             basic_coordinates = initial_spatial
             basic_mass_coordinates = initial_spatial
+
+        if self._refined:
+            # brentq places mass-mode radii to 1e-3 m, so an end cell holds its target to 2e-3 m.
+            self._check_refined_radii(
+                basic_coordinates[:, 0],
+                float(self.get_constant_spacing()[0, 0]),
+                float(self.get_constant_spacing()[-1, 0]),
+                atol=2e-3 if parameters.mesh.mass_coordinates else 0.0,
+            )
 
         self.basic: FixedMesh = FixedMesh(
             self.settings,
@@ -451,6 +461,23 @@ class Mesh:
             getattr(self.settings, 'surface_cell_thickness', 0.0)
             or getattr(self.settings, 'cmb_cell_thickness', 0.0)
         )
+
+    def _check_refined_radii(self, r, r_inner: float, r_outer: float, atol: float) -> None:
+        """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
+        start and end at ``r_inner`` and ``r_outer`` exactly, and each set end cell has its
+        thickness to ``atol`` m or to 1e-6 relative, whichever is larger."""
+        d = np.diff(r)
+        bad = [] if np.all(d > 0.0) else ['the radii are not strictly increasing']
+        if (r[0], r[-1]) != (r_inner, r_outer):
+            bad.append(
+                f'the end radii {r[0]!r}, {r[-1]!r} m are not {r_inner!r}, {r_outer!r} m'
+            )
+        for name, cell in (('cmb_cell_thickness', d[0]), ('surface_cell_thickness', d[-1])):
+            target = getattr(self.settings, name)
+            if target and not abs(cell - target) <= max(atol, 1e-6 * target):
+                bad.append(f'mesh.{name} = {target} m gives an end cell of {cell} m')
+        if bad:
+            raise ValueError('refined mesh: ' + '; '.join(bad))
 
     def _refined_unit_grid(self, first: float, last: float) -> npt.NDArray:
         """Stretched unit grid for ``mesh.cmb_cell_thickness`` and
