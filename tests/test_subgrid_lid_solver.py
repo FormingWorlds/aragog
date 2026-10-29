@@ -738,3 +738,157 @@ def test_solid_lid_base_is_the_rheological_temperature(eos, source, monkeypatch)
     assert 600.0 < expected < s._lid_T_sol
     base = s._lid_base_state(S_f, T_f, 0.0)
     assert base['T_b'] == pytest.approx(expected, rel=1e-9)
+
+
+def _base_solver(eos, monkeypatch, T_iso):
+    """A 10-node solver with the solid rheology whose stagnant-lid state has ``T_iso``."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode='local')
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    monkeypatch.setattr(s.state, '_lid_state', {'T_lid_iso': T_iso}, raising=False)
+    return s
+
+
+@pytest.mark.physics_invariant
+def test_lid_base_blends_in_entropy_by_the_melt_ramp(eos, monkeypatch):
+    """Inside the rheological transition the lid-base entropy is the melt-ramp blend of the
+    solidus and the rheological entropy; a molten top cell puts the base at the solidus."""
+    from aragog.rheology_lid import _melt_ramp
+
+    s = _base_solver(eos, monkeypatch, 1250.0)
+    ph = s.state.phase_staggered
+    phi = float(ph._phi_rheo)
+    w = float(_melt_ramp(phi, ph._phi_rheo, ph._phi_width))
+    assert 0.1 < w < 0.9
+    S_rh = float(eos.entropy_at_temperature(s._lid_P, 1250.0))
+    S_f = s._lid_S_sol + 50.0
+    base = s._lid_base_state(S_f, 1400.0, phi)
+    assert base['S_b'] == pytest.approx(w * s._lid_S_sol + (1.0 - w) * S_rh, rel=1e-12)
+    assert S_rh < base['S_b'] < s._lid_S_sol
+    w1 = float(_melt_ramp(1.0, ph._phi_rheo, ph._phi_width))  # below 1: a blend at phi 1 too
+    S_b1 = s._lid_base_state(S_f, 1400.0, 1.0)['S_b']
+    assert S_b1 == pytest.approx(w1 * s._lid_S_sol + (1.0 - w1) * S_rh, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('dT', [100.0, 1.0e-6])
+def test_lid_base_is_capped_at_the_solidus(eos, monkeypatch, dT):
+    """A rheological temperature at or above the solidus puts a solid-regime lid base at the
+    solidus entropy, never above it."""
+    s = _base_solver(eos, monkeypatch, 1.0)
+    monkeypatch.setattr(s.state, '_lid_state', {'T_lid_iso': s._lid_T_sol + dT})
+    base = s._lid_base_state(s._lid_S_sol - 100.0, 1300.0, 0.0)
+    assert base['S_b'] == s._lid_S_sol
+
+
+def test_lid_base_temperature_floor(eos, monkeypatch):
+    """A rheological temperature below 1 K is read as 1 K on the EOS."""
+    s = _base_solver(eos, monkeypatch, -50.0)
+    base = s._lid_base_state(s._lid_S_sol - 100.0, 1300.0, 0.0)
+    assert base['S_b'] == pytest.approx(
+        float(eos.entropy_at_temperature(s._lid_P, 1.0)), rel=1e-12
+    )
+    assert np.isfinite(base['T_b'])
+
+
+@pytest.mark.parametrize('case', ['convective', 'face', 'zero'])
+def test_base_flux_is_the_largest_of_convection_face_and_zero(eos, monkeypatch, case):
+    """F_b is the largest of the convective base flux, the mesh flux into the top cell and 0."""
+    s = _solver(eos)
+    y = s._S0.copy()
+    if case == 'zero':  # a top cell hotter than the cell below conducts down into the mesh
+        y[s._n_stag - 1] = 7000.0
+    s._dSdt_single(0.0, y)
+    F_in = float(s.state._heat_flux[-2])
+    assert (F_in < 0.0) == (case == 'zero')
+    q = {'convective': abs(F_in) + 7.0, 'face': -3.0, 'zero': F_in - 3.0}[case]
+    monkeypatch.setattr(sl, 'convective_base_flux', lambda *a: q)
+    s._dSdt_single(0.0, y)
+    assert s._lid_last.F_b == {'convective': q, 'face': F_in, 'zero': 0.0}[case]
+
+
+def test_merge_refuses_a_residual_above_its_bound(eos, monkeypatch):
+    """A merge whose root misses the target heat content raises instead of passing."""
+    import scipy.optimize
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    y[-2:] = (20.0, 40.0 * y[-1])
+    monkeypatch.setattr(scipy.optimize, 'brentq', lambda f, a, b, **kw: float(y[s._n_stag - 1]))
+    with pytest.raises(RuntimeError, match='merge residual'):
+        s._lid_merge(y)
+
+
+def _checked(s, **change):
+    """The step check of the last lid evaluation with fields of it, of its rates or of its
+    surface replaced."""
+    import dataclasses
+
+    ev = s._lid_last
+    rates = {k: change.pop(k) for k in list(change) if hasattr(ev.rates, k) and k != 'F_top'}
+    surf = {k: change.pop(k) for k in list(change) if k == 'clipped'}
+    s._lid_last = dataclasses.replace(
+        ev,
+        rates=dataclasses.replace(ev.rates, **rates),
+        surf=dataclasses.replace(ev.surf, **surf),
+        **change,
+    )
+    s._check_lid_step(s._lid_delta_lo, 3, 1.5)
+
+
+@pytest.mark.parametrize(
+    ('change', 'match'),
+    [
+        ({'E': float('nan')}, 'non-finite'),
+        ({'ddelta': float('inf')}, 'non-finite'),
+        ({'delta': 0.25}, 'thickness'),
+        ({'w': 1.5}, 'weight'),
+        ({'w': -0.5}, 'weight'),
+    ],
+    ids=['E_nan', 'rate_inf', 'below_delta_lo', 'w_above_1', 'w_below_0'],
+)
+def test_lid_step_check_refuses_bad_states(eos, change, match):
+    """The step check raises on a non-finite state or rate, a lid below its lower stop and a
+    weight outside [0, 1], naming the step and the time."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    assert s._lid_delta_lo == pytest.approx(0.5, rel=1e-12)
+    with pytest.raises(RuntimeError, match=f'step 3, t=1.500000e\\+00 yr: {match}'):
+        _checked(s, **dict(change))
+
+
+@pytest.mark.parametrize(
+    ('change', 'text'),
+    [({'h_f': -1.0e6}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],
+    ids=['enthalpy_floor', 'shape_bound'],
+)
+def test_lid_step_check_warns_once(eos, caplog, change, text):
+    """The enthalpy floor and the shape bound warn once per run."""
+    import logging
+
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        _checked(s, **dict(change))
+        _checked(s, **dict(change))
+    assert sum(text in r.getMessage() for r in caplog.records) == 1
+
+
+def test_root_of_a_handed_over_lid_or_a_column_without_crossing(eos, monkeypatch):
+    """The hand-over root is -1 for a handed-over lid and for a column without a crossing
+    of the lid-base isotherm."""
+    from aragog.solver import entropy_solver as es
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    assert s._lid_root_value(0.0, y) > 0.0
+    y[-2:] = 0.0
+    assert s._lid_root_value(0.0, y) == -1.0
+    monkeypatch.setattr(es, '_isotherm_depth', lambda *a: None)
+    assert s._lid_root_value(0.0, s._S0) == -1.0
