@@ -57,6 +57,7 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - `lid_ra_crit` (default 450): positive and finite.
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`.
 - The heat jump $\Delta h$ has a floor of 10³ J/kg (one logged warning when it acts).
+- The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (47,107 against 9,366).
 - The hand-over needs the solid rheology with `stress_closure_mode = 'lid'`; with another closure, or without the rheology, the lid never hands over.
 - The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
 
