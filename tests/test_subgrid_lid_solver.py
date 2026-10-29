@@ -220,3 +220,143 @@ def test_outputs_and_netcdf(eos, tmp_path):
         assert float(ds['lid_delta'][...]) == pytest.approx(out.lid_delta, rel=1e-12)
     with netCDF4.Dataset(tmp_path / 'off.nc') as ds:
         assert 'lid_delta' not in ds.variables
+
+
+def _cold_top_solver(eos, end=1.0, cells=1):
+    """A 20-node column with the solid rheology ('lid' closure) and two cold top cells, where
+    the lid-base isotherm lies below the face of the top cell at the start."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=end)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = cells
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.linspace(3150.0, 3000.0, s._n_stag)
+    S[-2:] = 1500.0
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+def test_lid_depth_is_the_isotherm_depth(eos):
+    """The hand-over depth is where the column with the lid reaches T_lid_iso: the profile
+    interpolated at that depth gives T_lid_iso, below the top-cell face here."""
+    s = _cold_top_solver(eos)
+    g = s._lid_root_value(0.0, s._S0)
+    z = s._lid_depth()
+    T_iso = float(np.asarray(s.state.lid_state['T_lid_iso']))
+    T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
+    ev = s._lid_last
+    zs = np.r_[0.0, ev.delta, s._lid_z_stag]
+    Ts = np.r_[ev.surf.T_s, ev.T_b, T]
+    assert np.interp(z, zs, Ts) == pytest.approx(T_iso, rel=1e-12)
+    assert z > s._lid_handover_depth
+    assert g == pytest.approx((z - s._lid_handover_depth) / s._lid_handover_depth, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_merge_is_energy_exact(eos):
+    """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - rho h_f delta),
+    with H checked by an independent adaptive quadrature of rho T dS."""
+    from scipy.integrate import quad
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    y[-2:] = (20.0, 40.0 * y[-1])  # a 20 m lid with 40 times the phantom energy
+    y_new, resid = s._lid_merge(y)
+    eos_, P = s.entropy_eos, s._lid_P
+
+    def H(S):
+        def f(x):
+            return float(eos_.density(P, x) * eos_.temperature(P, x))
+
+        pts = [p for p in (s._lid_S_liq,) if min(s._lid_S_sol, S) < p < max(s._lid_S_sol, S)]
+        return quad(f, s._lid_S_sol, S, points=pts or None, epsrel=1e-12, limit=200)[0]
+
+    i = s._n_stag - 1
+    T, phi = (
+        float(np.asarray(fn(P, y[i])).item()) for fn in (eos_.temperature, eos_.melt_fraction)
+    )
+    base = s._lid_base_state(float(y[i]), T, phi)
+    V, A = float(s._volume_flat[-1]), s._lid_area
+    before = V * H(float(y[i])) + A * (y[-1] - base['rho'] * base['h_f'] * y[-2])
+    after = V * H(float(y_new[i]))
+    assert after == pytest.approx(before, rel=1e-7)
+    assert resid <= 1e-10
+    np.testing.assert_array_equal(y_new[-2:], [0.0, 0.0])
+    np.testing.assert_array_equal(y_new[:i], y[:i])
+    assert y_new[i] != y[i]
+
+
+def test_trigger_passed_at_the_start_hands_over_at_the_start(eos, caplog):
+    """A lid whose hand-over trigger lies behind the call start hands over at the start; the
+    lid states stay zero for the whole call."""
+    import logging
+
+    s = _cold_top_solver(eos)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    out = s.get_state()
+    assert out.lid_handover_time == pytest.approx(0.0, abs=0)
+    assert out.lid_delta == pytest.approx(0.0, abs=0)
+    assert np.all(s._solution.y[-2:] == 0.0)
+    assert any('handed over to the mesh at t=0.0' in r.getMessage() for r in caplog.records)
+
+
+def _methods():
+    from aragog.solver import entropy_solver as es
+
+    cv = ['cvode-fixed', 'cvode-rate'] if es._CVODE_AVAILABLE else []
+    return ['radau', *cv]
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_handover_in_the_call(eos, method):
+    """A hand-over at t* inside the call merges there and continues to the call end on every
+    integrator path (scipy, plain CVODE, CVODE segments); the ledger closes across it.
+
+    The trigger is replaced by g = (t - t*) / t* on this mushy column, which has no stagnant
+    lid; the physical trigger has its own test."""
+    t_star = 0.4
+    s = _solver(eos, end=1.0)
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    s._lid_handover_armed = lambda: True
+    s._lid_root_value = lambda t, y: -1.0 if y[-2] == 0.0 else (t - t_star) / t_star
+    s.solve()
+    sol, out = s._solution, s.get_state()
+    assert out.lid_handover_time == pytest.approx(t_star, rel=1e-6)
+    assert sol.t[-1] == pytest.approx(1.0, rel=1e-12)
+    assert np.all(np.diff(sol.t) > 0)
+    assert np.all(sol.y[-2:, -1] == 0.0) and sol.y[-2, 0] > 0.0
+    tr_t = sol.energy_trace[0]
+    assert np.count_nonzero(np.isclose(tr_t, out.lid_handover_time, rtol=0, atol=1e-12)) == 2
+    ei = sol.energy_integrals
+    budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
+    if method == 'cvode-rate':
+        assert any(seg[1] == 'lid' for seg in sol.segments)
+
+
+@pytest.mark.physics_invariant
+def test_resume_after_handover_matches_the_lid_off_run(eos):
+    """A run resumed with the handed-over lid (0, 0) evolves as the run without the lid."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    off = _solver(eos, lid=False)
+    off.solve()
+    np.testing.assert_allclose(
+        s._solution.y[: s._n_stag, -1], off._solution.y[:, -1], rtol=1e-6
+    )
+    np.testing.assert_array_equal(s._solution.y[-2:, -1], [0.0, 0.0])
+    assert s.get_state().lid_delta == pytest.approx(0.0, abs=0)
