@@ -41,6 +41,8 @@ from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
     SEPARATION_BUOYANCY_DEFAULT,
     SEPARATION_VISCOSITY_DEFAULT,
+    SolidRheologyParams,
+    check_viscosity_ceiling,
 )
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -1524,7 +1526,7 @@ class EntropySolver:
         # re-solve. One-shot: consumed by the next ``set_initial_entropy``.
         self._xi_pre_resolve = None
 
-    def set_jax_cvode_factory(self, factory) -> None:
+    def set_jax_cvode_factory(self, factory, *, phase_params=None) -> None:
         """Register a factory that produces JAX-derived CVODE callbacks.
 
         The factory is called inside ``solve()`` when ``use_jax_jacobian``
@@ -1541,8 +1543,49 @@ class EntropySolver:
             attribute for batched per-call energy power evaluation.
             May be None to disable the Option Z path even if the flag
             is on.
+        phase_params : PhaseParams, optional
+            When supplied, validates immediately that ``phase_params.rheology``
+            matches ``self.parameters.phase_solid.rheology``.
         """
+        self._check_jax_factory_rheology(phase_params)
+        self._check_jax_factory_rheology(factory)
         self._jax_cvode_factory = factory
+
+    def _solid_rheology(self) -> SolidRheologyParams | None:
+        """Return ``parameters.phase_solid.rheology``, or None when any link is missing."""
+        return getattr(
+            getattr(getattr(self, 'parameters', None), 'phase_solid', None), 'rheology', None
+        )
+
+    @property
+    def _rheology_enabled(self) -> bool:
+        """True when the solid rheology is present and enabled."""
+        rheo = self._solid_rheology()
+        return bool(rheo is not None and rheo.enabled)
+
+    def _check_jax_factory_rheology(
+        self, candidate, *, require_when_enabled: bool = False
+    ) -> None:
+        """Raise ValueError if a JAX factory or RHS carries a mismatched SolidRheologyParams."""
+        if candidate is None:
+            return
+        solver_rheo = self._solid_rheology()
+        if solver_rheo is None:
+            return
+        cand_rheo = getattr(candidate, 'rheology', None)
+        if cand_rheo is None:
+            pp = getattr(candidate, 'phase_params', None)
+            cand_rheo = getattr(pp, 'rheology', None)
+        if cand_rheo is not None and cand_rheo != solver_rheo:
+            raise ValueError(
+                f'JAX CVODE factory PhaseParams.rheology ({cand_rheo!r}) does not match '
+                f'parameters.phase_solid.rheology ({solver_rheo!r})'
+            )
+        if require_when_enabled and solver_rheo.enabled and cand_rheo is None:
+            raise ValueError(
+                'JAX CVODE factory rhs_fn does not expose PhaseParams.rheology while '
+                f'parameters.phase_solid.rheology.enabled=True ({solver_rheo!r})'
+            )
 
     def _build_nondim_scales(self) -> 'NonDimScales':
         """Construct the per-component NonDimScales for the active state.
@@ -1752,6 +1795,7 @@ class EntropySolver:
             cp_blend=cp_blend,
             separation_viscosity=separation_viscosity,
             separation_buoyancy=separation_buoyancy,
+            rheology=self._solid_rheology(),
         )
 
         # Get viscosity and thermal conductivity from config.
@@ -1796,6 +1840,7 @@ class EntropySolver:
 
         phase_stag = EntropyPhaseEvaluator(
             gravitational_acceleration=g_stag,
+            defer_rheology_viscosity=True,
             **phase_kwargs,
         )
         phase_stag.set_pressure(P_stag)
@@ -1807,7 +1852,9 @@ class EntropySolver:
         phase_basic.set_pressure(P_basic)
         # The core_module CMB boundary layer, one point at the CMB pressure.
         self._bl_phase = EntropyPhaseEvaluator(
-            gravitational_acceleration=g_basic[:1], **phase_kwargs
+            gravitational_acceleration=g_basic[:1],
+            defer_rheology_viscosity=True,
+            **phase_kwargs,
         )
         self._bl_phase.set_pressure(P_basic[:1])
 
@@ -1843,6 +1890,7 @@ class EntropySolver:
         # any RHS call where the floors could silently bias the
         # integrand.
         self._check_eos_floors()
+        self._validate_rheology_setup()
 
         self._sync_top_node()
 
@@ -1868,6 +1916,244 @@ class EntropySolver:
         self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]; Aragog convention, not SPIDER
         self._r_ref = 6.371e7  # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
+
+    def _validate_rheology_setup(self) -> None:
+        """Validate static mesh and parameter invariants once at solver setup."""
+        liq_rheo = getattr(self.parameters.phase_liquid, 'rheology', None)
+        if liq_rheo is not None and liq_rheo != SolidRheologyParams():
+            raise ValueError('phase_liquid.rheology must keep default (disabled) values')
+        if not self._rheology_enabled:
+            return
+        rheo = self._solid_rheology()
+        rheo.__post_init__()
+        r_b = self._r_basic_flat
+        if r_b.ndim != 1 or r_b.size < 3:
+            raise ValueError('basic-node radii must be a 1-D array with at least 3 nodes')
+        if not np.all(np.isfinite(r_b)) or r_b[0] <= 0.0 or not np.all(np.diff(r_b) > 0.0):
+            raise ValueError(
+                'basic-node radii must be finite, positive, and strictly increasing'
+            )
+        p_b = self._P_basic_flat
+        if not np.all(np.isfinite(p_b)) or np.any(p_b < -1.0):
+            raise ValueError('basic-node pressure must be finite and >= -1.0 Pa')
+        p_s = np.asarray(self.state.phase_staggered.pressure, dtype=float).ravel()
+        if not np.all(np.isfinite(p_s)) or np.any(p_s < -1.0):
+            raise ValueError('staggered-node pressure must be finite and >= -1.0 Pa')
+        g_b = np.asarray(
+            self.state.phase_basic.gravitational_acceleration(), dtype=float
+        ).ravel()
+        g_s = np.asarray(
+            self.state.phase_staggered.gravitational_acceleration(), dtype=float
+        ).ravel()
+        if (
+            not np.all(np.isfinite(g_b))
+            or np.any(g_b <= 0.0)
+            or not np.all(np.isfinite(g_s))
+            or np.any(g_s <= 0.0)
+        ):
+            raise ValueError(
+                'gravitational_acceleration at basic and staggered nodes must be finite and positive'
+            )
+        ml = self.state._mixing_length
+        if not np.all(np.isfinite(ml)) or np.any(ml < 0.0):
+            raise ValueError('basic-node mixing_length must be finite and non-negative')
+        ph = self.state.phase_basic
+        if not np.isfinite(ph._visc_solid) or ph._visc_solid <= 0.0:
+            raise ValueError('viscosity_solid must be finite and positive')
+        check_viscosity_ceiling(ph._visc_solid, rheo)
+        if not np.isfinite(ph._phi_rheo) or not (0.0 <= ph._phi_rheo <= 1.0):
+            raise ValueError('rheological_transition_melt_fraction must lie in [0, 1]')
+        if not np.isfinite(ph._phi_width) or ph._phi_width <= 0.0:
+            raise ValueError('rheological_transition_width must be finite and positive')
+        if getattr(self.parameters.phase_mixed, 'const_properties', False):
+            logger.info(
+                'const_properties=True with rheology.enabled=True: setting melt_fraction '
+                'phi=0 (solid) and using Arrhenius solid viscosity (const_log10visc unused).'
+            )
+
+    def _check_rheology_invariants(
+        self,
+        trace_y: npt.NDArray | None = None,
+        trace_t: npt.NDArray | None = None,
+        *,
+        step_idx: int = 0,
+        time_yr: float | None = None,
+    ) -> None:
+        """Check solid rheology invariants on an accepted state when rheology is enabled.
+
+        During ``_compute_step_energy_integrals``, the EOS entropy-range check runs on every
+        accepted step on both branches, while RHS-state invariants run on the final step on the
+        JAX batch branch and on every step on the NumPy loop branch.
+        """
+        if not self._rheology_enabled:
+            return
+        rheo = self._solid_rheology()
+        if trace_y is not None:
+            y_pts = np.asarray(trace_y, dtype=float)
+            if y_pts.ndim == 1:
+                y_pts = y_pts.reshape(-1, 1)
+            n_steps = y_pts.shape[1]
+            t_pts = (
+                np.atleast_1d(np.asarray(trace_t, dtype=float)).ravel()
+                if trace_t is not None
+                else np.zeros(n_steps, dtype=float)
+            )
+            counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
+            try:
+                for k_idx in range(n_steps):
+                    t_step = float(t_pts[k_idx]) if k_idx < t_pts.size else 0.0
+                    self._check_rheology_eos_range(
+                        self._stag_entropy(y_pts[:, k_idx]),
+                        step_idx=k_idx,
+                        time_yr=t_step,
+                    )
+                    self._dSdt_single(t_step, y_pts[:, k_idx])
+                    self._check_rheology_step_invariants(rheo, step_idx=k_idx, time_yr=t_step)
+            finally:
+                self.state._pb_cache_hits, self.state._pb_cache_misses = counters
+            return
+        self._check_rheology_step_invariants(rheo, step_idx=step_idx, time_yr=time_yr)
+
+    def _check_rheology_eos_range(
+        self,
+        s_stag: npt.ArrayLike,
+        step_idx: int = 0,
+        time_yr: float | None = None,
+    ) -> None:
+        """Raise ``RuntimeError`` if an accepted state's staggered entropy leaves ``[S_min, S_max]``."""
+        eos = getattr(self, 'entropy_eos', None)
+        if eos is None or getattr(self.parameters.phase_mixed, 'const_properties', False):
+            return
+        s_min_raw = getattr(eos, 'S_min', None)
+        s_max_raw = getattr(eos, 'S_max', None)
+        if s_min_raw is None or s_max_raw is None:
+            return
+        s_min = float(s_min_raw)
+        s_max = float(s_max_raw)
+        s_arr = np.asarray(s_stag, dtype=float).ravel()
+        valid = np.isfinite(s_arr) & (s_arr >= s_min) & (s_arr <= s_max)
+        if not np.all(valid):
+            bad_node = int(np.flatnonzero(~valid)[0])
+            t_val = (
+                float(getattr(self.state, '_time', 0.0)) if time_yr is None else float(time_yr)
+            )
+            raise RuntimeError(
+                f'rheology invariant violated at step {step_idx}, t={t_val:.6e} yr, '
+                f'node {bad_node}: entropy S={s_arr[bad_node]:.6f} J/(kg K) '
+                f'outside EOS table [{s_min:.6f}, {s_max:.6f}] J/(kg K)'
+            )
+
+    def _check_rheology_eos_trace(self, t_pts: npt.ArrayLike, y_pts: npt.ArrayLike) -> None:
+        """Check ``_check_rheology_eos_range`` across every accepted state in ``(t_pts, y_pts)``."""
+        y_arr = np.asarray(y_pts, dtype=float)
+        if y_arr.ndim == 1:
+            y_arr = y_arr.reshape(-1, 1)
+        t_arr = np.atleast_1d(np.asarray(t_pts, dtype=float)).ravel()
+        for step_idx in range(y_arr.shape[1]):
+            t_i = (
+                float(t_arr[step_idx])
+                if step_idx < t_arr.size
+                else float(getattr(self.state, '_time', 0.0))
+            )
+            self._check_rheology_eos_range(
+                self._stag_entropy(y_arr[:, step_idx]),
+                step_idx=step_idx,
+                time_yr=t_i,
+            )
+
+    def _check_rheology_step_invariants(
+        self, rheo, step_idx: int = 0, time_yr: float | None = None
+    ) -> None:
+        """Check solid rheology invariants on ``self.state`` at step ``step_idx``."""
+        self._check_rheology_eos_range(
+            self.state._entropy_staggered,
+            step_idx=step_idx,
+            time_yr=float(getattr(self.state, '_time', 0.0))
+            if time_yr is None
+            else float(time_yr),
+        )
+        eta_eff = np.asarray(self.state._eta_eff_basic, dtype=float).ravel()
+        eta_diff = np.asarray(self.state.phase_basic.eta_diff(), dtype=float).ravel()
+        eta_bulk = np.asarray(self.state.phase_basic.viscosity(), dtype=float).ravel()
+        valid_visc = (
+            np.isfinite(eta_eff)
+            & np.isfinite(eta_diff)
+            & np.isfinite(eta_bulk)
+            & (eta_eff > 0.0)
+            & (eta_diff > 0.0)
+            & (eta_bulk > 0.0)
+        )
+        if not np.all(valid_visc):
+            bad_node = int(np.flatnonzero(~valid_visc)[0])
+            raise RuntimeError(
+                f'rheology invariant violated at step {step_idx}, node {bad_node}: '
+                f'non-finite or non-positive viscosity (eta_eff={eta_eff[bad_node]!r}, '
+                f'eta_diff={eta_diff[bad_node]!r}, eta_bulk={eta_bulk[bad_node]!r})'
+            )
+        ceiling = (10.0 ** float(rheo.viscosity_max_log10)) * (1.0 + 1.0e-12)
+        if np.any(eta_eff > ceiling) or np.any(eta_diff > ceiling):
+            raise RuntimeError(
+                f'rheology invariant violated at step {step_idx}, '
+                f'node {int(np.flatnonzero((eta_eff > ceiling) | (eta_diff > ceiling))[0])}: '
+                f'viscosity exceeds viscosity_max_log10 ceiling ({ceiling:.3e} Pa s)'
+            )
+        if np.any(eta_eff > eta_diff * (1.0 + 1.0e-12)):
+            bad_node = int(np.flatnonzero(eta_eff > eta_diff * (1.0 + 1.0e-12))[0])
+            raise RuntimeError(
+                f'rheology invariant violated at step {step_idx}, node {bad_node}: '
+                f'eta_eff ({eta_eff[bad_node]:.3e}) exceeds eta_diff ({eta_diff[bad_node]:.3e})'
+            )
+        lid = self.state._lid_state
+        if rheo.stress_closure_mode == 'lid':
+            if lid is None:
+                raise RuntimeError(
+                    f'rheology invariant violated at step {step_idx}: lid_state is None in lid mode'
+                )
+            for key in (
+                'eta_i',
+                'T_i',
+                'P_T_i',
+                'r_i',
+                'theta',
+                'tau_d',
+                'tau_d_lid',
+                'd_lid',
+                'd_lid_raw',
+            ):
+                if not np.isfinite(float(lid[key])):
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'non-finite lid_state[{key!r}]={lid[key]!r}'
+                    )
+            for tau_key in ('tau_d', 'tau_d_lid'):
+                tau_val = float(lid[tau_key])
+                if tau_val < 0.0:
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'{tau_key}={tau_val!r} < 0'
+                    )
+            w_lid = np.asarray(lid['w_lid'], dtype=float).ravel()
+            if np.any(w_lid < -1.0e-12) or np.any(w_lid > 1.0 + 1.0e-12):
+                bad_node = int(np.flatnonzero((w_lid < -1.0e-12) | (w_lid > 1.0 + 1.0e-12))[0])
+                raise RuntimeError(
+                    f'rheology invariant violated at step {step_idx}, node {bad_node}: '
+                    f'w_lid={w_lid[bad_node]!r} outside [0, 1]'
+                )
+            for w_key in ('w_y', 'w_active'):
+                w_val = float(lid[w_key])
+                if not (-1.0e-12 <= w_val <= 1.0 + 1.0e-12):
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'{w_key}={w_val!r} outside [0, 1]'
+                    )
+            d_shell = float(self._r_basic_flat[-1] - self._r_basic_flat[0])
+            for d_key in ('d_lid', 'd_lid_raw'):
+                d_val = float(lid[d_key])
+                if not (0.0 <= d_val <= d_shell * (1.0 + 1.0e-12)):
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'{d_key}={d_val!r} outside shell thickness [0, {d_shell!r}]'
+                    )
 
     def _check_eos_floors(self) -> None:
         """Scan loaded EOS tables for proximity to runtime floors.
@@ -3267,7 +3553,9 @@ class EntropySolver:
         # Gradient mode: the reconstruction couples all gradients to all
         # staggered nodes, making the Jacobian dense. Use no sparsity
         # hint (scipy will do full finite-difference Jacobian).
-        if self._core_bc == 'gradient':
+        if self._core_bc == 'gradient' or (
+            self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
+        ):
             return None
 
         n_stag = self._n_stag
@@ -3553,7 +3841,10 @@ class EntropySolver:
             'max_nonlin_iters': 10,
             'max_conv_fails': 25,
         }
-        if self._core_bc == 'quasi_steady':
+        lid_nonlocal = bool(
+            self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
+        )
+        if self._core_bc == 'quasi_steady' and not lid_nonlocal:
             cvode_options['linsolver'] = 'band'
             cvode_options['lband'] = 2
             cvode_options['uband'] = 2
@@ -3775,6 +4066,7 @@ class EntropySolver:
         t_ref: float,
         h_min: float,
         max_segments: int = 10000,
+        eos_s_nd_bounds: tuple[float, float] | None = None,
         **cvode_kw,
     ) -> 'OptimizeResult':
         """Integrate one rate-cap call as CVODE segments with their own ``max_step``.
@@ -3871,6 +4163,14 @@ class EntropySolver:
                 break
             for key in ('cap_fired', 'cap_evals', 'cap_label', 'cap_value', 'cap_phi0'):
                 res.pop(key, None)
+            if eos_s_nd_bounds is not None:
+                s_nd = y[: self._n_stag]
+                if (
+                    not np.all(np.isfinite(s_nd))
+                    or np.any(s_nd < eos_s_nd_bounds[0])
+                    or np.any(s_nd > eos_s_nd_bounds[1])
+                ):
+                    break
             if trigger == 'stiff':
                 inside = not roots.inside
         res.t = np.concatenate(ts)
@@ -4314,6 +4614,10 @@ class EntropySolver:
                     )
                     cvode_rhs_override = None
                     cvode_jacfn = None
+                if cvode_rhs_override is not None:
+                    self._check_jax_factory_rheology(
+                        cvode_rhs_override, require_when_enabled=True
+                    )
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
@@ -4391,6 +4695,22 @@ class EntropySolver:
                         cap=phi_cap_rootfn,
                     )
 
+                eos_seg = getattr(self, 'entropy_eos', None)
+                eos_s_nd_bounds = None
+                if (
+                    self._rheology_enabled
+                    and eos_seg is not None
+                    and not getattr(self.parameters.phase_mixed, 'const_properties', False)
+                    and self._core_bc != 'gradient'
+                    and getattr(eos_seg, 'S_min', None) is not None
+                    and getattr(eos_seg, 'S_max', None) is not None
+                ):
+                    s_scale = float(_state_scale[0])
+                    eos_s_nd_bounds = (
+                        float(eos_seg.S_min) / s_scale,
+                        float(eos_seg.S_max) / s_scale,
+                    )
+
                 self._solution = self._solve_cvode_segments(
                     start_time=start_nd,
                     end_time=end_nd,
@@ -4399,6 +4719,7 @@ class EntropySolver:
                     roots_at=_rate_roots,
                     t_ref=t_ref,
                     h_min=1.0 / t_ref,
+                    eos_s_nd_bounds=eos_s_nd_bounds,
                     **cvode_kw,
                 )
             else:
@@ -4588,11 +4909,12 @@ class EntropySolver:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
         budget = getattr(self, '_core_module_budget', None)
+        trace_t, trace_y = sol.get('energy_trace') or (sol.t, sol.y)
         if self._core_bc == 'core_module' and budget is not None:
             from aragog.core.regime import refuse_unmodelled_regime
 
             # every accepted step of the call, not only the output points
-            t_core = (sol.get('energy_trace') or (sol.t, sol.y))[1][self._n_stag + 1]
+            t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
         sol.energy_integrals = self._compute_step_energy_integrals()
@@ -4633,7 +4955,10 @@ class EntropySolver:
         (gradient, bower2018), ``_step_powers`` evaluates the powers at each node in a
         Python loop. The trapezoidal rule integrates them over physical time, so a transient
         between two outputs is resolved by the steps inside it. Sign convention: positive
-        adds energy to the mantle.
+        adds energy to the mantle. When solid rheology is enabled, the EOS entropy-range
+        invariant is checked on every accepted step on both branches, while invariants that
+        require a refreshed RHS state are checked on the final step on the JAX batch path and
+        at every step on the NumPy loop.
 
         Returns
         -------
@@ -4647,7 +4972,29 @@ class EntropySolver:
             ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
+        rheo = self._solid_rheology()
+        check_rheo = self._rheology_enabled
         if self.entropy_eos is None or sol is None or sol.t.size < 2:
+            if not check_rheo:
+                return dict(_ZERO_ENERGY_INTEGRALS)
+            if sol is not None and sol.t.size > 0 and sol.y.size > 0:
+                y_last = sol.y[:, -1] if sol.y.ndim == 2 else sol.y
+                t_last = float(sol.t[-1])
+                self._check_rheology_eos_range(
+                    self._stag_entropy(y_last),
+                    step_idx=int(sol.t.size - 1),
+                    time_yr=t_last,
+                )
+                counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
+                try:
+                    self._dSdt_single(t_last, y_last)
+                finally:
+                    self.state._pb_cache_hits, self.state._pb_cache_misses = counters
+            if sol is not None:
+                t_last_opt = float(sol.t[-1]) if sol.t.size > 0 else None
+                self._check_rheology_invariants(
+                    step_idx=max(int(sol.t.size - 1), 0), time_yr=t_last_opt
+                )
             return dict(_ZERO_ENERGY_INTEGRALS)
 
         # On the scipy path solve_ivp returns its accepted steps as sol.t.
@@ -4677,20 +5024,39 @@ class EntropySolver:
                 )
                 P = None
 
-        if P is not None:
-            self._batch_powers_calls += 1
-            logger.info(
-                'EntropySolver: evaluated energy powers via JAX batch path (%d nodes)',
-                t_pts.size,
-            )
-            self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
-        else:
-            logger.info(
-                'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
-                t_pts.size,
-            )
-            P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
-        self.state._pb_cache_hits, self.state._pb_cache_misses = counters
+        try:
+            if P is not None:
+                self._batch_powers_calls += 1
+                logger.info(
+                    'EntropySolver: evaluated energy powers via JAX batch path (%d nodes)',
+                    t_pts.size,
+                )
+                if check_rheo:
+                    self._check_rheology_eos_trace(t_pts, y_pts)
+                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
+                if check_rheo:
+                    self._check_rheology_step_invariants(
+                        rheo, step_idx=int(t_pts.size - 1), time_yr=float(t_pts[-1])
+                    )
+            else:
+                logger.info(
+                    'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
+                    t_pts.size,
+                )
+                rows = []
+                for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
+                    if check_rheo:
+                        self._check_rheology_eos_range(
+                            self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
+                        )
+                    rows.append(self._step_powers(float(t), y))
+                    if check_rheo:
+                        self._check_rheology_step_invariants(
+                            rheo, step_idx=step_idx, time_yr=float(t)
+                        )
+                P = np.array(rows)
+        finally:
+            self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
         n_stag = getattr(self, '_n_stag', 0)
@@ -5198,10 +5564,12 @@ class EntropySolver:
             phi_stag = np.asarray(eos.melt_fraction(P_stag, S_final)).ravel()
             rho_stag = np.asarray(eos.density(P_stag, S_final)).ravel()
         else:
-            # const_properties: analytical T, phi=1, rho=const
+            # const_properties: analytical T, phi=0 when rheology.enabled else 1, rho=const
             pm = self.parameters.phase_mixed
             T_stag = pm.const_T_ref * np.exp((S_final - pm.const_S_ref) / pm.const_Cp)
-            phi_stag = np.ones_like(S_final)
+            phi_stag = (
+                np.zeros_like(S_final) if self._rheology_enabled else np.ones_like(S_final)
+            )
             rho_stag = np.full_like(S_final, pm.const_rho)
 
         # Refresh the state at the final entropy through the RHS, so the boundary
@@ -5244,6 +5612,7 @@ class EntropySolver:
         _check_separation_sign(
             jgrav_b, rho_solid_b - rho_melt_b, ph._separation_viscosity, ph._separation_buoyancy
         )
+        self._check_rheology_invariants()
 
         # Scalar quantities. M_mantle is the structural mass between the CMB
         # and the surface from the EOS mass integral, not the PALEOS rho_stag
@@ -5375,7 +5744,7 @@ class EntropySolver:
             porosity = np.clip((rho_sol - rho_bulk) / safe_drho, 0, 1)
             Phi_global_vol = float(np.sum(porosity * vol) / np.sum(vol))
         else:
-            Phi_global_vol = 1.0  # const_properties: fully liquid
+            Phi_global_vol = 0.0 if self._rheology_enabled else 1.0
 
         # Heating flux
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2

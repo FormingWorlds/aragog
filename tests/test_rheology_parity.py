@@ -229,7 +229,14 @@ def test_yield_stress_parity_float64():
     ['unyielded', 'yielding', 'mobile', 'no_lid', 'mushy', 'inactive_convection'],
 )
 def test_lid_state_and_effective_viscosity_parity(regime: str):
-    """Verify lid diagnostics and effective viscosity match between NumPy and JAX."""
+    """Verify lid diagnostics and effective viscosity match between NumPy and JAX across regimes.
+
+    With geometric thickness scaling (tau_d_lid = tau_d * d_conv / d_geom), unyielded has tau_d = 1.672e6 Pa and
+    tau_d_lid = 2.473e7 Pa (d_conv/d_geom = 14.791), so tau_y_max = 2500e6 Pa keeps
+    tau_d_lid/tau_y_lid = 0.009892 < 0.01; yielding has tau_d = 2.584e6 Pa and
+    tau_d_lid = 2.259e7 Pa (d_conv/d_geom = 8.745), so tau_y_max = 23.2e6 Pa places
+    tau_d_lid/tau_y_lid = 0.9738 in (0.95, 1.0) with w_y = 0.3721 in (0.2, 0.5).
+    """
     n_nodes = 40
     radii = np.linspace(3.48e6, 6.371e6, n_nodes)
     pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
@@ -241,7 +248,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_unyielded = np.linspace(0.0, 1.0e-10, n_nodes)
         v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
-        tau_y_max = 500.0e6
+        tau_y_max = 2500.0e6
     elif regime == 'yielding':
         temperature = np.linspace(3200.0, 1600.0, n_nodes)
         conv_flux = np.linspace(0.0, 200.0, n_nodes)
@@ -249,7 +256,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_unyielded = np.linspace(0.0, 1.0e-9, n_nodes)
         v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
-        tau_y_max = 2.65e6
+        tau_y_max = 23.2e6
     elif regime == 'mobile':
         temperature = np.linspace(3400.0, 1400.0, n_nodes)
         conv_flux = np.linspace(0.0, 1000.0, n_nodes)
@@ -310,9 +317,11 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         'dT_rh',
         'theta',
         'd_lid',
+        'd_lid_raw',
         'v_i',
         'v_m',
         'tau_d',
+        'tau_d_lid',
         'tau_buoy',
         'tau_d_over_tau_buoy',
         'Ra_eff',
@@ -335,7 +344,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
     if regime in ('unyielded', 'yielding', 'mobile'):
         assert state_np['d_lid'] > 1.0e4, f'{regime} must form stagnant lid > 10 km'
         assert state_np['w_active'] > 0.5, f'{regime} must have active lid closure'
-        ratio = float(state_np['tau_d']) / float(state_np['tau_y_lid'])
+        ratio = float(state_np['tau_d_lid']) / float(state_np['tau_y_lid'])
         if regime == 'unyielded':
             assert ratio < 0.01
             assert float(state_np['w_y']) < 1.0e-4
@@ -388,7 +397,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
     eta_eff_np = compute_effective_viscosity(
         eta_diff=eta_diff_np,
         eta_i=state_np['eta_i'],
-        tau_d=state_np['tau_d'],
+        tau_d=state_np['tau_d_lid'],
         tau_y_lid=state_np['tau_y_lid'],
         stress_closure_mode='lid',
         w_lid=state_np['w_lid'],
@@ -398,7 +407,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
     eta_eff_jx = compute_effective_viscosity(
         eta_diff=eta_diff_jx,
         eta_i=state_jx['eta_i'],
-        tau_d=state_jx['tau_d'],
+        tau_d=state_jx['tau_d_lid'],
         tau_y_lid=state_jx['tau_y_lid'],
         stress_closure_mode='lid',
         w_lid=state_jx['w_lid'],

@@ -166,6 +166,7 @@ def _build_jax_pieces(solver):
         kappah_floor=float(en.kappah_floor),
         phase_smoothing=str(getattr(pm, 'phase_smoothing', 'tanh')),
         phase_smoothing_width=float(pm.phase_transition_width),
+        rheology=ps.rheology,
     )
     bc_cfg = solver.parameters.boundary_conditions
     bc_jax = BoundaryParams(

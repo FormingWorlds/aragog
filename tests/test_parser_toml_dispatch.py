@@ -31,7 +31,7 @@ import importlib.resources
 
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 
 # ----------------------------------------------------------------------
@@ -189,7 +189,7 @@ def test_toml_dispatch_reports_missing_required_section(tmp_path):
 
     cfg = tmp_path / 'incomplete.toml'
     cfg.write_text(
-        # Only [solver] – [boundary_conditions] / [mesh] / etc. all missing.
+        # Only [solver]: [boundary_conditions] / [mesh] / etc. all missing.
         '[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-9\n'
         'tsurf_poststep_change = 30\n',
         encoding='utf-8',
@@ -392,7 +392,6 @@ def test_from_file_no_arguments_raises():
         Parameters.from_file()
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize('cfg', ['abe_solid.toml', 'abe_mixed.cfg'])
 @pytest.mark.parametrize('value', ['fixed', 'rate', 'bogus'])
 def test_phase_boundary_cap_reaches_energy_through_both_loaders(tmp_path, cfg, value):
@@ -414,3 +413,139 @@ def test_phase_boundary_cap_reaches_energy_through_both_loaders(tmp_path, cfg, v
             Parameters.from_file(path)
     else:
         assert Parameters.from_file(path).energy.phase_boundary_cap == value
+
+
+def test_phase_solid_unknown_key_names_phase_parameters_not_rheology(tmp_path):
+    """A typo in [phase_solid] or _PhaseParameters must name _PhaseParameters/[phase_solid], not SolidRheologyParams."""
+    import tomllib
+
+    from aragog.config import Config
+    from aragog.parser import Parameters, _PhaseParameters
+
+    with pytest.raises(
+        TypeError,
+        match=r"_PhaseParameters\.__init__\(\) got an unexpected keyword argument 'densty'",
+    ) as exc_direct:
+        _PhaseParameters(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=1.0e-5,
+            viscosity=1.0e21,
+            densty=4000.0,
+        )
+    assert 'SolidRheologyParams' not in str(exc_direct.value)
+
+    src = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    typo_toml = tmp_path / 'typo_phase_solid.toml'
+    typo_toml.write_text(
+        src.replace('[phase_solid]\n', '[phase_solid]\ndensty = 4000.0\n'),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"\[phase_solid\].*_PhaseParameters\.__init__\(\) got an unexpected keyword argument 'densty'",
+    ) as exc_parser:
+        Parameters.from_file(typo_toml)
+    assert 'SolidRheologyParams' not in str(exc_parser.value)
+
+    for loader in (Config.from_toml, Config.from_file):
+        with pytest.raises(
+            TypeError,
+            match=r"_PhaseParameters\.__init__\(\) got an unexpected keyword argument 'densty'",
+        ) as exc_cfg:
+            loader(str(typo_toml))
+        assert 'SolidRheologyParams' not in str(exc_cfg.value)
+
+    raw_dict = tomllib.loads(typo_toml.read_text(encoding='utf-8'))
+    with pytest.raises(
+        TypeError,
+        match=r"_PhaseParameters\.__init__\(\) got an unexpected keyword argument 'densty'",
+    ) as exc_dict:
+        Config.from_dict(raw_dict)
+    assert 'SolidRheologyParams' not in str(exc_dict.value)
+
+
+def test_phase_parameters_accepts_viscosity_none():
+    """_PhaseParameters accepts viscosity=None as on main while still requiring the argument."""
+    from aragog.parser import _PhaseParameters
+    from aragog.rheology import SolidRheologyParams
+
+    p_pos = _PhaseParameters(4000.0, 1000.0, 0.0, 4.0, 1.0e-5, None)
+    assert p_pos.viscosity is None
+    assert p_pos.rheology == SolidRheologyParams()
+
+    p_kw = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=1.0e-5,
+        viscosity=None,
+        rheology=SolidRheologyParams(enabled=True, g_homologous=25.0),
+    )
+    assert p_kw.viscosity is None
+    assert p_kw.enabled is True
+    assert p_kw.g_homologous == 25.0
+
+    with pytest.raises(
+        TypeError,
+        match=r"_PhaseParameters\.__init__\(\) missing 1 required positional argument: 'viscosity'",
+    ):
+        _PhaseParameters(4000.0, 1000.0, 0.0, 4.0, 1.0e-5)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize('flat_line', ['enabled = true', 's_top_inf = 0.3'])
+def test_file_loaders_reject_flat_rheology_keys_in_phase_solid(tmp_path, flat_line):
+    """TOML, INI, and Config.from_dict reject flat rheology keys in [phase_solid] naming [phase_solid.rheology]."""
+    import tomllib
+
+    from aragog.config import Config
+    from aragog.parser import Parameters, _PhaseParameters
+
+    toml_src = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    flat_toml = tmp_path / 'flat_rheo.toml'
+    flat_toml.write_text(
+        toml_src.replace('[phase_solid]\n', f'[phase_solid]\n{flat_line}\n'),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Parameters.from_file(flat_toml)
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Config.from_toml(str(flat_toml))
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Config.from_file(str(flat_toml))
+
+    raw_dict = tomllib.loads(flat_toml.read_text(encoding='utf-8'))
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Config.from_dict(raw_dict)
+
+    ini_src = importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg').read_text()
+    ini_line = flat_line.replace('true', 'True')
+    flat_ini = tmp_path / 'flat_rheo.cfg'
+    flat_ini.write_text(
+        ini_src.replace('[phase_solid]\n', f'[phase_solid]\n{ini_line}\n'),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Parameters.from_file(flat_ini)
+    with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+        Config.from_file(str(flat_ini))
+
+    # Python keyword path on _PhaseParameters keeps flat rheology kwargs as in PhaseConfig
+    p_py = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=1.0e-5,
+        viscosity=1.0e21,
+        enabled=True,
+        s_top_inf=0.3,
+    )
+    assert p_py.rheology.enabled is True
+    assert p_py.rheology.s_top_inf == 0.3

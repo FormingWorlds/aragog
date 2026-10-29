@@ -128,7 +128,7 @@ def test_jax_dsdt_conserves_energy_with_a_heating_profile(monkeypatch):
     N, rho, cp = 8, 4000.0, 1000.0
     mesh = _make_const_property_mesh(N=N)
 
-    def phase(eos, params, P, S):
+    def phase(eos, params, P, S, **_):
         T = 2000.0 * jnp.exp((S - 3000.0) / cp)
         one = jnp.ones_like(S)
         return PhaseProperties(

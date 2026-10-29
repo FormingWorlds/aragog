@@ -498,6 +498,13 @@ def build_jax_rhs_and_jacobian(
 
         rhs_fn.step_powers = step_powers
 
+    if getattr(getattr(phase_params, 'rheology', None), 'enabled', False) and hasattr(
+        mesh_arrays, 'validate_for_rheology'
+    ):
+        mesh_arrays.validate_for_rheology()
+    rhs_fn.phase_params = phase_params
+    rhs_fn.rheology = getattr(phase_params, 'rheology', None)
+
     return rhs_fn, jacfn, info
 
 
