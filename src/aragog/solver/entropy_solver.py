@@ -5666,10 +5666,10 @@ class EntropySolver:
         (gradient, bower2018), ``_step_powers`` evaluates the powers at each node in a
         Python loop. The trapezoidal rule integrates them over physical time, so a transient
         between two outputs is resolved by the steps inside it. Sign convention: positive
-        adds energy to the mantle. When solid rheology is enabled, the EOS entropy-range
-        invariant is checked on every accepted step on both branches, while invariants that
-        require a refreshed RHS state are checked on the final step on the JAX batch path and
-        at every step on the NumPy loop.
+        adds energy to the mantle. The lid heat-table range of the fluid entropy, and with
+        solid rheology the EOS entropy-range invariant, are checked on every accepted step on
+        both branches, while invariants that require a refreshed RHS state are checked on the
+        final step on the JAX batch path and at every step on the NumPy loop.
 
         Returns
         -------
@@ -5746,6 +5746,15 @@ class EntropySolver:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
                 if self._n_lid and self._lid_active:
+                    lo, hi = self._lid_W_of_S.x[[0, -1]]
+                    S_f = np.array([self._stag_entropy(y)[-1] for y in y_pts.T])
+                    bad = np.flatnonzero(~((S_f >= lo) & (S_f <= hi)))
+                    if bad.size:
+                        k = int(bad[0])
+                        raise RuntimeError(
+                            f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
+                            f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
+                        )
                     lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
                     self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
                 if check_rheo:
