@@ -14,6 +14,9 @@ from pathlib import Path
 
 import pytest
 
+import aragog
+from tests.conftest import _package_logger_state, _restore_package_logger
+
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(150)]
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -55,3 +58,43 @@ def test_a_cli_run_leaves_no_logger_state_for_the_next_test():
     tail = proc.stdout[-3000:]
     assert f'{len(_CLI_RUN_TESTS) + 1} passed' in tail, tail
     assert proc.returncode == 0, tail
+
+
+def test_restoring_the_logger_closes_the_handlers_a_cli_run_added(tmp_path):
+    """The file handler of ``aragog_file_logger`` is closed and the import handler comes back."""
+    saved = _package_logger_state()
+    package_logger = logging.getLogger('fwl.aragog')
+    import_handler = package_logger.handlers[0]
+
+    aragog.aragog_file_logger(log_dir=str(tmp_path))
+    file_handlers = [h for h in package_logger.handlers if isinstance(h, logging.FileHandler)]
+    assert package_logger.level == logging.DEBUG
+    assert len(file_handlers) == 1
+    assert import_handler not in package_logger.handlers
+    assert (tmp_path / 'aragog.log').exists()
+
+    _restore_package_logger(saved)
+    assert file_handlers[0].stream is None
+    assert package_logger.handlers == [import_handler]
+    assert package_logger.level == logging.NOTSET
+    assert not package_logger.isEnabledFor(logging.DEBUG)
+
+
+def test_restoring_keeps_a_handler_that_was_there_before(tmp_path):
+    """A handler present when the state was taken stays open and attached after the restore."""
+    package_logger = logging.getLogger('fwl.aragog')
+    before = logging.FileHandler(tmp_path / 'before.log')
+    package_logger.addHandler(before)
+    package_logger.setLevel(logging.INFO)
+    saved = _package_logger_state()
+
+    package_logger.addHandler(logging.FileHandler(tmp_path / 'during.log'))
+    package_logger.setLevel(logging.DEBUG)
+    package_logger.propagate = False
+    _restore_package_logger(saved)
+
+    assert before in package_logger.handlers
+    assert before.stream is not None
+    assert len(package_logger.handlers) == 2
+    assert package_logger.level == logging.INFO
+    assert package_logger.propagate is True

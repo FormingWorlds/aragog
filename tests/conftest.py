@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import logging
 import os
 import warnings
 from contextlib import AbstractContextManager
@@ -111,6 +112,39 @@ def pytest_collection_finish(session):
                 helper(EOS_DIR)
             except Exception as exc:
                 warnings.warn(f'EOS table warm-up failed: {exc!r}', stacklevel=1)
+
+
+_PACKAGE_LOGGER = logging.getLogger('fwl.aragog')
+
+
+def _package_logger_state() -> tuple:
+    """Level, handlers, propagation and disabled flag of the ``fwl.aragog`` logger."""
+    lg = _PACKAGE_LOGGER
+    return lg.level, list(lg.handlers), lg.propagate, lg.disabled
+
+
+def _restore_package_logger(state: tuple) -> None:
+    """Close the handlers added since ``state`` was taken and restore the rest of it."""
+    level, handlers, propagate, disabled = state
+    for handler in _PACKAGE_LOGGER.handlers:
+        if handler not in handlers:
+            handler.close()
+    _PACKAGE_LOGGER.handlers = handlers
+    _PACKAGE_LOGGER.propagate = propagate
+    _PACKAGE_LOGGER.disabled = disabled
+    _PACKAGE_LOGGER.setLevel(level)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_package_logger():
+    """Restore the package logger after each test and close the handlers the test added.
+
+    ``aragog run`` sets the logger to DEBUG with a console and a file handler for the rest of the
+    process; under DEBUG the mesh formats a whole array on every state update.
+    """
+    state = _package_logger_state()
+    yield
+    _restore_package_logger(state)
 
 
 class Helper:
