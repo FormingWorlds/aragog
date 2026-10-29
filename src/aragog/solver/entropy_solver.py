@@ -2967,7 +2967,7 @@ class EntropySolver:
         eos, P = self.entropy_eos, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
-        base = self._lid_base_state(S_top, T_f, phi_f)
+        base = self._lid_base_state(T_f, phi_f)
         d = self._lid_delta_lo
         T_s = _lid.linear_lid_surface(
             d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
@@ -3075,8 +3075,9 @@ class EntropySolver:
         edge = np.clip(S, *pp.x[[0, -1]])
         return pp(edge) + pp(edge, 1) * (S - edge)
 
-    def _lid_base_state(self, S_f: float, T_f: float, phi_f: float) -> dict:
-        """Lid-base state at the top-cell pressure for a sub-lid fluid of entropy ``S_f``.
+    def _lid_base_state(self, T_f: float, phi_f: float) -> dict:
+        """Lid-base state at the top-cell pressure for a sub-lid fluid at ``T_f`` [K] with melt
+        fraction ``phi_f``.
 
         Above the rheological transition the lid base is the solidus; below it, the
         rheological lid base of the solid rheology, capped at the solidus: the lid-base
@@ -3205,7 +3206,7 @@ class EntropySolver:
         ph = self.state.phase_staggered
         T = np.asarray(ph.temperature()).ravel()
         phi = float(np.asarray(ph.melt_fraction()).ravel()[-1])
-        T_b = self._lid_base_state(float(entropy[-1]), float(T[-1]), phi)['T_b']
+        T_b = self._lid_base_state(float(T[-1]), phi)['T_b']
         z = _isotherm_depth(
             float(np.asarray(ls['T_lid_iso'])),
             float(y[-2]),
@@ -3311,7 +3312,7 @@ class EntropySolver:
             return float(np.asarray(values).ravel()[-1])
 
         T_f, rho_f, cp_f = top(ph.temperature()), top(ph.density()), top(ph.heat_capacity())
-        base = self._lid_base_state(float(entropy[-1]), T_f, top(ph.melt_fraction()))
+        base = self._lid_base_state(T_f, top(ph.melt_fraction()))
         H_b, H_f = (float(v) for v in self._lid_W([base['S_b'], float(entropy[-1])]))
         q_conv = _lid.convective_base_flux(
             T_f - base['T_b'],

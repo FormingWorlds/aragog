@@ -76,9 +76,9 @@ def _numpy_jump(s, y, monkeypatch, same=False):
         seen.update(rho=rho, dh=dh)
         return rate(q_b, F_b, rho, dh, *args)
 
-    def base(S_f, T_f, phi_f):
-        out = base_state(S_f, T_f, phi_f)
-        return {**out, 'S_b': S_f} if same else out
+    def base(T_f, phi_f):
+        out = base_state(T_f, phi_f)
+        return {**out, 'S_b': float(y[s._n_stag - 1])} if same else out
 
     monkeypatch.setattr(sl, 'stefan_rate', spy)
     monkeypatch.setattr(s, '_lid_base_state', base)
@@ -116,9 +116,9 @@ def _jax_jump(s, y, monkeypatch, same=False):
         seen.update(rho=float(rho), dh=float(dh))
         return rate(q_b, F_b, rho, dh, *args)
 
-    def base(lp, eos, S_f, *args):
-        out = lid_base(lp, eos, S_f, *args)
-        out = {**out, 'S_b': S_f} if same else out
+    def base(lp, eos, *args):
+        out = lid_base(lp, eos, *args)
+        out = {**out, 'S_b': float(y[s._n_stag - 1])} if same else out
         seen['S_b'] = float(out['S_b'])
         return out
 
@@ -251,7 +251,9 @@ def test_step_check_warns_on_a_jump_below_the_floor(eos, monkeypatch, caplog, dS
     150 J/kg, 5 J/kg/K gives several times the floor."""
     s, y = _solver(eos, True, lambda s: s._lid_S_sol - 0.3 * (s._lid_S_sol - float(eos.S_min)))
     base_state = s._lid_base_state
-    monkeypatch.setattr(s, '_lid_base_state', lambda *a: {**base_state(*a), 'S_b': a[0] - dS})
+    monkeypatch.setattr(
+        s, '_lid_base_state', lambda *a: {**base_state(*a), 'S_b': y[s._n_stag - 1] - dS}
+    )
     s._dSdt_single(0.0, y)
     ev = s._lid_last
     dh = (float(s._lid_W(ev.S_f)) - float(s._lid_W(ev.S_b))) / ev.rho
