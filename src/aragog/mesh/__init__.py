@@ -357,12 +357,7 @@ class Mesh:
             staggered_coordinates = np.array(
                 [
                     _radius_for_mass_coordinate(
-                        _xi_of_r,
-                        float(xi),
-                        rb[i],
-                        rb[i + 1],
-                        node=f'staggered {i}',
-                        xtol=1e-3 if self._refined else 1.0,
+                        _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
                     )
                     for i, xi in enumerate(staggered_mass_coordinates[:, 0])
                 ]

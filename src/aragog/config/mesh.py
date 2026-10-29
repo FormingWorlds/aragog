@@ -10,7 +10,8 @@ import attrs
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
-# Smallest end cell [m]: the mass-mode node bracket and the CMB flux floors act at 1 m.
+# Smallest end cell [m], a margin of 2 over the 1 m inset of the mass-mode node bracket; at
+# 2 m the CMB half cell meets the 1 m floor of the bower2018 core flux.
 MIN_CELL_THICKNESS = 2.0
 
 
@@ -18,17 +19,19 @@ def check_cell_thickness(mesh) -> None:
     """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
     ``mesh`` are each 0 or a real number in [``MIN_CELL_THICKNESS``, uniform cell) m.
 
-    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a set
-    cell needs at least 3 nodes. A bool (a TOML ``true``) is refused, not read as 1 m.
+    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; one set
+    cell needs at least 3 nodes, two set cells 4. A bool (a TOML ``true``) is refused, not
+    read as 1 m.
     """
+    need = 3 + (bool(mesh.surface_cell_thickness) and bool(mesh.cmb_cell_thickness))
     for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
         value = getattr(mesh, name)
         real = isinstance(value, numbers.Real) and not isinstance(value, bool)
         if real and value == 0:
             continue
-        if mesh.number_of_nodes < 3:
+        if mesh.number_of_nodes < need:
             raise ValueError(
-                f'mesh.{name} needs number_of_nodes >= 3, got {mesh.number_of_nodes}'
+                f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
             )
         uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
         if not (real and MIN_CELL_THICKNESS <= value < uniform):
