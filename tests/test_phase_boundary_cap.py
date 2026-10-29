@@ -1391,7 +1391,10 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_lifts_hundred_year_cap_at_default_width_after_solidification(shared_eos):
-    """At the default width 0.01, a segment that starts with phi_max = 0 takes max_step > 100 yr."""
+    """At the default width 0.01, a segment that starts with phi_max = 0 takes max_step > 100 yr.
+
+    The surface flux of 200 W/m^2 is chosen for the entropy range of the CI test table.
+    """
     s = _solver(
         shared_eos,
         'rate',
