@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_surface_lid_validation.py::test_v2_half_space_cooling; command: pytest tests/test_surface_lid_validation.py::test_v2_half_space_cooling --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0], [25, -1.0219827123655651, 4.500896032914772, 1.739456660274604, 0.9971864401200609, 1.0007039891852256, 1.000703989203148, 1.0007039891921414, 1.7664973293396505e-13]], "collections": [], "values": [], "value_scales": [], "patches": [[2, 0.0, 0.0, 0.0, 0.0, 0.99, 1.01, 1.0, 0.010000000000000009]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_surface_lid_validation.py::test_v2_half_space_cooling; command: pytest tests/test_surface_lid_validation.py::test_v2_half_space_cooling --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0], [25, -1.0219827123655651, 4.500896032914772, 1.739456660274604, 0.9971864401200609, 1.0007039891849474, 1.0007039892030074, 1.0007039891921286, 1.770141424459046e-13]], "collections": [], "values": [], "value_scales": [], "patches": [[2, 0.0, 0.0, 0.0, 0.0, 0.99, 1.01, 1.0, 0.010000000000000009]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -812,7 +812,7 @@ L 332.690866 135.414545
 L 332.690866 53.418182 
 L 71.923594 53.418182 
 z
-" clip-path="url(#pcd10863bc8)" style="fill: #d9d9d9; stroke: #d9d9d9; stroke-linejoin: miter"/>
+" clip-path="url(#pcd10863bc8)" style="fill: #10151b; opacity: 0.15; stroke: #10151b; stroke-linejoin: miter"/>
    </g>
    <g id="line2d_17">
     <path d="M 71.923594 94.416364 
@@ -878,7 +878,7 @@ L 265.962116 25.38
 L 265.962116 19.78 
 L 249.962116 19.78 
 z
-" style="fill: #d9d9d9; stroke: #d9d9d9; stroke-linejoin: miter"/>
+" style="fill: #10151b; opacity: 0.15; stroke: #10151b; stroke-linejoin: miter"/>
     </g>
     <g id="text_11">
      <!-- 1 % band -->

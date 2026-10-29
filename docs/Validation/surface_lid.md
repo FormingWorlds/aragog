@@ -2,9 +2,9 @@
 
 ## What this page checks
 
-This page checks the sub-grid surface lid, `subgrid_lid = true`: a conductive crust thinner than the top cell of the mesh, which Aragog carries as two extra states, the crust thickness and its energy per area. Validation here means that we run the lid on a case where the right answer is known from a textbook solution, and check that the lid gives that answer. If the lid were wrong, a run with the lid would grow its crust at the wrong rate, and the heat that leaves the planet through the crust would be wrong. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot and the test details.
+This page checks the sub-grid surface lid, `subgrid_lid = true`: a conductive crust thinner than the top cell of the mesh, which Aragog carries as two extra states, the crust thickness and its energy per area. Validation here means that we run the lid on a case where the right answer is known from a textbook solution or from a run on a much finer mesh, and check that the lid gives that answer. If the lid were wrong, a run with the lid would grow its crust at the wrong rate, and the heat that leaves the planet through the crust would be wrong. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot and the test details.
 
-The three cases drive the lid functions of `aragog.surface_lid` through time. These are the functions the solver calls in every right-hand side. The material properties are constant: thermal conductivity $k$ = 4 W/m/K, density $\rho$ = 3000 kg/m³ and heat capacity $c_p$ = 1200 J/kg/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 1.11 × 10⁻⁶ m²/s. The base of the lid is at $T_b$ = 1400 K. These cases check the lid on its own; the coupling of the lid to the mesh is checked by the solver tests listed at the end.
+Three of the cases drive the lid functions of `aragog.surface_lid` through time. These are the functions the solver calls in every right-hand side. The material properties are constant: thermal conductivity $k$ = 4 W/m/K, density $\rho$ = 3000 kg/m³ and heat capacity $c_p$ = 1200 J/kg/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 1.11 × 10⁻⁶ m²/s. The base of the lid is at $T_b$ = 1400 K. These three check the lid on its own; the coupling of the lid to the mesh is checked by the fine-mesh case and by the solver tests listed at the end.
 
 ## A crust growing over melt
 
@@ -50,6 +50,39 @@ The three cases drive the lid functions of `aragog.surface_lid` through time. Th
     - Test id: `tests/test_surface_lid_validation.py::test_v2_half_space_cooling`
     - Command: `pytest tests/test_surface_lid_validation.py -k v2` (add `--validation-plots` to write the plot pair)
 
+## A cooling solid shell on a fine mesh
+
+**Why this check exists.** The two cases above drive the lid functions alone, with a constant heat capacity. This case runs the lid inside the solver, where the heat content of the crust comes from the equation of state, and compares it with the solver's own conduction on a mesh fine enough to resolve the crust. A lid whose heat content took the heat capacity and density of its base would miss by +2.3 to +2.5 %; with the values at 780 K, by -1.2 to -1.3 %. The test sees both.
+
+**What it tests.** A solid shell 25 km thick starts at 1300 K, below the solidus (1421 K at the surface), and cools by conduction only through a black-body surface that radiates to 255 K. One run uses 10 nodes (cells of 2.8 km) with the lid; the other uses 4000 nodes (cells of 6.25 m) without the lid. The test compares their surface fluxes at 8 times from 300 to 5000 years. The surface of the fine mesh cools below 300 K, below the floor of the SPIDER test tables (about 320 K), so both runs use the PALEOS table extended to 67 K (md5 of `temperature_solid.dat`: `18d6f9eb5ba654d58fe3fad30ce118f0`).
+
+**How we know the right answer.** At 300 years the cooled layer is about 97 m thick, 15 cells of the fine mesh, so the fine mesh resolves the crust that the lid replaces. Runs on 500, 1000 and 4000 nodes bound the error of the fine mesh itself: the change from 1000 to 4000 nodes is 1.79 % at 300 years and falls to 0.17 % at 5000 years.
+
+| time (yr) | lid / 4000 nodes | bound of the 4000-node mesh |
+|---|---|---|
+| 300 | 1.0046 | 1.79 % |
+| 448 | 1.0037 | 1.30 % |
+| 670 | 1.0036 | 0.92 % |
+| 1002 | 1.0035 | 0.71 % |
+| 1497 | 1.0034 | 0.46 % |
+| 2238 | 1.0034 | 0.36 % |
+| 3345 | 1.0033 | 0.24 % |
+| 5000 | 1.0033 | 0.17 % |
+
+**Why it matters.** The lid exists so that a coarse mesh loses heat as a fine one would. Without the lid, the 10-node shell loses only 8 to 30 % of the heat the fine mesh loses over these times.
+
+![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh.svg#only-light){ width="80%" }
+![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The dots are the surface flux of the shell with the lid divided by that of the fine mesh; the shaded band is the tolerance of ±1 %. The bars show how much the fine mesh itself can be off: long at early times, when the cooled layer is thin, and short later. The dots sit 0.3 to 0.5 % above 1, inside the band. Until about 2000 years they also lie inside the bars; later the bars are shorter than the offset of 0.3 %, which is then the difference of the lid itself.
+
+??? info "Test details"
+    - Reference: the 4000-node solver run without the lid, stored in `tests/reference/surface_lid_v2_grid.npz` by `tests/reference/build_surface_lid_v2_grid.py`.
+    - Tolerance: relative 10⁻² at each time (measured: 3.3 × 10⁻³ to 4.6 × 10⁻³).
+    - Discrimination: the lid with the heat content of its base misses by 2.3 % or more.
+    - Test id: `tests/test_surface_lid_v2_grid.py::test_v2_lid_matches_the_resolved_mesh`; on the SPIDER test tables `::test_v2_lid_run_on_the_test_tables` reruns the lid shell against a stored pin.
+    - Command: `pytest tests/test_surface_lid_v2_grid.py` (set `ARAGOG_LOWT_EOS_DIR` to the extended table to repeat the lid run on it; add `--validation-plots` to write the plot pair)
+
 ## A crust in steady state
 
 **Why this check exists.** Under a constant heat flux from below, a crust must settle at the thickness where it conducts exactly that flux. A lid whose growth law or surface balance is wrong settles at the wrong thickness, or its profile stays curved; the test sees both.
@@ -76,7 +109,8 @@ The three cases drive the lid functions of `aragog.surface_lid` through time. Th
 These tests run the lid inside the full solver; they check exact properties of the code and have no plot.
 
 - The energy of the mantle and the lid together changes only by the heat that crosses the surface and the core boundary, on random lid thicknesses up to the growth stop and random entropy profiles: `tests/test_subgrid_lid_solver.py::test_ledger_per_call_closes`.
-- Over a solve, the energy budget closes to round-off, and a lid over a cooling mantle column grows as the Stefan law with the run's own Stefan number, to 2 %: `tests/test_subgrid_lid_solver.py::test_ledger_over_a_solve`.
+- Over a solve, the energy budget closes to round-off: `tests/test_subgrid_lid_solver.py::test_ledger_over_a_solve`.
+- Sanity check: with no heat from the melt, a lid over a molten column grows as the Stefan law taken step by step along the run, with the Stefan number and diffusivity of each state, to 1 % at 10, 20 and 40 nodes (measured within 0.45 %): `tests/test_subgrid_lid_solver.py::test_lid_growth_sanity_against_quasi_static_neumann`. The grey surface cools during the run, so a law with one surface temperature does not apply. The check takes its heat capacity from the run, so it does not tell one heat content from another; the fine-mesh case above does.
 - The hand-over of the lid to the mesh keeps the energy, and a run resumed after it evolves as a run without the lid: `tests/test_subgrid_lid_solver.py::test_merge_is_energy_exact`, `::test_resume_after_handover_matches_the_lid_off_run`.
 
 **Known limit.** The lid hands over to the mesh only with the solid rheology on and `stress_closure_mode = 'lid'`, whose lid-base isotherm sets the hand-over depth; with another closure, or without the rheology, the lid never hands over (`tests/test_subgrid_lid_solver.py::test_no_handover_without_the_lid_closure`).

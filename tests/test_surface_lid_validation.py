@@ -157,7 +157,7 @@ def test_v2_half_space_cooling(validation_plot):
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots(figsize=(5.0, 3.4))
-        ax.axhspan(0.99, 1.01, color='0.85', label='1 % band')
+        ax.axhspan(0.99, 1.01, color='C0', alpha=0.15, label='1 % band')
         ax.axhline(1.0, color='C0', lw=1.0)
         ax.semilogx(t / YR, F / ref, 'o', color='C1', ms=5, label='lid surface flux')
         ax.set_ylim(0.98, 1.02)
