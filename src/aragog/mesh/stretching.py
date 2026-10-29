@@ -25,6 +25,8 @@ def _one_sided_outer(xi: npt.NDArray, last: float) -> npt.NDArray:
     def cell(beta: float) -> float:
         return 1.0 - np.tanh(beta * (1.0 - h)) / np.tanh(beta) - last
 
+    if cell(1e-8) <= 0.0:  # target within round-off of the uniform cell: the beta -> 0 limit
+        return xi.copy()
     beta = brentq(cell, 1e-8, 200.0, xtol=1e-14, rtol=1e-14)
     return np.tanh(beta * xi) / np.tanh(beta)
 
