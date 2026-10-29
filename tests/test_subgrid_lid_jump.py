@@ -187,11 +187,27 @@ def test_melt_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac)
     assert jump == pytest.approx(_reference(s, S_b, S_f), rel=REL, abs=ABS_PER_MASS * rho_b)
 
 
-def test_heat_table_refuses_an_entropy_outside_its_range(eos):
-    """The heat-per-volume table does not extrapolate."""
+@pytest.mark.physics_invariant
+def test_heat_table_is_zero_at_the_solidus_and_rises(eos):
+    """W is 0 at the solidus entropy and rises with entropy (rho T > 0) over its knots."""
+    s, _ = _solver(eos, False, 3000.0)
+    knots = s._lid_W_of_S.x
+    assert float(s._lid_W(s._lid_S_sol)) == 0.0
+    assert np.all(np.diff(s._lid_W(knots)) > 0.0)
+
+
+def test_heat_table_continues_linearly_on_both_paths(eos):
+    """Outside its range the heat table continues linearly with its end slope, the same on
+    the NumPy and JAX paths, as the clamped EOS keeps rho T constant there."""
+    pytest.importorskip('jax')
+    from aragog.jax import surface_lid as jl
+
     s, _ = _solver(eos, False, 3000.0)
     lo, hi = float(eos.S_min), float(eos.S_max)
-    assert np.isfinite(s._lid_W(lo)) and np.isfinite(s._lid_W(hi))
-    for S in (lo - 1.0, hi + 1.0, np.nan):
-        with pytest.raises(ValueError, match='outside the lid heat table'):
-            s._lid_W(S)
+    pp = s._lid_W_of_S
+    for edge, dS in ((lo, -50.0), (hi, 50.0)):
+        linear = float(pp(edge)) + float(pp(edge, 1)) * dS
+        got = float(s._lid_W(edge + dS))
+        assert got == pytest.approx(linear, rel=1e-12)
+        want = float(jl.enthalpy_H(s.jax_lid_params().hs, edge + dS))
+        assert got == pytest.approx(want, rel=1e-12)

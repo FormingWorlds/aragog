@@ -870,6 +870,16 @@ def test_lid_step_check_refuses_bad_states(eos, change, match):
         _checked(s, **dict(change))
 
 
+@pytest.mark.parametrize('change', [{'S_f': 1.0e9}, {'S_f': -1.0e9}, {'S_b': -1.0e9}])
+def test_lid_step_check_refuses_an_entropy_outside_the_heat_table(eos, change):
+    """An accepted state whose fluid or lid-base entropy lies outside the heat table fails
+    the step check: the right-hand side only continues the table there."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    with pytest.raises(RuntimeError, match='outside the lid heat table'):
+        _checked(s, **dict(change))
+
+
 @pytest.mark.parametrize(
     ('change', 'text'),
     [({'H_f': -1.0e12}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],
