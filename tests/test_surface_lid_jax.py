@@ -279,3 +279,29 @@ def test_lid_rates_match_numpy(name):
         # F_fluid sums terms that can cancel to round-off: bound it by their size
         terms = max(abs(ref.F_top), abs(ref.dE), abs(kw['rho'] * kw['h_f'] * ref.ddelta))
         assert abs(got[3] - ref.F_fluid) <= 1e-11 * terms
+
+
+def test_surface_solve_evaluates_the_heat_content_at_most_27_times(monkeypatch):
+    """The surface solve brackets the shape root with 12 bisection and 10 Illinois steps: at
+    most 27 heat-content evaluations per solve, the 2 bound checks and the 3 of the implicit
+    derivative included (counted with the loops run in Python)."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()['kinked']
+    e, st = jl.enthalpy(hv), _surface_states(hv)
+    i = next(
+        i
+        for i in range(200)
+        if sl.surface_state(*(st[k][i] for k in KEYS), sl.LID_DELTA_FLOOR, hv).clipped == 0
+    )
+    calls, heat = [0], jl.profile_heat
+
+    def counted(*a):
+        calls[0] += 1
+        return heat(*a)
+
+    monkeypatch.setattr(jl, 'profile_heat', counted)
+    with jax.disable_jit():
+        jl.surface_state(*(jax.numpy.asarray(st[k][i]) for k in KEYS), sl.LID_DELTA_FLOOR, e)
+    assert 0 < calls[0] <= 27
