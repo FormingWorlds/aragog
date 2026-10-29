@@ -6,6 +6,7 @@ All functions are JIT-compilable and differentiable.
 from __future__ import annotations
 
 import math
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -77,53 +78,160 @@ def grey_flux(T_s: jax.Array, emissivity: jax.Array, T_eq: jax.Array) -> jax.Arr
     return emissivity * Stefan_Boltzmann * (jnp.maximum(T_s, 0.0) ** 4 - T_eq**4)
 
 
-def surface_state(delta, T_m, T_b, k, emissivity, T_eq, delta_floor):
-    """Grey-body surface of a lid with mean temperature ``T_m``, as
+def profile(s, x):
+    """The similarity profile f_s(x), as :func:`aragog.surface_lid.profile`."""
+    from aragog.surface_lid import _S_SERIES
+
+    s, x = jnp.asarray(s, dtype=float), jnp.asarray(x, dtype=float)
+    sp = jnp.where(s >= _S_SERIES, s, 1.0)
+    mu = jnp.sqrt(sp)
+    grow = jax.scipy.special.erf(mu * x) / jax.scipy.special.erf(mu)
+    sn = jnp.where(s <= -_S_SERIES, s, -1.0)
+    nu = jnp.sqrt(-sn)
+    thin = jnp.exp(sn * (1.0 - x * x)) * dawson(nu * x) / dawson(nu)
+    series = x + s * x * (1.0 - x * x) / 3.0
+    return jnp.where(s >= _S_SERIES, grow, jnp.where(s <= -_S_SERIES, thin, series))
+
+
+def profile_nodes(s):
+    """Quadrature nodes and weights on [0, 1], as :func:`aragog.surface_lid.profile_nodes`."""
+    from aragog.surface_lid import _GL16, PROFILE_PANELS
+
+    g, w = (jnp.asarray(v) for v in _GL16)
+    s = jnp.asarray(s, dtype=float)
+    c_grow = jnp.minimum(0.5, 6.0 / jnp.sqrt(jnp.where(s > 0.0, s, 1.0)))
+    c_thin = 1.0 - jnp.minimum(0.5, -15.0 / jnp.where(s < 0.0, s, -1.0))
+    c = jnp.where(s > 0.0, c_grow, jnp.where(s < 0.0, c_thin, 0.5))
+    u = jnp.linspace(0.0, 1.0, PROFILE_PANELS + 1)
+    edges = jnp.concatenate([c * u, c + (1.0 - c) * u[1:]])
+    half = 0.5 * jnp.diff(edges)[:, None]
+    return (edges[:-1, None] + half * (g + 1.0)).ravel(), (half * w).ravel()
+
+
+class Enthalpy(NamedTuple):
+    """Heat content per volume H(T) as cubic pieces on the knots ``T`` (coefficients ``c``,
+    highest power first) with linear continuation, and the density on the same knots."""
+
+    T: jax.Array
+    c: jax.Array
+    slopes: jax.Array
+    rho: jax.Array
+
+
+def enthalpy(hv) -> Enthalpy:
+    """The JAX form of a :class:`aragog.surface_lid.LidEnthalpy`."""
+    import numpy as np
+    from scipy.interpolate import PchipInterpolator
+
+    kind, *v = hv.data
+    if kind == 'linear':
+        rho, cp, T_b, h_b = v
+        T = np.array([T_b - 1.0e4, T_b + 1.0e4])
+        H0 = rho * (h_b + cp * (T[0] - T_b))
+        c = np.array([[0.0], [0.0], [rho * cp], [H0]])
+        return Enthalpy(*(jnp.asarray(a) for a in (T, c, [rho * cp, rho * cp], [rho, rho])))
+    T, H, rho = v
+    spline = PchipInterpolator(T, H)
+    d = spline.derivative()
+    slopes = [float(d(T[0])), float(d(T[-1]))]
+    return Enthalpy(*(jnp.asarray(a) for a in (T, spline.c, slopes, rho)))
+
+
+def enthalpy_H(e: Enthalpy, T):
+    """H(T) [J/m^3] of a JAX enthalpy table, linear outside its knots."""
+    T = jnp.asarray(T, dtype=float)
+    i = jnp.clip(jnp.searchsorted(e.T, T, side='right') - 1, 0, e.T.size - 2)
+    dx = jnp.clip(T, e.T[0], e.T[-1]) - e.T[i]
+    inside = ((e.c[0, i] * dx + e.c[1, i]) * dx + e.c[2, i]) * dx + e.c[3, i]
+    H_lo, H_hi = e.c[3, 0], _H_end(e)
+    below = H_lo + e.slopes[0] * (T - e.T[0])
+    above = H_hi + e.slopes[1] * (T - e.T[-1])
+    return jnp.where(T < e.T[0], below, jnp.where(T > e.T[-1], above, inside))
+
+
+def _H_end(e: Enthalpy):
+    dx = e.T[-1] - e.T[-2]
+    return ((e.c[0, -1] * dx + e.c[1, -1]) * dx + e.c[2, -1]) * dx + e.c[3, -1]
+
+
+def profile_heat(e: Enthalpy, s, T_s, T_b):
+    """Mean heat content per volume [J/m^3] of a lid profile, as ``LidEnthalpy.profile_heat``."""
+    x, w = profile_nodes(s)
+    return jnp.dot(w, enthalpy_H(e, T_s + (T_b - T_s) * profile(s, x)))
+
+
+def profile_density(e: Enthalpy, s, T_s, T_b):
+    """Mean density [kg/m^3] of a lid profile, as ``LidEnthalpy.profile_density``."""
+    x, w = profile_nodes(s)
+    return jnp.dot(w, jnp.interp(T_s + (T_b - T_s) * profile(s, x), e.T, e.rho))
+
+
+def _implicit_root(root, residual):
+    """``root`` in value, with the implicit derivative of ``residual(root) = 0`` in the
+    parameters that ``residual`` closes over."""
+    root = jax.lax.stop_gradient(root)
+    slope = jax.lax.stop_gradient(jax.grad(residual)(root))
+    return root - (residual(root) - jax.lax.stop_gradient(residual(root))) / slope
+
+
+def grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq):
+    """Surface temperature [K] of the grey-body balance, as
+    :func:`aragog.surface_lid.grey_surface_temperature` (40 Newton steps from ``T_b``)."""
+    from scipy.constants import Stefan_Boltzmann
+
+    c = k * f0 / d
+
+    def g(T):
+        return grey_flux(T, emissivity, T_eq) - c * (T_b - T)
+
+    def step(_, T):
+        return T - g(T) / (4.0 * emissivity * Stefan_Boltzmann * T**3 + c)
+
+    T = jax.lax.fori_loop(0, 40, step, jax.lax.stop_gradient(T_b))
+    T = jnp.maximum(_implicit_root(T, g), T_eq)
+    return jnp.where(T_b <= T_eq, T_b, T)
+
+
+def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
+    """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
 
-    The root in ``s`` comes from 64 bisection steps over the shape bounds; a term that is zero
-    in value carries the implicit derivative ``ds/dp = -(dB/dp) / (dB/ds)`` of the balance B.
-    At a clipped bound ``s`` is constant.
+    The root in ``s`` of ``Q(s) = E / delta`` comes from 64 bisection steps over the shape
+    bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
     Returns
     -------
     tuple of jax.Array
-        ``(T_s, F_s, q_b, s, clipped)`` in the units and meaning of ``LidSurface``.
+        ``(T_s, F_s, q_b, s, clipped, T_m)`` in the units and meaning of ``LidSurface``.
     """
-    from aragog.surface_lid import LID_DT_MIN, LID_SHAPE_MAX, LID_SHAPE_MIN
+    from aragog.surface_lid import LID_SHAPE_MAX, LID_SHAPE_MIN
 
     d = jnp.hypot(delta, delta_floor)
-    T_m = jnp.clip(T_m, T_eq + LID_DT_MIN, T_b - LID_DT_MIN)
-    D = T_b - T_m
+    q = E / jnp.maximum(delta, delta_floor)
 
-    def parts(s, T_m, D, d):
-        f0, f1, m = shape(s)
-        return (T_m - m * T_b) / (1.0 - m), f0, f1, m
+    def T_s_of(s):
+        return grey_surface_temperature(shape(s)[0], d, T_b, k, emissivity, T_eq)
 
-    def balance(s, T_m=T_m, D=D, d=d):
-        T_s, f0, _, m = parts(s, T_m, D, d)
-        return grey_flux(T_s, emissivity, T_eq) - k * D * f0 / ((1.0 - m) * d)
-
-    fixed = [jax.lax.stop_gradient(v) for v in (T_m, D, d)]
+    def residual(s):
+        return profile_heat(e, s, T_s_of(s), T_b) - q
 
     def body(_, bracket):
         lo, hi = bracket
         mid = 0.5 * (lo + hi)
-        above = balance(mid, *fixed) > 0.0
-        return jnp.where(above, mid, lo), jnp.where(above, hi, mid)
+        below = jax.lax.stop_gradient(residual(mid)) < 0.0
+        return jnp.where(below, mid, lo), jnp.where(below, hi, mid)
 
     lo, hi = jax.lax.fori_loop(
         0, 64, body, (jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX))
     )
-    root = jax.lax.stop_gradient(0.5 * (lo + hi))
-    slope = jax.lax.stop_gradient(jax.grad(balance)(root, *fixed))
-    s_in = root - (balance(root) - jax.lax.stop_gradient(balance(root))) / slope
-    b_min, b_max = balance(LID_SHAPE_MIN, *fixed), balance(LID_SHAPE_MAX, *fixed)
-    clipped = jnp.where(b_min <= 0.0, -1, jnp.where(b_max >= 0.0, 1, 0))
+    s_in = _implicit_root(0.5 * (lo + hi), residual)
+    r_min, r_max = (jax.lax.stop_gradient(residual(v)) for v in (LID_SHAPE_MIN, LID_SHAPE_MAX))
+    clipped = jnp.where(r_min >= 0.0, -1, jnp.where(r_max <= 0.0, 1, 0))
     s = jnp.select([clipped == -1, clipped == 1], [LID_SHAPE_MIN, LID_SHAPE_MAX], s_in)
-    T_s, f0, f1, m = parts(s, T_m, D, d)
-    dT = D / (1.0 - m)
-    return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped
+    f0, f1, m = shape(s)
+    T_s = T_s_of(s)
+    dT = T_b - T_s
+    return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped, T_s + m * dT
 
 
 def convective_base_flux(dT, k, rho, cp, alpha, g, eta, ra_crit):

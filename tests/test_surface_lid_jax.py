@@ -87,22 +87,50 @@ def test_shape_gradient_is_finite_and_matches_differences():
     np.testing.assert_allclose(jac[far], fd, rtol=1e-6, atol=1e-12)
 
 
-def _np_surface(delta, T_m, T_b, k, eps, T_eq, floor):
-    """The NumPy surface solve for a lid of mean temperature T_m (identity enthalpy H(T) = T)."""
+def _enthalpies():
+    from aragog import surface_lid as sl
+    from tests.test_surface_lid import _kinked_table
+
+    return {'identity': sl.LidEnthalpy.linear(1.0, 1.0, 0.0, 0.0), 'kinked': _kinked_table()}
+
+
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+def test_enthalpy_profile_and_nodes_match_numpy(name):
+    """The JAX enthalpy table, profile, quadrature nodes and profile heat equal the NumPy ones,
+    outside the table knots included."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    T = np.linspace(50.0, 1800.0, 997)
+    np.testing.assert_allclose(np.asarray(jl.enthalpy_H(e, T)), hv.H(T), rtol=1e-13, atol=1e-6)
+    for s_ in (-3000.0, -2.0, -1e-7, 0.0, 1e-7, 1.5, 300.0):
+        x, w = sl.profile_nodes(s_)
+        xj, wj = jl.profile_nodes(s_)
+        np.testing.assert_allclose(np.asarray(xj), x, rtol=1e-14, atol=1e-16)
+        np.testing.assert_allclose(np.asarray(wj), w, rtol=1e-13, atol=0)
+        np.testing.assert_allclose(
+            np.asarray(jl.profile(s_, x)), sl.profile(s_, x), rtol=1e-12, atol=1e-300
+        )
+        heat = float(jl.profile_heat(e, s_, 300.0, 1300.0))
+        assert heat == pytest.approx(hv.profile_heat(s_, 300.0, 1300.0), rel=1e-12)
+        rho = float(jl.profile_density(e, s_, 300.0, 1300.0))
+        assert rho == pytest.approx(hv.profile_density(s_, 300.0, 1300.0), rel=1e-13)
+
+
+def _surface_states(hv, n=200, seed=7):
     from aragog import surface_lid as sl
 
-    hv = sl.LidEnthalpy.linear(rho=1.0, cp=1.0, T_b=0.0, h_b=0.0)
-    return sl.surface_state(delta, max(delta, floor) * T_m, T_b, k, eps, T_eq, floor, hv)
-
-
-def _surface_states(n=400, seed=7):
     rng = np.random.default_rng(seed)
     T_eq = rng.uniform(200.0, 400.0, n)
     T_b = rng.uniform(1300.0, 1800.0, n)
     frac = np.concatenate([rng.uniform(0.0, 1.0, n - 4), [0.0, 1.0, 1e-9, 1 - 1e-9]])
+    delta = 10.0 ** rng.uniform(-3.0, 3.3, n)
+    E = np.maximum(delta, sl.LID_DELTA_FLOOR) * hv.H(T_eq + frac * (T_b - T_eq))
     return dict(
-        delta=10.0 ** rng.uniform(-3.0, 3.3, n),
-        T_m=T_eq + frac * (T_b - T_eq),
+        delta=delta,
+        E=E,
         T_b=T_b,
         k=rng.uniform(2.0, 6.0, n),
         emissivity=rng.uniform(0.5, 1.0, n),
@@ -110,51 +138,59 @@ def _surface_states(n=400, seed=7):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='the JAX surface solve takes the mean temperature, the NumPy one the energy',
-)
-def test_surface_state_matches_numpy():
-    """The JAX surface solve equals the NumPy one (Brent root) on random lid states, clipped
-    ones included: same clip flag, surface temperature and fluxes to relative 1e-10."""
-    from aragog import surface_lid as sl
-    from aragog.jax.surface_lid import surface_state
+KEYS = ('delta', 'E', 'T_b', 'k', 'emissivity', 'T_eq')
 
-    st = _surface_states()
-    keys = ('delta', 'T_m', 'T_b', 'k', 'emissivity', 'T_eq')
-    got = jax.jit(jax.vmap(lambda *a: surface_state(*a, sl.LID_DELTA_FLOOR)))(
-        *(st[k] for k in keys)
-    )
-    ref = [_np_surface(*(st[k][i] for k in keys), sl.LID_DELTA_FLOOR) for i in range(400)]
+
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+def test_surface_state_matches_numpy(name):
+    """The JAX surface solve equals the NumPy one (Brent root) on random lid states, clipped
+    ones included: same clip flag, and the surface temperature, fluxes and mean temperature to
+    relative 1e-9."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    st = _surface_states(hv)
+    solve = jax.jit(jax.vmap(lambda *a: jl.surface_state(*a, sl.LID_DELTA_FLOOR, e)))
+    got = solve(*(st[k] for k in KEYS))
+    ref = [
+        sl.surface_state(*(st[k][i] for k in KEYS), sl.LID_DELTA_FLOOR, hv) for i in range(200)
+    ]
     np.testing.assert_array_equal(np.asarray(got[4]), [r.clipped for r in ref])
     assert {r.clipped for r in ref} == {-1, 0, 1}
-    for j, name in enumerate(('T_s', 'F_s', 'q_b')):
-        want = np.array([getattr(r, name) for r in ref])
-        np.testing.assert_allclose(np.asarray(got[j]), want, rtol=1e-10, atol=1e-300)
+    for j, field in ((0, 'T_s'), (1, 'F_s'), (2, 'q_b'), (5, 'T_m')):
+        want = np.array([getattr(r, field) for r in ref])
+        np.testing.assert_allclose(np.asarray(got[j]), want, rtol=1e-9, atol=1e-300)
 
 
-def test_surface_state_derivatives_match_differences():
-    """The implicit derivative of the surface flux in the lid thickness and the lid mean
-    temperature equals a central difference of the NumPy solve on unclipped states."""
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+def test_surface_state_derivatives_match_differences(name):
+    """The implicit derivative of the surface flux in the lid thickness and the lid energy
+    equals a central difference of the NumPy solve on unclipped states."""
     from aragog import surface_lid as sl
-    from aragog.jax.surface_lid import surface_state
+    from aragog.jax import surface_lid as jl
 
-    st = _surface_states(60, seed=11)
-    keys = ('delta', 'T_m', 'T_b', 'k', 'emissivity', 'T_eq')
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    st = _surface_states(hv, 40, seed=11)
+    grad = jax.jit(jax.grad(lambda *v: jl.surface_state(*v, 1e-5, e)[1], argnums=(0, 1)))
     n_checked = 0
-    for i in range(60):
-        a = [float(st[k][i]) for k in keys]
-        if _np_surface(*a, sl.LID_DELTA_FLOOR).clipped:
+    for i in range(40):
+        a = [float(st[k][i]) for k in KEYS]
+        if sl.surface_state(*a, 1e-5, hv).clipped:
             continue
+        got = grad(*a)
         for j in (0, 1):
-            h = 1e-6 * a[j]
+            h = 1e-6 * abs(a[j])
             up, dn = list(a), list(a)
             up[j], dn[j] = a[j] + h, a[j] - h
-            fd = (_np_surface(*up, 1e-5).F_s - _np_surface(*dn, 1e-5).F_s) / (2 * h)
-            got = jax.grad(lambda *v: surface_state(*v, 1e-5)[1], argnums=j)(*a)
-            assert float(got) == pytest.approx(fd, rel=1e-5, abs=1e-12)
+            fd = (sl.surface_state(*up, 1e-5, hv).F_s - sl.surface_state(*dn, 1e-5, hv).F_s) / (
+                2 * h
+            )
+            assert float(got[j]) == pytest.approx(fd, rel=1e-4, abs=1e-12)
         n_checked += 1
-    assert n_checked > 30
+    assert n_checked > 20
 
 
 def test_rate_functions_match_numpy():

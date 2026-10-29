@@ -144,6 +144,7 @@ class LidEnthalpy:
 
     H: Callable[[npt.ArrayLike], npt.NDArray]
     rho: Callable[[npt.ArrayLike], npt.NDArray]
+    data: tuple = ()  # ('linear', rho, cp, T_b, h_b) or ('table', T, H, rho), for the JAX form
 
     @classmethod
     def linear(cls, rho: float, cp: float, T_b: float, h_b: float) -> LidEnthalpy:
@@ -151,6 +152,7 @@ class LidEnthalpy:
         return cls(
             H=lambda T: rho * (h_b + cp * (np.asarray(T, dtype=float) - T_b)),
             rho=lambda T: np.full(np.shape(T), rho),
+            data=('linear', rho, cp, T_b, h_b),
         )
 
     @classmethod
@@ -173,7 +175,7 @@ class LidEnthalpy:
                 np.where(t > hi[0], hi[1] + hi[2] * (t - hi[0]), spline(inside)),
             )
 
-        return cls(H=H_of, rho=lambda t: np.interp(t, T, rho))
+        return cls(H=H_of, rho=lambda t: np.interp(t, T, rho), data=('table', T, H, rho))
 
     def profile_heat(self, s: float, T_s: float, T_b: float) -> float:
         """Mean heat content per volume [J/m^3] of a lid with shape ``s`` from ``T_s`` to ``T_b``."""
