@@ -16,7 +16,7 @@ import numpy as np
 import aragog
 from tests.reference.subgrid_lid_v0_probe import CASES, case_name, probe
 
-BASE_COMMIT = 'dd6c2b98b4bbaf7dcf8710ef6b7317635d01a0f7'
+BASE_COMMIT = '4ae8167d469763449b51cb5097c59f83b5472843'
 OUT = Path(__file__).resolve().parent / 'subgrid_lid_v0_reference.npz'
 
 if __name__ == '__main__':
