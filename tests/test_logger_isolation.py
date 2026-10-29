@@ -113,3 +113,15 @@ def test_a_block_that_raises_still_restores_the_logger(tmp_path):
     assert aragog.logger.handlers == [import_handler]
     assert aragog.logger.level == logging.NOTSET
     assert vars(aragog.logger).get('addHandler') is fixture_recorder
+
+
+def test_an_outermost_block_leaves_no_recorder_on_the_logger():
+    """Without an outer block, leaving the block removes its recorder: ``addHandler`` is the class method."""
+    fixture_recorder = vars(aragog.logger).pop('addHandler')
+    try:
+        with package_logger_isolation():
+            assert 'addHandler' in vars(aragog.logger)
+        assert 'addHandler' not in vars(aragog.logger)
+    finally:
+        aragog.logger.addHandler = fixture_recorder
+    assert vars(aragog.logger)['addHandler'] is fixture_recorder
