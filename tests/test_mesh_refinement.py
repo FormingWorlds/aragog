@@ -106,6 +106,16 @@ def test_unit_grid_end_cells_hold_their_targets_from_the_smallest_fraction(n, fi
             assert cell == pytest.approx(target, rel=1e-6)
 
 
+@pytest.mark.parametrize('n', [100, 200])
+@pytest.mark.parametrize('ends', [(0, 1), (1, 0), (1, 1)], ids=['last', 'first', 'both'])
+def test_unit_grid_reaches_the_uniform_grid_at_the_uniform_cell(n, ends):
+    """The largest float below the uniform cell, at one or both ends, gives the uniform
+    grid to 1e-12."""
+    f = np.nextafter(1.0 / (n - 1), 0.0)
+    s = stretched_unit_grid(n, ends[0] * f, ends[1] * f)
+    np.testing.assert_allclose(s, np.linspace(0.0, 1.0, n), rtol=0, atol=1e-12)
+
+
 @pytest.mark.parametrize('mass_coordinates', [False, True])
 def test_mesh_end_cells_have_the_radial_thickness(mass_coordinates):
     """abe_solid (1000 km shell, 100 nodes, uniform cell 10.1 km): a 1 km top cell,
