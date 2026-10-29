@@ -10,11 +10,15 @@ one as ``output``.
 RUN uses this Aragog code. MAIN uses the Aragog commit without the controller rules near and
 below the solidus. REFERENCE is ``run_v5b_proteus.py --reference`` with the code of RUN. The
 header of each case config records the PROTEUS commit of the case and the Aragog commit of MAIN.
-The script refuses runs made with other versions and writes the versions of each run to its
-result file. Run from the repository root::
+The script stops unless every run used that PROTEUS commit from an unmodified tree, only the
+MAIN runs used that Aragog commit, and RUN and REFERENCE used one Aragog version. For v5b it
+also checks the driver flags of each run (``v5b_result.json``) and an end ``Phi_global`` of 0;
+for v5 an end ``Phi_global`` of 1. ``--floor`` takes the v5b round-off runs. The result file
+holds the versions of each run. Run from the repository root::
 
     python tools/verification/compare_v5_runs.py --case v5 RUN MAIN [--output FILE]
-    python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF [--output FILE]
+    python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF \
+        [--floor RUN_P RUN_M MAIN_P MAIN_M] [--output FILE]
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ COLUMNS = (
     'R_int',
 )
 PROFILES = ('temp_s', 'entropy_s')
+SOLID_STEPS = 3  # coupling steps with Phi_global = 0 at the end of a v5b run
 
 
 def pins(config):
@@ -53,7 +58,10 @@ def pins(config):
     head = ''.join(
         line for line in Path(config).read_text().splitlines(True) if line[:1] == '#'
     )
-    return {k: re.search(k + r' ([0-9a-f]{40})', head).group(1) for k in ('PROTEUS', 'Aragog')}
+    found = {k: re.search(k + r' ([0-9a-f]{40})', head) for k in ('PROTEUS', 'Aragog')}
+    if not all(found.values()):
+        raise SystemExit(f'{config}: the header needs a PROTEUS and an Aragog commit')
+    return {k: m.group(1) for k, m in found.items()}
 
 
 def _folder(path):
@@ -62,12 +70,17 @@ def _folder(path):
 
 
 def versions(path):
-    """Return the PROTEUS git hash and the Aragog version from the log of one run."""
+    """Return the PROTEUS git hash, the Aragog version and the driver flags of one run."""
     log = (_folder(path) / 'proteus_00.log').read_text()
-    return dict(
+    found = dict(
         PROTEUS=re.search(r'PROTEUS git hash\s+(\S+)', log).group(1),
         Aragog=re.search(r'Interior module\s+aragog version\s+(\S+)', log).group(1),
     )
+    driver = Path(path) / 'v5b_result.json'
+    if driver.exists():
+        d = json.loads(driver.read_text())
+        found.update({k: d.get(k) for k in ('reference', 'solid_steps', 's0_eps')})
+    return found
 
 
 def end_state(path):
@@ -83,35 +96,57 @@ def end_state(path):
     return {**{k: float(row[k]) for k in COLUMNS}, **prof}
 
 
-def check_versions(case, runs):
-    """Stop unless every run used the pinned PROTEUS and only MAIN used the pinned Aragog."""
+def check_runs(case, runs, state):
+    """Stop unless each run fits its role: versions, driver flags and end melt fraction."""
     pin = pins(CONFIGS[case])
     for name, v in runs.items():
+        role, sign = (
+            name.split('_')[0],
+            {'p': 1, 'm': -1}.get(name[-1] if '_' in name else '', 0),
+        )
+        bad = bool(re.search(r'\.d\d{8}', v['Aragog'])) or v['PROTEUS'] != pin['PROTEUS']
+        bad = bad or v['Aragog'] != runs['main' if role == 'main' else 'run']['Aragog']
+        bad = bad or state[name]['Phi_global'] != (0.0 if case == 'v5b' else 1.0)
+        if case == 'v5b':
+            want = dict(reference=role == 'reference', solid_steps=SOLID_STEPS)
+            bad = bad or any(v.get(k) != w for k, w in want.items())
+            bad = bad or np.sign(v.get('s0_eps') or 0.0) != sign
         on_pin = v['Aragog'].rsplit('+g', 1)[-1][:7] == pin['Aragog'][:7]
-        if v['PROTEUS'] != pin['PROTEUS'] or on_pin != (name == 'main'):
-            raise SystemExit(f'{case} {name}: versions {v} do not match the config pins {pin}')
+        if bad or on_pin != (role == 'main'):
+            raise SystemExit(f'{case} {name}: run {v} does not fit its role (pins {pin})')
 
 
-def compare(case, run, main, reference=None):
-    """Return the per-column result and the verdict of one case."""
+def compare(case, run, main, reference=None, floor=None):
+    """Return the per-column result and the verdict of one case.
+
+    ``floor`` holds the v5b round-off runs RUN_P, RUN_M, MAIN_P, MAIN_M (``--s0-eps`` +- eps);
+    a column then fails only when the error of RUN exceeds that of MAIN by more than the
+    largest round-off offset of either code.
+    """
     paths = dict(run=run, main=main, **({'reference': reference} if case == 'v5b' else {}))
+    paths.update(zip(('run_p', 'run_m', 'main_p', 'main_m'), floor or ()))
+    if len({Path(p).resolve() for p in paths.values()}) < len(paths):
+        raise SystemExit('each run folder must be given once')
     found = {k: versions(p) for k, p in paths.items()}
-    check_versions(case, found)
     st = {k: end_state(p) for k, p in paths.items()}
+    check_runs(case, found, st)
     columns = {}
     for k in (*COLUMNS, *PROFILES):
         if case == 'v5':
-            columns[k] = dict(equal=bool(np.array_equal(st['run'][k], st['main'][k])))
-            columns[k]['passed'] = columns[k]['equal']
-        else:
-            err = {
-                n: float(np.max(np.abs(np.subtract(st[n][k], st['reference'][k]))))
-                for n in ('run', 'main')
-            }
-            columns[k] = dict(error_run=err['run'], error_main=err['main'])
-            columns[k]['passed'] = err['run'] <= err['main']
+            eq = bool(np.array_equal(st['run'][k], st['main'][k]))
+            columns[k] = dict(equal=eq, passed=eq)
+            continue
+        err = {n: _maxdiff(st[n][k], st['reference'][k]) for n in ('run', 'main')}
+        pert = [_maxdiff(st[n][k], st[n.split('_')[0]][k]) for n in paths if '_' in n]
+        fl = max(pert, default=0.0)
+        passed = err['run'] <= err['main'] + fl
+        columns[k] = dict(error_run=err['run'], error_main=err['main'], floor=fl, passed=passed)
     passed = all(c['passed'] for c in columns.values())
     return dict(case=case, passed=passed, versions=found, columns=columns)
+
+
+def _maxdiff(a, b):
+    return float(np.max(np.abs(np.subtract(a, b))))
 
 
 def main(argv=None) -> int:
@@ -121,11 +156,12 @@ def main(argv=None) -> int:
     ap.add_argument('run', type=Path)
     ap.add_argument('main', type=Path)
     ap.add_argument('--reference', type=Path, default=None)
+    ap.add_argument('--floor', type=Path, nargs=4, default=None, metavar='DIR')
     ap.add_argument('--output', type=Path, default=None)
     args = ap.parse_args(argv)
-    if (args.case == 'v5b') != (args.reference is not None):
-        ap.error('--reference is required for v5b and not used for v5')
-    result = compare(args.case, args.run, args.main, args.reference)
+    if (args.case == 'v5b') != (args.reference is not None) or args.case == 'v5' and args.floor:
+        ap.error('--reference is required for v5b; v5 takes neither --reference nor --floor')
+    result = compare(args.case, args.run, args.main, args.reference, args.floor)
     for k, c in result['columns'].items():
         print(f'{k:16s} ' + ' '.join(f'{n}={v}' for n, v in c.items()))
     print(f'{args.case}: ' + ('PASS' if result['passed'] else 'FAIL'))

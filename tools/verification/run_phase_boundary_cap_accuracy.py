@@ -3,7 +3,7 @@
 Computes the numbers in the accuracy table of ``docs/Explanations/energy_equation.md``.
 Each case integrates one solver call with the CVODE entropy solver on the
 test EOS (``ARAGOG_TEST_EOS_DIR``) and compares the cell temperatures at the
-call end against ``'fixed'`` at rtol = atol = 1e-10:
+call end against ``'fixed'`` at rtol = atol = 1e-10 (the solver keeps atol at 1e-8 or above):
 
 ====  ==============  ========  =====================  ========  ======  =====
 Case  core_bc         Call [yr] Start                  F [W/m2]  w       Nodes

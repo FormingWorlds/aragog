@@ -351,7 +351,7 @@ def _rate_phase_boundary_times(
     delta: float,
     rate_floor: bool = True,
 ) -> npt.NDArray | None:
-    """Time [yr] of each entry to the boundary that sets its step; see ``_rate_phase_boundary_max_step``.
+    """Time [yr] of each entry to its step-setting boundary (see ``_rate_phase_boundary_max_step``).
 
     Returns an array with a non-finite entry where no boundary counts, or None when ``S``,
     ``dSdt``, the boundaries or the floor are not finite.
@@ -4114,8 +4114,8 @@ class EntropySolver:
         ``rtol`` at most ``1e-9`` and a physical ``atol`` at most ``1e-8`` in the unit of each
         state entry (J/(kg K) for entropy, K for a temperature). The limits also hold after a
         retry loosens ``solver.rtol`` or raises ``_atol_sf``; tighter caller tolerances are
-        kept. They keep the validation cases inside 1.3e-4 K without the 100 yr ``max_step``
-        ceiling. Other segments keep the caller's ``rtol`` and ``atol``.
+        kept. With them the V3 validation cases stay inside 1.3e-4 K without the 100 yr
+        ``max_step`` ceiling. Other segments keep the caller's ``rtol`` and ``atol``.
 
         Parameters
         ----------

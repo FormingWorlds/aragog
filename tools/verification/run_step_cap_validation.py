@@ -55,9 +55,11 @@ import aragog.solver.entropy_solver as es  # noqa: E402
 from aragog.eos.entropy import EntropyEOS  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 
+# max_steps: ceiling on the m = 0 rate steps (224 and 1031 measured; 272 and 2669 without the
+# distance floor, 2081 with the 100 yr ceiling kept); inf_cap: a sub-solidus cap must reach inf.
 V3 = {
-    'v3_r3': dict(end=1.5e4, flux=20.0, width=0.0),
-    'v3_r4': dict(end=2.0e5, flux=200.0, width=0.0),
+    'v3_r3': dict(end=1.5e4, flux=20.0, width=0.0, max_steps=250, inf_cap=False),
+    'v3_r4': dict(end=2.0e5, flux=200.0, width=0.0, max_steps=1500, inf_cap=True),
 }
 V4 = {
     'v4_rheo_off': dict(rheology=False, stall=107.655e6, max_steps=100_000, end=1.2e8),
@@ -82,10 +84,8 @@ def regime(S, dSdt, S_liq, S_sol, mass, delta, rate_floor=True, **_):
     slow = False
     if t_c is not None and np.isfinite(t_c).any():
         b = int(np.nanargmin(np.where(np.isfinite(t_c), t_c, np.nan)))
-        rate = np.abs(dSdt)
-        floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
         dist = min(abs(S[b] - S_liq[b]), abs(S[b] - S_sol[b]))
-        slow = bool(dist < 0.5 * delta and max(rate[b], floor) < 0.05 * delta)
+        slow = bool(dist < 0.5 * delta and t_c[b] > 10.0)  # t_c = 0.5 delta / floored rate
     return slow, bool(np.all(S <= S_sol))
 
 
@@ -159,7 +159,9 @@ def v3_run(task):
         raise RuntimeError(f'{name} {mode} at {tol:g}, m = {m}: solver status {sol.status}')
     S = np.asarray(sol.y)[: s._n_stag, :]
     T_end = np.asarray(eos.temperature(s._P_stag_flat, S[:, -1])).ravel()
+    caps = [seg[2] for seg in getattr(sol, 'segments', None) or []]
     return dict(
+        inf_caps=sum(not np.isfinite(h) for h in caps),
         mode=mode,
         tol=tol,
         m=m,
@@ -197,6 +199,8 @@ def run_v3(eos_dir, name, workers, width=None):
         round_off_envelope_K=max(
             float(np.max(np.abs(np.asarray(rate[m]['T_end']) - T0))) for m in STARTS if m
         ),
+        steps=rate[0]['steps'],
+        inf_cap_segments=rate[0]['inf_caps'],
         slow_landing_segments=rate[0]['slow_landing'],
         subsolidus_segments=rate[0]['subsolidus'],
         S_min=min(r['S_min'] for r in rows),
@@ -344,8 +348,10 @@ def stop_after_stall(res, state, stall):
 def check(case, result):
     """Return the failed tolerances of the docs page for one case result."""
     if case in V3:
-        m = result['metrics']
+        m, c = result['metrics'], V3[case]
         fails = [] if m['max_dT_rate_vs_ref_K'] <= V3_BOUND_K else [f'|dT| > {V3_BOUND_K} K']
+        fails += [f'steps > {c["max_steps"]}'] if m['steps'] > c['max_steps'] else []
+        fails += ['no inf cap'] if c['inf_cap'] and not m['inf_cap_segments'] else []
     else:
         m = result
         fails = [] if m['status'] == 0 else [f'status {m["status"]}']

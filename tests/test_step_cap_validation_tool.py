@@ -78,6 +78,7 @@ def _row(mode, m, T, slow=0, S=(10.0, 20.0)):
         segments=1,
         slow_landing=slow,
         subsolidus=0,
+        inf_caps=m + 2,
     )
 
 
@@ -99,6 +100,7 @@ def test_run_v3_metrics_come_from_the_m0_start_and_the_reference(monkeypatch):
     assert metrics['max_dT_rate_vs_ref_K'] == 1.0
     assert metrics['round_off_envelope_K'] == 0.5
     assert metrics['slow_landing_segments'] == 1
+    assert (metrics['steps'], metrics['inf_cap_segments']) == (1, 2)
     assert metrics['inside_table'] is True
     rows['rate', 2]['S_max'] = 101.0
     assert tool.run_v3('eos', 'v3_r3', workers=1)['metrics']['inside_table'] is False
@@ -110,7 +112,8 @@ def test_main_writes_the_case_result(monkeypatch, tmp_path):
 
     def fake_run_v3(eos_dir, name, workers, width):
         seen.update(eos_dir=eos_dir, name=name, workers=workers, width=width)
-        return dict(rows=[], metrics={'max_dT_rate_vs_ref_K': 0.0, 'inside_table': True})
+        ok = dict(max_dT_rate_vs_ref_K=0.0, inside_table=True, steps=1, inf_cap_segments=1)
+        return dict(rows=[], metrics=ok)
 
     monkeypatch.setattr(tool, 'run_v3', fake_run_v3)
     monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')  # main() sets it; monkeypatch restores it
@@ -123,10 +126,18 @@ def test_main_writes_the_case_result(monkeypatch, tmp_path):
 
 def test_check_names_each_failed_tolerance():
     """check() fails a v3 error above the bound, a v4 failure, and an entropy outside the table."""
-    v3 = {'metrics': {'max_dT_rate_vs_ref_K': tool.V3_BOUND_K, 'inside_table': True}}
-    assert tool.check('v3_r3', v3) == []
-    v3['metrics'].update(max_dT_rate_vs_ref_K=1.01 * tool.V3_BOUND_K, inside_table=False)
-    assert tool.check('v3_r4', v3) == [f'|dT| > {tool.V3_BOUND_K} K', 'inside_table']
+    m = dict(
+        max_dT_rate_vs_ref_K=tool.V3_BOUND_K, inside_table=True, steps=250, inf_cap_segments=0
+    )
+    assert tool.check('v3_r3', {'metrics': m}) == []
+    assert tool.check('v3_r4', {'metrics': m}) == ['no inf cap']
+    m.update(max_dT_rate_vs_ref_K=1.01 * tool.V3_BOUND_K, inside_table=False, steps=1501)
+    assert tool.check('v3_r4', {'metrics': {**m, 'inf_cap_segments': 1}}) == [
+        f'|dT| > {tool.V3_BOUND_K} K',
+        'steps > 1500',
+        'inside_table',
+    ]
+    assert tool.check('v3_r3', {'metrics': {**m, 'steps': 251}})[1] == 'steps > 250'
     v4 = dict(status=0, passed_stall_point=True, solidified=True, inside_table=True)
     assert tool.check('v4_rheo_on', v4) == []
     v4.update(status=-1, solidified=False)
@@ -137,7 +148,7 @@ def test_check_names_each_failed_tolerance():
 
 def test_main_check_exits_1_on_a_failed_tolerance(monkeypatch, tmp_path, capsys):
     """With --check a failed tolerance gives exit 1; without it the run still exits 0."""
-    bad = {'max_dT_rate_vs_ref_K': 1.0, 'inside_table': True}
+    bad = {'max_dT_rate_vs_ref_K': 1.0, 'inside_table': True, 'steps': 1, 'inf_cap_segments': 0}
     monkeypatch.setattr(tool, 'run_v3', lambda *a: dict(rows=[], metrics=bad))
     monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
     args = ['--case', 'v3_r3', '--eos-dir', 'E', '--output', str(tmp_path / 'r.json')]
@@ -238,17 +249,64 @@ def test_v5b_stop_rule_ends_at_the_third_step_with_phi_zero(monkeypatch):
     import aragog.solver.entropy_solver as es
 
     monkeypatch.setattr(es.EntropySolver, '_solve_cvode', es.EntropySolver._solve_cvode)
-    original = es.EntropySolver._solve_cvode
+    monkeypatch.setattr(
+        es.EntropySolver, 'set_initial_entropy', es.EntropySolver.set_initial_entropy
+    )
     term = _fake_proteus(monkeypatch, check_termination=lambda handler: 'proteus')
-    solid = v5b.install(reference=False)
-    assert es.EntropySolver._solve_cvode is original
+    solid, _ = v5b.install(reference=False)
     handler = types.SimpleNamespace(hf_row={'Phi_global': 0.5})
     assert term.check_termination(handler) == 'proteus'
     handler.hf_row['Phi_global'] = 0.0
     assert [term.check_termination(handler) for _ in range(3)] == ['proteus', 'proteus', True]
     assert solid == [3] and handler.finished_both and handler.finished_prev
-    v5b.install(reference=True)
-    assert es.EntropySolver._solve_cvode is not original
+
+
+def _recording_solver(monkeypatch):
+    """Patch _solve_cvode and set_initial_entropy with recorders on a unit-scale solver."""
+    import types
+
+    import aragog.solver.entropy_solver as es
+
+    calls = {'cvode': [], 's0': []}
+
+    def solve_cvode(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
+        calls['cvode'].append((atol, rtol, max_step))
+        return {'cvode_nst': 7}
+
+    monkeypatch.setattr(es.EntropySolver, '_solve_cvode', solve_cvode)
+    monkeypatch.setattr(
+        es.EntropySolver, 'set_initial_entropy', lambda self, S0: calls['s0'].append(S0)
+    )
+    _fake_proteus(monkeypatch, check_termination=lambda handler: False)
+    scales = types.SimpleNamespace(state_scale=np.array([2.0, 4.0]), t_ref=10.0)
+    return es.EntropySolver, types.SimpleNamespace(_build_nondim_scales=lambda: scales), calls
+
+
+def test_v5b_driver_counts_steps_and_keeps_the_run_settings(monkeypatch):
+    """Without --reference each call keeps its tolerances and max_step; steps add up."""
+    cls, solver, calls = _recording_solver(monkeypatch)
+    _, steps = v5b.install(reference=False)
+    cls._solve_cvode(solver, 0.0, 1.0, None, 1e-8, 1e-8, 5.0)
+    cls._solve_cvode(
+        solver, start_time=1.0, end_time=2.0, y0=None, atol=2e-8, rtol=1e-9, max_step=3.0
+    )
+    assert calls['cvode'] == [(1e-8, 1e-8, 5.0), (2e-8, 1e-9, 3.0)] and steps == [14]
+    cls.set_initial_entropy(solver, np.array([100.0]))
+    assert calls['s0'][0].tolist() == [100.0]
+
+
+def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_start(monkeypatch):
+    """--reference sets 1 yr steps and the reference rtol and atol in every CVODE call."""
+    cls, solver, calls = _recording_solver(monkeypatch)
+    v5b.install(reference=True, s0_eps=1e-3, reference_rtol=1e-11)
+    for max_step in (5.0, np.inf):
+        cls._solve_cvode(solver, 0.0, 1.0, None, 1e-6, 1e-6, max_step)
+    for atol, rtol, max_step in calls['cvode']:
+        np.testing.assert_allclose(atol, [5e-12, 2.5e-12], rtol=1e-15)
+        assert (rtol, max_step) == (1e-11, 0.1)
+    cls.set_initial_entropy(solver, np.array([100.0]))
+    cls.set_initial_entropy(solver, np.array([100.0]))
+    assert [S[0] for S in calls['s0']] == [pytest.approx(100.1, rel=1e-15), 100.0]
 
 
 def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):
