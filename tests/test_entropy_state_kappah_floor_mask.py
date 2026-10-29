@@ -278,7 +278,7 @@ needs_eos = pytest.mark.skipif(
 )
 
 
-def _build_state(eos, *, kappah_floor: float, convective_threshold=_D):
+def _build_state(eos, *, kappah_floor: float, convective_threshold=_D, rheology=None):
     """Mirror of ``test_entropy_state_branches._build_state`` with the
     kappa_h floor enabled, returning the state plus the mesh."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -339,9 +339,13 @@ def _build_state(eos, *, kappah_floor: float, convective_threshold=_D):
     mesh.dr = dr
     mesh.N = N
 
-    phase_stag = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0, rheology=rheology
+    )
     phase_stag.set_pressure(mesh.staggered.pressure)
-    phase_basic = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0, rheology=rheology
+    )
     phase_basic.set_pressure(mesh.basic.pressure)
 
     class _Eval:
@@ -609,3 +613,42 @@ def test_numpy_convective_flux_never_runs_up_a_stable_gradient(phi):
     assert np.all(jconv[x >= 0] <= 0.0)
     assert np.all(np.abs(jconv[x >= 0]) <= bound[x >= 0])
     assert np.abs(jconv[5]) > 0.1 * bound[5]  # the band node at 5e-7 carries the floor flux
+
+
+@needs_eos
+@pytest.mark.physics_invariant
+def test_numpy_floor_with_rheology_on_is_the_zero_anchored_weight_at_a_mushy_node():
+    """With the solid rheology on, a convecting mushy node at phi ~ 0.2 whose raw eddy
+    diffusivity lies far below the floor takes kappa_h = kappah_floor * w(phi), with w the
+    tanh ramp rescaled to w(0) = 0 and w(1) = 1.
+
+    Discriminating: the plain tanh ramp gives a floor 7 % higher at this phi, and a zero
+    floor leaves the raw value, more than four orders of magnitude lower.
+    """
+    from aragog.rheology import SolidRheologyParams
+
+    eos = entropy_eos_copy(EOS_DIR)
+    state, mesh = _build_state(
+        eos, kappah_floor=_KAPPAH_FLOOR, rheology=SolidRheologyParams(enabled=True)
+    )
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    S0 = S_sol + 0.2 * (S_liq - S_sol)
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    k = 5
+    state.update(S0, time=0.0, dSdr=dSdr)
+    kh = float(np.asarray(state.eddy_diffusivity).ravel()[k])
+    phi_k = float(np.asarray(state.phase_basic.melt_fraction()).ravel()[k])
+
+    state._kappah_floor = 0.0
+    state.update(S0, time=0.0, dSdr=dSdr)
+    kh_raw = float(np.asarray(state.eddy_diffusivity).ravel()[k])
+
+    def ramp(x):
+        return 0.5 * (1.0 + np.tanh((x - _PHI_RHEO) / _PHI_WIDTH))
+
+    w_hand = (ramp(phi_k) - ramp(0.0)) / (ramp(1.0) - ramp(0.0))
+    assert phi_k == pytest.approx(0.2, abs=1.0e-3)
+    assert kh_raw < 1.0e-3 * _KAPPAH_FLOOR * w_hand
+    assert kh == pytest.approx(_KAPPAH_FLOOR * w_hand, rel=1.0e-12)
+    assert abs(kh - _KAPPAH_FLOOR * ramp(phi_k)) > 0.05 * kh

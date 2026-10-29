@@ -94,6 +94,8 @@ $$
 
 the temperature at which Thiriet et al. (2019, p. 140) take the viscosity of the lower boundary layer (Foley & Driscoll 2016 leave that temperature to the model). With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
 
+When solid mantle rheology is enabled (`[phase_solid.rheology]`), temperature-dependent and stress-dependent solid viscosity laws govern the mantle above the core-mantle boundary layer, and the bottom mixing-length slope factor $s_\mathrm{bottom}$ scales the lower convective boundary. See [Solid-state convection](solid_state_convection.md) for solid rheology formulations and boundary layer dynamics.
+
 In a partly molten layer $c_p$ and $\alpha$ are those of the two phases, without the latent heat or the density change of melting, each phase evaluated at its end-member entropy. The heat capacity is weighted by the Lever-rule mass fractions $x_i$ and the expansivity by the volume fractions:
 
 $$

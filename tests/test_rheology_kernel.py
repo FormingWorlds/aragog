@@ -1434,6 +1434,20 @@ def test_effective_viscosity_lid_floor_pinned_sub_1e30():
 
 
 @pytest.mark.unit
+def test_effective_viscosity_lid_floor_pinned_sub_1e300():
+    """Verify compute_effective_viscosity clamps log_eff to 1e-300 for eta_diff below 1e-300."""
+    res = compute_effective_viscosity(
+        eta_diff=1.0e-310,
+        stress_closure_mode='lid',
+        eta_i=1.0e-310,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res, 1.0e-300, rtol=1.0e-12)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'field_name', 'bad_val', 'static_error'),
     [
@@ -2138,24 +2152,32 @@ def test_rheology_kernel_reference_grid_parity():
         unyielded_velocity=np.full(30, 1e-9),
         xp=np,
     )
+    # Independent expected values for the 3 changed or added keys derived solely from main fixture data:
+    exp_d_lid_raw = (radii[-1] - float(data['lid_r_lid_base'])) * float(data['lid_w_active'])
+    w_lid_pres_main = float(data['lid_d_lid']) / exp_d_lid_raw
+    tau_d_lid_raw_main = float(data['lid_tau_d_lid']) / w_lid_pres_main
+    exp_wy_from_main = (
+        w_lid_pres_main
+        * 0.5
+        * (1.0 + np.tanh((tau_d_lid_raw_main / float(data['lid_tau_y_lid']) - 1.0) / 0.1))
+    )
+    exp_regime_from_main = float(data['lid_w_active']) * (1.0 + exp_wy_from_main)
+
     for k, v in lid_st.items():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
         if arr.dtype == bool:
             assert bool(arr) == bool(data[f'lid_{k}'])
+        elif k == 'd_lid_raw':
+            np.testing.assert_allclose(arr, exp_d_lid_raw, rtol=1.0e-12, atol=0.0)
+        elif k == 'w_y':
+            np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
-            w_solid_surf_main = 0.5 * (1.0 + np.tanh(5.0))
-            assert float(arr) != float(data['lid_lid_regime'])
-            np.testing.assert_allclose(
-                arr,
-                data['lid_lid_regime'] / w_solid_surf_main,
-                rtol=1.0e-12,
-                atol=0.0,
-            )
+            np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 
     assert 'main_commit' in data
-    assert str(data['main_commit']) == '2457a8c95099b04b766a220772d2e55bb3d02608'
+    assert str(data['main_commit']) == 'c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'
 
     import importlib.util
 
@@ -2179,13 +2201,13 @@ def test_rheology_kernel_reference_grid_parity():
 
     with (
         patch.object(gen_mod, '_has_git_commit', return_value=False),
-        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(RuntimeError, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         gen_mod.verify_fixture(fixture_path)
 
     with (
         patch.object(gen_mod, '_has_git_commit', return_value=False),
-        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(RuntimeError, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         gen_mod.main(['--check', '--output', str(fixture_path)])
 
@@ -2240,7 +2262,7 @@ def test_rheology_kernel_reference_grid_parity_skips_when_commit_absent():
 
     with (
         patch('subprocess.run') as mock_run,
-        pytest.raises(pytest.skip.Exception, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(pytest.skip.Exception, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         mock_run.return_value.returncode = 1
         test_rheology_kernel_reference_grid_parity()
@@ -2903,8 +2925,635 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
+def test_cross_field_viscosity_max_and_boundary_checks(tmp_path):
+    """Verify viscosity_max_log10 > log10(viscosity_solid) across kernels, TOML/INI/dict config loaders, and EntropyPhaseEvaluator, plus 1-D w_lid shape check and huge-int ValueError."""
+    import copy
+    import importlib.resources
+    import tomllib
+
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+    from aragog.config import Config
+    from aragog.config.phases import PhaseConfig
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.parser import Parameters, _PhaseParameters
+
+    # 1. compute_arrhenius_viscosity: valid when viscosity_max_log10 > log10(viscosity_solid), invalid otherwise.
+    val_ok = compute_arrhenius_viscosity(
+        1600.0, 0.0, viscosity_solid=1.0e21, viscosity_max_log10=21.1
+    )
+    assert np.isfinite(val_ok) and val_ok > 0.0
+    for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0), (1.0e35, 30.0)):
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_arrhenius_viscosity(
+                1600.0, 0.0, viscosity_solid=bad_vs, viscosity_max_log10=bad_vmax
+            )
+        jit_fn = jax.jit(
+            lambda vs, vm: compute_arrhenius_viscosity(
+                jnp.asarray(1600.0),
+                jnp.asarray(0.0),
+                viscosity_solid=vs,
+                viscosity_max_log10=vm,
+                xp=jnp,
+            )
+        )
+        assert np.isnan(float(jit_fn(jnp.asarray(bad_vs), jnp.asarray(bad_vmax))))
+
+    # 2. compute_stagnant_lid_state: rejects viscosity_max_log10 <= log10(viscosity_solid).
+    n = 10
+    r = np.linspace(3.48e6, 6.371e6, n)
+    t = np.linspace(2600.0, 1200.0, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    fc = np.full(n, 0.08)
+    fc[-1] = 0.0
+    ft = np.full(n, 0.10)
+    phi = np.zeros(n)
+    for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0)):
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=fc,
+                total_flux=ft,
+                solidus_temperature=None,
+                melt_fraction=phi,
+                params=SolidRheologyParams(enabled=True, viscosity_max_log10=bad_vmax),
+                viscosity_solid=bad_vs,
+                phi_rheo=0.4,
+                phi_width=0.15,
+                xp=np,
+            )
+        st_jx = compute_stagnant_lid_state(
+            radii=jnp.asarray(r),
+            temperature=jnp.asarray(t),
+            pressure=jnp.asarray(p),
+            convective_flux=jnp.asarray(fc),
+            total_flux=jnp.asarray(ft),
+            solidus_temperature=None,
+            melt_fraction=jnp.asarray(phi),
+            params=SolidRheologyParams(enabled=True, viscosity_max_log10=bad_vmax),
+            viscosity_solid=bad_vs,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=jnp,
+        )
+        assert np.isnan(float(st_jx['eta_i']))
+        assert np.isnan(float(st_jx['T_i']))
+        assert np.isnan(float(st_jx['P_T_i']))
+        assert np.isnan(float(st_jx['d_lid']))
+        assert np.isnan(float(st_jx['d_lid_raw']))
+        assert np.all(np.isnan(np.asarray(st_jx['w_lid'])))
+
+    # 3. PhaseConfig and _PhaseParameters enforce viscosity_max_log10 > log10(viscosity).
+    cfg_ok = PhaseConfig(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=3.0e-5,
+        viscosity=1.0e21,
+        rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=25.0),
+    )
+    assert cfg_ok.viscosity_max_log10 == 25.0
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        _PhaseParameters(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=np.asarray(1.0e22),
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    toml_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    ini_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg').read_text()
+
+    toml_bad = tmp_path / 'bad_vmax.toml'
+    toml_bad.write_text(
+        toml_base + '\n[phase_solid.rheology]\nenabled = true\nviscosity_max_log10 = 21.0\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Parameters.from_file(toml_bad)
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_toml(str(toml_bad))
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_file(str(toml_bad))
+
+    ini_bad = tmp_path / 'bad_vmax.cfg'
+    ini_bad.write_text(
+        ini_base + '\n[phase_solid.rheology]\nenabled = True\nviscosity_max_log10 = 21.0\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Parameters.from_file(ini_bad)
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_file(str(ini_bad))
+
+    d_bad = copy.deepcopy(tomllib.loads(toml_base))
+    d_bad['phase_solid']['rheology'] = {'enabled': True, 'viscosity_max_log10': 21.0}
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_dict(d_bad)
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        EntropyPhaseEvaluator(
+            entropy_eos=None,
+            gravitational_acceleration=9.8,
+            const_properties=True,
+            viscosity_solid=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    from aragog.jax.phase import PhaseParams
+
+    jax_phase_kwargs = dict(
+        phi_rheo=0.4,
+        phi_width=0.15,
+        viscosity_solid=1.0e22,
+        viscosity_liquid=1.0e2,
+        grain_size=1.0e-3,
+        k_solid=4.0,
+        k_liquid=4.0,
+        matprop_smooth_width=0.01,
+        conduction=True,
+        convection=True,
+        grav_sep=False,
+        mixing=False,
+        eddy_diff_thermal=1.0,
+        eddy_diff_chemical=1.0,
+        kappah_floor=0.0,
+    )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseParams(
+            **jax_phase_kwargs,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+    # The ceiling applies only with the rheology enabled.
+    pp_off = PhaseParams(
+        **jax_phase_kwargs,
+        rheology=SolidRheologyParams(enabled=False, viscosity_max_log10=21.0),
+    )
+    assert float(pp_off.log10_visc_solid) == pytest.approx(22.0, rel=1.0e-12)
+
+    for bad_visc in (jnp.asarray(1.0e22), 10**400):
+        with pytest.raises(ValueError):
+            PhaseConfig(
+                density=4000.0,
+                heat_capacity=1000.0,
+                melt_fraction=0.0,
+                thermal_conductivity=4.0,
+                thermal_expansivity=3.0e-5,
+                viscosity=bad_visc,
+                rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+            )
+
+    # 4. 1-D w_lid length mismatch in compute_effective_viscosity raises ValueError.
+    with pytest.raises(ValueError, match='w_lid'):
+        compute_effective_viscosity(
+            eta_diff=np.full(10, 1.0e22),
+            eta_i=1.0e20,
+            tau_d=1.0e7,
+            tau_y_lid=5.0e7,
+            stress_closure_mode='lid',
+            w_lid=np.ones(5),
+            xp=np,
+        )
+
+    # 5. Huge Python int (10**400) raises ValueError instead of OverflowError.
+    for call_kwargs in (
+        {'pressure': 10**400},
+        {'pressure': 0.0, 'g_homologous': 10**400},
+    ):
+        with pytest.raises(ValueError):
+            compute_arrhenius_enthalpy(**call_kwargs, xp=np)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bad', [False, 5, 'x'], ids=['bool', 'int', 'str'])
+def test_jax_phase_params_rheology_of_the_wrong_type_names_the_field(bad):
+    """The JAX PhaseParams refuses a rheology that is not a mapping, a
+    SolidRheologyParams or None with a TypeError naming the field and the type."""
+    from aragog.jax.phase import PhaseParams
+
+    try:
+        PhaseParams(
+            phi_rheo=0.4,
+            phi_width=0.15,
+            viscosity_solid=1.0e22,
+            viscosity_liquid=1.0e2,
+            grain_size=1.0e-3,
+            k_solid=4.0,
+            k_liquid=4.0,
+            matprop_smooth_width=0.01,
+            conduction=True,
+            convection=True,
+            grav_sep=False,
+            mixing=False,
+            eddy_diff_thermal=1.0,
+            eddy_diff_chemical=1.0,
+            kappah_floor=0.0,
+            rheology=bad,
+        )
+    except Exception as exc:
+        assert isinstance(exc, TypeError), f'expected TypeError, got {exc!r}'
+        assert 'rheology' in str(exc) and type(bad).__name__ in str(exc)
+    else:
+        pytest.fail(f'PhaseParams accepted rheology={bad!r}')
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_saturating_activation_enthalpy_and_viscosity():
+    """Verify saturating integral activation law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)), limits, validation, and solver wiring."""
+    import math
+
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+
+    # 1. Defaults preserve homologous law (activation_energy is None, activation_volume == 0.0, P_decay == +inf).
+    p_def = SolidRheologyParams()
+    assert p_def.activation_energy is None
+    assert p_def.activation_volume == 0.0
+    assert math.isinf(p_def.activation_volume_decay_pressure) and (
+        p_def.activation_volume_decay_pressure > 0.0
+    )
+
+    p_grid = np.array([0.0, 1.0e9, 25.0e9, 50.0e9, 100.0e9, 135.0e9, 500.0e9, 1000.0e9])
+    t_grid = np.linspace(1500.0, 2900.0, p_grid.size)
+    h_hom_np = compute_arrhenius_enthalpy(p_grid, xp=np)
+    h_none_np = compute_arrhenius_enthalpy(p_grid, activation_energy=None, xp=np)
+    np.testing.assert_array_equal(h_hom_np, h_none_np)
+    eta_hom_np = compute_arrhenius_viscosity(t_grid, p_grid, xp=np)
+    eta_none_np = compute_arrhenius_viscosity(t_grid, p_grid, activation_energy=None, xp=np)
+    np.testing.assert_array_equal(eta_hom_np, eta_none_np)
+
+    # 2. Cross-field and domain validation on SolidRheologyParams and compute_arrhenius_enthalpy.
+    for bad_kwargs, expected_substr in (
+        ({'activation_volume': 6.0e-6}, 'activation_energy'),
+        ({'activation_volume_decay_pressure': 200.0e9}, 'activation_energy'),
+        ({'enabled': True, 'activation_energy': 0.0}, 'activation_energy'),
+        ({'activation_energy': -1.0}, 'activation_energy'),
+        ({'activation_energy': math.inf}, 'activation_energy'),
+        ({'activation_energy': float('nan')}, 'activation_energy'),
+        ({'activation_energy': 300.0e3, 'activation_volume': -1.0e-6}, 'activation_volume'),
+        ({'activation_energy': 300.0e3, 'activation_volume': math.inf}, 'activation_volume'),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': 0.0},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': -10.0},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': -math.inf},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': float('nan')},
+            'activation_volume_decay_pressure',
+        ),
+    ):
+        with pytest.raises(ValueError, match=expected_substr):
+            SolidRheologyParams(**bad_kwargs)
+
+    for bool_kwargs in (
+        {'activation_energy': True},
+        {'activation_energy': 300.0e3, 'activation_volume': True},
+        {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': True},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            SolidRheologyParams(**bool_kwargs)
+
+    for bad_call, expected_field in (
+        ({'pressure': 1.0e9, 'activation_energy': -10.0}, 'activation_energy'),
+        ({'pressure': 1.0e9, 'activation_energy': math.inf}, 'activation_energy'),
+        (
+            {'pressure': 1.0e9, 'activation_energy': 300.0e3, 'activation_volume': -1.0e-6},
+            'activation_volume',
+        ),
+        (
+            {
+                'pressure': 1.0e9,
+                'activation_energy': 300.0e3,
+                'activation_volume_decay_pressure': 0.0,
+            },
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {
+                'pressure': 1.0e9,
+                'activation_energy': 300.0e3,
+                'activation_volume_decay_pressure': -1.0e9,
+            },
+            'activation_volume_decay_pressure',
+        ),
+        ({'pressure': 1.0e9, 'activation_volume': 6.0e-6}, 'activation_energy'),
+        (
+            {'pressure': 1.0e9, 'activation_volume_decay_pressure': 200.0e9},
+            'activation_energy',
+        ),
+    ):
+        with pytest.raises(ValueError, match=expected_field):
+            compute_arrhenius_enthalpy(**bad_call, xp=np)
+
+    # 3. Isobaric limit (V_0 = 0, Korenaga 2009 Table 1 E_a = 300 kJ/mol): H(P) == E_a.
+    e_a = 300.0e3
+    h_iso_np = compute_arrhenius_enthalpy(
+        p_grid, activation_energy=e_a, activation_volume=0.0, xp=np
+    )
+    h_iso_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid), activation_energy=e_a, activation_volume=0.0, xp=jnp
+        )
+    )
+    np.testing.assert_allclose(h_iso_np, e_a, rtol=1.0e-15, atol=0.0)
+    np.testing.assert_allclose(h_iso_jx, e_a, rtol=1.0e-15, atol=0.0)
+
+    eta_iso_np = compute_arrhenius_viscosity(
+        t_grid,
+        p_grid,
+        viscosity_solid=1.0e21,
+        arrhenius_t_ref=1600.0,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        viscosity_max_log10=60.0,
+        xp=np,
+    )
+    eta_iso_expected = 1.0e21 * np.exp((e_a / R_GAS) * (1.0 / t_grid - 1.0 / 1600.0))
+    np.testing.assert_allclose(eta_iso_np, eta_iso_expected, rtol=1.0e-13)
+
+    # Homologous parameters (solidus_temperature, g_homologous, t_sol_0, dt_sol_dp) are ignored
+    # when activation_energy is set, and t_sol_0 is not required when solidus_temperature is given.
+    sol_unused = np.linspace(1500.0, 4500.0, p_grid.size)
+    h_with_hom_np = compute_arrhenius_enthalpy(
+        p_grid,
+        g_homologous=42.0,
+        solidus_temperature=sol_unused,
+        t_sol_0=None,
+        dt_sol_dp=9.9e-8,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        xp=np,
+    )
+    h_with_hom_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            g_homologous=42.0,
+            solidus_temperature=jnp.asarray(sol_unused),
+            t_sol_0=None,
+            dt_sol_dp=9.9e-8,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            xp=jnp,
+        )
+    )
+    np.testing.assert_array_equal(h_with_hom_np, h_iso_np)
+    np.testing.assert_array_equal(h_with_hom_jx, h_iso_jx)
+
+    eta_with_hom_np = compute_arrhenius_viscosity(
+        t_grid,
+        p_grid,
+        viscosity_solid=1.0e21,
+        g_homologous=42.0,
+        solidus_temperature=sol_unused,
+        t_sol_0=None,
+        dt_sol_dp=9.9e-8,
+        arrhenius_t_ref=1600.0,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        viscosity_max_log10=60.0,
+        xp=np,
+    )
+    eta_with_hom_jx = np.asarray(
+        compute_arrhenius_viscosity(
+            jnp.asarray(t_grid),
+            jnp.asarray(p_grid),
+            viscosity_solid=1.0e21,
+            g_homologous=42.0,
+            solidus_temperature=jnp.asarray(sol_unused),
+            t_sol_0=None,
+            dt_sol_dp=9.9e-8,
+            arrhenius_t_ref=1600.0,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            viscosity_max_log10=60.0,
+            xp=jnp,
+        )
+    )
+    eta_iso_jx = np.asarray(
+        compute_arrhenius_viscosity(
+            jnp.asarray(t_grid),
+            jnp.asarray(p_grid),
+            viscosity_solid=1.0e21,
+            arrhenius_t_ref=1600.0,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            viscosity_max_log10=60.0,
+            xp=jnp,
+        )
+    )
+    np.testing.assert_array_equal(eta_with_hom_np, eta_iso_np)
+    np.testing.assert_array_equal(eta_with_hom_jx, eta_iso_jx)
+
+    # 4. Linear activation-volume limit (P_decay = +inf, Karato & Wu 1993 E_a = 300 kJ/mol, V_0 = 6 cm^3/mol)
+    # and Taylor expansion accuracy for small x = P / P_decay < 1e-8.
+    v_0 = 6.0e-6
+    h_lin_np = compute_arrhenius_enthalpy(
+        p_grid,
+        activation_energy=e_a,
+        activation_volume=v_0,
+        activation_volume_decay_pressure=math.inf,
+        xp=np,
+    )
+    h_lin_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=math.inf,
+            xp=jnp,
+        )
+    )
+    h_lin_expected = e_a + v_0 * p_grid
+    np.testing.assert_allclose(h_lin_np, h_lin_expected, rtol=1.0e-15)
+    np.testing.assert_allclose(h_lin_jx, h_lin_expected, rtol=1.0e-15)
+
+    p_test = 10.0e9
+    p_decay_huge = 1.0e20  # x = 1e-10 < 1e-8 enters Taylor branch
+    h_taylor = float(
+        compute_arrhenius_enthalpy(
+            p_test,
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay_huge,
+            xp=np,
+        )
+    )
+    expected_taylor = e_a + v_0 * p_test * (1.0 - 0.5 * (p_test / p_decay_huge))
+    assert h_taylor == pytest.approx(expected_taylor, rel=1.0e-15)
+
+    # 5. Saturating integral law vs. Tackley et al. (2013) secant law:
+    # Integral law is strictly increasing and concave for all P > 0 and approaches E_a + V_0 P_decay.
+    e_pv = 370.0e3
+    v_pv = 3.65e-6
+    p_dec = 200.0e9
+    h_sat_np = compute_arrhenius_enthalpy(
+        p_grid,
+        activation_energy=e_pv,
+        activation_volume=v_pv,
+        activation_volume_decay_pressure=p_dec,
+        xp=np,
+    )
+    h_sat_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=jnp,
+        )
+    )
+    h_sat_expected = e_pv - v_pv * p_dec * np.expm1(-p_grid / p_dec)
+    np.testing.assert_allclose(h_sat_np, h_sat_expected, rtol=1.0e-15)
+    np.testing.assert_allclose(h_sat_jx, h_sat_expected, rtol=1.0e-15)
+    assert np.all(np.diff(h_sat_np) > 0.0)
+    h_asymptote = e_pv + v_pv * p_dec
+    assert np.all(h_sat_np < h_asymptote)
+    # At P = 135 GPa (index 5, x = 0.675): integral form gives 728.316 kJ/mol.
+    assert h_sat_np[5] == pytest.approx(
+        e_pv + v_pv * p_dec * (1.0 - np.exp(-135.0 / 200.0)), rel=1.0e-15
+    )
+
+    # Taylor threshold continuity across x = 1e-8 +/- 1e-10 and mutant check at x = 5e-7 (Lens 2 F4b)
+    x_lo = 1.0e-8 - 1.0e-10
+    x_hi = 1.0e-8 + 1.0e-10
+    p_lo = x_lo * p_dec
+    p_hi = x_hi * p_dec
+    h_lo = float(
+        compute_arrhenius_enthalpy(
+            p_lo,
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    h_hi = float(
+        compute_arrhenius_enthalpy(
+            p_hi,
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    dh_exp = v_pv * (p_hi - p_lo) * (1.0 - 1.0e-8)
+    assert abs((h_hi - h_lo) - dh_exp) / dh_exp < 1.0e-6
+    x_mid = 5.0e-7
+    p_mid = x_mid * p_dec
+    h_mid = float(
+        compute_arrhenius_enthalpy(
+            p_mid,
+            activation_energy=0.0,
+            activation_volume=1.0,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    assert h_mid == pytest.approx(float(-p_dec * np.expm1(-x_mid)), rel=1.0e-15, abs=0.0)
+    assert h_mid != float(p_mid * (1.0 - 0.5 * x_mid))
+
+    # 6. Propagation through compute_stagnant_lid_state in NumPy and JAX.
+    n = 20
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p_prof = np.linspace(135.0e9, 1.0e5, n)
+    t_prof = np.full(n, 1600.0)
+    t_prof[-4:] = np.linspace(1600.0, 300.0, 4)
+    fc = np.full(n, 0.08)
+    fc[-4:] = 0.0
+    ft = np.full(n, 0.10)
+    phi = np.zeros(n)
+    params_sat = SolidRheologyParams(
+        enabled=True,
+        activation_energy=e_pv,
+        activation_volume=v_pv,
+        activation_volume_decay_pressure=p_dec,
+        arrhenius_t_ref=1600.0,
+    )
+    st_sat_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_prof,
+        pressure=p_prof,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sat,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    st_sat_jx = compute_stagnant_lid_state(
+        radii=jnp.asarray(r),
+        temperature=jnp.asarray(t_prof),
+        pressure=jnp.asarray(p_prof),
+        convective_flux=jnp.asarray(fc),
+        total_flux=jnp.asarray(ft),
+        solidus_temperature=None,
+        melt_fraction=jnp.asarray(phi),
+        params=params_sat,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=jnp,
+    )
+    p_ti = float(st_sat_np['P_T_i'])
+    h_ti_expected = e_pv - v_pv * p_dec * math.expm1(-p_ti / p_dec)
+    theta_expected = (h_ti_expected * (1600.0 - 300.0)) / (R_GAS * 1600.0**2)
+    assert float(st_sat_np['theta']) == pytest.approx(theta_expected, rel=1.0e-12)
+    assert float(st_sat_jx['theta']) == pytest.approx(float(st_sat_np['theta']), rel=1.0e-13)
+    assert float(st_sat_jx['eta_i']) == pytest.approx(float(st_sat_np['eta_i']), rel=1.0e-13)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
     """Verify eta reaches the ceiling, not exp(-H_0 / (R T_ref)), when H(P) overflows to +inf."""
+    from aragog.rheology import (
+        _compute_arrhenius_enthalpy_core,
+        _compute_arrhenius_viscosity_core,
+    )
+
     for xp_name in ('np', 'jnp'):
         if xp_name == 'jnp':
             jax = pytest.importorskip('jax')
@@ -2915,15 +3564,22 @@ def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
         h_p = compute_arrhenius_enthalpy(
             1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
         )
+        h_p_core = _compute_arrhenius_enthalpy_core(
+            1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
+        )
         assert np.isposinf(float(h_p))
+        assert np.isposinf(float(h_p_core))
         for kwargs in (
             {'pressure': 1.0e9, 'solidus_temperature': 1.0e307, 't_sol_0': 1400.0},
             {'pressure': 1.0e308, 'dt_sol_dp': 1.0},
         ):
             eta = float(compute_arrhenius_viscosity(1600.0, xp=xp, **kwargs))
-            # Dropping the infinite H(P) to 0 gives 1e21 * exp(-21.875) = 3.2e11 Pa s.
+            eta_core = float(_compute_arrhenius_viscosity_core(1600.0, xp=xp, **kwargs))
+            # Dropping the infinite H(P) to 0 or H_0 gives <= 1e21 Pa s instead of the 1e40 ceiling.
             assert np.log10(eta) == pytest.approx(40.0, abs=1.0e-9)
+            assert np.log10(eta_core) == pytest.approx(40.0, abs=1.0e-9)
             assert abs(np.log10(eta) - np.log10(1.0e21 * np.exp(-21.875))) > 25.0
+            assert abs(np.log10(eta_core) - 21.0) > 15.0
 
 
 @pytest.mark.unit

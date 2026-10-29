@@ -21,6 +21,7 @@ from aragog.utilities import (
     is_monotonic_increasing,
     is_number,
     tanh_weight,
+    zero_anchored_weight,
 )
 
 pytestmark = pytest.mark.unit
@@ -176,6 +177,17 @@ def test_tanh_weight_array_input_returns_array():
     # Symmetry: f(threshold + d) + f(threshold - d) == 1.
     # Distance from threshold is symmetric (200 each side).
     assert float(out[0] + out[2]) == pytest.approx(1.0, abs=1e-15)
+
+
+def test_zero_anchored_weight_is_anchored_and_clipped_to_the_unit_interval():
+    """The weight is 0 at 0 and 1 at 1, and inputs outside [0, 1] clip to the end values."""
+    values = np.array([-0.5, 0.0, 0.5, 1.0, 1.5])
+    out = np.asarray(zero_anchored_weight(tanh_weight, values, 0.4, 0.15))
+    assert out[1] == 0.0
+    assert out[3] == pytest.approx(1.0, abs=1.0e-15)
+    assert 0.0 < out[2] < 1.0
+    assert out[0] == 0.0
+    assert out[4] == 1.0
 
 
 # ---- combine_properties ----------------------------------------------------

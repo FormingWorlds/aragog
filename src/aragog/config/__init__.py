@@ -23,6 +23,7 @@ from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
+from aragog.rheology import SolidRheologyParams
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -36,6 +37,7 @@ __all__ = [
     'MixedPhaseConfig',
     'PhaseConfig',
     'RadionuclideConfig',
+    'SolidRheologyParams',
     'SolverConfig',
 ]
 
@@ -117,6 +119,7 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
+            _reject_flat_rheology,
             _resolve_data_paths,
             _SolverParameters,
         )
@@ -138,8 +141,21 @@ class Config:
         mesh = _MeshParameters(**data['mesh'])
         energy = _EnergyParameters(**data['energy'])
         initial_condition = _InitialConditionParameters(**data.get('initial_condition', {}))
-        phase_liquid = _PhaseParameters(**data['phase_liquid'])
-        phase_solid = _PhaseParameters(**data['phase_solid'])
+        phase_data: dict[str, dict] = {}
+        for name in ('phase_liquid', 'phase_solid'):
+            phase_data[name] = dict(data[name])
+            if f'{name}.rheology' in data:
+                if 'rheology' in phase_data[name]:
+                    raise ValueError(
+                        f"Cannot specify both data['{name}']['rheology'] and "
+                        f"data['{name}.rheology']"
+                    )
+                phase_data[name]['rheology'] = data[f'{name}.rheology']
+        for name, section in phase_data.items():
+            _reject_flat_rheology(name, section)
+
+        phase_liquid = _PhaseParameters(**phase_data['phase_liquid'])
+        phase_solid = _PhaseParameters(**phase_data['phase_solid'])
         phase_mixed = _PhaseMixedParameters(**data['phase_mixed'])
 
         radionuclides: list[_Radionuclide] = []

@@ -52,3 +52,4 @@ With $m > 0$ the floor is armed in every solve with the entropy EOS, except on t
 - [CVODE and JAX explainer](../Explanations/cvode_jax.md): why the analytic Jacobian helps and how `set_jax_cvode_factory` is wired.
 - [`phi_step_cap` how-to](phi-step-cap.md): SUNDIALS-rootfn capping of $|\Delta\phi|$ across a step.
 - [Installation: production solver path](installation.md#production-solver-path-sundials-cvode-jax-analytic-jacobian): runtime requirement for `use_jax_jacobian = true`.
+- [Solid-state convection explainer](../Explanations/solid_state_convection.md): mantle rheology, stagnant-lid closures, and step control during solid-state thermal evolution.

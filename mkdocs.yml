@@ -36,6 +36,7 @@ nav:
       - Fixed surface temperature: Tutorials/surface_temperature.md
       - Properties at the solidus: Tutorials/phase_blend.md
       - Refining the mesh: Tutorials/mesh_refinement.md
+      - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
       - Overview:

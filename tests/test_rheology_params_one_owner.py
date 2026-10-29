@@ -20,7 +20,7 @@ from aragog.rheology import (
     merge_rheology,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 EXPECTED_FIELDS = {
     'enabled',
@@ -43,6 +43,9 @@ EXPECTED_FIELDS = {
     'mlt_bottom_slope',
     's_top_inf',
     'c_theta',
+    'activation_energy',
+    'activation_volume',
+    'activation_volume_decay_pressure',
 }
 
 
@@ -54,6 +57,64 @@ def test_solid_rheology_params_has_expected_fields():
     assert field_names == EXPECTED_FIELDS
     assert not hasattr(rheo_mod, 'eta_eff')
     assert not hasattr(rheo_mod, 'eta_diff')
+
+
+def test_rheology_config_reference_table_matches_solid_rheology_params():
+    """Verify docs/How-to/configuration.md rheology reference table matches SolidRheologyParams.
+
+    Runs tools/generate_rheology_config_reference.py --check on the committed
+    documentation page to ensure every parameter is documented with its type,
+    unit, default, range, and effect.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    tool_path = repo_root / 'tools' / 'generate_rheology_config_reference.py'
+    doc_path = repo_root / 'docs' / 'How-to' / 'configuration.md'
+
+    assert tool_path.is_file(), f'Tool not found at {tool_path}'
+    assert doc_path.is_file(), f'Document not found at {doc_path}'
+
+    result = subprocess.run(
+        [sys.executable, str(tool_path), '--check', '--doc', str(doc_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f'Config reference check failed:\n{result.stderr}\n{result.stdout}'
+    )
+    assert f'all {len(dataclasses.fields(SolidRheologyParams))} fields' in result.stdout
+
+
+def test_rheology_config_reference_check_fails_on_missing_field(tmp_path):
+    """Canary test: verify --check fails when a field is removed from the table."""
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    tool_path = repo_root / 'tools' / 'generate_rheology_config_reference.py'
+    doc_path = repo_root / 'docs' / 'How-to' / 'configuration.md'
+
+    content = doc_path.read_text(encoding='utf-8')
+    mutated = re.sub(r'\|\s*`activation_energy`\s*\|.*?\n', '', content)
+    assert mutated != content, 'Failed to mutate document for canary test'
+
+    temp_doc = tmp_path / 'configuration.md'
+    temp_doc.write_text(mutated, encoding='utf-8')
+
+    result = subprocess.run(
+        [sys.executable, str(tool_path), '--check', '--doc', str(temp_doc)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, 'Check unexpectedly passed with missing field'
+    assert 'activation_energy' in result.stderr
 
 
 def test_phase_config_rheology_defaults_match():
@@ -180,6 +241,32 @@ def test_solid_rheology_params_unconditional_bounds_validation():
 
     with pytest.raises(ValueError, match='viscosity_max_log10'):
         SolidRheologyParams(enabled=False, viscosity_max_log10=15.0)
+
+
+@pytest.mark.parametrize('phase', ['phase_solid', 'phase_liquid'])
+def test_parameters_rechecks_the_viscosity_ceiling_of_a_changed_phase(phase):
+    """Parameters rejects a solid viscosity set above the ceiling after the phase was built
+    when the solid rheology is enabled; with the rheology off, and on the liquid phase,
+    whose rheology stays disabled, the same viscosity passes."""
+    import importlib.resources
+
+    from aragog.parser import Parameters
+
+    cfg = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    with importlib.resources.as_file(cfg) as path:
+        params = Parameters.from_file(path)
+    getattr(params, phase).viscosity = 1.0e301
+    assert dataclasses.replace(params).phase_solid.rheology.enabled is False
+    assert getattr(params, phase).viscosity == pytest.approx(1.0e301, rel=1.0e-15)
+
+    params.phase_solid.rheology = SolidRheologyParams(enabled=True)
+    if phase == 'phase_solid':
+        with pytest.raises(ValueError, match=r'must be > log10\(viscosity\) \(301'):
+            dataclasses.replace(params)
+    else:
+        assert dataclasses.replace(params).phase_liquid.viscosity == pytest.approx(
+            1.0e301, rel=1.0e-15
+        )
 
 
 def test_phase_config_merge_precedence():
@@ -517,11 +604,18 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert r'w_\text{lid,present}' in doc_text
     assert 'YIELD_BLEND_RATIO_WIDTH' in doc_text
     assert '$C^0$' in doc_text
+    assert 'max(T_i, 1.0)' not in doc_text
+    assert 'max(H_T_i, 1e-6)' not in doc_text
     for switch_token in (
         'DeltaT_conv',
         'max(theta, 1e-6)',
-        'max(T_i, 1.0)',
-        'max(H_T_i, 1e-6)',
+        'max(T_0, 1.0)',
+        'max(T_1, 1.0)',
+        'max(H_0, 1e-6)',
+        'max(H_1, 1e-6)',
+        'w_eff',
+        'dT_ep_nz',
+        'is_mono_T',
         'f_int_max',
         'max(dr_min, 1.0)',
         'max(Ra_rh_raw, 1e-30)',
@@ -787,6 +881,58 @@ def test_solid_rheology_params_bounds_covers_every_numeric_field():
 
 
 @pytest.mark.unit
+def test_rheology_bounds_edges():
+    """Verify each numerical field bound in _BOUNDS is strictly enforced at its edge."""
+    from aragog.rheology import _BOUNDS, SolidRheologyParams
+
+    for name, _pred, text in _BOUNDS:
+        if name == 'activation_volume':
+            SolidRheologyParams(activation_energy=1e5, activation_volume=0.0)
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(activation_energy=1e5, activation_volume=-1e-6)
+        elif name == 'activation_volume_decay_pressure':
+            SolidRheologyParams(activation_energy=1e5, activation_volume_decay_pressure=1e-6)
+            SolidRheologyParams(
+                activation_energy=1e5, activation_volume_decay_pressure=float('inf')
+            )
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(activation_energy=1e5, activation_volume_decay_pressure=0.0)
+        elif 'in (0, 1]' in text:
+            SolidRheologyParams(**{name: 1.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 1.0001})
+        elif 'non-negative' in text:
+            SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: -1e-6})
+        elif 'positive' in text:
+            SolidRheologyParams(**{name: 1e-6})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+        elif 'in (20, 300]' in text:
+            SolidRheologyParams(**{name: 300.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 20.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 300.001})
+        elif 'in [0.05, 0.5]' in text:
+            SolidRheologyParams(**{name: 0.05})
+            SolidRheologyParams(**{name: 0.5})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0499})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.5001})
+        elif 'in (0, 1)' in text:
+            SolidRheologyParams(**{name: 0.5})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 0.0})
+            with pytest.raises(ValueError, match=name):
+                SolidRheologyParams(**{name: 1.0})
+
+
+@pytest.mark.unit
 def test_arrhenius_viscosity_lower_exponent_clip_active():
     """Verify arrhenius viscosity clips exponent to -700 rather than -100."""
     from aragog.rheology import compute_arrhenius_viscosity
@@ -834,3 +980,137 @@ def test_arrhenius_enthalpy_exact_r_gas_codata_2018():
     )
     expected_h_g25 = 25.0 * 8.314462618 * t_sol_table
     np.testing.assert_allclose(h_g25, expected_h_g25, rtol=1.0e-12)
+
+
+def _abe_solid_toml(tmp_path, *, viscosity: str = '1e21', phase_solid_extra: str = ''):
+    """Write ``abe_solid.toml`` to ``tmp_path`` with a solid viscosity and extra
+    ``[phase_solid]`` keys; returns the file path."""
+    import importlib.resources
+
+    base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    assert 'viscosity = 1e21\n' in base
+    text = base.replace('[phase_solid]\n', f'[phase_solid]\n{phase_solid_extra}', 1).replace(
+        'viscosity = 1e21\n', f'viscosity = {viscosity}\n', 1
+    )
+    path = tmp_path / 'abe_solid_case.toml'
+    path.write_text(text, encoding='utf-8')
+    return path
+
+
+def _call(fn, *args, **kwargs):
+    """Return ``fn(*args, **kwargs)``; any exception fails the test on an assertion path."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        pytest.fail(f'{getattr(fn, "__name__", fn)} raised {exc!r}')
+
+
+def _raises(exc_type, pattern, fn, *args, **kwargs):
+    """Return the exception ``fn`` raises after asserting its type and message."""
+    import re
+
+    try:
+        fn(*args, **kwargs)
+    except Exception as exc:
+        assert isinstance(exc, exc_type), f'expected {exc_type.__name__}, got {exc!r}'
+        assert re.search(pattern, str(exc)), f'{pattern!r} not in {str(exc)!r}'
+        return exc
+    pytest.fail(f'{getattr(fn, "__name__", fn)} did not raise {exc_type.__name__}')
+
+
+@pytest.mark.parametrize('viscosity', [1.0e40, 1.0e41])
+def test_viscosity_ceiling_applies_only_with_the_rheology_enabled(tmp_path, viscosity):
+    """A solid viscosity at or above ``10**viscosity_max_log10`` (default 1e40 Pa s) loads
+    with the rheology off and is refused with the rheology on.
+
+    Edge case: 1e40 Pa s sits exactly on the default ceiling, which the enabled check
+    refuses (``viscosity_max_log10 <= log10(viscosity)``).
+    """
+    import importlib.resources
+
+    from aragog.parser import Parameters
+
+    params = _call(Parameters.from_file, _abe_solid_toml(tmp_path, viscosity=repr(viscosity)))
+    assert params.phase_solid.rheology.enabled is False
+    assert params.phase_solid.viscosity == pytest.approx(viscosity, rel=1.0e-15)
+
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as cfg:
+        bundled = Parameters.from_file(cfg)
+    off = _call(dataclasses.replace, bundled.phase_solid, viscosity=viscosity)
+    assert off.viscosity == pytest.approx(viscosity, rel=1.0e-15)
+    cfg_off = _call(
+        PhaseConfig,
+        density=4200.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=1.0e-5,
+        viscosity=viscosity,
+    )
+    assert cfg_off.viscosity == pytest.approx(viscosity, rel=1.0e-15)
+
+    msg = r'viscosity_max_log10 \(40\.0\) must be > log10\(viscosity\)'
+    on = SolidRheologyParams(enabled=True)
+    with pytest.raises(ValueError, match=msg):
+        dataclasses.replace(bundled.phase_solid, viscosity=viscosity, rheology=on)
+    with pytest.raises(ValueError, match=msg):
+        PhaseConfig(
+            density=4200.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=1.0e-5,
+            viscosity=viscosity,
+            rheology=on,
+        )
+    on_toml = _abe_solid_toml(
+        tmp_path, viscosity=repr(viscosity), phase_solid_extra='rheology = {enabled = true}\n'
+    )
+    with pytest.raises(ValueError, match=msg):
+        Parameters.from_file(on_toml)
+
+
+def _toml_value(literal: str):
+    """Return the Python value of a TOML literal."""
+    import tomllib
+
+    return tomllib.loads(f'v = {literal}')['v']
+
+
+@pytest.mark.parametrize(
+    ('literal', 'type_name'), [('false', 'bool'), ('5', 'int'), ('"x"', 'str')]
+)
+def test_rheology_entry_of_the_wrong_type_names_the_section_and_type(
+    tmp_path, literal, type_name
+):
+    """A ``rheology`` entry under ``[phase_solid]`` that is not a table is refused with
+    the section and the type in the message, not an AttributeError later."""
+    from aragog.parser import Parameters
+
+    path = _abe_solid_toml(tmp_path, phase_solid_extra=f'rheology = {literal}\n')
+    exc = _raises(ValueError, r'phase_solid\.rheology', Parameters.from_file, path)
+    assert type_name in str(exc)
+    assert isinstance(exc.__cause__, TypeError)
+
+    _raises(TypeError, f'rheology.*{type_name}', merge_rheology, _toml_value(literal), {})
+
+
+@pytest.mark.parametrize('value', ['x', [1], None], ids=['str', 'list', 'none'])
+def test_bounded_field_of_a_non_numeric_type_names_the_field(tmp_path, value):
+    """A string, list or None in a bounded rheology field raises a TypeError that names
+    the field, directly and through the TOML loader."""
+    from aragog.parser import Parameters
+
+    with pytest.raises(TypeError, match=r's_top_inf must be a real number') as exc_info:
+        SolidRheologyParams(s_top_inf=value)
+    assert repr(value) in str(exc_info.value)
+
+    if value is not None:
+        toml_value = '"x"' if value == 'x' else '[1]'
+        path = _abe_solid_toml(
+            tmp_path, phase_solid_extra=f'rheology = {{s_top_inf = {toml_value}}}\n'
+        )
+        with pytest.raises(ValueError, match=r's_top_inf must be a real number'):
+            Parameters.from_file(path)

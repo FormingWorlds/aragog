@@ -10,8 +10,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from aragog.config import Config
 from aragog.config.phases import PhaseConfig
+from aragog.parser import Parameters, _PhaseParameters
 from aragog.rheology import (
+    R_GAS,
     SolidRheologyParams,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
@@ -35,7 +38,7 @@ def _require_jax() -> tuple[Any, Any]:
     return jax, jnp
 
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 RHEOLOGY_FIELD_NAMES: tuple[str, ...] = tuple(f.name for f in fields(SolidRheologyParams))
 
@@ -71,7 +74,10 @@ BOUNDED_INTERVAL_FIELDS: tuple[str, ...] = (
 )
 
 NUMERIC_FIELD_NAMES: tuple[str, ...] = (
-    POSITIVE_FIELDS + NON_NEGATIVE_FIELDS + BOUNDED_INTERVAL_FIELDS
+    POSITIVE_FIELDS
+    + NON_NEGATIVE_FIELDS
+    + BOUNDED_INTERVAL_FIELDS
+    + ('activation_volume', 'activation_volume_decay_pressure')
 )
 
 
@@ -94,9 +100,30 @@ def _assert_wrong_types_raise_type_error(
 
 @st.composite
 def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
-    """Generate a valid dictionary covering all 20 SolidRheologyParams fields."""
+    """Generate a valid dictionary covering all 23 SolidRheologyParams fields."""
     enabled = draw(st.booleans())
     g_min = 1.0e-6 if enabled else 0.0
+    use_act = draw(st.booleans())
+    if use_act:
+        ea_min = 1.0e-3 if enabled else 0.0
+        act_energy: float | None = draw(
+            st.floats(min_value=ea_min, max_value=2.0e6, allow_nan=False, allow_infinity=False)
+        )
+        act_vol = draw(
+            st.floats(min_value=0.0, max_value=1.0e-3, allow_nan=False, allow_infinity=False)
+        )
+        act_p_decay = draw(
+            st.one_of(
+                st.just(float('inf')),
+                st.floats(
+                    min_value=1.0e3, max_value=1.0e14, allow_nan=False, allow_infinity=False
+                ),
+            )
+        )
+    else:
+        act_energy = None
+        act_vol = 0.0
+        act_p_decay = float('inf')
     return {
         'enabled': enabled,
         'g_homologous': draw(
@@ -113,7 +140,7 @@ def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
         ),
         'viscosity_max_log10': draw(
             st.floats(
-                min_value=np.nextafter(20.0, np.inf),
+                min_value=np.nextafter(21.0, np.inf),
                 max_value=300.0,
                 allow_nan=False,
                 allow_infinity=False,
@@ -172,7 +199,59 @@ def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
         'c_theta': draw(
             st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False)
         ),
+        'activation_energy': act_energy,
+        'activation_volume': act_vol,
+        'activation_volume_decay_pressure': act_p_decay,
     }
+
+
+def _expected_cross_field_error(d: dict[str, Any]) -> str | None:
+    """Return the expected ValueError substring for cross-field rules on d, or None if valid."""
+    if d['activation_energy'] is None:
+        if d['activation_volume'] != 0.0:
+            return 'activation_volume requires activation_energy to be set'
+        if np.isfinite(float(d['activation_volume_decay_pressure'])):
+            return 'activation_volume_decay_pressure requires activation_energy to be set'
+        if d['enabled'] and d['g_homologous'] <= 0.0:
+            return 'enabled=True requires positive g_homologous'
+    elif d['enabled'] and float(d['activation_energy']) <= 0.0:
+        return 'enabled=True requires positive activation_energy'
+    return None
+
+
+def _normalize_sub_dict(sub: dict[str, Any], defaults: dict[str, Any]) -> None:
+    """Ensure a random subset dict satisfies cross-field rules when merged with defaults."""
+    eff_ea = sub.get('activation_energy', defaults['activation_energy'])
+    eff_enabled = sub.get('enabled', defaults['enabled'])
+    if eff_ea is None:
+        if sub.get('activation_volume', defaults['activation_volume']) != 0.0 or np.isfinite(
+            float(
+                sub.get(
+                    'activation_volume_decay_pressure',
+                    defaults['activation_volume_decay_pressure'],
+                )
+            )
+        ):
+            sub['activation_energy'] = 3.0e5
+        elif eff_enabled and sub.get('g_homologous', defaults['g_homologous']) <= 0.0:
+            sub['g_homologous'] = 25.0
+    elif eff_enabled and float(eff_ea) <= 0.0:
+        sub['activation_energy'] = 3.0e5
+
+
+def _assert_raises_with_match(
+    exc_type: type[BaseException], match: str, kwargs: dict[str, Any]
+) -> None:
+    """Assert SolidRheologyParams(**kwargs) raises exc_type containing match via AssertionError."""
+    caught: BaseException | None = None
+    try:
+        SolidRheologyParams(**kwargs)
+    except BaseException as exc:  # noqa: BLE001
+        caught = exc
+    assert isinstance(caught, exc_type), (
+        f'Expected {exc_type.__name__} matching {match!r} for {kwargs!r}, got {caught!r}'
+    )
+    assert match in str(caught), f'Expected {match!r} in {caught!r} message for {kwargs!r}'
 
 
 def _make_phase_config(**kwargs: Any) -> PhaseConfig:
@@ -188,6 +267,21 @@ def _make_phase_config(**kwargs: Any) -> PhaseConfig:
     }
     base.update(kwargs)
     return PhaseConfig(**base)
+
+
+def _make_phase_parameters(**kwargs: Any) -> _PhaseParameters:
+    """Construct a _PhaseParameters with standard base material properties and extra kwargs."""
+    base: dict[str, Any] = {
+        'density': 4000.0,
+        'heat_capacity': 1000.0,
+        'melt_fraction': 0.0,
+        'thermal_conductivity': 4.0,
+        'thermal_expansivity': 1.0e-5,
+        'viscosity': 1.0e21,
+        'entropy': '',
+    }
+    base.update(kwargs)
+    return _PhaseParameters(**base)
 
 
 def _scalar_wrong_types_strategy() -> st.SearchStrategy[Any]:
@@ -214,47 +308,51 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
     override_dict: dict[str, Any],
     subset_keys: list[str],
 ) -> None:
-    """Verify PhaseConfig construction from SolidRheologyParams, flat kwargs, and dict."""
+    """Verify PhaseConfig and _PhaseParameters construction from SolidRheologyParams, flat kwargs, and dict."""
     params = SolidRheologyParams(**rheo_dict)
-    cfg_obj = _make_phase_config(rheology=params)
-    cfg_flat = _make_phase_config(**rheo_dict)
-    cfg_dict = _make_phase_config(rheology=rheo_dict)
+    for builder in (_make_phase_config, _make_phase_parameters):
+        cfg_obj = builder(rheology=params)
+        cfg_flat = builder(**rheo_dict)
+        cfg_dict = builder(rheology=rheo_dict)
 
-    assert cfg_obj.rheology == params
-    assert cfg_flat.rheology == params
-    assert cfg_dict.rheology == params
+        assert cfg_obj.rheology == params
+        assert cfg_flat.rheology == params
+        assert cfg_dict.rheology == params
 
-    for name in RHEOLOGY_FIELD_NAMES:
-        expected_val = rheo_dict[name]
-        assert hasattr(cfg_obj, name) and getattr(cfg_obj, name) == expected_val
-        assert hasattr(cfg_flat, name) and getattr(cfg_flat, name) == expected_val
-        assert hasattr(cfg_dict, name) and getattr(cfg_dict, name) == expected_val
-        with pytest.raises(AttributeError):
-            setattr(cfg_obj, name, expected_val)
+        for name in RHEOLOGY_FIELD_NAMES:
+            expected_val = rheo_dict[name]
+            assert hasattr(cfg_obj, name) and getattr(cfg_obj, name) == expected_val
+            assert hasattr(cfg_flat, name) and getattr(cfg_flat, name) == expected_val
+            assert hasattr(cfg_dict, name) and getattr(cfg_dict, name) == expected_val
+            with pytest.raises(AttributeError):
+                setattr(cfg_obj, name, expected_val)
 
-    partial_overrides = {k: override_dict[k] for k in subset_keys}
-    if partial_overrides.get('enabled', rheo_dict['enabled']) and (
-        partial_overrides.get('g_homologous', rheo_dict['g_homologous']) <= 0.0
-    ):
-        with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
-            _make_phase_config(rheology=params, **partial_overrides)
-    else:
-        cfg_merged = _make_phase_config(rheology=params, **partial_overrides)
-        expected_merged = SolidRheologyParams(**(rheo_dict | partial_overrides))
-        assert cfg_merged.rheology == expected_merged
+        partial_overrides = {k: override_dict[k] for k in subset_keys}
+        combined_dict = rheo_dict | partial_overrides
+        cross_err = _expected_cross_field_error(combined_dict)
+        if cross_err is not None:
+            with pytest.raises(ValueError, match=cross_err):
+                builder(rheology=params, **partial_overrides)
+        else:
+            cfg_merged = builder(rheology=params, **partial_overrides)
+            expected_merged = SolidRheologyParams(**combined_dict)
+            assert cfg_merged.rheology == expected_merged
 
-    with pytest.raises(ValueError, match='viscosity must not be None'):
-        _make_phase_config(viscosity=None, rheology=params)
+        if builder is _make_phase_config:
+            with pytest.raises(ValueError, match='viscosity must not be None'):
+                builder(viscosity=None, rheology=params)
+        else:
+            assert builder(viscosity=None, rheology=params).viscosity is None
 
-    # TOML reachability: tomllib parses `true`/`false` as bool, reaching PhaseConfig ->
-    # merge_rheology -> SolidRheologyParams; Config.from_dict / Parameters._from_toml
-    # stops earlier at _PhaseParameters, which does not accept rheology keys.
+    # TOML reachability: tomllib parses `true`/`false` as bool, reaching PhaseConfig and
+    # _PhaseParameters -> merge_rheology -> SolidRheologyParams.
     import tomllib
 
     assert set(NUMERIC_FIELD_NAMES) == set(RHEOLOGY_FIELD_NAMES) - {
         'enabled',
         'stress_closure_mode',
         'lid_base_mode',
+        'activation_energy',
     }
     toml_failures: list[str] = []
     for num_field in NUMERIC_FIELD_NAMES:
@@ -267,15 +365,19 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
                 'thermal_conductivity = 4.0\n'
                 'thermal_expansivity = 1.0e-5\n'
                 'viscosity = 1.0e21\n'
+                '[phase_solid.rheology]\n'
                 f'{num_field} = {bool_literal}\n'
             )
-            try:
-                PhaseConfig(**toml_data['phase_solid'])
-                toml_failures.append(f'{num_field}={bool_literal}->accepted')
-            except TypeError:
-                pass
-            except Exception as exc:
-                toml_failures.append(f'{num_field}={bool_literal}->raised {type(exc).__name__}')
+            for cls in (PhaseConfig, _PhaseParameters):
+                try:
+                    cls(**toml_data['phase_solid'])
+                    toml_failures.append(f'{cls.__name__}:{num_field}={bool_literal}->accepted')
+                except TypeError:
+                    pass
+                except Exception as exc:
+                    toml_failures.append(
+                        f'{cls.__name__}:{num_field}={bool_literal}->raised {type(exc).__name__}'
+                    )
     assert not toml_failures, f'TOML bools did not raise TypeError: {toml_failures}'
 
 
@@ -317,15 +419,13 @@ def test_hypothesis_merge_rheology_dict_round_trip_and_unknown_key(
     """Verify merge_rheology round-trip from dict and SolidRheologyParams and unknown-key error."""
     defaults = asdict(SolidRheologyParams())
     sub_base = {k: base_dict[k] for k in base_keys}
-    if sub_base.get('enabled', defaults['enabled']) and (
-        sub_base.get('g_homologous', defaults['g_homologous']) <= 0.0
-    ):
-        sub_base['g_homologous'] = 25.0
+    _normalize_sub_dict(sub_base, defaults)
 
     sub_overrides = {k: override_dict[k] for k in override_keys}
     combined = defaults | sub_base | sub_overrides
-    if combined['enabled'] and combined['g_homologous'] <= 0.0:
-        with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
+    cross_err = _expected_cross_field_error(combined)
+    if cross_err is not None:
+        with pytest.raises(ValueError, match=cross_err):
             merge_rheology(sub_base, sub_overrides)
     else:
         merged_from_dict = merge_rheology(sub_base, sub_overrides)
@@ -345,6 +445,11 @@ def test_hypothesis_merge_rheology_dict_round_trip_and_unknown_key(
         merge_rheology(SolidRheologyParams(), {unknown_key: 1.0})
     with pytest.raises(TypeError):
         _make_phase_config(**{unknown_key: 1.0})
+    with pytest.raises(
+        TypeError,
+        match=r'_PhaseParameters\.__init__\(\) got an unexpected keyword argument',
+    ):
+        _make_phase_parameters(**{unknown_key: 1.0})
 
 
 @pytest.mark.unit
@@ -442,6 +547,128 @@ def test_hypothesis_positive_and_non_negative_field_validators(
         POSITIVE_FIELDS + NON_NEGATIVE_FIELDS,
         (True, False, np.bool_(True), np.bool_(False), None, bad_str),
     )
+
+
+@pytest.mark.unit
+@settings(max_examples=50, deadline=None)
+@given(
+    ea_pos=st.floats(min_value=1.0e-6, max_value=2.0e6, allow_nan=False, allow_infinity=False),
+    v0_val=st.floats(min_value=0.0, max_value=1.0e-2, allow_nan=False, allow_infinity=False),
+    v0_pos=st.floats(
+        min_value=1.0e-12, max_value=1.0e-2, allow_nan=False, allow_infinity=False
+    ),
+    p_decay_pos=st.floats(
+        min_value=1.0e-6, max_value=1.0e14, allow_nan=False, allow_infinity=False
+    ),
+    neg_val=st.floats(max_value=-1.0e-12, allow_nan=False, allow_infinity=False),
+    bad_str=st.text(),
+)
+def test_hypothesis_activation_fields_and_cross_field_validators(
+    ea_pos: float,
+    v0_val: float,
+    v0_pos: float,
+    p_decay_pos: float,
+    neg_val: float,
+    bad_str: str,
+) -> None:
+    """Verify activation_energy, activation_volume, activation_volume_decay_pressure, and cross-field rules."""
+    # 1. Valid ranges when activation_energy is set:
+    p_valid = SolidRheologyParams(
+        enabled=True,
+        activation_energy=ea_pos,
+        activation_volume=v0_val,
+        activation_volume_decay_pressure=p_decay_pos,
+    )
+    assert p_valid.activation_energy == ea_pos
+    assert p_valid.activation_volume == v0_val
+    assert p_valid.activation_volume_decay_pressure == p_decay_pos
+
+    p_zero_ea_inf_p = SolidRheologyParams(
+        enabled=False,
+        activation_energy=0.0,
+        activation_volume=0.0,
+        activation_volume_decay_pressure=float('inf'),
+    )
+    assert p_zero_ea_inf_p.activation_energy == 0.0
+    assert p_zero_ea_inf_p.activation_volume == 0.0
+    assert np.isinf(p_zero_ea_inf_p.activation_volume_decay_pressure)
+
+    min_pos = float(np.nextafter(0.0, 1.0))
+    p_min_p = SolidRheologyParams(
+        enabled=False,
+        activation_energy=ea_pos,
+        activation_volume=v0_pos,
+        activation_volume_decay_pressure=min_pos,
+    )
+    assert p_min_p.activation_volume_decay_pressure == min_pos
+
+    # 2. Range validators when activation_energy is set:
+    for bad_ea in (neg_val, float('nan'), float('inf'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_energy must be non-negative and finite',
+            {'enabled': False, 'activation_energy': bad_ea},
+        )
+    for bad_v0 in (neg_val, float('nan'), float('inf'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_volume must be non-negative and finite',
+            {'enabled': False, 'activation_energy': ea_pos, 'activation_volume': bad_v0},
+        )
+    for bad_p in (0.0, -0.0, neg_val, float('nan'), float('-inf')):
+        _assert_raises_with_match(
+            ValueError,
+            'activation_volume_decay_pressure must be positive (finite or +inf)',
+            {
+                'enabled': False,
+                'activation_energy': ea_pos,
+                'activation_volume_decay_pressure': bad_p,
+            },
+        )
+
+    # 3. Cross-field rules when activation_energy is None or enabled is True:
+    _assert_raises_with_match(
+        ValueError,
+        'activation_volume requires activation_energy to be set',
+        {'enabled': False, 'activation_energy': None, 'activation_volume': v0_pos},
+    )
+    _assert_raises_with_match(
+        ValueError,
+        'activation_volume_decay_pressure requires activation_energy to be set',
+        {
+            'enabled': False,
+            'activation_energy': None,
+            'activation_volume_decay_pressure': p_decay_pos,
+        },
+    )
+    _assert_raises_with_match(
+        ValueError,
+        'enabled=True requires positive activation_energy',
+        {'enabled': True, 'activation_energy': 0.0},
+    )
+
+    # 4. Wrong types on activation_energy, activation_volume, and activation_volume_decay_pressure:
+    for wt_ea in (
+        True,
+        False,
+        np.bool_(True),
+        np.bool_(False),
+        bad_str,
+        [ea_pos],
+        np.array([ea_pos]),
+    ):
+        _assert_raises_with_match(
+            TypeError,
+            'activation_energy must be a real number',
+            {'enabled': False, 'activation_energy': wt_ea},
+        )
+    for f_name in ('activation_volume', 'activation_volume_decay_pressure'):
+        for wt_num in (True, False, np.bool_(True), np.bool_(False), None, bad_str):
+            _assert_raises_with_match(
+                TypeError,
+                'real number',
+                {'enabled': False, 'activation_energy': ea_pos, f_name: wt_num},
+            )
 
 
 @pytest.mark.unit
@@ -551,6 +778,237 @@ def test_hypothesis_bounded_interval_field_validators(
     _assert_wrong_types_raise_type_error(BOUNDED_INTERVAL_FIELDS, wrong_types)
 
 
+def _minimal_config_dict() -> dict[str, Any]:
+    """Return a minimal valid dictionary for Config.from_dict."""
+    return {
+        'solver': {'start_time': 0.0, 'end_time': 1.0, 'atol': 1.0e-9, 'rtol': 1.0e-9},
+        'boundary_conditions': {
+            'outer_boundary_condition': 1,
+            'outer_boundary_value': 1500.0,
+            'inner_boundary_condition': 3,
+            'inner_boundary_value': 4000.0,
+            'emissivity': 1.0,
+            'equilibrium_temperature': 273.0,
+            'core_heat_capacity': 880.0,
+        },
+        'mesh': {
+            'outer_radius': 6.371e6,
+            'inner_radius': 3.480e6,
+            'number_of_nodes': 10,
+            'mixing_length_profile': 'nearest_boundary',
+            'core_density': 10500.0,
+        },
+        'energy': {
+            'conduction': True,
+            'convection': True,
+            'gravitational_separation': False,
+            'mixing': False,
+            'radionuclides': False,
+            'tidal': False,
+        },
+        'initial_condition': {
+            'initial_condition': 1,
+            'surface_temperature': 3500.0,
+            'basal_temperature': 3500.0,
+        },
+        'phase_liquid': {
+            'density': 4000.0,
+            'heat_capacity': 1000.0,
+            'melt_fraction': 1.0,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3.0e-5,
+            'viscosity': 10.0,
+        },
+        'phase_solid': {
+            'density': 4200.0,
+            'heat_capacity': 1000.0,
+            'melt_fraction': 0.0,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3.0e-5,
+            'viscosity': 1.0e21,
+        },
+        'phase_mixed': {
+            'latent_heat_of_fusion': 4.0e5,
+            'rheological_transition_melt_fraction': 0.4,
+            'rheological_transition_width': 0.15,
+            'solidus': 'solidus.dat',
+            'liquidus': 'liquidus.dat',
+            'phase': 'solid',
+            'phase_transition_width': 0.01,
+            'grain_size': 1.0e-3,
+        },
+    }
+
+
+def _format_rheology_section(sub_dict: dict[str, Any], *, is_toml: bool) -> str:
+    """Serialize a [phase_solid.rheology] section in TOML or INI syntax."""
+    lines = ['\n[phase_solid.rheology]']
+    for k, v in sub_dict.items():
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            val_str = ('true' if v else 'false') if is_toml else ('True' if v else 'False')
+        elif isinstance(v, str):
+            val_str = f'"{v}"' if is_toml else v
+        else:
+            val_str = f'{v!r}'
+        lines.append(f'{k} = {val_str}')
+    return '\n'.join(lines) + '\n'
+
+
+@pytest.mark.unit
+@pytest.mark.timeout(300)
+@settings(max_examples=50, deadline=None)
+@given(
+    rheo_dict=valid_rheology_dict_strategy(),
+    subset_keys=st.lists(st.sampled_from(RHEOLOGY_FIELD_NAMES), unique=True),
+)
+def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
+    rheo_dict: dict[str, Any],
+    subset_keys: list[str],
+) -> None:
+    """Verify [phase_solid.rheology] round-trips every field through TOML, INI, and Config.from_dict."""
+    import importlib.resources
+    import tempfile
+    from pathlib import Path
+
+    defaults = asdict(SolidRheologyParams())
+    sub_dict = {k: rheo_dict[k] for k in subset_keys}
+    _normalize_sub_dict(sub_dict, defaults)
+
+    expected_full = SolidRheologyParams(**rheo_dict)
+    expected_sub = SolidRheologyParams(**sub_dict)
+
+    # 1. Config.from_dict: nested dict, SolidRheologyParams object, flat keys, and dotted section key
+    base_data = _minimal_config_dict()
+    assert Config.from_dict(base_data).phase_solid.rheology == SolidRheologyParams()
+
+    d_nested = _minimal_config_dict()
+    d_nested['phase_solid']['rheology'] = dict(rheo_dict)
+    p_nested = Config.from_dict(d_nested)
+    assert p_nested.phase_solid.rheology == expected_full
+    assert p_nested.phase_liquid.rheology == SolidRheologyParams()
+
+    d_obj = _minimal_config_dict()
+    d_obj['phase_solid']['rheology'] = expected_full
+    assert Config.from_dict(d_obj).phase_solid.rheology == expected_full
+
+    d_flat = _minimal_config_dict()
+    d_flat['phase_solid'].update(sub_dict)
+    if sub_dict:
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Config.from_dict(d_flat)
+    else:
+        assert Config.from_dict(d_flat).phase_solid.rheology == expected_sub
+
+    d_dotted = _minimal_config_dict()
+    d_dotted['phase_solid.rheology'] = dict(sub_dict)
+    p_dotted = Config.from_dict(d_dotted)
+    assert p_dotted.phase_solid.rheology == expected_sub
+
+    d_liq_dotted = _minimal_config_dict()
+    d_liq_dotted['phase_liquid.rheology'] = dict(sub_dict)
+    if expected_sub != SolidRheologyParams():
+        with pytest.raises(ValueError, match='phase_liquid'):
+            Config.from_dict(d_liq_dotted)
+    else:
+        assert Config.from_dict(d_liq_dotted).phase_liquid.rheology == expected_sub
+
+    d_conflict = _minimal_config_dict()
+    d_conflict['phase_solid']['rheology'] = dict(sub_dict)
+    d_conflict['phase_solid.rheology'] = dict(sub_dict)
+    with pytest.raises(ValueError, match='phase_solid'):
+        Config.from_dict(d_conflict)
+
+    d_liq_conflict = _minimal_config_dict()
+    d_liq_conflict['phase_liquid']['rheology'] = dict(sub_dict)
+    d_liq_conflict['phase_liquid.rheology'] = dict(sub_dict)
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_dict(d_liq_conflict)
+
+    # 2. TOML and INI file round-trip for full 20-field dict and subset dict
+    toml_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    ini_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg').read_text()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        for label, payload, expected in (
+            ('full', rheo_dict, expected_full),
+            ('sub', sub_dict, expected_sub),
+        ):
+            toml_path = tmp / f'rheo_{label}.toml'
+            toml_path.write_text(
+                toml_base + _format_rheology_section(payload, is_toml=True),
+                encoding='utf-8',
+            )
+            ini_path = tmp / f'rheo_{label}.cfg'
+            ini_path.write_text(
+                ini_base + _format_rheology_section(payload, is_toml=False),
+                encoding='utf-8',
+            )
+
+            p_toml_parser = Parameters.from_file(toml_path)
+            p_toml_config = Config.from_toml(str(toml_path))
+            p_toml_auto = Config.from_file(str(toml_path))
+            p_ini_parser = Parameters.from_file(ini_path)
+            p_ini_auto = Config.from_file(str(ini_path))
+
+            for loaded in (
+                p_toml_parser,
+                p_toml_config,
+                p_toml_auto,
+                p_ini_parser,
+                p_ini_auto,
+            ):
+                assert loaded.phase_solid.rheology == expected
+                assert loaded.phase_liquid.rheology == SolidRheologyParams()
+                for name in RHEOLOGY_FIELD_NAMES:
+                    val = getattr(expected, name)
+                    assert getattr(loaded.phase_solid.rheology, name) == val
+                    assert getattr(loaded.phase_solid, name) == val
+
+        # Error contract on unknown key and invalid value in [phase_solid.rheology]
+        bad_toml_key = tmp / 'bad_key.toml'
+        bad_toml_key.write_text(
+            toml_base + '\n[phase_solid.rheology]\nunknown_rheo_field = 1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid'):
+            Parameters.from_file(bad_toml_key)
+
+        bad_ini_key = tmp / 'bad_key.cfg'
+        bad_ini_key.write_text(
+            ini_base + '\n[phase_solid.rheology]\nunknown_rheo_field = 1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid'):
+            Parameters.from_file(bad_ini_key)
+
+        bad_toml_val = tmp / 'bad_val.toml'
+        bad_toml_val.write_text(
+            toml_base + '\n[phase_solid.rheology]\ng_homologous = -1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Parameters.from_file(bad_toml_val)
+
+        bad_ini_val = tmp / 'bad_val.cfg'
+        bad_ini_val.write_text(
+            ini_base + '\n[phase_solid.rheology]\ng_homologous = -1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Parameters.from_file(bad_ini_val)
+
+        bad_ini_bool = tmp / 'bad_bool.cfg'
+        bad_ini_bool.write_text(
+            ini_base + '\n[phase_solid.rheology]\nenabled = 1\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match='enabled'):
+            Parameters.from_file(bad_ini_bool)
+
+
 def _make_valid_lid_inputs(n: int = 10) -> dict[str, Any]:
     r = np.linspace(3480e3, 6371e3, n)
     t = np.linspace(3000.0, 1600.0, n)
@@ -630,7 +1088,7 @@ def test_hypothesis_arrhenius_underflow_bound_property(vs: float, temp: float) -
     tiny = np.finfo(float).tiny
     t_ref = 50.0
     g_hom = 50.0
-    r_gas = 8.314462618
+    r_gas = R_GAS
     t_sol_0 = 1400.0
     # Unclipped exponent
     h_p = g_hom * r_gas * t_sol_0
@@ -1413,8 +1871,8 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
     )
     assert d_lid_raw <= upper_bound * (1.0 + 1.0e-12) + 1.0e-9
 
-    # Cold fixed-lid column where w_interior ~ 0 requires w_base_weight = tanh(smax_w / 1e-6) -> 0
-    # so r_lid_base relaxes to r[0] and d_lid_raw <= (r[-1] - r[0]) * w_active.
+    # Cold fixed-lid column (compact non-convective selector): convecting nodes have w_nonconv = 0 so r_lid_base = r[-3]
+    # with fc[-2:] = 0, r[-1] (d_lid = 0) when all nodes convect, and r[0] when no node convects.
     st_cold = compute_stagnant_lid_state(
         radii=r,
         temperature=np.linspace(400.0, 300.0, n),
@@ -1431,13 +1889,51 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
         phi_width=0.15,
         xp=np,
     )
-    assert float(st_cold['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold['r_lid_base']) == pytest.approx(float(r[-3]), rel=1.0e-9)
     assert float(st_cold['d_lid']) == pytest.approx(
-        float(r[-1] - r[0]) * float(st_cold['w_active']), rel=1.0e-9
+        float(r[-1] - r[-3]) * float(st_cold['w_active']), rel=1.0e-9
     )
     assert float(st_cold['d_lid']) <= float(r[-1] - r[0]) * float(st_cold['w_active']) * (
         1.0 + 1.0e-12
     )
+
+    st_cold_all_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=np.linspace(400.0, 300.0, n),
+        pressure=p,
+        convective_flux=np.full(n, f_scale * 100.0),
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cold_all_conv['r_lid_base']) == pytest.approx(float(r[-1]), rel=1.0e-9)
+    assert float(st_cold_all_conv['d_lid']) == 0.0
+
+    st_cold_no_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=np.linspace(400.0, 300.0, n),
+        pressure=p,
+        convective_flux=np.zeros(n),
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cold_no_conv['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold_no_conv['d_lid']) == 0.0
 
 
 @pytest.mark.unit
@@ -1507,3 +2003,126 @@ def test_hypothesis_smooth_rheology_blend_tails(
         )
     )
     assert eta_ceil == pytest.approx(10.0**vmax, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    log10_vs=st.floats(min_value=15.0, max_value=35.0, allow_nan=False, allow_infinity=False),
+    delta_vmax=st.floats(min_value=0.2, max_value=20.0, allow_nan=False, allow_infinity=False),
+    f_thresh=st.floats(min_value=0.05, max_value=0.30, allow_nan=False, allow_infinity=False),
+)
+def test_hypothesis_viscosity_max_cross_field_and_fixed_lid_convecting_selector(
+    log10_vs: float, delta_vmax: float, f_thresh: float
+) -> None:
+    """Property test for viscosity_max_log10 > log10(viscosity_solid) and fixed-mode non-convective w_lid selector."""
+    from aragog.config.phases import PhaseConfig
+    from aragog.rheology import compute_arrhenius_viscosity
+
+    vs = 10.0**log10_vs
+    vmax_valid = max(20.1, min(300.0, log10_vs + delta_vmax))
+    if vmax_valid > log10_vs:
+        eta_ok = compute_arrhenius_viscosity(
+            1600.0, 0.0, viscosity_solid=vs, viscosity_max_log10=vmax_valid
+        )
+        assert np.isfinite(eta_ok) and eta_ok > 0.0
+
+    vmax_bad = max(20.1, min(300.0, log10_vs - delta_vmax))
+    if vmax_bad <= log10_vs:
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_arrhenius_viscosity(
+                1600.0, 0.0, viscosity_solid=vs, viscosity_max_log10=vmax_bad
+            )
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            PhaseConfig(
+                density=4000.0,
+                heat_capacity=1000.0,
+                melt_fraction=0.0,
+                thermal_conductivity=4.0,
+                thermal_expansivity=3.0e-5,
+                viscosity=vs,
+                rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=vmax_bad),
+            )
+
+    # Fixed lid-base mode: every node with f_k >= f_thresh + 0.2 * f_thresh has w_lid[k] == 0.0.
+    n = 20
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.full(n, 1400.0)
+    t[-4:] = np.linspace(1400.0, 300.0, 4)
+    ft = np.ones(n)
+    fc = np.full(n, min(1.0, f_thresh * 1.25 + 1.0e-3))
+    fc[-4:] = 0.0
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True,
+            lid_base_mode='fixed',
+            lid_base_temperature=2000.0,
+            interior_flux_fraction=f_thresh,
+        ),
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert np.all(np.asarray(st['w_lid'])[:-4] == 0.0)
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    e_a=st.floats(min_value=50.0e3, max_value=1000.0e3, allow_nan=False, allow_infinity=False),
+    v_0=st.floats(min_value=0.0, max_value=30.0e-6, allow_nan=False, allow_infinity=False),
+    p_decay=st.floats(
+        min_value=1.0e6, max_value=5000.0e9, allow_nan=False, allow_infinity=False
+    ),
+    p_hi=st.floats(min_value=1.0e7, max_value=1000.0e9, allow_nan=False, allow_infinity=False),
+)
+def test_hypothesis_saturating_activation_law(
+    e_a: float, v_0: float, p_decay: float, p_hi: float
+) -> None:
+    """Property test for saturating integral activation enthalpy bounds, monotonicity, concavity, and JAX parity."""
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+    from aragog.rheology import compute_arrhenius_enthalpy
+
+    p_mid = 0.5 * p_hi
+    p_arr = np.array([0.0, p_mid, p_hi], dtype=float)
+    h_np = np.asarray(
+        compute_arrhenius_enthalpy(
+            p_arr,
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay,
+            xp=np,
+        ),
+        dtype=float,
+    )
+    h_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_arr),
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay,
+            xp=jnp,
+        ),
+        dtype=float,
+    )
+    np.testing.assert_allclose(h_np, h_jx, rtol=1.0e-14, atol=0.0)
+    # Exact zero-pressure anchor, non-decreasing monotonicity, concavity, and upper envelope bound:
+    assert h_np[0] == pytest.approx(e_a, rel=1.0e-15, abs=0.0)
+    assert h_np[0] <= h_np[1] * (1.0 + 1.0e-15)
+    assert h_np[1] <= h_np[2] * (1.0 + 1.0e-15)
+    # Concavity: midpoint enthalpy >= chord average 0.5 * (H(0) + H(p_hi))
+    assert h_np[1] + 1.0e-9 >= 0.5 * (h_np[0] + h_np[2])
+    upper_bound = e_a + v_0 * min(p_hi, p_decay)
+    assert h_np[2] <= upper_bound * (1.0 + 1.0e-14)

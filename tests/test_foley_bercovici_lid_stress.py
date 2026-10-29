@@ -16,10 +16,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-from aragog.rheology import SolidRheologyParams
+from aragog.rheology import SolidRheologyParams, _softmax2
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
     SOLIDUS_MELT_FRACTION_WIDTH,
+    _compute_stagnant_lid_state_core,
     compute_stagnant_lid_state,
 )
 
@@ -96,6 +97,8 @@ def test_fb2014_earth_reference_state():
     """
     inputs = _make_earth_reference_inputs()
     state = compute_stagnant_lid_state(**inputs)
+    assert 'd_lid_raw' in state
+    assert float(state['d_lid_raw']) >= float(state['d_lid'])
 
     t_i = float(state['T_i'])
     # Conductive lid nodes at f = 0 have zero weight under w_Ti (f_0 = 0.9, width = 0.02).
@@ -140,6 +143,41 @@ def test_fb2014_earth_reference_state():
     # Regression pin: on 50 nodes d_lid = 378391.41 m, giving tau_d_lid ~ 1.774 MPa.
     assert state['tau_d_lid'] == pytest.approx(1774312.943961, rel=1.0e-6)
     assert state['eta_contrast'] == pytest.approx(expected_eta_contrast, rel=1.0e-6)
+
+
+@pytest.mark.unit
+def test_core_lid_state_matches_the_public_lid_state_on_every_key():
+    """The unchecked core path, which the solver calls, gives the public result."""
+    inputs = _make_earth_reference_inputs()
+    public = compute_stagnant_lid_state(**inputs)
+    core = _compute_stagnant_lid_state_core(**inputs)
+    assert core.keys() == public.keys()
+    for key, value in public.items():
+        np.testing.assert_allclose(
+            np.asarray(core[key], dtype=float),
+            np.asarray(value, dtype=float),
+            rtol=1.0e-12,
+            err_msg=key,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('flux_scale', [1.0e-5, 1.0e-4])
+def test_interior_pressure_on_a_non_monotone_profile_ignores_temperature(flux_scale):
+    """On a non-monotone T profile, P_T_i and r_i are flux-weighted means with no T input.
+
+    The weak convective flux puts the interior weight between its two end values.
+    """
+    states = []
+    for bump in (0.0, 50.0):
+        inputs = _make_earth_reference_inputs()
+        inputs['temperature'] = inputs['temperature'].copy()
+        inputs['temperature'][2:40] += bump
+        inputs['convective_flux'] = inputs['convective_flux'] * flux_scale
+        states.append(_compute_stagnant_lid_state_core(**inputs))
+    assert float(states[1]['T_i']) > float(states[0]['T_i'])
+    assert float(states[1]['P_T_i']) == float(states[0]['P_T_i'])
+    assert float(states[1]['r_i']) == float(states[0]['r_i'])
 
 
 @pytest.mark.unit
@@ -610,8 +648,13 @@ def test_w_active_mesh_independence_and_low_flux_solver_continuity():
             w_act_gate = 0.5 * (1.0 + np.tanh((float(st['w_active']) - 0.05) / 0.0025))
             d_raw = float((r[-1] - st['r_lid_base']) * st['w_active'])
             assert float(st['d_lid']) == pytest.approx(w_act_gate * d_raw, rel=1.0e-6)
+            dr_top = max(float(r[-1] - r[-2]), 1.0e-6)
+            d_geom_floor = float(_softmax2(st['delta_rh'], dr_top, 0.01 * dr_top, np))
+            d_geom = float(
+                _softmax2(r[-1] - st['r_lid_base'], d_geom_floor, 0.01 * d_geom_floor, np)
+            )
             assert float(st['tau_d']) == pytest.approx(
-                float(st['tau_d_lid']) * d_raw / (float(st['w_active']) * (r[-1] - r[0])),
+                float(st['tau_d_lid']) * d_geom / (r[-1] - r[0]),
                 rel=1.0e-9,
             )
             assert abs(float(st['T_i']) - float(t[0])) > 1.0
@@ -1501,7 +1544,13 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
         if s_off == 0.0:
             assert float(st_off['tau_d_lid']) == 0.0
         else:
-            d_geom_off = max(float(r0[-1] - st_off['r_lid_base']), 1.0e-6)
+            dr_top_off = max(float(r0[-1] - r0[-2]), 1.0e-6)
+            d_floor_off = float(
+                _softmax2(st_off['delta_rh'], dr_top_off, 0.01 * dr_top_off, np)
+            )
+            d_geom_off = float(
+                _softmax2(r0[-1] - st_off['r_lid_base'], d_floor_off, 0.01 * d_floor_off, np)
+            )
             expected_off = (
                 float(st_off['w_active'])
                 * FB2014_STRESS_FACTOR
@@ -1531,7 +1580,9 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
         eta_i = float(st_s['eta_i'])
         v_m = float(st_s['v_m'])
         r_lid_base = float(st_s['r_lid_base'])
-        d_geom = max(float(r0[-1]) - r_lid_base, 1.0e-6)
+        dr_top_s = max(float(r0[-1] - r0[-2]), 1.0e-6)
+        d_floor_s = float(_softmax2(st_s['delta_rh'], dr_top_s, 0.01 * dr_top_s, np))
+        d_geom = float(_softmax2(float(r0[-1]) - r_lid_base, d_floor_s, 0.01 * d_floor_s, np))
         w_act = float(st_s['w_active'])
         tau_lid = float(st_s['tau_d_lid'])
         expected = w_act * FB2014_STRESS_FACTOR * eta_i * v_m / d_geom
@@ -1541,11 +1592,11 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
     for prev_val, curr_val in zip(tau_d_lid_vals[:-1], tau_d_lid_vals[1:], strict=True):
         assert curr_val > prev_val
     assert tau_d_lid_vals[0] < 0.1 * tau_d_lid_vals[-1]
-    assert tau_d_lid_vals[-1] == pytest.approx(89153746.66734585, rel=1.0e-12)
+    assert tau_d_lid_vals[-1] == pytest.approx(89153746.66533343, rel=1.0e-12)
 
     earth_inputs = _make_earth_reference_inputs()
     st_earth = compute_stagnant_lid_state(**earth_inputs)
-    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-12)
+    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439610392, rel=1.0e-12)
 
 
 @pytest.mark.unit
@@ -1809,7 +1860,7 @@ def test_tau_y_lid_evaluates_at_lid_base_pressure():
 
 @pytest.mark.unit
 def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
-    """Verify r_lid_base moves with phi_rheo and phi_width when T < T_sol."""
+    """Verify r_lid_base moves with phi_rheo and phi_width across non-convecting lid nodes when T < T_sol."""
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
     t_sol = np.full(n_nodes, 2500.0)
@@ -1833,15 +1884,31 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
     }
     st_base = compute_stagnant_lid_state(**base_inp)
 
-    # Shifting phi_rheo by +0.1 moves the transition deeper (smaller radius).
+    # Shifting phi_rheo by +0.1 moves the transition deeper into the conductive lid (smaller radius).
     st_a1 = compute_stagnant_lid_state(**{**base_inp, 'phi_rheo': 0.102})
-    assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 100.0e3
+    assert float(st_a1['r_lid_base']) == pytest.approx(5898163.265306123, rel=1.0e-12)
+    assert float(st_base['r_lid_base']) == pytest.approx(5924965.788707826, rel=1.0e-12)
+    assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 25.0e3
 
     # Doubling phi_width changes the smooth transition location.
     st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.002})
-    assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 100.0e3
-    # Regression pin: base r_lid_base ~ 5668.0 km
-    assert float(st_base['r_lid_base']) == pytest.approx(5668000.2, rel=1.0e-4)
+    assert float(st_l33['r_lid_base']) == pytest.approx(5961284.616364969, rel=1.0e-12)
+    assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 35.0e3
+
+    # Zero convective flux deactivates non-convective gating across the mantle.
+    st_zero = compute_stagnant_lid_state(**{**base_inp, 'convective_flux': np.zeros(n_nodes)})
+    assert float(st_zero['r_lid_base']) == pytest.approx(5668000.236544377, rel=1.0e-12)
+    assert float(st_zero['r_lid_base']) == pytest.approx(5668000.2, rel=1.0e-4)
+
+    # Melt ramp confined to the 8 non-convecting lid nodes (-8:): moves from 6190.27 km to 5898.16 km.
+    phi_lid = np.zeros(n_nodes)
+    phi_lid[-8:] = np.linspace(0.005, 0.0, 8)
+    st_lid_base = compute_stagnant_lid_state(**{**base_inp, 'melt_fraction': phi_lid})
+    st_lid_a1 = compute_stagnant_lid_state(
+        **{**base_inp, 'melt_fraction': phi_lid, 'phi_rheo': 0.102}
+    )
+    assert float(st_lid_base['r_lid_base']) == pytest.approx(6190274.209267668, rel=1.0e-12)
+    assert float(st_lid_a1['r_lid_base']) == pytest.approx(5898163.265306123, rel=1.0e-12)
 
 
 @pytest.mark.unit

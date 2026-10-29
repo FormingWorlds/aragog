@@ -81,6 +81,15 @@ thermal_conductivity = 4.0
 thermal_expansivity = 1.0e-5
 viscosity = 1.0e21
 
+[phase_solid.rheology]
+enabled = false
+g_homologous = 25.0
+stress_closure_mode = "lid"           # "lid" | "local"
+lid_base_mode = "rheological"         # "rheological" | "fixed"
+yield_stress_c = 50.0e6               # Pa
+yield_stress_mu = 0.6
+yield_stress_max = 500.0e6            # Pa
+
 [phase_liquid]
 density = "data/lookup/density_melt.dat"
 heat_capacity = "data/lookup/heat_capacity_melt.dat"
@@ -168,11 +177,11 @@ Spatial discretisation and pressure-density profile.
 | `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below); with `outer_boundary_condition = 5`, `"constant"` is refused unless `mixing_length_constant_fraction = 0` |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
 | `core_density` | kg/m³ | Mean core density |
-| `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
+| `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
 | `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or `initialize()` raises. Default 9.81 |
-| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
-| `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
+| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams-Williamson. Default 260e9 |
+| `adams_williamson_beta` | -- | A-W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
@@ -232,6 +241,38 @@ End-member phase properties. Float values mean a constant; string values are fil
 | `entropy` | J/kg/K | Optional reference entropy |
 
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
+
+### `[phase_solid.rheology]`
+
+Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid boundary layer stress closure, and mixing-length convection scaling. The optional saturating integral activation law couples `activation_energy`, `activation_volume`, and `activation_volume_decay_pressure` through $H(P) = E_a + V_0 P_\text{decay} (1 - \exp(-P / P_\text{decay}))$; activation_volume and a finite activation_volume_decay_pressure require activation_energy; with enabled = true, activation_energy must be positive. See [`docs/Explanations/solid_state_convection.md`](../Explanations/solid_state_convection.md) for theory and derivations.
+
+<!-- rheology-config-reference:start -->
+| Key | Type | Unit | Default | Range | Effect |
+|-----|------|------|---------|-------|--------|
+| `enabled` | `bool` | -- | `false` | `true` \| `false` | Enable solid-state mantle rheology and variable viscosity |
+| `g_homologous` | `float` | -- | `25.0` | \[0, inf); (0, inf) when enabled and activation_energy is unset | Homologous temperature scaling factor in activation enthalpy H(P) |
+| `t_sol_0` | `float` | K | `1400.0` | (0, inf) | Zero-pressure solidus temperature for linear solidus and enthalpy normalization |
+| `dt_sol_dp` | `float` | K/Pa | `2.4e-08` | \[0, inf) | Linear solidus Clapeyron slope when table solidus is absent |
+| `arrhenius_t_ref` | `float` | K | `1600.0` | (0, inf) | Reference temperature where mantle viscosity equals reference value at P=0 |
+| `viscosity_max_log10` | `float` | log10(Pa·s) | `40.0` | (20, 300] | Logarithmic viscosity ceiling preventing numerical overflow in cold lithosphere |
+| `water_prefactor` | `float` | -- | `1.0` | (0, inf) | Viscosity multiplier accounting for mantle hydration and volatile content |
+| `yield_stress_c` | `float` | Pa | `50000000.0` | \[0, inf) | Cohesion intercept in Byerlee brittle frictional yielding criterion |
+| `yield_stress_mu` | `float` | -- | `0.6` | \[0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
+| `yield_stress_max` | `float` | Pa | `500000000.0` | (0, inf) | Maximum ductile yield stress ceiling capping frictional strength at depth |
+| `stress_closure_mode` | `str` | -- | `"lid"` | `"lid"` \| `"local"` | Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress |
+| `interior_flux_fraction` | `float` | -- | `0.05` | \[0.05, 0.5] | Threshold on the convective flux fraction F_conv/F_tot (f_conv,min) |
+| `lid_base_mode` | `str` | -- | `"rheological"` | `"rheological"` \| `"fixed"` | Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm |
+| `lid_base_temperature` | `float` | K | `1400.0` | (0, inf) | Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed" |
+| `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
+| `lid_mask_width_cells` | `float` | cells | `1.0` | (0, inf) | Smoothing transition width at stagnant-lid base in cell units |
+| `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
+| `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
+| `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
+| `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local" |
+| `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
+| `activation_volume` | `float` | m³/mol | `0.0` | \[0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
+| `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |
+<!-- rheology-config-reference:end -->
 
 ### `[phase_mixed]`
 

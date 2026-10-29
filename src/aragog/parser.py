@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -37,6 +38,12 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
     check_matprop_smooth_width,
+)
+from aragog.rheology import (
+    SolidRheologyParams,
+    check_viscosity_ceiling,
+    delegate_rheology,
+    merge_rheology,
 )
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -354,6 +361,21 @@ class _PhaseMixedParameters:
             )
 
 
+_RHEOLOGY_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in fields(SolidRheologyParams))
+
+
+def _reject_flat_rheology(section_name: str, keys: Any, source: str = '') -> None:
+    """Raise ``ValueError`` when a phase section holds a rheology key outside its subtable."""
+    flat_rheo = [k for k in keys if k in _RHEOLOGY_FIELD_NAMES]
+    if flat_rheo:
+        raise ValueError(
+            f'Configuration error in [{section_name}]{source}: '
+            f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+            f'not flat in [{section_name}]'
+        )
+
+
+@delegate_rheology
 @dataclass
 class _PhaseParameters:
     """Stores settings in a phase section in the configuration data.
@@ -370,6 +392,34 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    rheology: SolidRheologyParams = field(default_factory=SolidRheologyParams)
+
+    def __init__(
+        self,
+        density: float | str,
+        heat_capacity: float | str,
+        melt_fraction: float,
+        thermal_conductivity: float | str,
+        thermal_expansivity: float | str,
+        viscosity: float | str,
+        entropy: float | str = '',
+        rheology: SolidRheologyParams | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        for key in kwargs:
+            if key not in _RHEOLOGY_FIELD_NAMES:
+                raise TypeError(
+                    f'_PhaseParameters.__init__() got an unexpected keyword argument {key!r}'
+                )
+        self.density = density
+        self.heat_capacity = heat_capacity
+        self.melt_fraction = melt_fraction
+        self.thermal_conductivity = thermal_conductivity
+        self.thermal_expansivity = thermal_expansivity
+        self.viscosity = viscosity
+        self.entropy = entropy
+        self.rheology = merge_rheology(rheology, kwargs)
+        check_viscosity_ceiling(viscosity, self.rheology)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
@@ -538,6 +588,14 @@ class Parameters:
                         f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
                         f'{r.half_life_years}); check the amplitude and t0_years'
                     )
+        if self.phase_liquid.rheology != SolidRheologyParams():
+            raise ValueError(
+                'Solid-state rheology is only supported on phase_solid; '
+                'phase_liquid.rheology must keep default values (enabled=False).'
+            )
+        check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
+        check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
+
         for r, r_scaled in zip(self.radionuclides, scaled):
             r.concentration = r_scaled.concentration
 
@@ -606,11 +664,23 @@ class Parameters:
                     f'Configuration error: missing required section [{section_name}] '
                     f'in {path.name}'
                 )
+            if dataclass_ is _PhaseParameters:
+                _reject_flat_rheology(section_name, section, f' of {path.name}')
             try:
                 init_dict[section_name] = dataclass_(**section)
-            except TypeError as exc:
+            except (TypeError, ValueError) as exc:
+                is_rheo_err = (
+                    dataclass_ is _PhaseParameters
+                    and 'rheology' in section
+                    and '_PhaseParameters.__init__()' not in str(exc)
+                )
+                err_sec = (
+                    f'{section_name}.rheology] of [{section_name}'
+                    if is_rheo_err
+                    else section_name
+                )
                 raise ValueError(
-                    f'Configuration error in [{section_name}] of {path.name}: {exc}'
+                    f'Configuration error in [{err_sec}] of {path.name}: {exc}'
                 ) from exc
 
         radionuclides: list[_Radionuclide] = []
@@ -647,9 +717,36 @@ class Parameters:
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
+            if dataclass_ is _PhaseParameters and parser.has_section(section_name):
+                _reject_flat_rheology(
+                    section_name,
+                    (k for k, _ in parser.items(section_name)),
+                    f' of {Path(filenames[0]).name}',
+                )
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )
+            rheology_section = f'{section_name}.rheology'
+            if dataclass_ is _PhaseParameters and parser.has_section(rheology_section):
+                if parser.has_option(rheology_section, 'enabled'):
+                    raw_enabled = parser.get(rheology_section, 'enabled').strip().lower()
+                    if raw_enabled not in ('true', 'false'):
+                        raise ValueError(
+                            f'Configuration error in [{rheology_section}]: enabled must be '
+                            f"a bool ('true' or 'false'), got "
+                            f'{parser.get(rheology_section, "enabled")!r}'
+                        )
+                try:
+                    init_dict[section_name].rheology = parser.parse_section(
+                        using_dataclass=SolidRheologyParams,
+                        section_name=rheology_section,
+                        extra='error',
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f'Configuration error in [{rheology_section}] of [{section_name}] '
+                        f'of {Path(filenames[0]).name}: {exc}'
+                    ) from exc
         radionuclides: list[_Radionuclide] = []
         for radionuclide_section in cls.radionuclide_sections(parser):
             radionuclide = parser.parse_section(

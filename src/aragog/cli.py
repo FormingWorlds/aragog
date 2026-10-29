@@ -751,9 +751,12 @@ def _serialize_params(params) -> dict:
     Walks the dataclass with dataclasses.asdict, then post-processes
     numpy-array fields (notably energy.tidal_array and the optional
     mesh.eos_* arrays loaded by __post_init__) into Python lists so
-    json.dumps does not choke. Skips fields with leading underscore.
+    json.dumps does not choke. Non-finite floats become the strings
+    ``"inf"``, ``"-inf"`` and ``"nan"``, which keeps the output strict JSON.
+    Skips fields with leading underscore.
     """
     import dataclasses
+    import math
 
     import numpy as np
 
@@ -765,9 +768,11 @@ def _serialize_params(params) -> dict:
         if isinstance(value, tuple):
             return [_convert(v) for v in value]
         if isinstance(value, np.ndarray):
-            return value.tolist()
+            return _convert(value.tolist())
         if isinstance(value, (np.floating, np.integer)):
-            return value.item()
+            value = value.item()
+        if isinstance(value, float) and not math.isfinite(value):
+            return str(value)
         return value
 
     return _convert(dataclasses.asdict(params))

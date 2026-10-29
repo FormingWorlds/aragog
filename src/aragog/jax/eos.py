@@ -56,6 +56,7 @@ class PhaseState(NamedTuple):
     gphi: jax.Array  # untruncated melt fraction
     smth: jax.Array  # mixed-vs-single blend factor
     latent_heat: jax.Array  # [J/kg]
+    solidus_temperature: jax.Array | None = None  # [K]
 
 
 def _tanh_weight_jax(x: jax.Array, threshold: float, width: float) -> jax.Array:
@@ -825,4 +826,5 @@ class EntropyEOS_JAX(eqx.Module):
             gphi=jnp.where(finite_S, gphi, jnp.nan),
             smth=jnp.where(finite_S, smth, jnp.nan),
             latent_heat=latent_heat,
+            solidus_temperature=T_sol,
         )
