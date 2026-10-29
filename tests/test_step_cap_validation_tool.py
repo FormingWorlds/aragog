@@ -1,4 +1,4 @@
-"""``tools/verification/run_step_cap_validation.py``: regime counts, case setup and refusals."""
+"""``tools/verification/run_step_cap_validation.py``: segment counts, case setup, checks, refusals."""
 
 from __future__ import annotations
 
@@ -28,19 +28,27 @@ _spec.loader.exec_module(tool)
 S_SOL, S_LIQ, MASS, DELTA = np.full(2, 100.0), np.full(2, 200.0), np.ones(2), 10.0
 
 
-def test_regime_4_when_no_cell_is_above_the_solidus():
-    """All cells at or below the solidus give Regime 4; the binding cell sits at 0.5 delta."""
+def test_subsolidus_when_no_cell_is_above_the_solidus():
+    """All cells at or below the solidus count as sub-solidus; no cell is a slow landing."""
     assert tool.regime(np.array([90.0, 95.0]), -np.ones(2), S_LIQ, S_SOL, MASS, DELTA) == (
         False,
         True,
     )
 
 
-def test_regime_3_needs_a_slow_binding_cell_near_a_boundary():
-    """A cell 3 J/(kg K) above the solidus binds; it is Regime 3 only below 0.05 delta per yr."""
+def test_slow_landing_needs_a_slow_binding_cell_near_a_boundary():
+    """A cell 3 J/(kg K) above the solidus binds; it is a slow landing only below 0.05 delta/yr."""
     S = np.array([103.0, 150.0])
     assert tool.regime(S, np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA) == (True, False)
     assert tool.regime(S, np.full(2, -1.0), S_LIQ, S_SOL, MASS, DELTA) == (False, False)
+
+
+def test_regime_takes_the_binding_cell_of_the_controller():
+    """The cell that sets the controller step decides the count, not the raw distance."""
+    S, dSdt, mass = np.array([100.1, 191.0]), np.array([-0.4, -1.0]), np.array([1.0, 0.0])
+    t_c = tool.es._rate_phase_boundary_times(S, dSdt, S_LIQ, S_SOL, mass, DELTA)
+    np.testing.assert_allclose(t_c, [12.5, 9.0])  # 0.5 delta / 0.4 against 9 / 1
+    assert tool.regime(S, dSdt, S_LIQ, S_SOL, mass, DELTA) == (False, False)
 
 
 def test_regime_counter_counts_calls_and_restores_the_cap():
@@ -50,14 +58,14 @@ def test_regime_counter_counts_calls_and_restores_the_cap():
     with tool.regime_counter() as counts:
         assert tool.es._rate_phase_boundary_max_step(*args) == original(*args)
         tool.es._rate_phase_boundary_max_step(np.array([90.0, 95.0]), *args[1:])
-    assert counts == {'segments': 2, 'regime_3': 1, 'regime_4': 1}
+    assert counts == {'segments': 2, 'slow_landing': 1, 'subsolidus': 1}
     assert tool.es._rate_phase_boundary_max_step is original
     with pytest.raises(RuntimeError), tool.regime_counter():
         raise RuntimeError
     assert tool.es._rate_phase_boundary_max_step is original
 
 
-def _row(mode, m, T, regime_3=0, S=(10.0, 20.0)):
+def _row(mode, m, T, slow=0, S=(10.0, 20.0)):
     return dict(
         mode=mode,
         tol=1e-8,
@@ -68,8 +76,8 @@ def _row(mode, m, T, regime_3=0, S=(10.0, 20.0)):
         S_min=S[0],
         S_max=S[1],
         segments=1,
-        regime_3=regime_3,
-        regime_4=0,
+        slow_landing=slow,
+        subsolidus=0,
     )
 
 
@@ -84,13 +92,13 @@ def test_run_v3_metrics_come_from_the_m0_start_and_the_reference(monkeypatch):
     """The error is m = 0 against 'fixed'; the envelope is the largest m != 0 offset from m = 0."""
     T = {-2: [1.0, 2.0], -1: [1.0, 2.5], 0: [1.0, 2.0], 1: [1.0, 2.0], 2: [0.75, 2.0]}
     rows = {('fixed', 0): _row('fixed', 0, [1.0, 3.0])}
-    rows.update({('rate', m): _row('rate', m, T[m], regime_3=int(m == 0)) for m in T})
+    rows.update({('rate', m): _row('rate', m, T[m], slow=int(m == 0)) for m in T})
     monkeypatch.setattr(tool, 'v3_run', lambda task: rows[task[2], task[4]])
     monkeypatch.setattr(tool, 'EntropyEOS', _Table)
     metrics = tool.run_v3('eos', 'v3_r3', workers=1)['metrics']
     assert metrics['max_dT_rate_vs_ref_K'] == 1.0
     assert metrics['round_off_envelope_K'] == 0.5
-    assert metrics['regime_3_segments'] == 1
+    assert metrics['slow_landing_segments'] == 1
     assert metrics['inside_table'] is True
     rows['rate', 2]['S_max'] = 101.0
     assert tool.run_v3('eos', 'v3_r3', workers=1)['metrics']['inside_table'] is False
@@ -102,7 +110,7 @@ def test_main_writes_the_case_result(monkeypatch, tmp_path):
 
     def fake_run_v3(eos_dir, name, workers, width):
         seen.update(eos_dir=eos_dir, name=name, workers=workers, width=width)
-        return dict(rows=[], metrics={'max_dT_rate_vs_ref_K': 0.0})
+        return dict(rows=[], metrics={'max_dT_rate_vs_ref_K': 0.0, 'inside_table': True})
 
     monkeypatch.setattr(tool, 'run_v3', fake_run_v3)
     monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')  # main() sets it; monkeypatch restores it
@@ -111,6 +119,46 @@ def test_main_writes_the_case_result(monkeypatch, tmp_path):
     assert tool.main([*args, str(out)]) == 0
     assert seen == {'eos_dir': 'E', 'name': 'v3_r4', 'workers': 3, 'width': 0.0}
     assert json.loads(out.read_text())['case'] == 'v3_r4'
+
+
+def test_check_names_each_failed_tolerance():
+    """check() fails a v3 error above the bound, a v4 failure, and an entropy outside the table."""
+    v3 = {'metrics': {'max_dT_rate_vs_ref_K': tool.V3_BOUND_K, 'inside_table': True}}
+    assert tool.check('v3_r3', v3) == []
+    v3['metrics'].update(max_dT_rate_vs_ref_K=1.01 * tool.V3_BOUND_K, inside_table=False)
+    assert tool.check('v3_r4', v3) == [f'|dT| > {tool.V3_BOUND_K} K', 'inside_table']
+    v4 = dict(status=0, passed_stall_point=True, solidified=True, inside_table=True)
+    assert tool.check('v4_rheo_on', v4) == []
+    v4.update(status=-1, solidified=False)
+    assert tool.check('v4_rheo_off', v4) == ['status -1', 'solidified']
+    v4.update(status=0, solidified=True, passed_stall_point=False)
+    assert tool.check('v4_rheo_off', v4) == ['passed_stall_point']
+
+
+def test_main_check_exits_1_on_a_failed_tolerance(monkeypatch, tmp_path, capsys):
+    """With --check a failed tolerance gives exit 1; without it the run still exits 0."""
+    bad = {'max_dT_rate_vs_ref_K': 1.0, 'inside_table': True}
+    monkeypatch.setattr(tool, 'run_v3', lambda *a: dict(rows=[], metrics=bad))
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
+    args = ['--case', 'v3_r3', '--eos-dir', 'E', '--output', str(tmp_path / 'r.json')]
+    assert tool.main([*args, '--check']) == 1
+    assert 'v3_r3: FAIL |dT|' in capsys.readouterr().out
+    assert tool.main(args) == 0
+
+
+def test_stop_after_stall_keeps_a_failed_status():
+    """Only a successful solid segment past the stall ends the loop; a failure stays a failure."""
+    import types
+
+    def res(status):
+        return types.SimpleNamespace(status=status, cvode_flag=2)
+
+    solid = {'phi_max': 0.0, 't_yr': 2.0}
+    assert tool.stop_after_stall(res(0), solid, 1.0).cvode_flag == 0
+    failed = tool.stop_after_stall(res(-3), solid, 1.0)
+    assert (failed.status, failed.cvode_flag) == (-3, 2)
+    assert tool.stop_after_stall(res(0), solid, 3.0).cvode_flag == 2
+    assert tool.stop_after_stall(res(0), {'phi_max': 0.1, 't_yr': 2.0}, 1.0).cvode_flag == 2
 
 
 def test_main_needs_an_eos_dir(monkeypatch):
@@ -130,14 +178,14 @@ def test_v4_refuses_a_table_that_is_not_the_paleos_low_t_set(tmp_path):
 
 @needs_eos
 def test_v3_starts_place_the_cells_against_the_solidus():
-    """v3_r3 puts cells 4 and 5 above the stiff zone and the rest 10 below; v3_r4 is uniform."""
+    """v3_r3 puts cells 4 and 5 above the stiff zone and the rest 15 below; v3_r4 is uniform."""
     eos = tool.EntropyEOS(str(EOS_DIR))
     S_sol = np.asarray(
         eos.solidus_entropy(tool._v3_solver(eos, tool.V3['v3_r3'], 'rate', 1e-8)._P_stag_flat)
     ).ravel()
     offset = tool.v3_start(eos, 'v3_r3') - S_sol
     np.testing.assert_allclose(offset[[4, 5]], [11.0, 12.5], rtol=0, atol=1e-9)
-    np.testing.assert_allclose(np.delete(offset, [4, 5]), -10.0, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(np.delete(offset, [4, 5]), -15.0, rtol=0, atol=1e-9)
     np.testing.assert_array_equal(
         tool.v3_start(eos, 'v3_r4'), np.full_like(S_sol, S_sol[-1] + 5.0)
     )
@@ -183,7 +231,7 @@ def test_v5b_driver_refuses_without_the_stop_hook(monkeypatch):
         v5b.install(reference=False)
 
 
-def test_v5b_stop_rule_ends_three_steps_after_phi_reaches_zero(monkeypatch):
+def test_v5b_stop_rule_ends_at_the_third_step_with_phi_zero(monkeypatch):
     """The patched stop ends the run at the 3rd step with Phi_global = 0; others go to PROTEUS."""
     import types
 

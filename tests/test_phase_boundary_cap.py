@@ -93,6 +93,13 @@ def test_rate_cap_floor_uses_the_mass_weighted_rate_and_the_nearer_boundary():
 
 
 @pytest.mark.unit
+def test_rate_cap_floor_skips_a_slow_cooling_cell_below_the_solidus():
+    """A slow sub-solidus cell next to a mushy cell has no boundary ahead and sets no time."""
+    S, dSdt = [980.0, 1200.0], [-1e-4, -1.0]
+    assert _cap(S, dSdt, rate_floor=True, fraction=1.0, bounds=WIDE) == pytest.approx(200.0)
+
+
+@pytest.mark.unit
 def test_rate_cap_applies_fraction_and_clip():
     assert _cap([1200.0], [-1.0]) == pytest.approx(20.0)
     assert _cap([1350.0], [-10.0]) == 1.0
@@ -1321,7 +1328,7 @@ def test_rate_mode_arms_and_completes_for_core_module(shared_eos, caplog):
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_boundary_landing_does_not_pin_cap_to_floor_across_segments(shared_eos):
-    """Mechanism 1: slow boundary landing does not pin max_step to 1 yr across segments."""
+    """A cell that starts a segment on its solidus does not pin max_step to 1 yr."""
     s = _solver(
         shared_eos,
         'rate',
@@ -1335,8 +1342,8 @@ def test_rate_mode_boundary_landing_does_not_pin_cap_to_floor_across_segments(sh
     )
     S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
     rate_delta = 10.0
-    S0 = S_sol.copy() - 10.0
-    S0[4] = S_sol[4] + rate_delta + 1.0
+    S0 = S_sol.copy() - 15.0
+    S0[4] = S_sol[4] + 1.0e-9  # inside the stiff zone, almost on the solidus
     S0[5] = S_sol[5] + rate_delta + 2.5
     s.set_initial_entropy(S0)
     s.solve()
@@ -1352,7 +1359,7 @@ def test_rate_mode_boundary_landing_does_not_pin_cap_to_floor_across_segments(sh
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eos):
-    """Mechanism 2: the 100 yr ceiling relaxes to inf once phi_max reaches zero.
+    """The 100 yr ceiling relaxes to inf once phi_max reaches zero.
 
     The case needs ``matprop_smooth_width = 0``: at the default width 0.01 the
     run ends after 3 segments, and max_step stays finite after the ceiling lifts.
@@ -1376,10 +1383,8 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
     s.solve()
     sol = s._solution
     assert sol.status == 0, f'Solver aborted with status {sol.status}'
-    phi_end = float(
-        getattr(sol, 'phi_global', [0.0])[-1] if hasattr(sol, 'phi_global') else 0.0
-    )
-    assert phi_end == 0.0
+    S_end = np.asarray(sol.y)[: s._n_stag, -1]
+    assert np.max(shared_eos.melt_fraction(s._P_stag_flat, S_end)) == 0.0
     segs = getattr(sol, 'segments', [])
     assert len(segs) >= 10
     S_all = np.asarray(sol.y)[: s._n_stag, :]
@@ -1427,9 +1432,13 @@ def test_rate_mode_lifts_hundred_year_cap_at_default_width_after_solidification(
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
-def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos):
-    """Regime 4 segments use rtol 1e-9 and atol 1e-8 while super-solidus keep caller tolerances."""
+def test_rate_mode_subsolidus_segment_tightens_loose_tolerances(shared_eos):
+    """Sub-solidus segments use rtol 1e-9 and atol 1e-8; super-solidus keep caller tolerances.
+
+    A loose caller rtol and a raised ``_atol_sf`` (as a retry raises them) stay clamped.
+    """
     s = _solver(shared_eos, 'rate', tol=1.0e-7, end_time=100.0)
+    s._atol_sf = 10.0
     S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
 
@@ -1481,13 +1490,10 @@ def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos)
 
     assert len(recorded) == 2, 'Expected two segments (super-solidus then sub-solidus)'
     assert recorded[0]['rtol'] == 1.0e-7, 'Super-solidus segment did not keep caller rtol'
+    assert recorded[0]['atol'][0] * scales.state_scale[0] >= 1.0e-6
 
     assert recorded[1]['rtol'] == 1.0e-9, 'Sub-solidus segment did not tighten rtol to 1e-9'
-    atol_phys = (
-        recorded[1]['atol'][0] * scales.state_scale[0]
-        if hasattr(recorded[1]['atol'], '__len__')
-        else recorded[1]['atol']
-    )
+    atol_phys = recorded[1]['atol'][0] * scales.state_scale[0]
     assert atol_phys == pytest.approx(1.0e-8), (
         'Sub-solidus segment did not set physical atol to 1e-8'
     )
@@ -1497,7 +1503,7 @@ def test_rate_mode_subsolidus_segment_tightens_tolerances_to_regime4(shared_eos)
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_subsolidus_segment_never_loosens_tighter_caller_tolerances(shared_eos):
-    """Regime 4 segments never loosen caller tolerances tighter than rtol 1e-9 and atol 1e-8."""
+    """Sub-solidus segments keep caller tolerances tighter than rtol 1e-9 and atol 1e-8."""
     s = _solver(shared_eos, 'rate', tol=1.0e-10, end_time=100.0)
     s._atol_sf = 1.0e-3
     S_sol = np.asarray(shared_eos.solidus_entropy(s._P_stag_flat)).ravel()
@@ -1526,12 +1532,8 @@ def test_rate_mode_subsolidus_segment_never_loosens_tighter_caller_tolerances(sh
     s.solve()
 
     assert len(recorded) == 1, 'Expected one segment'
-    assert recorded[0]['rtol'] == 1.0e-10, 'Regime 4 segment loosened caller rtol from 1e-10'
-    atol_phys = (
-        recorded[0]['atol'][0] * scales.state_scale[0]
-        if hasattr(recorded[0]['atol'], '__len__')
-        else recorded[0]['atol']
-    )
+    assert recorded[0]['rtol'] == 1.0e-10, 'Sub-solidus segment loosened caller rtol from 1e-10'
+    atol_phys = recorded[0]['atol'][0] * scales.state_scale[0]
     assert atol_phys == pytest.approx(1.0e-10), (
-        'Regime 4 segment loosened caller atol from 1e-10'
+        'Sub-solidus segment loosened caller atol from 1e-10'
     )

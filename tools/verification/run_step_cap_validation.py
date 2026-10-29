@@ -6,7 +6,7 @@ Computes the V3-R3, V3-R4 and V4 rows of ``docs/Validation/numerics.md``:
 Case         Nodes  End [yr]    Setting                          Result
 ===========  =====  ==========  ===============================  ================================
 v3_r3        12     1.5e4       F = 20 W/m^2, 2 cells above      max|T - T_ref|, round-off
-                                the stiff zone                   envelope, Regime 3/4 segments
+                                the stiff zone                   envelope, segment counts
 v3_r4        12     2e5         F = 200 W/m^2, start            as v3_r3, plus the entropy range
                                 S_sol + 5 J/(kg K)               against the table
 v4_rheo_off  100    1.2e8       abe_solid.toml, T_eq = 273 K,   stall point 107.655 Myr passed,
@@ -17,8 +17,10 @@ v4_rheo_on   100    1e9         as v4_rheo_off, stagnant-lid     stall point 83.
 
 The v3 cases use ``_build_mushy_parameters`` of ``tests/test_phi_step_cap_armed_smoke.py`` and
 the CI test table with ``matprop_smooth_width = 0``; their fluxes are chosen for the table's
-entropy range and they test the controller only. Each runs ``'fixed'`` at rtol = atol = 1e-10
-as the reference and ``'rate'`` at 1e-8 from S0 (1 + m 1e-12), m = -2..2. The v4 cases need
+entropy range and they test the controller only. The solver floors atol at 1e-8 and multiplies
+it by 10 when the mean start melt fraction is at most 0.01. Each case runs ``'fixed'`` at rtol
+1e-10 with ``solver._atol_sf`` set for a physical atol of at most 1e-10 as the reference, and
+``'rate'`` at rtol = atol = 1e-8 from S0 (1 + m 1e-12), m = -2..2. The v4 cases need
 the PALEOS low-temperature table set (``paleos_lowt_spider_eos_1350x281``). They stop at the
 first segment end with phi_max = 0 after the stall point, or at the end time of the case.
 Run from the repository root::
@@ -65,42 +67,39 @@ PALEOS_LOWT_MD5 = (
     '18d6f9eb5ba654d58fe3fad30ce118f0'  # temperature_solid.dat of the 1350 x 281 set
 )
 STARTS = (-2, -1, 0, 1, 2)
+V3_BOUND_K = 1.3e-4  # largest |dT| [K] of a v3 rate run against its reference
 
 
 def regime(S, dSdt, S_liq, S_sol, mass, delta, rate_floor=True, **_):
-    """Return (Regime 3, Regime 4) of one segment start of the rate cap.
+    """Return (slow landing, sub-solidus) of one segment start of the rate cap.
 
-    Regime 3: the binding cell is within 0.5 delta of a boundary and moves slower than
-    0.05 delta per year (rate floored at the mass-weighted mean). Regime 4: no cell above
+    Slow landing: the cell that sets the step (shortest time from
+    ``_rate_phase_boundary_times``) is within 0.5 delta of a boundary and moves slower than
+    0.05 delta per year (rate floored at the mass-weighted mean). Sub-solidus: no cell above
     the solidus.
     """
-    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
-    rate = np.abs(dSdt)
-    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
-    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
-    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
-    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
-    d = np.where((dist < delta) | (rate < floor), dist, ahead)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        t_c = d / np.maximum(rate, floor)
-    r3 = False
-    if np.isfinite(t_c).any():
+    t_c = es._rate_phase_boundary_times(S, dSdt, S_liq, S_sol, mass, delta, rate_floor)
+    slow = False
+    if t_c is not None and np.isfinite(t_c).any():
         b = int(np.nanargmin(np.where(np.isfinite(t_c), t_c, np.nan)))
-        r3 = bool(dist[b] < 0.5 * delta and max(rate[b], floor) < 0.05 * delta)
-    return r3, bool(np.all(S <= S_sol))
+        rate = np.abs(dSdt)
+        floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
+        dist = min(abs(S[b] - S_liq[b]), abs(S[b] - S_sol[b]))
+        slow = bool(dist < 0.5 * delta and max(rate[b], floor) < 0.05 * delta)
+    return slow, bool(np.all(S <= S_sol))
 
 
 @contextmanager
 def regime_counter():
     """Count the segment starts of each regime while the block runs."""
-    counts = {'segments': 0, 'regime_3': 0, 'regime_4': 0}
+    counts = {'segments': 0, 'slow_landing': 0, 'subsolidus': 0}
     original = es._rate_phase_boundary_max_step
 
     def counted(*args, **kwargs):
-        r3, r4 = regime(*args[:6], **kwargs)
+        slow, sub = regime(*args[:6], **kwargs)
         counts['segments'] += 1
-        counts['regime_3'] += r3
-        counts['regime_4'] += r4
+        counts['slow_landing'] += slow
+        counts['subsolidus'] += sub
         return original(*args, **kwargs)
 
     es._rate_phase_boundary_max_step = counted
@@ -139,7 +138,7 @@ def v3_start(eos, name):
     S_sol = S_sol.ravel()
     if name == 'v3_r4':
         return np.full_like(S_sol, S_sol[-1] + 5.0)
-    S0 = S_sol - 10.0  # cells 4 and 5 start just above the stiff zone (delta = 10 J/(kg K))
+    S0 = S_sol - 15.0  # off the stiff-zone edge, so a round-off start keeps dist > delta
     S0[4], S0[5] = S_sol[4] + 11.0, S_sol[5] + 12.5
     return S0
 
@@ -150,6 +149,8 @@ def v3_run(task):
     eos = EntropyEOS(eos_dir)
     s = _v3_solver(eos, V3[name], mode, tol, width)
     s.set_initial_entropy(v3_start(eos, name) * (1.0 + m * 1e-12))
+    if mode == 'fixed':
+        s._atol_sf = tol / 1.0e-7  # atol_base 1e-8 times atol_scale up to 10
     t0 = time.perf_counter()
     with regime_counter() as counts:
         s.solve()
@@ -182,7 +183,8 @@ def run_v3(eos_dir, name, workers, width=None):
         for row in pool.imap(v3_run, tasks) if pool else map(v3_run, tasks):
             print(
                 f'{name} {row["mode"]} tol {row["tol"]:g} m {row["m"]:+d}: {row["steps"]} steps, '
-                f'{row["wall_s"]:.1f} s, Regime 3/4 segments {row["regime_3"]}/{row["regime_4"]}',
+                f'{row["wall_s"]:.1f} s, slow-landing/sub-solidus segments '
+                f'{row["slow_landing"]}/{row["subsolidus"]}',
                 flush=True,
             )
             rows.append(row)
@@ -195,8 +197,8 @@ def run_v3(eos_dir, name, workers, width=None):
         round_off_envelope_K=max(
             float(np.max(np.abs(np.asarray(rate[m]['T_end']) - T0))) for m in STARTS if m
         ),
-        regime_3_segments=rate[0]['regime_3'],
-        regime_4_segments=rate[0]['regime_4'],
+        slow_landing_segments=rate[0]['slow_landing'],
+        subsolidus_segments=rate[0]['subsolidus'],
         S_min=min(r['S_min'] for r in rows),
         S_max=max(r['S_max'] for r in rows),
         inside_table=bool(
@@ -316,9 +318,7 @@ def run_v4(eos_dir, name, end_time=None):
             f'{state["phi_max"]:.6f}, {state["steps"]} steps, {time.perf_counter() - t0:.1f} s',
             flush=True,
         )
-        if state['phi_max'] == 0.0 and state['t_yr'] >= case['stall']:
-            res.status, res.cvode_flag = 0, 0  # ends the segment loop of the rate cap
-        return res
+        return stop_after_stall(res, state, case['stall'])
 
     s._solve_cvode = monitored
     s.solve()
@@ -334,6 +334,25 @@ def run_v4(eos_dir, name, end_time=None):
     )
 
 
+def stop_after_stall(res, state, stall):
+    """End the segment loop once a solid state passes the stall point; keep a failed status."""
+    if res.status == 0 and state['phi_max'] == 0.0 and state['t_yr'] >= stall:
+        res.cvode_flag = 0
+    return res
+
+
+def check(case, result):
+    """Return the failed tolerances of the docs page for one case result."""
+    if case in V3:
+        m = result['metrics']
+        fails = [] if m['max_dT_rate_vs_ref_K'] <= V3_BOUND_K else [f'|dT| > {V3_BOUND_K} K']
+    else:
+        m = result
+        fails = [] if m['status'] == 0 else [f'status {m["status"]}']
+        fails += [k for k in ('passed_stall_point', 'solidified') if not m[k]]
+    return fails + ([] if m['inside_table'] else ['inside_table'])
+
+
 def main(argv=None) -> int:
     """Run one case, write its JSON result and print the result line."""
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
@@ -343,6 +362,7 @@ def main(argv=None) -> int:
     ap.add_argument('--width', type=float, default=None, help='replace the v3 width 0')
     ap.add_argument('--end-time', type=float, default=None, help='replace the v4 end time [yr]')
     ap.add_argument('--output', type=Path, default=None)
+    ap.add_argument('--check', action='store_true', help='exit 1 when a tolerance fails')
     args = ap.parse_args(argv)
     if not args.eos_dir:
         ap.error('--eos-dir or ARAGOG_TEST_EOS_DIR is required')
@@ -355,7 +375,9 @@ def main(argv=None) -> int:
         print(json.dumps(result))
     out = args.output or Path(f'step_cap_{args.case}.json')
     out.write_text(json.dumps(dict(case=args.case, eos_dir=str(args.eos_dir), **result)) + '\n')
-    return 0
+    fails = check(args.case, result)
+    print(f'{args.case}: ' + ('FAIL ' + ', '.join(fails) if fails else 'PASS'))
+    return 1 if args.check and fails else 0
 
 
 if __name__ == '__main__':

@@ -1,10 +1,10 @@
 """Coupled PROTEUS run of the step-controller case V5b, with its stop rule and its reference.
 
-The case config is ``tools/verification/data/v5b_zalmoxis_aragog_calliope.toml``; the case was
-run with PROTEUS a8bbd8751cb5040aedd90f7acb4a85755afae26b. Two settings of the case are not
-PROTEUS config options, so this driver sets them before the run starts:
+The case config is ``tools/verification/data/v5b_zalmoxis_aragog_calliope.toml``; its header
+records the PROTEUS commit of the case. Two settings of the case are not PROTEUS config
+options, so this driver sets them before the run starts:
 
-- the run stops 3 coupling steps after ``Phi_global`` first reaches 0
+- the run stops at the 3rd coupling step with ``Phi_global`` = 0
   (``proteus.utils.terminate.check_termination``);
 - ``--reference`` integrates every rate-cap segment that starts with no cell above the solidus at
   rtol = 1e-10, atol = 1e-10 / state scale and 1 yr steps (``EntropySolver._solve_cvode``).
@@ -52,7 +52,7 @@ def hook(owner, name):
 
 
 def install(reference):
-    """Patch the stop rule and, with ``reference``, the Regime 4 segment setting."""
+    """Patch the stop rule and, with ``reference``, the setting of sub-solidus segments."""
     import proteus.utils.terminate as term
 
     import aragog.solver.entropy_solver as es
@@ -70,7 +70,7 @@ def install(reference):
                 return True
         return check(handler)
 
-    def regime4_reference(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
+    def subsolidus_reference(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
         root = kw.get('phi_cap_rootfn')
         if isinstance(root, root_type) and np.all(root.S0 <= root.S_sol):
             sc = self._build_nondim_scales()
@@ -79,7 +79,7 @@ def install(reference):
 
     term.check_termination = check_termination  # PROTEUS imports it inside Proteus.start()
     if reference:
-        es.EntropySolver._solve_cvode = regime4_reference
+        es.EntropySolver._solve_cvode = subsolidus_reference
     return solid
 
 

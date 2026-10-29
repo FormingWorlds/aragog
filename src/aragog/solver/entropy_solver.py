@@ -342,6 +342,34 @@ def _segment_arming_margin(
     return margin
 
 
+def _rate_phase_boundary_times(
+    S: npt.NDArray,
+    dSdt: npt.NDArray,
+    S_liq: npt.NDArray,
+    S_sol: npt.NDArray,
+    mass: npt.NDArray,
+    delta: float,
+    rate_floor: bool = True,
+) -> npt.NDArray | None:
+    """Time [yr] of each entry to the boundary that sets its step; see ``_rate_phase_boundary_max_step``.
+
+    Returns an array with a non-finite entry where no boundary counts, or None when ``S``,
+    ``dSdt``, the boundaries or the floor are not finite.
+    """
+    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+    rate = np.abs(dSdt)
+    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
+    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
+        return None
+    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
+    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
+    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
+    d_near = np.maximum(dist, _PhaseBoundarySegmentRoot.alpha * delta)
+    d = np.where((dist < delta) | ((rate < floor) & (S > S_sol)), d_near, ahead)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return d / np.maximum(rate, floor)
+
+
 def _rate_phase_boundary_max_step(
     S: npt.NDArray,
     dSdt: npt.NDArray,
@@ -401,18 +429,9 @@ def _rate_phase_boundary_max_step(
         finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the boundaries, or
         the floor are not finite.
     """
-    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
-    rate = np.abs(dSdt)
-    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
-    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
+    t_c = _rate_phase_boundary_times(S, dSdt, S_liq, S_sol, mass, delta, rate_floor)
+    if t_c is None:
         return bounds[0]
-    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
-    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
-    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
-    d_near = np.maximum(dist, _PhaseBoundarySegmentRoot.alpha * delta)
-    d = np.where((dist < delta) | ((rate < floor) & (S > S_sol)), d_near, ahead)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        t_c = d / np.maximum(rate, floor)
     t_c = t_c[np.isfinite(t_c)]
     hi = np.inf if np.all(S <= S_sol) else bounds[1]
     return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
@@ -4092,10 +4111,11 @@ class EntropySolver:
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
         ends the call. The segments' trajectories and energy traces are joined. Segments
         starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
-        ``rtol`` at most ``1e-9`` and physical ``atol`` at most ``1e-8`` J/(kg K) so that
-        removing the 100 yr ``max_step`` ceiling keeps the 1.3e-4 K accuracy without
-        loosening tighter caller tolerances; other segments keep the caller's ``rtol`` and
-        ``atol``.
+        ``rtol`` at most ``1e-9`` and a physical ``atol`` at most ``1e-8`` in the unit of each
+        state entry (J/(kg K) for entropy, K for a temperature). The limits also hold after a
+        retry loosens ``solver.rtol`` or raises ``_atol_sf``; tighter caller tolerances are
+        kept. They keep the validation cases inside 1.3e-4 K without the 100 yr ``max_step``
+        ceiling. Other segments keep the caller's ``rtol`` and ``atol``.
 
         Parameters
         ----------
@@ -4246,8 +4266,8 @@ class EntropySolver:
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
-        # Phase-aware atol: tight during crystallization, relaxed
-        # only when fully solid.
+        # Phase-aware atol: tight during crystallization, relaxed by 10 when fully solid
+        # (sub-solidus rate-cap segments clamp it again, see _solve_cvode_segments).
         try:
             n_stag = self._n_stag
             if self._core_bc == 'gradient':
