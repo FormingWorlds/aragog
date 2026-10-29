@@ -2440,6 +2440,7 @@ class EntropySolver:
                 )
             )
         self._lid_gl = np.polynomial.legendre.leggauss(8)
+        self._lid_hv = self._lid_enthalpy_table()
         r_stag = np.asarray(self.evaluator.mesh.staggered.radii).ravel()
         self._lid_z_stag = (float(r[-1]) - r_stag)[::-1]  # depths [m], top cell first
         self._lid_active = True
@@ -2944,9 +2945,7 @@ class EntropySolver:
         T_s = _lid.linear_lid_surface(
             d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
         )
-        T_m = 0.5 * (base['T_b'] + T_s)
-        E = _lid.lid_energy(base['rho'], d, base['h_b'], base['cp'], base['T_b'], T_m)
-        return np.array([d, E])
+        return np.array([d, d * self._lid_hv.profile_heat(0.0, T_s, base['T_b'])])
 
     def _lid_handover_armed(self) -> bool:
         """True when the lid can hand over: the solid rheology runs the 'lid' stress closure,
@@ -2959,6 +2958,41 @@ class EntropySolver:
         if self._core_bc == 'gradient':
             return self._n_stag + 2
         return self._n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ())) + self._n_shell()
+
+    def _lid_enthalpy_table(self) -> '_lid.LidEnthalpy':
+        """Heat content per volume ``H = integral of rho T dS`` from the solidus entropy, and the
+        density, of the solid at the top-cell pressure, on 2048 entropy intervals (4-point
+        Gauss-Legendre each) from the table floor to the solidus. Sets ``_lid_H_of_S``, ``H`` in
+        entropy, and returns ``H`` and the density in temperature between the flat floor of the
+        table and the band below the solidus where the temperature stays at the solidus.
+
+        Raises
+        ------
+        ValueError
+            When the temperature does not rise with entropy between those two parts.
+        """
+        from scipy.interpolate import PchipInterpolator
+
+        eos, P = self.entropy_eos, self._lid_P
+        S = np.linspace(float(eos.S_min), self._lid_S_sol, 2049)
+        g, w = np.polynomial.legendre.leggauss(4)
+        half = 0.5 * np.diff(S)[:, None]
+        nodes = 0.5 * (S[1:] + S[:-1])[:, None] + half * g
+        Pn = np.full(nodes.size, P)
+        rhoT = np.asarray(eos.density(Pn, nodes.ravel()) * eos.temperature(Pn, nodes.ravel()))
+        H = np.concatenate([[0.0], np.cumsum((half * w * rhoT.reshape(nodes.shape)).sum(1))])
+        H -= H[-1]
+        self._lid_H_of_S = PchipInterpolator(S, H)
+        T = np.asarray(eos.temperature(np.full(S.size, P), S), dtype=float).ravel()
+        tol = 1e-9 * T.max()
+        i0 = int(np.flatnonzero(T <= T.min() + tol)[-1])
+        i1 = int(np.flatnonzero(T >= T.max() - tol)[0])
+        if i1 - i0 < 2 or not np.all(np.diff(T[i0 : i1 + 1]) > 0.0):
+            raise ValueError(
+                'lid enthalpy table: T(S) at the top-cell pressure is not increasing'
+            )
+        rho = np.asarray(eos.density(np.full(S.size, P), S), dtype=float).ravel()
+        return _lid.LidEnthalpy.table(T[i0 : i1 + 1], H[i0 : i1 + 1], rho[i0 : i1 + 1])
 
     def _lid_enthalpy(self, S: npt.ArrayLike) -> npt.NDArray:
         """Specific heat content [J/kg] at the top-cell pressure, from the solidus entropy.
@@ -3007,8 +3041,10 @@ class EntropySolver:
                     T_rh = rheo.lid_base_temperature
                 else:
                     T_rh = T_f - rheo.lid_contrast_coeff * _R_GAS * T_f**2 / self._lid_H
-                T_rh = min(max(T_rh, 1.0), self._lid_T_sol)
-                S_rh = min(float(eos.entropy_at_temperature(P, T_rh)), S_sol)
+                T_rh = max(T_rh, 1.0)
+                # the EOS holds T at the solidus over a band below S_sol: the cap is S_sol
+                S_rh = S_sol if T_rh >= self._lid_T_sol else eos.entropy_at_temperature(P, T_rh)
+                S_rh = min(float(S_rh), S_sol)
                 S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
         h_b, h_f = self._lid_enthalpy([S_b, S_f])
         return dict(
@@ -3051,16 +3087,17 @@ class EntropySolver:
                 f'sub-grid lid: the growth stop holds the lid near {cap:.6g} m '
                 f'({_lid.LID_CAP_FRAC} of the top cell) from t={time_yr:.6e} yr',
             )
-        if ev.h_f - ev.h_b < _lid.LID_DH_MIN:
+        dh = ev.h_f - float(self._lid_H_of_S(ev.S_b)) / ev.rho
+        if dh < _lid.LID_DH_MIN:
             self._warn_once(
                 'lid_dh_floor',
-                f'sub-grid lid: enthalpy jump {ev.h_f - ev.h_b:.6g} J/kg below the floor '
+                f'sub-grid lid: enthalpy jump {dh:.6g} J/kg below the floor '
                 f'{_lid.LID_DH_MIN} J/kg at t={time_yr:.6e} yr; the Stefan rate uses the floor',
             )
         if ev.surf.clipped:
             self._warn_once(
                 'lid_shape_bound',
-                f'sub-grid lid: the lid mean lies outside the profile family at t={time_yr:.6e} '
+                f'sub-grid lid: the lid energy lies outside the profile family at t={time_yr:.6e} '
                 'yr; the bound profile is used',
             )
 
@@ -3228,12 +3265,8 @@ class EntropySolver:
         F_b = max(q_conv, float(self.state._heat_flux[-2]), 0.0)
         eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
         w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
-        d_pos = max(delta, _lid.LID_DELTA_FLOOR)
-        T_m = _lid.lid_mean_temperature(
-            E, base['rho'], d_pos, base['h_b'], base['cp'], base['T_b']
-        )
         surf = _lid.surface_state(
-            delta, T_m, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR
+            delta, E, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR, self._lid_hv
         )
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
@@ -3244,10 +3277,10 @@ class EntropySolver:
             F_grid=float(self.state._heat_flux[-1]),
             w=w,
             rho=base['rho'],
-            cp=base['cp'],
-            h_b=base['h_b'],
             h_f=base['h_f'],
             T_b=base['T_b'],
+            H_b=float(self._lid_H_of_S(base['S_b'])),
+            hv=self._lid_hv,
             h_top=self._lid_h_top,
             delta_lo=self._lid_delta_lo,
             heating=heating,
@@ -3260,8 +3293,8 @@ class EntropySolver:
             rates=rates,
             surf=surf,
             F_b=F_b,
-            T_m=T_m,
-            H_lid=heating * base['rho'] * delta,
+            T_m=surf.T_m,
+            H_lid=rates.H_lid,
             **base,
         )
         self._lid_last = ev

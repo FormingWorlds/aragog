@@ -10,11 +10,14 @@ problem (Neumann solution),
              x                                    (s = 0),
              erfi(sqrt(-s) x) / erfi(sqrt(-s))    (s < 0),
 
-with the shape parameter ``s`` fixed by the mean lid temperature. The family holds the Neumann
-growth exactly (``s = lambda^2``) and reduces to the linear profile in steady state. Material
-joins the lid at its base by the Stefan condition ``rho dh d(delta)/dt = q_b - F_b``, where
-``q_b`` is the conduction into the lid at its base, ``F_b`` the flux the fluid below delivers
-and ``dh`` the enthalpy released per kilogram.
+with the shape parameter ``s`` and the surface temperature ``T_s`` fixed by the lid energy,
+``E_lid = delta int_0^1 H(T(x)) dx`` with ``H`` the heat content per volume of the lid material
+(:class:`LidEnthalpy`), and by the grey-body balance at the surface. The family holds the
+Neumann growth exactly (``s = lambda^2``) and reduces to the linear profile in steady state.
+Material joins the lid at its base by the Stefan condition ``(rho h_f - H(T_b)) d(delta)/dt =
+q_b - F_b``, where ``q_b`` is the conduction into the lid at its base, ``F_b`` the flux the
+fluid below delivers, ``rho`` the density at the lid base and ``h_f`` the specific heat content
+of the fluid.
 
 The functions here are pure: the solver evaluates the material properties, passes them in and
 assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, kg/m^3, s).
@@ -28,9 +31,11 @@ cooling of a half-space (eq. 4.116, p. 189).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing as npt
 from scipy.constants import Stefan_Boltzmann
 from scipy.optimize import brentq
 from scipy.special import dawsn, erf
@@ -91,6 +96,117 @@ LID_SHAPE_MIN: float = _shape_of_mean(LID_MEAN_RATIO_MIN)
 LID_SHAPE_MAX: float = _shape_of_mean(LID_MEAN_RATIO_MAX)
 
 
+def profile(s: float, x: npt.ArrayLike) -> npt.NDArray:
+    """The similarity profile f_s(x) on [0, 1] (series below ``|s| = 1e-6``)."""
+    x = np.asarray(x, dtype=float)
+    if abs(s) < _S_SERIES:
+        return x + s * x * (1.0 - x * x) / 3.0
+    if s > 0.0:
+        mu = np.sqrt(s)
+        return erf(mu * x) / erf(mu)
+    nu = np.sqrt(-s)
+    return np.exp(s * (1.0 - x * x)) * dawsn(nu * x) / dawsn(nu)
+
+
+_GL16 = np.polynomial.legendre.leggauss(16)
+PROFILE_PANELS: int = 16
+
+
+def profile_nodes(s: float) -> tuple[npt.NDArray, npt.NDArray]:
+    """Quadrature nodes and weights on [0, 1] for integrals over the profile f_s.
+
+    Two segments split at ``c(s)``, which follows the steep part of the profile:
+    ``min(1/2, 6 / sqrt(s))`` for ``s > 0`` (erf layer at the surface) and
+    ``1 - min(1/2, 15 / |s|)`` for ``s < 0`` (exponential layer at the base); ``c`` is
+    continuous in ``s``. Each segment holds ``PROFILE_PANELS`` 16-point Gauss-Legendre panels:
+    the table enthalpy has kinks at the EOS nodes, so the panels, not the order, set the error
+    (about 3e-6 relative at worst on the test tables).
+    """
+    g, w = _GL16
+    if s > 0.0:
+        c = min(0.5, 6.0 / np.sqrt(s))
+    elif s < 0.0:
+        c = 1.0 - min(0.5, -15.0 / s)
+    else:
+        c = 0.5
+    edges = np.concatenate(
+        [np.linspace(0.0, c, PROFILE_PANELS + 1), np.linspace(c, 1.0, PROFILE_PANELS + 1)[1:]]
+    )
+    half = 0.5 * np.diff(edges)[:, None]
+    x = (edges[:-1, None] + half * (g + 1.0)).ravel()
+    return x, (half * w).ravel()
+
+
+@dataclass(frozen=True)
+class LidEnthalpy:
+    """Heat content per volume ``H(T)`` [J/m^3] and density ``rho(T)`` [kg/m^3] of the lid
+    material at the top-cell pressure, both vectorised in ``T`` [K]."""
+
+    H: Callable[[npt.ArrayLike], npt.NDArray]
+    rho: Callable[[npt.ArrayLike], npt.NDArray]
+
+    @classmethod
+    def linear(cls, rho: float, cp: float, T_b: float, h_b: float) -> LidEnthalpy:
+        """Constant properties: ``H(T) = rho (h_b + cp (T - T_b))``."""
+        return cls(
+            H=lambda T: rho * (h_b + cp * (np.asarray(T, dtype=float) - T_b)),
+            rho=lambda T: np.full(np.shape(T), rho),
+        )
+
+    @classmethod
+    def table(cls, T: npt.ArrayLike, H: npt.ArrayLike, rho: npt.ArrayLike) -> LidEnthalpy:
+        """From a table on increasing ``T``: monotone cubic ``H``, linear ``rho``, both continued
+        linearly outside the table with the end slopes of ``H`` and constant ``rho``."""
+        from scipy.interpolate import PchipInterpolator
+
+        T, H, rho = (np.asarray(v, dtype=float) for v in (T, H, rho))
+        spline = PchipInterpolator(T, H, extrapolate=False)
+        slope = spline.derivative()
+        lo, hi = (T[0], H[0], float(slope(T[0]))), (T[-1], H[-1], float(slope(T[-1])))
+
+        def H_of(t):
+            t = np.asarray(t, dtype=float)
+            inside = np.clip(t, lo[0], hi[0])
+            return np.where(
+                t < lo[0],
+                lo[1] + lo[2] * (t - lo[0]),
+                np.where(t > hi[0], hi[1] + hi[2] * (t - hi[0]), spline(inside)),
+            )
+
+        return cls(H=H_of, rho=lambda t: np.interp(t, T, rho))
+
+    def profile_heat(self, s: float, T_s: float, T_b: float) -> float:
+        """Mean heat content per volume [J/m^3] of a lid with shape ``s`` from ``T_s`` to ``T_b``."""
+        x, w = profile_nodes(s)
+        return float(np.dot(w, self.H(T_s + (T_b - T_s) * profile(s, x))))
+
+    def profile_density(self, s: float, T_s: float, T_b: float) -> float:
+        """Mean density [kg/m^3] of a lid with shape ``s`` from ``T_s`` to ``T_b``."""
+        x, w = profile_nodes(s)
+        return float(np.dot(w, self.rho(T_s + (T_b - T_s) * profile(s, x))))
+
+
+def grey_surface_temperature(
+    f0: float, d: float, T_b: float, k: float, emissivity: float, T_eq: float
+) -> float:
+    """Surface temperature [K] where ``grey(T_s) = k (T_b - T_s) f0 / d``.
+
+    Newton from ``T_b``: the residual is convex and increasing in ``T_s`` and non-negative at
+    ``T_b``, so the iterates fall monotonically to the root. ``T_b`` when ``T_b <= T_eq``.
+    """
+    if T_b <= T_eq:
+        return T_b
+    c = k * f0 / d
+    T = T_b
+    for _ in range(100):
+        g = grey_flux(T, emissivity, T_eq) - c * (T_b - T)
+        step = g / (4.0 * emissivity * Stefan_Boltzmann * T**3 + c)
+        T -= step
+        if abs(step) <= 1e-13 * T:
+            break
+    return max(T, T_eq)
+
+
 def grey_flux(T_s: float, emissivity: float, T_eq: float) -> float:
     """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against the equilibrium ``T_eq`` [K]."""
     return emissivity * Stefan_Boltzmann * (max(T_s, 0.0) ** 4 - T_eq**4)
@@ -111,9 +227,10 @@ class LidSurface:
     s : float
         Shape parameter of the profile [-].
     clipped : int
-        0 when the root lies inside the shape bounds; +1 when the lid mean is too hot for any
-        profile (the steepest profile, coldest surface, is used), -1 when it is too cold (the
-        flattest profile, hottest surface).
+        0 when the root lies inside the shape bounds; +1 when the lid energy is too high for
+        any profile (``s`` at its upper bound), -1 when it is too low (``s`` at its lower bound).
+    T_m : float
+        Mean temperature of the profile [K].
     """
 
     T_s: float
@@ -121,29 +238,54 @@ class LidSurface:
     q_b: float
     s: float
     clipped: int
+    T_m: float
+
+
+def _surface(s: float, T_s: float, T_b: float, k: float, d: float, clipped: int) -> LidSurface:
+    f0, f1, m = shape(s)
+    dT = T_b - T_s
+    return LidSurface(
+        T_s=T_s,
+        F_s=k * dT * f0 / d,
+        q_b=k * dT * f1 / d,
+        s=s,
+        clipped=clipped,
+        T_m=T_s + m * dT,
+    )
+
+
+def _shape_of_energy(q: float, heat: Callable[[float], float]) -> tuple[float, int]:
+    """Root in ``s`` of ``heat(s) = q`` (``heat`` increasing), clipped at the shape bounds."""
+    if heat(LID_SHAPE_MIN) >= q:
+        return LID_SHAPE_MIN, -1
+    if heat(LID_SHAPE_MAX) <= q:
+        return LID_SHAPE_MAX, 1
+    s = brentq(lambda v: heat(v) - q, LID_SHAPE_MIN, LID_SHAPE_MAX, xtol=1e-13, rtol=1e-14)
+    return s, 0
 
 
 def surface_state(
     delta: float,
-    T_m: float,
+    E: float,
     T_b: float,
     k: float,
     emissivity: float,
     T_eq: float,
     delta_floor: float,
+    hv: LidEnthalpy,
 ) -> LidSurface:
-    """Solve the grey-body surface of a lid with mean temperature ``T_m``.
+    """Solve the grey-body surface of a lid with energy ``E`` [J/m^2].
 
-    The mean fixes the surface temperature for a given shape, ``T_s = (T_m - m T_b) / (1 - m)``,
-    so the balance ``grey(T_s) = k (T_b - T_s) f'(0) / delta`` is one equation in ``s``. Its
-    left side falls and its right side rises with ``s``, so the root is unique in the bounds.
+    For a shape ``s`` the grey-body balance ``grey(T_s) = k (T_b - T_s) f'(0) / d`` fixes the
+    surface temperature, and with it the lid heat content ``Q(s) = int_0^1 H(T(x)) dx``. ``Q``
+    rises with ``s``, so ``Q(s) = E / delta`` has one root in the shape bounds.
 
     Parameters
     ----------
     delta : float
         Lid thickness [m].
-    T_m : float
-        Mean lid temperature [K]; held inside ``(T_eq, T_b)``.
+    E : float
+        Lid energy [J/m^2].
     T_b : float
         Lid-base temperature [K].
     k : float
@@ -153,56 +295,43 @@ def surface_state(
     T_eq : float
         Equilibrium temperature of the radiation balance [K].
     delta_floor : float
-        Conduction floor [m]: the flux uses ``hypot(delta, delta_floor)``.
+        Conduction floor [m]: the flux uses ``hypot(delta, delta_floor)``; the heat content
+        per volume uses ``max(delta, delta_floor)``.
+    hv : LidEnthalpy
+        Heat content and density of the lid material.
 
     Returns
     -------
     LidSurface
     """
     d = float(np.hypot(delta, delta_floor))
-    T_m = float(np.clip(T_m, T_eq + LID_DT_MIN, T_b - LID_DT_MIN))
-    D = T_b - T_m
+    q = E / max(delta, delta_floor)
 
-    def ts_of(s):
-        f0, f1, m = shape(s)
-        return (T_m - m * T_b) / (1.0 - m), f0, f1, m
+    def T_s_of(v):
+        return grey_surface_temperature(shape(v)[0], d, T_b, k, emissivity, T_eq)
 
-    def balance(s):
-        T_s, f0, _, m = ts_of(s)
-        return grey_flux(T_s, emissivity, T_eq) - k * D * f0 / ((1.0 - m) * d)
-
-    clipped = 0
-    if balance(LID_SHAPE_MIN) <= 0.0:
-        s, clipped = LID_SHAPE_MIN, -1
-    elif balance(LID_SHAPE_MAX) >= 0.0:
-        s, clipped = LID_SHAPE_MAX, 1
-    else:
-        s = brentq(balance, LID_SHAPE_MIN, LID_SHAPE_MAX, xtol=1e-13, rtol=1e-14)
-    T_s, f0, f1, m = ts_of(s)
-    dT = D / (1.0 - m)
-    return LidSurface(T_s=T_s, F_s=k * dT * f0 / d, q_b=k * dT * f1 / d, s=s, clipped=clipped)
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
+    return _surface(s, T_s_of(s), T_b, k, d, clipped)
 
 
 def fixed_surface_state(
-    delta: float, T_m: float, T_b: float, k: float, T_s: float, delta_floor: float
+    delta: float,
+    E: float,
+    T_b: float,
+    k: float,
+    T_s: float,
+    delta_floor: float,
+    hv: LidEnthalpy,
 ) -> LidSurface:
-    """Lid with a fixed surface temperature ``T_s`` [K]: the shape follows from the mean,
-    ``m(s) = (T_m - T_s) / (T_b - T_s)``, held inside the bounds of the profile family.
+    """Lid with a fixed surface temperature ``T_s`` [K]: the shape follows from
+    ``Q(s) = E / delta`` at that surface temperature, held inside the shape bounds.
 
-    Parameters and the result as :func:`surface_state`; ``clipped`` is +1 (-1) when the mean
-    lies above (below) the family.
+    Parameters and the result as :func:`surface_state`.
     """
     d = float(np.hypot(delta, delta_floor))
-    m = (T_m - T_s) / max(T_b - T_s, LID_DT_MIN)
-    if m >= LID_MEAN_RATIO_MAX:
-        s, clipped = LID_SHAPE_MAX, 1
-    elif m <= LID_MEAN_RATIO_MIN:
-        s, clipped = LID_SHAPE_MIN, -1
-    else:
-        s, clipped = _shape_of_mean(m), 0
-    f0, f1, _ = shape(s)
-    dT = T_b - T_s
-    return LidSurface(T_s=T_s, F_s=k * dT * f0 / d, q_b=k * dT * f1 / d, s=s, clipped=clipped)
+    q = E / max(delta, delta_floor)
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s, T_b))
+    return _surface(s, T_s, T_b, k, d, clipped)
 
 
 def linear_lid_surface(
@@ -282,20 +411,6 @@ def existence_weight(
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0
 
 
-def lid_energy(
-    rho: float, delta: float, h_b: float, cp: float, T_b: float, T_m: float
-) -> float:
-    """Lid energy [J/m^2] of a lid with mean temperature ``T_m``: ``rho delta (h_b - cp (T_b - T_m))``."""
-    return rho * delta * (h_b - cp * (T_b - T_m))
-
-
-def lid_mean_temperature(
-    E_lid: float, rho: float, delta: float, h_b: float, cp: float, T_b: float
-) -> float:
-    """Mean lid temperature [K], the inverse of :func:`lid_energy`."""
-    return T_b - (h_b - E_lid / (rho * delta)) / cp
-
-
 @dataclass(frozen=True)
 class LidRates:
     """Rates and fluxes of the lid at one state.
@@ -314,6 +429,8 @@ class LidRates:
         Lid weight [0, 1].
     stop : float
         Factor of the growth or melt-back stop [0, 1].
+    H_lid : float
+        Internal heating of the lid [W/m^2].
     """
 
     ddelta: float
@@ -322,6 +439,7 @@ class LidRates:
     F_fluid: float
     w: float
     stop: float
+    H_lid: float
 
 
 def lid_rates(
@@ -333,34 +451,37 @@ def lid_rates(
     F_grid: float,
     w: float,
     rho: float,
-    cp: float,
-    h_b: float,
     h_f: float,
     T_b: float,
+    H_b: float,
+    hv: LidEnthalpy,
     h_top: float,
     delta_lo: float,
     heating: float,
 ) -> LidRates:
     """Assemble the lid rates and the fluid flux at one state.
 
-    The lid acts with weight ``w``; the hidden part ``1 - w`` relaxes to the phantom lid
-    (thickness ``delta_lo``, linear profile) over ``LID_TAU_HIDDEN``, and the surface then sees
-    the grid flux ``F_grid``. The fluid flux follows from the conservation of the energy of the
-    fluid and the lid: ``F_fluid = F_top + dE - H_lid - rho h_f d(delta)/dt``, with
-    ``H_lid = heating rho delta``. Exact for any ``w`` and any stop.
+    Fluid of density ``rho`` (the lid base) and heat content ``h_f`` [J/kg] joins the lid at
+    ``T_b`` with heat content ``H_b`` [J/m^3] per volume, so the Stefan rate releases
+    ``rho h_f - H_b`` per volume. The lid acts with weight ``w``; the hidden part ``1 - w``
+    relaxes to the phantom lid (thickness ``delta_lo``, linear profile) over
+    ``LID_TAU_HIDDEN``, and the surface then sees the grid flux ``F_grid``. The fluid flux
+    follows from the conservation of the energy of the fluid and the lid:
+    ``F_fluid = F_top + dE - H_lid - rho h_f d(delta)/dt``. Exact for any ``w`` and any stop.
 
     Parameters
     ----------
     heating : float
         Internal heating per mass [W/kg] of the top cell, applied to the lid mass.
     """
-    r, stop = stefan_rate(surf.q_b, F_b, rho, h_f - h_b, delta, h_top, delta_lo)
-    T_ph = 0.5 * (T_b + surf.T_s)
-    E_ph = lid_energy(rho, delta_lo, h_b, cp, T_b, T_ph)
+    r, stop = stefan_rate(surf.q_b, F_b, rho, h_f - H_b / rho, delta, h_top, delta_lo)
+    E_ph = delta_lo * hv.profile_heat(0.0, surf.T_s, T_b)
     relax = (1.0 - w) / LID_TAU_HIDDEN
     ddelta = w * r - relax * (delta - delta_lo)
-    H_lid = heating * rho * delta
-    dE = w * (surf.q_b - surf.F_s + rho * h_b * r) - relax * (E_lid - E_ph) + H_lid
+    H_lid = heating * delta * hv.profile_density(surf.s, surf.T_s, T_b)
+    dE = w * (surf.q_b - surf.F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
     F_top = w * surf.F_s + (1.0 - w) * F_grid
     F_fluid = F_top + dE - H_lid - rho * h_f * ddelta
-    return LidRates(ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop)
+    return LidRates(
+        ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop, H_lid=H_lid
+    )

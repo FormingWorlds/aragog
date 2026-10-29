@@ -96,7 +96,7 @@ def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
     s._dSdt_single(0.0, y)
     ev = s._lid_last
     T_m = float(np.clip(ev.T_m + dT, 300.0, ev.T_b - 1.0))
-    y[-2:] = (delta, sl.lid_energy(ev.rho, delta, ev.h_b, ev.cp, ev.T_b, T_m))
+    y[-2:] = (delta, delta * float(s._lid_hv.H(T_m)))
     pw = s._step_powers(0.0, y)
     scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(s._lid_last.rates.dE), 1.0)
     assert abs(pw[-1]) <= 1e-10 * scale
@@ -106,7 +106,9 @@ def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
 @pytest.mark.physics_invariant
 def test_ledger_over_a_solve(eos):
     """Over a solve the step ledger closes to round-off and the state heat to the stated
-    quadrature accuracy; the lid grows as Neumann with the run's Stefan number within 2 %."""
+    quadrature accuracy; the lid grows as Neumann with the run's Stefan number within 3 %
+    (measured 1.9 % slower: the base flux, 0.5 % of q_b, and the EOS heat capacity that varies
+    across the crust, which the similarity profile holds only for constant properties)."""
     from scipy.optimize import brentq
     from scipy.special import erf
 
@@ -117,11 +119,13 @@ def test_ledger_over_a_solve(eos):
     assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
     assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
     ev = s._lid_last
-    St = ev.cp * (ev.T_b - ev.surf.T_s) / (ev.h_f - ev.h_b)
+    H_b = float(s._lid_H_of_S(ev.S_b))
+    cp = (H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
+    St = cp * (ev.T_b - ev.surf.T_s) / (ev.h_f - H_b / ev.rho)
     lam = brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
     t = (s._solution.t[-1] - s._solution.t[0]) * 3.15576e7
-    neumann = 2.0 * lam * np.sqrt(s._lid_k / (ev.rho * ev.cp) * t)
-    assert ev.delta == pytest.approx(neumann, rel=0.02)
+    neumann = 2.0 * lam * np.sqrt(s._lid_k / (ev.rho * cp) * t)
+    assert ev.delta == pytest.approx(neumann, rel=0.03)
     assert ev.delta > 5.0 * s._lid_delta_lo
 
 
@@ -161,7 +165,7 @@ def test_jax_factory_refused_with_the_lid(eos):
 def _phantom_energy(s, delta, T_m):
     s._dSdt_single(0.0, s._S0)
     ev = s._lid_last
-    return sl.lid_energy(ev.rho, delta, ev.h_b, ev.cp, ev.T_b, T_m), ev
+    return delta * float(s._lid_hv.H(T_m)), ev
 
 
 def test_lid_above_the_growth_stop_fails_the_step_check(eos):

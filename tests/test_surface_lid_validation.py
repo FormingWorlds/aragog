@@ -28,14 +28,20 @@ def _neumann_lambda(St):
     return brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
 
 
+HV = sl.LidEnthalpy.linear(RHO, CP, T_B, CP * T_B)
+
+
+def _energy(delta, T_m):
+    return delta * float(HV.H(T_m))
+
+
 def _evolve(y0, t0, t_out, *, dh, F_b, surface):
-    """Integrate the lid states (delta, E_lid) with the lid functions; ``surface(delta, T_m)``
+    """Integrate the lid states (delta, E_lid) with the lid functions; ``surface(delta, E)``
     returns the LidSurface. Returns delta, the surface solution and the base rates at t_out."""
     h_b = CP * T_B
 
     def state(y):
-        T_m = sl.lid_mean_temperature(y[1], RHO, y[0], h_b, CP, T_B)
-        surf = surface(y[0], T_m)
+        surf = surface(y[0], y[1])
         rates = sl.lid_rates(
             delta=y[0],
             E_lid=y[1],
@@ -44,10 +50,10 @@ def _evolve(y0, t0, t_out, *, dh, F_b, surface):
             F_grid=0.0,
             w=1.0,
             rho=RHO,
-            cp=CP,
-            h_b=h_b,
             h_f=h_b + dh,
             T_b=T_B,
+            H_b=RHO * h_b,
+            hv=HV,
             h_top=1e12,
             delta_lo=1e-9,
             heating=0.0,
@@ -70,8 +76,8 @@ def _evolve(y0, t0, t_out, *, dh, F_b, surface):
     return sol.y[0], [state(sol.y[:, i])[0] for i in range(sol.t.size)]
 
 
-def _dirichlet(delta, T_m):
-    return sl.fixed_surface_state(delta, T_m, T_B, K, T_S, 0.0)
+def _dirichlet(delta, E):
+    return sl.fixed_surface_state(delta, E, T_B, K, T_S, 0.0, HV)
 
 
 T_V1 = np.array([1e8, 1e10, 1e12])
@@ -93,7 +99,7 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
         t0 = 1e6
         d0 = 2 * lam * np.sqrt(KAPPA * t0)
         T_m0 = T_S + sl.shape(lam**2)[2] * (T_B - T_S)
-        E0 = sl.lid_energy(RHO, d0, CP * T_B, CP, T_B, T_m0)
+        E0 = _energy(d0, T_m0)
         d, _ = _evolve([d0, E0], t0, T_V1, dh=dh, F_b=0.0, surface=_dirichlet)
         ref = 2 * lam * np.sqrt(KAPPA * T_V1)
         np.testing.assert_allclose(d, ref, rtol=1e-2)
@@ -102,7 +108,7 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
         linear = np.sqrt(2 * St * KAPPA * T_V1)
         assert np.all(np.abs(linear / ref - 1) > 1e-2)
         t_lin = np.geomspace(1e5, 1e12, 30)
-        E_lin = sl.lid_energy(RHO, 1.0, CP * T_B, CP, T_B, 0.5 * (T_S + T_B))
+        E_lin = _energy(1.0, 0.5 * (T_S + T_B))
         d_lin, _ = _evolve([1.0, E_lin], 0.0, t_lin, dh=dh, F_b=0.0, surface=_dirichlet)
         err = np.abs(d_lin / (2 * lam * np.sqrt(KAPPA * t_lin)) - 1)
         assert err[-1] < 1e-2 and err[-1] < err[5]
@@ -139,7 +145,7 @@ def test_v2_half_space_cooling(validation_plot):
     t0 = 1e6
     d0 = 2 * lam * np.sqrt(KAPPA * t0)
     T_m0 = T_S + sl.shape(lam**2)[2] * (T_B - T_S)
-    E0 = sl.lid_energy(RHO, d0, CP * T_B, CP, T_B, T_m0)
+    E0 = _energy(d0, T_m0)
     t = np.geomspace(3 * t0, 1e12, 25)
     _, surf = _evolve([d0, E0], t0, t, dh=0.0, F_b=0.0, surface=_dirichlet)
     F = np.array([s.F_s for s in surf])
@@ -176,10 +182,10 @@ def test_v3_quasi_steady_crust(validation_plot):
     d_eq = K * (T_B - T_s_eq) / F_b
     tau = max(RHO * dh * d_eq**2 / (K * (T_B - T_s_eq)), d_eq**2 / KAPPA)
     t = np.geomspace(1e-3 * tau, 10 * tau, 20)
-    E0 = sl.lid_energy(RHO, 10.0, CP * T_B, CP, T_B, 0.5 * (T_B + T_S))
+    E0 = _energy(10.0, 0.5 * (T_B + T_S))
 
-    def grey(delta, T_m):
-        return sl.surface_state(delta, T_m, T_B, K, 1.0, T_eq, 0.0)
+    def grey(delta, E):
+        return sl.surface_state(delta, E, T_B, K, 1.0, T_eq, 0.0, HV)
 
     d, surf = _evolve([10.0, E0], 0.0, t, dh=dh, F_b=F_b, surface=grey)
     assert d[-1] == pytest.approx(d_eq, rel=1e-4)

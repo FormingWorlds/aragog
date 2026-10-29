@@ -2,7 +2,9 @@
 
 A lid state built as the EOS integral of a known profile, ``E = int_0^delta H(T(z)) dz`` with
 ``H(S) = int_{S_sol}^S rho T dS`` at the top-cell pressure (the per-volume enthalpy of the
-merge), must give back that profile: its shape parameter and its surface temperature.
+merge), must give back that profile: its shape parameter to 1e-4 and its surface temperature
+to relative 1e-6. A lid that takes the density and heat capacity of its base misses the shape
+by 0.2 to 0.4.
 """
 
 from __future__ import annotations
@@ -83,5 +85,6 @@ def test_lid_state_gives_back_its_eos_profile(table, T_eq, shape):
     s.dSdt(0.0, np.concatenate([S0, [delta, E]]))
     surf = seen['ev'].surf
     assert surf.clipped == 0
-    assert surf.s == pytest.approx(shape, abs=1e-6)
-    assert surf.T_s == pytest.approx(T_s, rel=1e-8)
+    # both sides integrate the enthalpy table, whose kinks at the EOS nodes cap the quadrature
+    assert surf.s == pytest.approx(shape, abs=1e-4)
+    assert surf.T_s == pytest.approx(T_s, rel=1e-6)
