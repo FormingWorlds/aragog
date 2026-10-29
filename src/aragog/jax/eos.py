@@ -787,7 +787,7 @@ class EntropyEOS_JAX(eqx.Module):
         rho_single = _table_lookup_blend('density')
         Cp_single = _table_lookup_blend('heat_capacity')
         dTdPs_single = _table_lookup_blend('dTdPs')
-        # alpha derived from thermodynamic identity (no thermal_exp tables yet)
+        # alpha from the thermodynamic identity, as the NumPy evaluator; thermal_exp is not read
         alpha_single = dTdPs_single * rho_single * Cp_single / jnp.maximum(T_single, 1.0)
         cond_single = jnp.where(gphi > 0.5, k_liquid, k_solid)
 

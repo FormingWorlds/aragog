@@ -108,6 +108,21 @@ def script(tmp_path, monkeypatch):
     sys.path.remove(str(ROOT / 'tools' / 'verification'))
 
 
+@pytest.mark.unit
+def test_the_values_file_is_the_dump_of_its_values(monkeypatch):
+    """The values file is the text of ``dump_values`` of its items: one top-level item per
+    line and no indented line. The writer module imports no JAX, so this unit test runs
+    without the ``jax`` extra."""
+    monkeypatch.syspath_prepend(str(ROOT / 'tools' / 'verification'))
+    from _values_io import dump_values
+
+    text = (ROOT / 'docs' / 'figures' / 'vv' / 'core_verification_values.json').read_text()
+    assert dump_values(VALUES) == text
+    lines = text.splitlines()
+    assert len(lines) == len(VALUES) + 2
+    assert not [ln for ln in lines if ln[:1].isspace()]
+
+
 def _holds(key, value, want):
     """A value in ROUNDING or RUN_SPREAD may not double, one in MIXING_TCEN lies between 0 and
     1 K, one in AT_LEAST_HALF is at least half its value, one in BANDS within its band, every

@@ -459,10 +459,10 @@ def test_the_heated_rhs_matches_numpy_after_the_start():
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
-def test_the_expansivity_source_is_the_only_numpy_jax_difference():
+def test_the_rhs_matches_jax_with_and_without_the_thermal_exp_tables():
     """Over a mantle above its liquidus at every node, where the single-phase expansivity enters,
-    the JAX RHS equals the numpy RHS with the identity expansivity rho cp |dT/dP_S| / T to
-    1e-10; with the numpy thermal_exp tables the difference is that of the two expansivities."""
+    the JAX RHS equals the numpy RHS to 1e-10 with and without the thermal_exp tables: both
+    paths take the expansivity from the identity rho cp dT/dP_S / T."""
     diffs = []
     for identity in (True, False):
         eos = entropy_eos_copy(identity_alpha=identity)
@@ -477,7 +477,7 @@ def test_the_expansivity_source_is_the_only_numpy_jax_difference():
         f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
         f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), _build_jax_pieces(solver)))
         diffs.append(np.max(np.abs(f_jax - f_np) / np.maximum(np.abs(f_np), 1e-300)))
-    assert diffs[0] < 1e-10 < diffs[1] < 1e-3
+    assert max(diffs) < 1e-10
 
 
 @pytest.mark.unit
@@ -485,10 +485,9 @@ def test_the_expansivity_source_is_the_only_numpy_jax_difference():
 @needs_eos
 def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax():
     """At the CMB pressure the material expansivity is the volume-weighted mean
-    ``sum_i x_i alpha_i / rho_i / sum_i x_i / rho_i`` of the coexisting phases, from the raw
-    tables or the identity per phase; NumPy without the alpha tables equals JAX to rounding and
-    with them differs by the table-identity difference only; it and the heat capacity have no
-    jump at the solidus or the liquidus."""
+    ``sum_i x_i alpha_i / rho_i / sum_i x_i / rho_i`` of the coexisting phases, with the identity
+    alpha per phase whether or not the thermal_exp tables are loaded; NumPy equals JAX to rounding
+    in both cases; it and the heat capacity have no jump at the solidus or the liquidus."""
     tables, eos_jax = entropy_eos_copy(), entropy_eos_jax()
     identity = entropy_eos_copy(identity_alpha=True)
     P = float(_build_numpy_solver(tables)._P_basic_flat[0])
@@ -502,25 +501,20 @@ def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax(
             ends = {}
             for phase, s, x in (('solid', s_sol, 1.0 - phi), ('melt', s_liq, phi)):
                 rho = raw('density', phase, s)
-                if eos is tables:
-                    alpha = raw('thermal_exp', phase, s)
-                else:
-                    cp, dtdp, t = (
-                        raw(q, phase, s) for q in ('heat_capacity', 'dTdPs', 'temperature')
-                    )
-                    alpha = rho * cp * abs(dtdp) / t
+                cp, dtdp, t = (
+                    raw(q, phase, s) for q in ('heat_capacity', 'dTdPs', 'temperature')
+                )
+                alpha = rho * cp * abs(dtdp) / t
                 ends[phase] = (x / rho, alpha)
             want = sum(v * a for v, a in ends.values()) / sum(v for v, _ in ends.values())
             got = eos.material_expansivity(P, s_sol + phi * (s_liq - s_sol))
             assert float(got) == pytest.approx(want, rel=1e-12)
     S = np.linspace(s_sol - 400.0, s_liq + 400.0, 201)
     a_jax = np.asarray(jax.vmap(eos_jax.material_expansivity)(jnp.full_like(S, P), S))
-    np.testing.assert_allclose(
-        identity.material_expansivity(np.full_like(S, P), S), a_jax, rtol=1e-13
-    )
-    np.testing.assert_allclose(
-        tables.material_expansivity(np.full_like(S, P), S), a_jax, rtol=5e-4
-    )
+    for eos in (tables, identity):
+        np.testing.assert_allclose(
+            eos.material_expansivity(np.full_like(S, P), S), a_jax, rtol=1e-13
+        )
     for edge in (s_sol, s_liq):
         sides = np.array([edge - 1e-6, edge + 1e-6])
         for eos in (tables, eos_jax):

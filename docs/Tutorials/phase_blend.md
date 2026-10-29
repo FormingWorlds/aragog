@@ -7,6 +7,7 @@ In this tutorial you evaluate the heat capacity of the mantle just below and jus
 - How to evaluate material properties at a given pressure and entropy with `EntropyPhaseEvaluator`.
 - What the blend width does at the solidus.
 - Which widths the configuration accepts.
+- Where the expansivity of a single phase comes from.
 
 ## What you need
 
@@ -104,4 +105,31 @@ The output is
 matprop_smooth_width must lie in (0, 1), got 0.0
 ```
 
-A TOML file read by `Parameters.from_file` refuses the same values. [Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus) explains the blend, and [Validation: Phase transitions](../Validation/phase_transitions.md) shows the checks.
+A TOML file read by `Parameters.from_file` refuses the same values.
+
+## 4. See where the expansivity of a single phase comes from
+
+Outside the mushy zone the evaluator derives the thermal expansivity $\alpha$ \[1/K\] from the density, the heat capacity, the temperature and the adiabatic gradient of the same phase, $\alpha = \rho\, c_p\, (\partial T/\partial P)_S / T$. The test tables also carry two `thermal_exp` tables, one per phase, which the solver does not read. We evaluate a melt state 200 J/kg/K above the liquidus with a width of 10⁻⁶, so that the blend does not enter.
+
+```python
+S = np.array([S_liq + 200.0])  # in the melt, outside the blend
+ev = EntropyPhaseEvaluator(eos, gravitational_acceleration=10.0, matprop_smooth_width=1e-6)
+ev.set_pressure(P)
+ev.set_entropy(S)
+ev.update()
+alpha = float(ev.thermal_expansivity()[0])
+rho, c_p, T = (float(np.ravel(f())[0]) for f in (ev.density, ev.heat_capacity, ev.temperature))
+identity = rho * c_p * float(np.ravel(ev.dTdPs())[0]) / T
+table = float(eos._tables['thermal_exp_melt']['interp']([[P[0], S[0]]])[0])
+print(f'alpha {alpha:.6e} 1/K, identity {identity:.6e} 1/K')
+print(f'thermal_exp table {table:.6e} 1/K, relative gap {abs(table - identity) / identity:.1e}')
+```
+
+The output is
+
+```text
+alpha 8.433257e-05 1/K, identity 8.433257e-05 1/K
+thermal_exp table 8.433308e-05 1/K, relative gap 6.1e-06
+```
+
+The evaluator gives the identity value. The table value is close to it but not equal; SPIDER reads the table, so a comparison of Aragog with SPIDER shows this gap outside the mushy zone. [Thermal expansivity of a single phase](../Explanations/phase_transitions.md#thermal-expansivity-of-a-single-phase) explains the choice. [Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus) explains the blend, and [Validation: Phase transitions](../Validation/phase_transitions.md) shows the checks.
