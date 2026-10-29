@@ -25,7 +25,6 @@ import tomllib
 from pathlib import Path
 
 import numpy as np
-import toml
 
 CONFIG = Path(__file__).resolve().parent / 'data' / 'v5b_zalmoxis_aragog_calliope.toml'
 SOLID_STEPS = 3
@@ -92,6 +91,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     out = (args.output_dir or Path(tempfile.mkdtemp(prefix='v5b_'))).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    import toml  # a PROTEUS dependency; Aragog itself does not install it
+
     cfg = tomllib.loads(CONFIG.read_text())
     cfg['params']['out']['path'] = str(out / 'output')
     (out / 'config.toml').write_text(toml.dumps(cfg))
