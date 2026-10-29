@@ -353,6 +353,15 @@ def test_lid_depth_is_the_isotherm_depth(eos):
     assert g == pytest.approx((z - s._lid_handover_depth) / s._lid_handover_depth, rel=1e-12)
 
 
+def test_lid_depth_of_a_handed_over_start_is_none(eos):
+    """A solver that starts with the handed-over lid (0, 0) has no lid, so no lid depth."""
+    s = _cold_top_solver(eos)
+    s.set_initial_lid(0.0, 0.0)
+    s._dSdt_single(0.0, s._S0)
+    assert s.state.lid_state is not None
+    assert s._lid_depth() is None
+
+
 def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8638394321628):
     """``_lid_depth`` of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
     from types import SimpleNamespace
