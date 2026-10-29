@@ -67,6 +67,9 @@ def test_state_helpers_run_on_a_carrier_without_the_lid_property(eos):
         _resolve_dSdr_cmb_init = EntropySolver._resolve_dSdr_cmb_init
         _n_shell = EntropySolver._n_shell
         _core_shell = EntropySolver._core_shell
+        _remap_entropy_to_current_mesh = EntropySolver._remap_entropy_to_current_mesh
+        staggered_mass_coordinates = EntropySolver.staggered_mass_coordinates
+        entropy_staggered = EntropySolver.entropy_staggered
 
     c = Carrier()
     c.__dict__.update(vars(s))
@@ -74,6 +77,9 @@ def test_state_helpers_run_on_a_carrier_without_the_lid_property(eos):
     assert c.get_current_dSdr_cmb() == 7.0e-4
     c.set_initial_entropy(3000.0)
     assert c._S0.size == s._n_stag + 1
+    c._lid_on = True  # a carrier of a lid solver: the 2 lid rows follow the extra state
+    c._solution = SimpleNamespace(y=np.full((s._n_stag + 3, 2), 7.0e-4))
+    assert c.get_current_dSdr_cmb() == 7.0e-4
 
 
 def test_lid_off_keeps_the_state_layout(eos):

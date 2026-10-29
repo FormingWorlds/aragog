@@ -1487,6 +1487,12 @@ class SolverOutput:
             _arr('g_b', self.g_b, 'basic', 'm s-2', 'Gravitational acceleration at basic nodes')
 
 
+def _lid_slots(solver) -> int:
+    """Number of lid states at the end of the state vector of ``solver``: 2 with the lid on,
+    else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works too."""
+    return 2 if getattr(solver, '_lid_on', False) else 0
+
+
 class EntropySolver:
     """Entropy-based interior dynamics solver.
 
@@ -2901,13 +2907,13 @@ class EntropySolver:
                 S_arr.min(),
                 S_arr.max(),
             )
-        if self._n_lid:
+        if _lid_slots(self):
             self._S0 = np.concatenate([self._S0, self._initial_lid(float(S_arr[-1]))])
 
     @property
     def _n_lid(self) -> int:
         """Number of lid states at the end of the state vector: 2 with the lid on, else 0."""
-        return 2 if getattr(self, '_lid_on', False) else 0
+        return _lid_slots(self)
 
     def set_initial_lid(self, delta: float | None, E_lid: float | None = None) -> None:
         """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
@@ -3483,7 +3489,7 @@ class EntropySolver:
             or prev_sol is None
             or getattr(prev_sol, 'y', None) is None
             or prev_sol.y.size == 0
-            or prev_sol.y.shape[0] != n_stag + len(slots) + self._n_shell() + self._n_lid
+            or prev_sol.y.shape[0] != n_stag + len(slots) + self._n_shell() + _lid_slots(self)
         ):
             return None
         return float(prev_sol.y[n_stag + slots.index(slot), -1])
