@@ -19,11 +19,27 @@ def eos():
     return entropy_eos_copy(EOS_DIR)
 
 
-def _solver(eos, lid=True, end=1.0, core_bc='quasi_steady', S0=3050.0, **lidkw):
+HEATING = [None, 'tidal', 'radio']
+
+
+def _heat(p, heating):
+    """Internal heating of about 3e-7 W/kg: tidal, or one radionuclide."""
+    from aragog.parser import _Radionuclide
+
+    if heating == 'tidal':
+        p.energy.tidal = True
+        p.energy.tidal_array = np.array([3.0e-7])
+    elif heating == 'radio':
+        p.energy.radionuclides = True
+        p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
+
+
+def _solver(eos, lid=True, end=1.0, core_bc='quasi_steady', S0=3050.0, heating=None, **lidkw):
     from aragog.solver.entropy_solver import EntropySolver
 
     inner = 2 if core_bc == 'quasi_steady' else 1
     p = _build(core_bc=core_bc, outer_bc=1, inner_bc=inner, n_nodes=10, end_time=end)
+    _heat(p, heating)
     p.boundary_conditions.subgrid_lid = lid
     for k, v in lidkw.items():
         setattr(p.boundary_conditions, k, v)
@@ -75,6 +91,7 @@ def test_set_initial_lid_and_hot_start(eos):
         s.set_initial_lid(1.0, float('nan'))
 
 
+@pytest.mark.parametrize('heating', HEATING)
 @pytest.mark.physics_invariant
 @settings(
     max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
@@ -85,11 +102,12 @@ def test_set_initial_lid_and_hot_start(eos):
     S_top=st.floats(2700.0, 3300.0),
     S_bot=st.floats(2700.0, 3300.0),
 )
-def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
+def test_ledger_per_call_closes(eos, heating, frac, dT, S_top, S_bot):
     """The per-call energy identity closes on random valid states: the lid at any thickness up
     to the growth stop, its mean off the steady value, any entropy profile (so the lid hidden,
-    partly hidden or full)."""
-    s = _solver(eos)
+    partly hidden or full), with and without internal heating; residual within 1e-10 of the
+    largest power."""
+    s = _solver(eos, heating=heating)
     delta = max(frac * s._lid_h_top, s._lid_delta_lo)
     y = s._S0.copy()
     y[: s._n_stag] = np.linspace(S_bot, S_top, s._n_stag)
@@ -104,15 +122,15 @@ def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
 
 
 @pytest.mark.physics_invariant
-def test_ledger_per_call_closes_with_internal_heating(eos):
+@pytest.mark.parametrize('heating', ['tidal', 'radio'])
+def test_ledger_per_call_closes_with_internal_heating(eos, heating):
     """With internal heating the per-call energy identity closes too: the lid heats the mass
     of its profile, delta times the mean density over the profile, in the ledger as in the
     lid energy rate."""
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
-    p.energy.tidal = True
-    p.energy.tidal_array = np.array([3.0e-7])
+    _heat(p, heating)
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.normalize()
     s = EntropySolver(p, entropy_eos=eos)
@@ -128,10 +146,12 @@ def test_ledger_per_call_closes_with_internal_heating(eos):
 
 
 @pytest.mark.physics_invariant
-def test_ledger_over_a_solve(eos):
-    """Over a solve the step ledger closes to round-off and the state heat to the stated
-    quadrature accuracy, and the lid grows well past its phantom start."""
-    s = _solver(eos)
+@pytest.mark.parametrize('heating', HEATING)
+def test_ledger_over_a_solve(eos, heating):
+    """Over a solve the step ledger closes to 1e-10 of the surface power and the state heat to
+    1e-2 of the budget (its quadrature accuracy), with and without internal heating, and the lid
+    grows well past its phantom start."""
+    s = _solver(eos, heating=heating)
     s.solve()
     ei = s._solution.energy_integrals
     budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
