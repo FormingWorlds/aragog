@@ -3173,16 +3173,30 @@ class EntropySolver:
         )
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
-        """Hand-over margin ``(z_lid - depth) / depth`` of a physical state: positive once the
-        lid-base isotherm lies below the face of ``lid_handover_cells`` top cells; -1 for a
-        handed-over lid or without the stagnant-lid state."""
+        """Hand-over root of a physical state: the smallest of the margin
+        ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_gate`. It is positive once
+        the lid-base isotherm lies below the face of ``lid_handover_cells`` top cells in the
+        solid regime; -1 for a handed-over lid or without the stagnant-lid state."""
         if float(y[-2]) == 0.0:
             return -1.0
         self._dSdt_single(t_yr, y)
         z = self._lid_depth()
         if z is None:
             return -1.0
-        return (z - self._lid_handover_depth) / self._lid_handover_depth
+        return min((z - self._lid_handover_depth) / self._lid_handover_depth, *self._lid_gate())
+
+    def _lid_gate(self) -> tuple[float, ...]:
+        """Solid-regime terms of the hand-over root at the last RHS state: ``2 w_active - 1``
+        of the stagnant-lid state and ``1 - 2 w_phi``, with ``w_phi`` the melt ramp of the top
+        cell that also sets the lid base. Both are positive only with an active stagnant lid
+        and a top cell below the rheological transition."""
+        from aragog.rheology_lid import _melt_ramp
+
+        ph = self.state.phase_staggered
+        phi = float(np.asarray(ph.melt_fraction()).ravel()[-1])
+        w_phi = float(_melt_ramp(phi, ph._phi_rheo, ph._phi_width))
+        w_active = float(np.asarray(self.state.lid_state['w_active']))
+        return 2.0 * w_active - 1.0, 1.0 - 2.0 * w_phi
 
     def _lid_heat_per_volume(self, S: float) -> float:
         """Heat content per volume [J/m^3] at the top-cell pressure from the solidus entropy,
