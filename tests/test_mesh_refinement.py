@@ -45,9 +45,21 @@ def _radii(m):
 
 
 @pytest.mark.parametrize('mass_coordinates', [True, False])
-def test_the_default_mesh_is_not_refined(mass_coordinates):
-    """With both cell thicknesses at 0 the mesh takes the uniform path."""
-    assert not _mesh(mass_coordinates=mass_coordinates)._refined
+def test_the_default_mesh_does_not_reach_the_refined_path(mass_coordinates, monkeypatch):
+    """With both cell thicknesses at 0 the mesh builds without the refined grid and its
+    radii check; with a 1 km top cell it reaches them."""
+
+    def refined(*_):
+        raise RuntimeError('refined path')
+
+    monkeypatch.setattr(Mesh, '_refined_unit_grid', refined)
+    monkeypatch.setattr(Mesh, '_check_refined_radii', refined)
+    try:
+        _mesh(mass_coordinates=mass_coordinates)
+    except RuntimeError as exc:
+        pytest.fail(f'the default mesh reached the {exc}')
+    with pytest.raises(RuntimeError, match='refined path'):
+        _mesh(top=1e3, mass_coordinates=mass_coordinates)
 
 
 def test_unit_grid_hits_both_end_cells_over_a_wide_range():

@@ -24,7 +24,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / 'tests' / 'reference' / 'mesh_refinement_off_main_reference.npz'
 GEN = ROOT / 'tools' / 'verification' / 'generate_mesh_refinement_off_reference.py'
-# Linux against the macOS reference: mesh 1.6e-12, RHS 2.8e-14 of the largest value, end states 9.8e-8
+# Linux vs macOS reference, max |d| / max |ref|: mesh 1.0e-12, RHS 2.8e-14, end states 2.3e-8
 MESH_RTOL, RHS_RTOL, SOLVE_RTOL = 1.0e-10, 1.0e-10, 1.0e-6
 
 
@@ -70,10 +70,8 @@ def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates, monkey
         ('solve/numpy/y_end', SOLVE_RTOL),
         ('solve/jax/y_end', SOLVE_RTOL),
     )
-    scale = {key: float(np.max(np.abs(expected[key]))) for key, _ in checks}
-    dev = {
-        key: float(np.max(np.abs(out[key] - expected[key]))) / scale[key] for key, _ in checks
-    }
+    scale = {key: np.max(np.abs(expected[key])) for key, _ in checks}
+    dev = {key: np.max(np.abs(out[key] - expected[key])) / scale[key] for key, _ in checks}
     warnings.warn(
         f'{mode} off-path max |d| / max |ref|: '
         + ', '.join(f'{k} {v:.2e}' for k, v in dev.items())
