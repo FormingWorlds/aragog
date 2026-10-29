@@ -357,6 +357,8 @@ def test_lid_depth_of_a_handed_over_start_is_none(eos):
     """A solver that starts with the handed-over lid (0, 0) has no lid, so no lid depth."""
     s = _cold_top_solver(eos)
     s.set_initial_lid(0.0, 0.0)
+    s.set_initial_entropy(s._S0[: s._n_stag].copy())
+    assert np.array_equal(s._S0[-2:], [0.0, 0.0])
     s._dSdt_single(0.0, s._S0)
     assert s.state.lid_state is not None
     assert s._lid_depth() is None
