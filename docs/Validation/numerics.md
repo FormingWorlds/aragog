@@ -155,20 +155,24 @@ When a cell cools slowly near the boundary, its cooling rate $|\dot{S}|$ can app
 Without a floor on the effective progress distance, the step cap could collapse to the $1\text{ yr}$ minimum step bound, causing many tiny steps.
 
 **What it tests.**
-A 12-node mantle starts two cells above the solidus plus the stiff-zone half-width $\delta$ under a low surface heat flux ($F = 20\text{ W/m}^2$) over $15\,000\text{ yr}$.
-The test verifies that the stiff-zone landing rule ($d_{\text{eff}} = \max(d_{\text{near}}, 0.5\,\delta)$) allows the cell to advance cleanly into Regime 3 without step collapse.
+A 12-node column on the CI test table cools for $15\,000\text{ yr}$ under a prescribed surface flux $F = 20\text{ W/m}^2$, with `matprop_smooth_width` $= 0$, so that the stiff-zone half-width is $\delta = 10\text{ J/(kg K)}$.
+Cells 4 and 5 start $11$ and $12.5\text{ J/(kg K)}$ above the solidus, just outside the stiff zone; the other cells start $10\text{ J/(kg K)}$ below it.
+This case checks the step controller only; it is not a model of a planet.
+The flux is chosen for the entropy range of the CI test table.
+The test verifies that the stiff-zone landing rule ($d_{\text{eff}} = \max(d_{\text{near}}, 0.5\,\delta)$) lets these cells advance into Regime 3 without step collapse.
 
 **How we know the right answer.**
 The solution matches a high-precision reference solve with tolerances of $10^{-10}$ and stays inside the perturbation envelope $\Delta_{\text{pert}}(T)$ under $10^{-12}$ round-off perturbations.
 
 **Why it matters.**
-Low surface fluxes occur in insulated mantles under thick primordial atmospheres, where efficient stepping is required to simulate long cooling timescales.
+Slow cooling near the solidus occurs in long runs.
+Without the distance floor, the controller takes $1\text{ yr}$ steps for as long as a cell stays near the boundary.
 
 ??? info "Test details"
     - Reference: Fixed $1\text{ yr}$ step size reference at tolerances of $10^{-10}$ and 5 round-off perturbations
     - Tolerance: $\|T_{\text{rate}}^{(0)} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $3.62 \times 10^{-5}\text{ K}$, envelope $\Delta_{\text{pert}} = 3.40 \times 10^{-5}\text{ K}$)
     - Test id: V3-R3
-    - Command: `python scripts/run_v3_r3.py`
+    - Command: `ARAGOG_TEST_EOS_DIR=... python tools/verification/run_step_cap_validation.py --case v3_r3`
 
 ### Sub-solidus upper-bound relaxation and tolerance tightening
 
@@ -178,65 +182,79 @@ Imposing a $100\text{ yr}$ step ceiling on sub-solidus cooling slows down comput
 Removing the $100\text{ yr}$ ceiling without tightening tolerances could degrade solution accuracy.
 
 **What it tests.**
-A 12-node mantle starts above the solidus and cools for $200\,000\text{ yr}$ under $F = 200\text{ W/m}^2$.
-Once all cells cool below the solidus, the upper step bound relaxes to $\infty$, and segment tolerances tighten to $\mathtt{rtol} \le 10^{-9}$ and $\mathtt{atol} \le 10^{-8}/\text{scale}$.
+A 12-node column on the CI test table cools for $200\,000\text{ yr}$ under a prescribed surface flux $F = 200\text{ W/m}^2$, with `matprop_smooth_width` $= 0$.
+Every cell starts at the solidus entropy of the top cell plus $5\text{ J/(kg K)}$: the top cell starts above its solidus, the deeper cells start $306$ to $485\text{ J/(kg K)}$ below theirs.
+This case checks the step controller only; it is not a model of a planet.
+The flux is chosen so that every cell stays inside the entropy range of the CI test table.
+Once all cells cool below the solidus, the upper step bound relaxes to $\infty$.
+The segment tolerances then tighten to $\mathtt{rtol} \le 10^{-9}$ and $\mathtt{atol} \le 10^{-8}/\text{scale}$.
 
 **How we know the right answer.**
-The solution matches the fixed high-precision reference to $1.3 \times 10^{-4}\text{ K}$ while reducing total integration steps from 3688 to 1031.
+The solution matches the fixed high-precision reference to $1.3 \times 10^{-4}\text{ K}$ in 1031 steps.
 
 **Why it matters.**
-Post-magma-ocean solid-state mantle cooling covers billions of years; step relaxation allows long coupled thermal evolution runs to complete quickly.
+Solid-state cooling after the magma ocean covers billions of years.
+The relaxed step bound lets such runs finish in reasonable time; this case checks that the error stays inside the tolerance below.
+The physical case for this regime is the [full solidification check](#full-solidification-without-solver-stalling): a 100-node mantle on the PALEOS low-temperature table.
 
 ??? info "Test details"
     - Reference: Fixed $1\text{ yr}$ step size reference at tolerances of $10^{-10}$ and 5 round-off perturbations
     - Tolerance: $\|T_{\text{rate}}^{(0)} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $7.54 \times 10^{-5}\text{ K}$, envelope $\Delta_{\text{pert}} = 1.07 \times 10^{-6}\text{ K}$)
     - Test id: V3-R4
-    - Command: `python scripts/run_v3_r4.py`
+    - Command: `ARAGOG_TEST_EOS_DIR=... python tools/verification/run_step_cap_validation.py --case v3_r4`
 
 ### Full solidification without solver stalling
 
 **Why this check exists.**
-In deep mantle cells at high pressures, thermal boundary layer sharpening and phase-boundary crossing previously triggered integrator stalls in 100-node setups, failing to reach full solidification.
+In 100-node runs, deep cells at high pressure stay close to the phase boundary for millions of years.
+If the controller ties the step to their small distance from the boundary, the step size collapses and the run does not reach full solidification.
+This case has 2 such points: $83.684\text{ Myr}$ with stagnant-lid rheology and $107.655\text{ Myr}$ without it.
 
 **What it tests.**
-A 100-node mantle using PALEOS low-temperature equation of state tables is integrated past historical stall points ($83.684\text{ Myr}$ and $107.655\text{ Myr}$) under both stagnant-lid rheology (`rheo_on`) and rheology off (`rheo_off`) until full solidification ($\phi_{\max} = 0$, status 0).
+A 100-node mantle on the PALEOS low-temperature equation of state tables cools from $S_0 = 3165.90\text{ J/(kg K)}$ under a grey-body surface ($T_{\text{eq}} = 273\text{ K}$), once with stagnant-lid rheology (`rheo_on`) and once without it (`rheo_off`), until full solidification ($\phi_{\max} = 0$).
 
 **How we know the right answer.**
-Each run passes its historical stall point ($83.684\text{ Myr}$ for `rheo_on`, $107.655\text{ Myr}$ for `rheo_off`), reaches full solidification ($\phi_{\max} = 0$), and completes with status 0, while keeping entropy inside the valid equation of state table domain.
+Each run must pass its stall point and reach $\phi_{\max} = 0$ with status 0.
+Its entropy must stay inside the table.
 
 **Why it matters.**
 Long planetary evolution runs require robust integration from magma ocean through complete mantle solidification into solid-state convection.
 
 **Known limit.**
-Per Tim's ruling (2026-10-26, Ruling 19), integration to $1.0 \times 10^9\text{ yr}$ is not required; each run passes its old stall point and reaches full solidification ($\phi_{\max} = 0$) with status 0.
-The first `rheo_on` run used finite-difference Jacobians because the standalone runner installed no JAX factory, and does not count for V4; only the run with the JAX factory installed (as in coupled PROTEUS runs) counts (Ruling 22b).
+The run stops at full solidification; the check does not integrate to $10^9\text{ yr}$.
+The `rheo_on` run installs the JAX CVODE factory, as coupled PROTEUS runs do.
 
 ??? info "Test details"
-    - Reference: Historical stall points at $83.684\text{ Myr}$ and $107.655\text{ Myr}$
-    - Tolerance: Each run passes its old stall point (rheo_on $83.684\text{ Myr}$, rheo_off $107.655\text{ Myr}$), reaches $\phi_{\max} = 0$, status 0; $10^9\text{ yr}$ not required. The first rheo_on run used finite-difference Jacobians (no JAX factory in the standalone runner) and does not count; only the factory run counts. Evidence: unique progress files (Ruling 19, Ruling 22b).
+    - Reference: Stall points at $83.684\text{ Myr}$ (`rheo_on`) and $107.655\text{ Myr}$ (`rheo_off`)
+    - Tolerance: Each run passes its stall point and reaches $\phi_{\max} = 0$ with status 0; the entropy stays inside the table
     - Test id: V4
-    - Command: `python scripts/run_v4_rheo_off_r18.py` and `python scripts/run_v4_rheo_on_r22.py`
+    - Command: `python tools/verification/run_step_cap_validation.py --case v4_rheo_off --eos-dir <PALEOS low-T table directory>`; the same with `--case v4_rheo_on`
 
 ### Coupled planetary evolution under super-solidus conditions
 
 **Why this check exists.**
-Coupling Aragog to the PROTEUS framework requires exchanging heat fluxes and boundary temperatures with the atmospheric model (Janus).
-Unchanged super-solidus paths must stay stable and perturbation-robust under coupling.
+Coupling Aragog to the PROTEUS framework exchanges heat fluxes and boundary temperatures with the atmosphere model (JANUS).
+The rules of the controller act only near and below the solidus.
+A coupled run that stays above the solidus must therefore not change at all.
 
 **What it tests.**
-Five coupled PROTEUS + Aragog iterations on `tests/integration/aragog_janus.toml` start at $T_{\text{surf}} = 4000\text{ K}$, comparing the branch tip against `origin/main` over 5 round-off perturbations.
+PROTEUS couples Aragog and JANUS for 5 iterations from $T_{\text{surf}} = 4000\text{ K}$.
+The run stays above the solidus ($\Phi_{\text{global}} = 1$ at the end).
+The rate cap never arms a segment.
 
 **How we know the right answer.**
-Unperturbed before and after differences stay inside the round-off perturbation envelope $\Delta_{\text{pert}}$ or $10^{-8}$ relative on all tracked planetary helpfile columns and staggered profiles.
+The end state is bitwise equal to that of the same run without the rules of the controller near and below the solidus.
+This holds for the 9 tracked helpfile columns and for the staggered temperature and entropy profiles.
 
 **Why it matters.**
 Ensures the phase-boundary controller introduces no regressions into existing coupled magma ocean simulations.
 
 ??? info "Test details"
-    - Reference: `origin/main` coupled trajectory and 5 round-off perturbation runs
-    - Tolerance: Before/after difference $\le \max(\Delta_{\text{pert}}, 10^{-8}\text{ rel})$ on all helpfile columns and profiles
+    - Reference: The same coupled run without the rules of the controller near and below the solidus
+    - Tolerance: Bitwise equality of `Time`, `T_magma`, `T_surf`, `F_int`, `F_atm`, `Phi_global`, `M_mantle_liquid`, `M_mantle_solid`, `R_int` and the staggered profiles
     - Test id: V5
-    - Command: `python scripts/run_v5.py`
+    - Config: `tools/verification/data/v5_aragog_janus.toml` (PROTEUS `d3f98e81365e728700884723fb820e00660d3793`)
+    - Command: `proteus start --offline -c tools/verification/data/v5_aragog_janus.toml`
 
 ### Coupled planetary evolution crossing the solidus into the solid regime
 
@@ -245,19 +263,24 @@ When a coupled PROTEUS planet cools below the critical melt fraction into the so
 The coupled run must cross the solidus and execute solid-state steps smoothly.
 
 **What it tests.**
-Coupled PROTEUS + Aragog + Calliope run on `tests/integration/zalmoxis_aragog_calliope.toml` starts in the mushy zone ($T_{\text{surf}} = 1750\text{ K}$), continuing until 3 coupling steps after the global melt fraction reaches zero.
+PROTEUS couples Aragog and CALLIOPE from the mushy zone ($T_{\text{surf}} = 1750\text{ K}$).
+The run stops 3 coupling steps after the global melt fraction reaches zero.
 
 **How we know the right answer.**
-The branch's error against the strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) is not larger than main's on all 11 columns, confirmed on the hand-back tip (Tim's ruling 2026-10-26, Ruling 19).
+A strict reference integrates every Regime 4 segment at rtol $10^{-10}$ with $1\text{ yr}$ steps.
+Against that reference, the error of the run is not larger than the error of the same run without the rules of the controller near and below the solidus.
+This holds for all 11 columns: the 9 tracked helpfile columns and the staggered temperature and entropy profiles.
 
 **Why it matters.**
 Shows stable coupling through the final stages of planetary solidification into the rocky mantle regime.
 
 **Known limit.**
-Step ceiling relaxation and tolerance tightening in Regime 4 alter step sizes and numerical truncation errors by design. Validation verifies that the branch's error against the strictest reference ($1\text{ yr}$ Regime 4 steps at $10^{-10}$) is not larger than main's on all 11 columns.
+The relaxed step bound and the tighter tolerances in Regime 4 change step sizes and truncation errors by design.
+The check therefore compares errors against the strict reference, not the end states of the 2 runs.
 
 ??? info "Test details"
-    - Reference: Strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) and `origin/main` coupled trajectory
-    - Tolerance: The branch's error against the strictest reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) is not larger than main's on all 11 columns, confirmed on the hand-back tip (Tim's ruling 2026-10-26, Ruling 19)
+    - Reference: Strict reference (rtol $10^{-10}$ with $1\text{ yr}$ steps in Regime 4) and the same coupled run without the rules of the controller near and below the solidus
+    - Tolerance: The error against the strict reference is not larger than that of the run without those rules, on all 11 columns
     - Test id: V5b
-    - Command: `python scripts/run_v5b.py`
+    - Config: `tools/verification/data/v5b_zalmoxis_aragog_calliope.toml` (PROTEUS `a8bbd8751cb5040aedd90f7acb4a85755afae26b`)
+    - Command: `python tools/verification/run_v5b_proteus.py`; the strict reference with `--reference`
