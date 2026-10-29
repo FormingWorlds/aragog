@@ -1,6 +1,16 @@
 # First-principles verification
 
-Aragog ships a verification test suite that exercises the entropy solver against analytic limits, conservation laws, and SPIDER-parity references. The suite runs under `pytest` from the repository root and is the primary way to confirm a build is correct.
+## What this page checks
+
+This page checks the numerical solvers and physical conservation laws in Aragog.
+Aragog solves the coupled equations of energy conservation, hydrostatic pressure, and mantle convection to simulate magma-ocean cooling and solid-mantle thermal evolution.
+Validation here means running the solver on cases where another source provides the known answer.
+The test then checks that the code matches that answer inside a stated numerical tolerance.
+Known answers come from analytical limits, physical conservation laws, published benchmark studies, or independent second code paths.
+If these numerical methods are wrong, the mantle calculates incorrect temperatures, melt fractions, and boundary heat fluxes.
+Those errors then propagate directly into atmospheric outgassing, planet contraction, and orbital evolution in PROTEUS.
+Each case below states why the check exists, what it tests, how we know the right answer, and why it matters.
+The box "Test details" at the end of each case gives the reference, the tolerance, the test id, and the test command.
 
 ## Test categories
 
@@ -12,7 +22,7 @@ Exercise `EntropyEOS` and `EntropyPhaseEvaluator`:
 
 - Property lookups (temperature, density, heat capacity, thermal expansivity, isentropic temperature gradient) at on-grid and off-grid $(P, S)$ points.
 - Solidus and liquidus entropy lookups against the reference `solidus_P-S.dat` and `liquidus_P-S.dat` files.
-- Smooth-clipped melt fraction $\phi(P, S)$: monotone in $S$, clamped to $[0, 1]$, $C^\infty$ across the solidus and liquidus crossings.
+- Smooth-clipped melt fraction $\phi(P, S)$: monotone in $S$, clamped to $[0, 1]$, $C^\infty$ through the solidus and liquidus crossings.
 - The two-stage SPIDER-parity blend (cubic-Hermite or tanh smoothing followed by `combine_matprop`) for density, heat capacity, and viscosity.
 - The latent-blend $c_p$ method against the linear blend.
 
@@ -25,7 +35,7 @@ Exercise `EntropyEOS` and `EntropyPhaseEvaluator`:
 Test the SPIDER-parity behaviour of `EntropyPhaseEvaluator`:
 
 - Phase identification at $(P, S)$ in pure solid, pure liquid, and mushy regimes.
-- Viscosity tanh blend across the rheological transition $\phi_\mathrm{rheo}$.
+- Viscosity tanh blend through the rheological transition $\phi_\mathrm{rheo}$.
 - Gravitational-separation velocity in viscous and inviscid regimes.
 - Pressure-dependent latent heat $L(P) = T_\mathrm{liq}(P) [S_\mathrm{liq}(P) - S_\mathrm{sol}(P)]$.
 
@@ -59,7 +69,7 @@ Verify that the JAX-backed `EntropyEOS_JAX` and `compute_fluxes` agree with the 
 
 - EOS parity: `EntropyEOS_JAX` returns the same temperature, density, heat capacity, thermal expansivity, $\partial T/\partial P|_S$, and conductivity as `EntropyEOS` on the same $(P, S)$ inputs.
 - Phase evaluator parity: the JAX two-stage blend matches `EntropyPhaseEvaluator` to within floating-point tolerance.
-- JIT and `vmap` compatibility: the JAX flux assembly is differentiable end-to-end with `jax.grad`/`jax.jacrev` and survives JIT compilation without recompilation hot-spots.
+- JIT and `vmap` compatibility: the JAX flux assembly is differentiable in full with `jax.grad`/`jax.jacrev` and survives JIT compilation without recompilation hot-spots.
 - Boundary-copy tests: `dSdr` boundary values copy from the nearest interior node (SPIDER `ic.c:450` parity) instead of being extrapolated.
 - Solver parity: integrating the same problem with the JAX-RHS-driven CVODE path and the numpy RHS produces matching trajectories.
 
@@ -83,6 +93,89 @@ Numpy and JAX paths are independent re-derivations, not a bit-exact port.
 ### Mesh tests (`tests/test_jax_mesh_gravity_fallback.py`)
 
 Verify that when the external mesh file (`eos_method = 2`) supplies an `eos_gravity` column, the JAX path interpolates the per-node gravity profile onto the basic grid rather than broadcasting a single scalar.
+
+### Numpy <-> JAX RHS parity
+
+**Why this check exists.** Aragog implements the right-hand side of the energy equation in both NumPy and JAX. The NumPy right-hand side is the reference implementation, and CVODE evaluates the compiled JAX right-hand side to integrate planet cooling. If the two paths differ in their rheology formulas or flux assembly, CVODE will integrate a different physical system than the reference equations. This test catches discrepancies in homologous temperature parameters on active-solid states (`abe_solid_kappah_floor_0`), where the JAX homologous perturbation probe produces relative differences in $[8.332 \times 10^{-3}, 1.0582 \times 10^{-2}]$ and fails the $10^{-6}$ tolerance by a factor of 8332 to 10582 ($> 8000\times$). It catches missing plastic yielding in JAX on yielded states (`abe_solid_yield_active`), where disabling plastic yielding produces relative differences in $[8.529 \times 10^{-5}, 1.340 \times 10^{-4}]$ and fails tolerance by a factor of 85 to 134 ($> 80\times$). The default state set (`abe_solid_default`) does not show either fault. The test also catches a missing or weakened viscosity law: on `abe_solid_kappah_floor_0` the law alone shifts the right-hand side by $[8.412 \times 10^{-3}, 1.0677 \times 10^{-2}]$, and the law-only guard requires $[4 \times 10^{-3}, 2 \times 10^{-2}]$ on the stored states and $[5 \times 10^{-3}, 2 \times 10^{-2}]$ on the live state ($1.037 \times 10^{-2}$). A law-cut mutant (rheology on with the rheology-off viscosity and mixing-length factor) gives 0 and fails it.
+
+**What it tests.** With solid-state rheology enabled (`[phase_solid.rheology] enabled = true`), the right-hand side evaluates the rate of specific entropy change $\dot{S} = \partial S/\partial t$ in both `EntropyState.update` (NumPy) and `aragog.jax.phase.compute_fluxes` (JAX). The test reads a stored sweep of 100 cooling states on three state sets (`tests/reference/ssc_solver_wiring_benchmarks.json`, made by `tools/verification/generate_ssc_solver_wiring_benchmarks.py`) and evaluates one live profile per set:
+
+1. Default configuration `cfg/abe_solid.toml`: initial entropy $S_\text{init} = 2900\text{ J/(kg K)}$, eddy-diffusivity floor $\kappa_{h,\text{floor}} = 10.0\text{ m}^2/\text{s}$, and solid reference viscosity $\eta_\text{solid} = 1.0\times 10^{21}\text{ Pa s}$. Solid rheology alters basic-node viscosity with solid blend weight $1 - w(\phi) > 0$ at all 100 basic nodes, with effective viscosity $\eta_\text{eff} = \eta_\text{diff}$ across all states ($n_\text{states}(\eta_\text{eff} \ne \eta_\text{diff}) = 0$). Rheology on vs off changes the right-hand side by $[8.101 \times 10^{-5}, 1.268 \times 10^{-3}]$. This change comes mostly from the solid-cell floor switch, not from the viscosity law: with rheology on, a fully solid cell gets no $\kappa_{h,\text{floor}}$.
+2. Active-solid Arrhenius variant `abe_solid_kappah_floor_0`: $S_\text{init} = 2500\text{ J/(kg K)}$, bottom entropy $S_\text{bot} \in [1850, 2500]\text{ J/(kg K)}$, $\kappa_{h,\text{floor}} = 0.0\text{ m}^2/\text{s}$, $\eta_\text{solid} = 1.0\times 10^{18}\text{ Pa s}$, cohesion $c = 1.0\times 10^7\text{ Pa}$, friction coefficient $\mu = 0.1$, and maximum yield stress $\tau_{y,\text{max}} = 1.0\times 10^8\text{ Pa}$. Homologous Arrhenius strengthening ($\eta_\text{diff} \ge 10^{22}\text{ Pa s}$) keeps Pass 1 convective flux below conductive flux through the column ($f_\text{conv} < 0.5$), so `has_lid = False` and $n_\text{nodes}(\eta_\text{eff} \ne \eta_\text{diff}) = 0$ in all 100 states while Arrhenius strengthening changes the RHS by $[8.412 \times 10^{-3}, 1.0677 \times 10^{-2}]$ (and $0.99467$ along the integrated 100-yr trajectory on 60 basic nodes).
+3. Yield-active state set `abe_solid_yield_active`: warm sub-solidus interior $S_\text{init} = 2150\text{ J/(kg K)}$, $S_\text{bot} \in [1950, 2150]\text{ J/(kg K)}$, $\Delta S \in [1620, 1820]\text{ J/(kg K)}$, $\kappa_{h,\text{floor}} = 0.0\text{ m}^2/\text{s}$, $\eta_\text{solid} = 3.0\times 10^{17}\text{ Pa s}$, $c = 150.0\text{ Pa}$, $\mu = 0.0$, and $\tau_{y,\text{max}} = 1.0\times 10^8\text{ Pa}$. Pass 1 interior convection exceeds conduction ($f_\text{conv} > 0.5$) beneath a cold conductive upper boundary layer (`has_lid = True` in all 100 states), generating driving stress $\tau_{d,\text{lid}} \gg \tau_{y,\text{lid}} = 150\text{ Pa}$ so plastic yielding reduces $\eta_\text{eff} < \eta_\text{diff}$ in 9 to 13 nodes in all 100 states. Yielding shifts the RHS relative to yield-off by $[8.529 \times 10^{-5}, 1.340 \times 10^{-4}]$ (median $9.520 \times 10^{-5}$). At the default `matprop_smooth_width = 0.01` the blend gives the two solid nodes above the solidus the small two-phase thermal expansivity of the test tables, so their mixing-length diffusivity is near 0 with and without yield.
+
+When single-phase thermal expansivity $\alpha$ is harmonised between both paths (`identity_alpha = True`), `abe_solid_kappah_floor_0` is unchanged because two-phase latent-blend node 98 ($\phi = 0.5567$, $\rho_\text{sol} < \rho_\text{liq}$) uses `alpha_mixed` exclusively (`flux_vs_rhs_diagnostic`): a $1\text{ ULP}$ `jax.jit` division rounding difference in negative unclamped $\alpha_\text{mixed}$ ($-3.559 \times 10^{-4}\text{ K}^{-1}$) is amplified by cancellation in the smooth positivity clamp $\alpha = \frac{1}{2}(a + \sqrt{a^2 + \epsilon_\alpha^2})$ ($\epsilon_\alpha = 10^{-8}\text{ K}^{-1}$) into a $3.859 \times 10^{-7}$ relative shift in $\alpha_{98} = 7.024 \times 10^{-14}\text{ K}^{-1}$ and a maximum relative right-hand side difference of $4.584 \times 10^{-10}$ (median $3.521 \times 10^{-16}$, interior heat-flux relative difference $\le 5.095 \times 10^{-8}$; eager JAX at state 0 agrees with NumPy to $8.066 \times 10^{-16}$), asserted by the smoke test to within $10^{-9}$ ($2.18\times$ above $4.584 \times 10^{-10}$, corresponding to $2\text{ ULP}$ in unclamped $\alpha_\text{mixed}$). On `abe_solid_yield_active` and `abe_solid_default`, NumPy and JAX right-hand sides agree to floating-point round-off: $\le 1.097 \times 10^{-15}$ (median $2.823 \times 10^{-16}$, interior heat-flux relative difference $\le 9.510 \times 10^{-14}$) on `abe_solid_yield_active`, and $\le 4.998 \times 10^{-15}$ (median $2.127 \times 10^{-15}$, interior heat-flux relative difference $\le 1.669 \times 10^{-14}$) on `abe_solid_default`. With unharmonised single-phase $\alpha$ where `EntropyPhaseEvaluator` interpolates the table directly and `EntropyEOS_JAX` evaluates the thermodynamic relation, differences remain within $10^{-6}$ in all three state sets: $\le 4.584 \times 10^{-10}$ (median $5.509 \times 10^{-16}$, interior heat-flux relative difference $\le 5.095 \times 10^{-8}$) on `abe_solid_kappah_floor_0`, $\le 1.255 \times 10^{-7}$ (median $2.787 \times 10^{-8}$, interior heat-flux relative difference $\le 2.987 \times 10^{-5}$) on `abe_solid_yield_active`, and $\le 4.998 \times 10^{-15}$ (median $2.127 \times 10^{-15}$, interior heat-flux relative difference $\le 1.669 \times 10^{-14}$) on `abe_solid_default`. Live evaluation of a single profile verifies parity to within $2.5 \times 10^{-13}$ relative error.
+
+**How we know the right answer.** The NumPy and JAX implementations are independent code paths that derive from the same physical formulas. They must yield identical right-hand side rates within floating-point round-off.
+
+**Why it matters.** The integrator relies on the JAX right-hand side for speed and differentiability. Discrepancies between NumPy and JAX would mean that model predictions depend on which code path is active.
+
+![NumPy <-> JAX RHS parity with solid rheology](../assets/validation/ssc_rhs_parity.svg#only-light){ width="80%" }
+![NumPy <-> JAX RHS parity with solid rheology](../assets/validation/ssc_rhs_parity_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The top row shows absolute differences between NumPy and JAX right-hand sides along mantle radius for the three state sets. The bottom row shows relative differences. The plot shows the stored 100-state sweep. A pass means that all points lie below the dashed tolerance line at $10^{-6}$.
+
+??? info "Test details"
+    - Reference: NumPy `EntropySolver.dSdt` two-pass implementation on `abe_solid_kappah_floor_0` (`s_init = 2500`, `kappah_floor = 0`, `viscosity_solid = 1e18`), `abe_solid_yield_active` (`s_init = 2150`, `kappah_floor = 0`, `viscosity_solid = 3e17`, `yield_stress_c = 150 Pa`), and inert default `abe_solid_default` (`s_init = 2900`, `kappah_floor = 10`, `viscosity_solid = 1e21`).
+    - Tolerance: $\max_i |\dot{S}_{\text{NumPy}, i} - \dot{S}_{\text{JAX}, i}| / \max(|\dot{S}_{\text{NumPy}, i}|, 10^{-30}) \le 10^{-6}$ for all 100 states of each state set (asserted to $\le 10^{-9}$ for harmonised active-solid RHS parity); active-solid on-vs-off relative difference in $[4 \times 10^{-3}, 2 \times 10^{-2}]$ (live state $[5 \times 10^{-3}, 2 \times 10^{-2}]$) and yield-active yield-on vs yield-off relative difference $\ge 10^{-5}$ at every state (live state $\ge 5 \times 10^{-5}$).
+    - Test id: `tests/test_rheology_solver_wiring_smoke.py::test_rhs_numpy_jax_parity_rheology_on`
+    - Command: `pytest tests/test_rheology_solver_wiring_smoke.py -k test_rhs_numpy_jax_parity_rheology_on` (add `--validation-plots` to write the plot pair)
+
+### Round-off perturbation spread with solid rheology
+
+**Why this check exists.** Nonlinear rheology coupling can cause numerical instability where tiny floating-point round-off errors grow exponentially. This check verifies that microscopic initial perturbations do not cause divergent trajectory spreads during planetary thermal evolution.
+
+**What it tests.** Five perturbed initial entropy profiles $S_0^{(k)}(r) = S_0(r)\left(1 + k \cdot 10^{-12}\right)$ ($k \in \{-2, -1, 0, +1, +2\}$) are integrated forward for 100 years on the active-solid variant (`s_init = 2500 J/(kg K)`, `kappah_floor = 0.0 m^2/s`, `viscosity_solid = 1.0e18 Pa s`) and the default `cfg/abe_solid.toml` (`s_init = 2900 J/(kg K)`, `kappah_floor = 10.0 m^2/s`, `viscosity_solid = 1.0e21 Pa s`). The spread $\Delta T(r) = \max_k T_k(r) - \min_k T_k(r)$ over all 100 basic nodes and all 99 staggered nodes measures trajectory sensitivity:
+
+1. Active-solid variant (`abe_solid_kappah_floor_0`): solid rheology alters final temperatures by $\max_r |T_\text{on}(r, t_\text{end}) - T_\text{off}(r, t_\text{end})| = 7.9874\text{ K}$ ($T_\text{surf} = 482.079\text{ K}$ vs $481.618\text{ K}$, relative difference at the surface $(T_\text{on,surf} - T_\text{off,surf}) / T_\text{off,surf} = 9.570 \times 10^{-4}$, relative difference normalized by peak mantle temperature $\max_r |T_\text{on} - T_\text{off}| / \max_r T_\text{off} = 2.205 \times 10^{-3}$, RHS relative difference $7.656 \times 10^{-2}$, `visc_on != visc_off` at all 100 basic nodes, and $\kappa_{h,\text{on}} \ne \kappa_{h,\text{off}}$ at 60 basic nodes). Microscopic round-off perturbations yield maximum radial spread with rheology enabled of $\max_r \Delta T_\text{on}(r) = 2.128 \times 10^{-5}\text{ K}$ ($\Delta T_{\text{on,surf}} = 2.128 \times 10^{-5}\text{ K}$, $\Delta T_{\text{on,cmb}} = 1.232 \times 10^{-9}\text{ K}$, $\max_r \Delta T_{\text{on,stag}}(r) = 2.178 \times 10^{-5}\text{ K}$) against $\max_r \Delta T_\text{off}(r) = 1.232 \times 10^{-5}\text{ K}$ ($\Delta T_{\text{off,surf}} = 1.232 \times 10^{-5}\text{ K}$, $\Delta T_{\text{off,cmb}} = 1.255 \times 10^{-9}\text{ K}$, $\max_r \Delta T_{\text{off,stag}}(r) = 1.433 \times 10^{-5}\text{ K}$). The measured ratio $\max_r \Delta T_\text{on} / \max_r \Delta T_\text{off}$ is $1.727$; the deciding bounds are taken directly from the measurement, with the active-solid spread bounded by the $3.5 \times 10^{-5}\text{ K}$ ceiling ($1.64\times$ margin over the measured basic spread).
+2. Default configuration `cfg/abe_solid.toml`: solid rheology alters final basic temperatures by $\max_r |T_\text{on}(r, t_\text{end}) - T_\text{off}(r, t_\text{end})| = 7.5340\text{ K}$, relative difference $2.052 \times 10^{-3}$, RHS relative difference $9.789 \times 10^{-2}$, with $\max_r \Delta T_\text{on}(r) = 5.946 \times 10^{-7}\text{ K}$ and $\max_r \Delta T_\text{off}(r) = 1.089 \times 10^{-6}\text{ K}$ ($\Delta T_\text{surf} = 5.946 \times 10^{-7}\text{ K}$). A run with the solid-cell floor switch and without the viscosity law changes the temperatures by $7.485\text{ K}$. Adding the viscosity law to that run changes them by at most $0.199\text{ K}$ more. Both are maxima over the radius, so they do not add up to $7.534\text{ K}$.
+
+**How we know the right answer.** Trajectories with rheology enabled must remain stable: their perturbation spread must not exceed the deciding bound set from the measured spread with a stated margin ($3.5 \times 10^{-5}\text{ K}$ for active solid, $2.0 \times 10^{-6}\text{ K}$ for default).
+
+**Why it matters.** Unstable numerical behaviour causes planetary thermal evolution simulations to diverge or crash during multi-gigayear coupled runs.
+
+![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread.svg#only-light){ width="80%" }
+![End-time temperature profiles and 5-start radial spread profiles Delta T(r)](../assets/validation/ssc_perturbed_spread_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The top panel shows end-time radial temperature profiles for rheology on and off on the active-solid variant. The bottom panel shows the radial perturbation spreads $\Delta T(r)$ from the stored runs. A pass means the active-solid curves with rheology on (basic and staggered nodes) stay below the dash-dot line ($3.5 \times 10^{-5}\text{ K}$) and the default curve stays below the dotted line ($2.0 \times 10^{-6}\text{ K}$). The active-solid staggered curve comes closest to its bound: its margin is $1.61\times$.
+
+??? info "Test details"
+    - Reference: 5 perturbed trajectories with `rheology.enabled = false` on the active-solid variant and default `cfg/abe_solid.toml` (`tests/reference/ssc_solver_wiring_benchmarks.json`).
+    - Tolerance: $\Delta T_\text{on}(r) \le 3.5 \times 10^{-5}\text{ K}$ (margin $1.64\times$ over the measured basic spread $2.128 \times 10^{-5}\text{ K}$ and $1.61\times$ over the staggered spread $2.178 \times 10^{-5}\text{ K}$) on the active-solid variant and $\Delta T_\text{on}(r) \le 2.0 \times 10^{-6}\text{ K}$ on default, with active-solid on-vs-off relative difference $\ge 10^{-4}$.
+    - Test id: `tests/test_rheology_solver_wiring.py::test_perturbed_starts_spread`
+    - Command: `pytest tests/test_rheology_solver_wiring.py -k test_perturbed_starts_spread` (add `--validation-plots` to write the plot pair)
+
+### Two-pass solid rheology RHS cost
+
+**Why this check exists.** Solid rheology calculations execute inside the innermost loop of the differential equation solver. Redundant lookups or repeated compilation would make simulations run slowly. This check counts kernel executions and reads the stored execution times to confirm that two-pass solid rheology adds only the expected kernel calls and that the recorded JAX wall-time ratio stays below 1.5.
+
+**What it tests.** Enabling two-pass solid rheology (`rheology.enabled = true`) reuses the basic-node solidus temperature $T_\text{sol}(P)$ already evaluated during phase lookup, skips staggered-node rheology viscosity via `defer_rheology_viscosity = True` (NumPy) and `include_rheology = False` (JAX), and calls the validation-free `_core` kernels directly inside the RHS. The test measures the call-count deltas live and reads the recorded wall times:
+
+| Per-RHS item | Expected delta (`on - off`) | Measured `'lid'` delta (NumPy / JAX) | Measured `'local'` delta (NumPy / JAX) | Difference (`'lid'` - expected) | Reason |
+|:---|:---:|:---:|:---:|:---:|:---|
+| EOS lookups (solidus temperature) | `0` | `0 / 0` (`5 - 5` / `6 - 6`) | `0 / 0` | `0` | `T_sol(P)` is cached on basic nodes during phase evaluation and reused without extra EOS lookups. |
+| `compute_arrhenius_viscosity` | `+2` | `+2 / +2` | `+1 / +1` | `0` | In `'lid'` mode: `1` vector call on $N_b$ basic nodes in phase evaluation plus `1` scalar call at $(T_i, P_i)$ inside `_compute_stagnant_lid_state_core` (`+2`). In `'local'` mode: `1` vector call on $N_b$ basic nodes (`+1`). |
+| `compute_yield_stress` | `+2` | `+2 / +2` | `+1 / +1` | `0` | In `'lid'` mode: `1` vector call on $N_b$ basic nodes in phase evaluation plus `1` scalar call at $P_\text{lid,base}$ inside `_compute_stagnant_lid_state_core` (`+2`). In `'local'` mode: `1` vector call on $N_b$ basic nodes (`+1`). |
+| `compute_stagnant_lid_state` | `+1` | `+1 / +1` | `0 / 0` | `0` | In `'lid'` mode: `1` call per RHS between Pass 1 (unyielded probe) and Pass 2 (`+1`). In `'local'` mode: active when `stress_closure_mode == 'lid'` (`0`). |
+| `compute_effective_viscosity` | `+1` | `+1 / +1` | `+1 / +1` | `0` | `1` vector call on $N_b$ basic nodes in Pass 2 (`+1` in both `'lid'` and `'local'` modes). |
+| `viscous_mixing_length_factor` | `+2` | `+2 / +2` | `+2 / +2` | `0` | Relative to `rheology.enabled = false` (`0` calls), Pass 1 (`theta = None`) and Pass 2 (`theta = lid_state['theta']` in `'lid'` mode, `None` in `'local'` mode) each invoke `_viscous_mixing_length_factor_core` once, giving `+2` calls per RHS in both NumPy and JAX. |
+
+Each wall time is the minimum over 7 blocks of 1000 RHS evaluations on the 100-basic-node `cfg/abe_solid.toml` mesh (`tests/reference/ssc_solver_wiring_benchmarks.json`). The JIT-compiled JAX RHS wall-time ratio is $1.293\times$ in `'lid'` mode ($789.02\,\mu\text{s}$ vs $610.12\,\mu\text{s}$ per call) and $1.125\times$ in `'local'` mode ($686.30\,\mu\text{s}$ vs $610.12\,\mu\text{s}$ per call). The bound of $1.5\times$ applies to this recorded ratio: the test and the generator's `--check` read it from the stored benchmark, so a slowdown of the code is detected only when the benchmark is regenerated. It is not a performance target. On the eager NumPy path, the two-pass RHS wall-time ratio is $1.703\times$ in `'lid'` mode ($3087.04\,\mu\text{s}$ vs $1813.03\,\mu\text{s}$) and $1.128\times$ in `'local'` mode ($2045.50\,\mu\text{s}$ vs $1813.03\,\mu\text{s}$). The generator's `--check` accepts NumPy ratios in $[0.8, 2.5]$. The test sets no bound on them.
+
+**How we know the right answer.** The expected call numbers come directly from code design: Pass 1 calculates unyielded convection and Pass 2 applies lid geometry and yielding. Wall times are measured by the benchmark generator against identical runs with rheology disabled and stored in the JSON; the test reads them.
+
+**Why it matters.** Coupled planetary simulations run tens of thousands of solver steps. In the recorded benchmark, the JAX ratio of $1.293$ in `'lid'` mode means that solid-state convection adds about $29\%$ to the cost of the right-hand side. The ratios depend on the machine load at generation time. The test checks the recorded benchmark, so a new measurement needs a regeneration of the benchmark file.
+
+![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost.svg#only-light){ width="80%" }
+![Per-RHS kernel call-count deltas and wall-time ratios](../assets/validation/ssc_rhs_cost_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The top panel shows call counts for the six kernel components. Points show expected deltas, measured NumPy deltas, and measured JAX deltas (matching across all components). The bottom panel shows wall-time ratios for JAX (solid line) and NumPy (dashed line). A pass means JAX ratios remain below the dotted guard line at $1.5$.
+
+??? info "Test details"
+    - Reference: `rheology.enabled = false` per-RHS call counts and 1000-call wall time on `cfg/abe_solid.toml`.
+    - Tolerance: per-RHS call-count deltas $(0, +2, +2, +1, +1, +2)$ in `'lid'` mode and $(0, +1, +1, 0, +1, +2)$ in `'local'` mode on both NumPy and JAX; JIT-compiled JAX wall-time ratio $\le 1.5$ (minimum over 7 blocks of 1000 calls, read from the stored benchmark).
+    - Test id: `tests/test_rheology_solver_wiring.py::test_rhs_call_counts_and_cost`
+    - Command: `pytest tests/test_rheology_solver_wiring.py -k test_rhs_call_counts_and_cost` (add `--validation-plots` to write the plot pair)
 
 ## Running the verification suite
 
@@ -111,6 +204,6 @@ The suite asserts the following physical invariants on every solver-driven test 
 1. **Temperature positivity.** $T > 0$ everywhere at all integration times. EOS lookups outside the table domain raise rather than silently extrapolating.
 2. **Melt fraction bounds.** $0 \le \phi \le 1$ via the smooth-clip; the assertion runs at every staggered node.
 3. **Pressure positivity and monotonicity.** $P(r)$ is positive and decreases monotonically from CMB to surface.
-4. **Entropy gradient continuity.** $\partial S/\partial r$ and the resulting fluxes are $C^0$ across the solidus and liquidus crossings (the smoothing functions enforce this).
+4. **Entropy gradient continuity.** $\partial S/\partial r$ and the resulting fluxes are $C^0$ through the solidus and liquidus crossings (the smoothing functions enforce this).
 5. **Energy conservation.** Within the integrator tolerance, $\Delta E_\mathrm{th}$ matches the time-integrated boundary fluxes plus internal heating sources.
 6. **Mass conservation.** Total mantle mass is preserved under gravitational separation and chemical mixing (the segregation flux is divergence-free in mass).

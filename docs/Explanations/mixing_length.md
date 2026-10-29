@@ -55,9 +55,11 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. These solid values hold with the rheology off. With `rheology.enabled = true` the floor in a fully solid cell ($\phi = 0$) is exactly 0 ([Solid-state convection, Section 6](solid_state_convection.md#6-interaction-with-the-eddy-diffusivity-floor)). SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+
+When solid-state mantle rheology is enabled, the mixing-length profile boundary slopes depend on the viscosity contrast in the boundary layer. See [Solid-state convection](solid_state_convection.md) for the slope scaling and parameterization.
 
 ## Boundary-layer theory in companion codes
 
@@ -109,7 +111,7 @@ The two closures resolve different physical states.
 A more fundamental difference, also worth noting: MLT closes the convective heat transport on a *single* representative wavenumber of the convective spectrum (typically the most unstable mode, or the one carrying the most energy at saturation), so it captures the contribution of one mode and ignores the rest of the inertial range.
 BLT, by contrast, closes the surface heat flux globally through the upper thermal boundary layer thickness, which is set by the *integrated* turbulent transport across all wavenumbers.
 As a consequence, MLT typically *under*-estimates the true convective flux (it misses the integrated contribution of the secondary modes) while BLT typically *over*-estimates it (it lumps all transport into a single Ra-Nu scaling that cannot resolve the partial-melt regime).
-The two errors point in opposite directions, and there is no general theorem that says either one bounds the truth from the same side across the whole magma-ocean parameter regime.
+The two errors point in opposite directions, and there is no general theorem that says either one bounds the truth from the same side throughout the entire magma-ocean parameter regime.
 
 In the high-$\mathrm{Ra}$, fully-molten, isoviscous limit MLT and BLT converge: MLT in the inviscid regime recovers the same free-fall surface-flux scaling that BLT applies as a single boundary condition.
 The two closures stop agreeing when:
@@ -125,7 +127,7 @@ The two closures stop agreeing when:
 - **Native handling of phase transitions.** Solidus and liquidus are smoothed per cell within the same flux assembly, so partial-melt physics enters the heat budget continuously rather than as a switch between regimes.
 - **Per-component flux diagnostics.** Conduction, convection, gravitational separation, and chemical mixing fluxes ($F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$) are exposed individually and reconstruct the total to floating-point round-off.
 - **Two-way coupling to a multi-phase mantle.** Multi-Myr atmosphere-interior runs in which mantle composition feeds back on the lower boundary remain self-consistent because the radial structure that the lower BL sees is the solved mantle, not an imposed adiabat.
-- **Captures the viscous transition.** Both viscous (laminar) and inviscid (turbulent) limits are handled inside the same closure via the smooth blend on Re, so the parameterisation extends across the full range from solid to fully molten without piecing together separate scaling fits.
+- **Captures the viscous transition.** Both viscous (laminar) and inviscid (turbulent) limits are handled inside the same closure via the smooth blend on Re, so the parameterisation extends throughout the full range from solid to fully molten without piecing together separate scaling fits.
 
 ## Advantages of BLT
 

@@ -1443,3 +1443,39 @@ def test_run_rejects_missing_eos_dir(tmp_path, monkeypatch):
 
     assert result.exit_code != 0, 'aragog run should fail without eos-dir.'
     assert '--eos-dir' in (result.output or ''), 'error message should name the missing flag.'
+
+
+def test_show_config_writes_non_finite_floats_as_strings():
+    """`aragog show-config` emits strict JSON with the rheology off: the default
+    ``activation_volume_decay_pressure = inf`` reads as the string ``"inf"``, not the
+    non-standard ``Infinity`` token.
+
+    Edge case: ``-inf`` and ``nan`` take the same string form through the serializer.
+    """
+    import importlib.resources
+    import json
+
+    from aragog.cli import _serialize_params, cli
+
+    def _refuse(token):
+        pytest.fail(f'non-standard JSON constant {token} in the show-config output')
+
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as cfg_path:
+        result = CliRunner().invoke(cli, ['show-config', str(cfg_path)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output, parse_constant=_refuse)
+    rheo = payload['phase_solid']['rheology']
+    assert rheo['enabled'] is False
+    assert rheo['activation_volume_decay_pressure'] == 'inf'
+    assert rheo['viscosity_max_log10'] == pytest.approx(40.0, rel=0.0)
+
+    import dataclasses
+
+    @dataclasses.dataclass
+    class _Probe:
+        values: tuple = (float('-inf'), float('nan'), float('inf'), 1.5)
+
+    assert _serialize_params(_Probe())['values'] == ['-inf', 'nan', 'inf', 1.5]

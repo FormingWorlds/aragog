@@ -34,6 +34,7 @@ nav:
       - Building a test: Tutorials/build_test.md
       - Fixed surface temperature: Tutorials/surface_temperature.md
       - Properties at the solidus: Tutorials/phase_blend.md
+      - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
       - Overview:
