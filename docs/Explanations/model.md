@@ -52,6 +52,8 @@ $$
 
 When `mass_coordinates = false`, $\xi$ is identified with $r$ and the chain rule above reduces to the identity.
 
+In both modes the mesh can be refined towards the surface and the CMB with `surface_cell_thickness` and `cmb_cell_thickness` ([Mesh refinement](mesh_refinement.md)).
+
 ## Heat fluxes
 
 The total radial heat flux at each basic node is the sum of four configurable contributions:

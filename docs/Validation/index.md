@@ -5,6 +5,7 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 - [Core](core.md): the core module against Nimmo (2015), the `leeds` and `leeds_thermal` models of thermal_history (Greenwood et al. 2021) and analytical limits.
 - [Surface boundary](surface.md): the prescribed surface temperature (`outer_boundary_condition = 5`) against closed-form conduction solutions and a grid-convergence study.
 - [Phase transitions](phase_transitions.md): the blend of the material properties at the solidus and the liquidus against the blend formula of SPIDER, and the NumPy and JAX right-hand sides inside the blend.
+- [Mesh refinement](mesh_refinement.md): the mesh refined towards the surface and the CMB against its set end cells, and the mesh without refinement against the main branch.
 - [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides; these are checks, not `reference_pinned` cases.
 
 ## Cases by process
@@ -26,6 +27,7 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 | Surface boundary | Cooling below a fixed surface temperature | `tests/test_entropy_bc5_validation.py::test_cooling_below_a_fixed_surface_temperature_follows_the_half_space_flux` | Turcotte and Schubert (2014), eq. 4.116 | 1 % at every output time; signed error within 5e-4 of the grid and curvature estimates | [Surface boundary](surface.md#cooling-below-a-fixed-surface-temperature) |
 | Surface boundary | Grid convergence with convection | `tests/test_entropy_bc5_validation.py::test_the_convecting_shell_converges_with_second_order` | convergence order and Richardson extrapolation | order 2.0 ± 0.4; 1e-3 of the rise from the extrapolation | [Surface boundary](surface.md#grid-convergence-with-convection) |
 | Phase transitions | Properties on the solidus and the liquidus | `tests/test_matprop_smooth_width_validation.py::test_on_each_boundary_every_property_is_the_mean_of_the_two_branches` | SPIDER `get_smoothing` (`util.c`): weight 1/2 on each boundary | 1e-12 relative | [Phase transitions](phase_transitions.md#on-each-boundary-a-property-is-the-mean-of-its-two-values) |
+| Mesh | End cells of a refined mesh | `tests/test_mesh_refinement_validation.py::test_the_refined_mesh_has_the_set_end_cells` | the end-cell thickness set in the config | 1e-6 relative (radius mode), 2 mm (mass-coordinate mode) | [Mesh refinement](mesh_refinement.md#the-end-cells-have-the-thickness-that-was-set) |
 | Mantle heat transport | Theta-dependent top slope of the mixing length | `tests/test_mlt_calibration.py::test_theta_dependent_top_slope_hand_values_and_limits` | hand values and limits | 1e-15 to 1e-13 relative | no page section yet |
 | Mantle rheology | Arrhenius viscosity, yield stress, NumPy and JAX kernels | `tests/test_rheology_verification.py` (its `reference_pinned` tests) | reference limits, NumPy implementation | 1e-12 relative (one bound 1e-9) | no page section yet ([Solid-state convection](../Explanations/solid_state_convection.md) explains the rheology) |
 
