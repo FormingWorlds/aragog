@@ -345,8 +345,8 @@ class EntropyPhaseEvaluator:
         T_liq = _lookup('temperature', P_arr, 'melt')
         rho_sol = _lookup('density', P_arr, 'solid')
         rho_liq = _lookup('density', P_arr, 'melt')
-        # Cp and alpha are derived from T, rho, S at boundaries (below)
-        # dTdPs at boundaries not needed (computed analytically)
+        # Cp and alpha at the boundaries follow below: latent from T, rho, S; linear
+        # from the boundary Cp and dTdPs tables through the identity
 
         # ── Step 3: intermediate two-phase properties (SPIDER 222-249) ──
         dT_phase = np.maximum(T_liq - T_sol, 1e-10)
@@ -373,17 +373,12 @@ class EntropyPhaseEvaluator:
             Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
             Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
             Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
-            if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
-                alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
-                alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
-            else:
-                # Derive from thermodynamic identity
-                dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
-                dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
-                alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
-                alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+            # Boundary alphas from the identity, as the single-phase alpha below
+            dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
+            dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
+            alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
+            alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
+            alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
 
         # dTdPs: analytical from intermediates (line 249)
         dTdPs_mixed = (
@@ -432,11 +427,8 @@ class EntropyPhaseEvaluator:
         rho_single = _table_lookup('density')
         Cp_single = _table_lookup('heat_capacity')
         dTdPs_single = _table_lookup('dTdPs')
-        # alpha: use table if available, else derive from thermodynamic identity
-        if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
-            alpha_single = _table_lookup('thermal_exp')
-        else:
-            alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
+        # alpha: thermodynamic identity rho Cp (dT/dP)_S / T, as the JAX evaluator
+        alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
         cond_single = np.where(gphi > 0.5, self._k_liquid, self._k_solid)
 
         # ── Step 5: combine_matprop blend (SPIDER 278-285) ──────────
@@ -689,6 +681,12 @@ class EntropyPhaseEvaluator:
         return self._thermal_conductivity_val
 
     def thermal_expansivity(self) -> FloatOrArray:
+        """Thermal expansivity [1/K] at each node, from the last :meth:`update`.
+
+        The blend of the two-phase value and the single-phase identity
+        ``rho cp (dT/dP)_S / T``, mapped by ``0.5 (a + sqrt(a^2 + 1e-16))`` so that it is
+        positive: a negative blend gives a value near 0.
+        """
         return self._thermal_expansivity
 
     def viscosity(self) -> FloatOrArray:

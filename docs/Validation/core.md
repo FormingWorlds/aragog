@@ -2,7 +2,7 @@
 
 This page checks the `core_module` core boundary condition ([core_bc.md](../Explanations/core_bc.md)) and the `aragog.core` model behind it against analytic results, published values, an independent core evolution code and coupled runs. Each section states the physics a check tests, the reference and where it comes from, the value aragog gives, a figure and what it shows, the limits of the check where it has any, and the tests that pin it. A check shows that the code solves the stated equations to the stated accuracy; whether the equations describe a real core is a separate question, which the literature comparisons in sections 5 to 8 and the limits stated with each check address.
 
-Every number in sections 1 to 13 and every figure there is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about eight minutes on one core. Sections 9 and 12 and the solver tests use the aragog test tables that CI uses, `spider_eos_test_data.tar.gz` of release `test-data-v1` (sha256 `e3842bc494969571428d7f978d8f70972d40a3bc5d6ac2c09f6a96808f4079fb`), 500 pressures from 0 to 150 GPa by 200 entropies; their numbers hold for these tables. Other tables give other values; section 12 compares two sets of 1350 pressures by 280 entropies that reach 650 GPa. Two kinds of number come from separate measurements and say so where they appear: the closures of the stratified call heated from above (section 13), held by its smoke test, and the expansivity differences on those two sets. Nimmo (2015) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
+Every number in sections 1 to 13 and every figure there is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about eight minutes on one core. Sections 9 and 12 and the solver tests use the aragog test tables that CI uses, `spider_eos_test_data.tar.gz` of release `test-data-v1` (sha256 `e3842bc494969571428d7f978d8f70972d40a3bc5d6ac2c09f6a96808f4079fb`), 500 pressures from 0 to 150 GPa by 200 entropies; their numbers hold for these tables. Other tables give other values. One kind of number comes from a separate measurement and says so where it appears: the closures of the stratified call heated from above (section 13), held by its smoke test. Nimmo (2015) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
 
 ## 1. Gaussian core structure
 
@@ -295,7 +295,7 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **Reference.** The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The bound is $10^{-6}$ for a core without a layer solved alone.
 
-**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K, and grows an inner core of 244<!--k:9.r_icb_end_km--> km. At a solver rtol of $10^{-10}$ (atol stays at its floor of $10^{-8}$) the solver books the core heat change as the heat-content difference, and that change matches the CMB heat it books to 5.5e-07<!--k:9.core_vs_cmb_rel-->, within the bound. The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->, the error of that sampling: with 65, 130 and 260 output intervals (`item9_cvode_onset(output_points=...)`) it is 2.3e-3, 7.9e-4 and 1.9e-4, so it falls with order 1.5 and then 2.0, the order of the trapezoid rule.
+**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K, and grows an inner core of 244<!--k:9.r_icb_end_km--> km. At a solver rtol of $10^{-10}$ (atol stays at its floor of $10^{-8}$) the solver books the core heat change as the heat-content difference, and that change matches the CMB heat it books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound. The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->, the error of that sampling: with 65, 130 and 260 output intervals (`item9_cvode_onset(output_points=...)`) it is 2.3e-3, 7.9e-4 and 1.9e-4, so it falls with order 1.5 and then 2.0, the order of the trapezoid rule.
 
 ![CVODE solve across the onset](../figures/vv/fig_16_cvode_onset_ledger.png)
 
@@ -303,7 +303,7 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **What the figure shows.** In (a) the core temperature crosses the onset temperature during the call. In (b) the two curves of the heat lost lie on each other, and (c) gives their difference, which is the sampling error of the trapezoid rule over the output times and is largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b). The core energy ledger of a `core_module` run rests on this closure.
 
-**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.4e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 **Pinned by** `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset` and `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`.
 
@@ -440,13 +440,15 @@ The tighter tolerance at 80 levels changes the bounded fluxes and times by at mo
 
 ## 12. NumPy and JAX right-hand sides and the analytic Jacobian
 
-**What is tested.** The solver evaluates the coupled right-hand side in NumPy and, for CVODE's analytic Jacobian, in JAX; the two must agree, and the JAX Jacobian must equal the derivative of that right-hand side. The two evaluate the same equations except for the single-phase thermal expansivity: NumPy reads it from the `thermal_exp` tables, JAX derives it from the identity
+**What is tested.** The solver evaluates the coupled right-hand side in NumPy and, for CVODE's analytic Jacobian, in JAX; the two must agree, and the JAX Jacobian must equal the derivative of that right-hand side. The two evaluate the same equations. Both take the single-phase thermal expansivity from the identity
 
 $$
-\alpha = \frac{\rho c_p}{T} \left|\frac{\partial T}{\partial P}\right|_S.
+\alpha = \frac{\rho c_p}{T} \left|\frac{\partial T}{\partial P}\right|_S,
 $$
 
-**Reference.** Each right-hand side is the reference of the other, and a central difference of $\dot T_\mathrm{core}$ is the reference of the analytic Jacobian entry $\partial \dot T_\mathrm{core}/\partial T_\mathrm{core}$. The comparison runs on a 10-node mesh with the core in three states (inside the growth band, 100 K above the onset, and stratified with the core 50 K above the mantle), with the NumPy expansivity from the identity as well. These states put the mantle cells in the mush, where the composite expansivity applies and the tables do not enter; a fourth comparison puts the mantle above its liquidus at every node.
+also when the table directory carries `thermal_exp` files ([thermal expansivity of a single phase](../Explanations/phase_transitions.md#thermal-expansivity-of-a-single-phase)).
+
+**Reference.** Each right-hand side is the reference of the other, and a central difference of $\dot T_\mathrm{core}$ is the reference of the analytic Jacobian entry $\partial \dot T_\mathrm{core}/\partial T_\mathrm{core}$. The comparison runs on a 10-node mesh with the core in three states (inside the growth band, 100 K above the onset, and stratified with the core 50 K above the mantle), with the `thermal_exp` tables not loaded. These states put the mantle cells in the mush, where the composite expansivity applies; a fourth comparison puts the mantle above its liquidus at every node, where the single-phase expansivity enters, once with the `thermal_exp` tables loaded and once without.
 
 **Result.**
 
@@ -454,12 +456,12 @@ $$
 |---|---|
 | Right-hand sides, largest over the components, first two states | 1.4e-12<!--k:12.rhs_max_rel_nucleating--> |
 | Right-hand sides, largest over the components, with the layer, whose core rate is ill-conditioned (section 13) | 2.0e-10<!--k:12.rhs_max_rel_stratified--> |
-| Right-hand sides over a liquid mantle, largest over the components, with the identity | 2.8e-14<!--k:12.rhs_liquid_max_rel_identity--> |
-| Right-hand sides over a liquid mantle, largest over the components, with the tables | 1.7e-04<!--k:12.rhs_liquid_max_rel_tables--> |
+| Right-hand sides over a liquid mantle, largest over the components, without the `thermal_exp` tables | 2.7e-14<!--k:12.rhs_liquid_max_rel_identity--> |
+| Right-hand sides over a liquid mantle, largest over the components, with the `thermal_exp` tables | 2.7e-14<!--k:12.rhs_liquid_max_rel_tables--> |
 | Jacobian entry against a central difference at the best step, in the growth band | 1.6e-11<!--k:12.jac_tcore_min_rel_nucleating--> |
 | Jacobian entry against a central difference at the best step, with the layer | 1.5e-11<!--k:12.jac_tcore_min_rel_stratified--> |
 
-The difference with the tables is the difference of the two single-phase expansivities on these tables, which NumPy reads from the tables for the mantle cells and for the boundary layer when they are present; on the two 1350 by 280 sets the same comparison, run separately from the script, gives $6.1 \times 10^{-5}$ and $2.1 \times 10^{-5}$. The best step is the one that balances truncation and rounding; above the onset the core is colder than the mantle base, the flux is on its linear conduction branch, and the difference stays at rounding for every step.
+Both liquid-mantle comparisons stay at rounding, because neither path reads the `thermal_exp` tables. The best step is the one that balances truncation and rounding; above the onset the core is colder than the mantle base, the flux is on its linear conduction branch, and the difference stays at rounding for every step.
 
 ![NumPy and JAX parity](../figures/vv/fig_19_numpy_jax_parity.png)
 

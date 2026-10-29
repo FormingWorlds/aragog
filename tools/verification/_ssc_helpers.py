@@ -253,8 +253,8 @@ def entropy_eos_copy(
     The tables are parsed once per process and each call returns a deep copy,
     which starts in the state of a fresh build; only the read-only solidus and
     liquidus interpolation functions are shared. ``identity_alpha`` drops the
-    ``thermal_exp`` tables, so the expansivity comes from the identity
-    ``rho cp |dT/dP_S| / T`` that the JAX EOS uses.
+    ``thermal_exp`` tables, as for a directory without them; the expansivity
+    is the identity ``rho cp (dT/dP)_S / T`` either way.
     """
     eos = copy.deepcopy(_parsed(eos_class, str(eos_dir)))
     eos.strict_range = strict_range
