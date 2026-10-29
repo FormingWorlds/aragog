@@ -94,7 +94,9 @@ def test_unit_grid_end_cells_hold_their_targets_from_the_smallest_fraction(n, fi
     1e-6 relative."""
     h, lo = 1.0 / (n - 1), np.log10(1e-7)
     first, last = (
-        0.0 if u < 0.2 else min(10 ** (lo + u * (np.log10(h) - lo)), np.nextafter(h, 0))
+        0.0
+        if u < 0.2
+        else min(10 ** (lo + (u - 0.2) / 0.8 * (np.log10(h) - lo)), np.nextafter(h, 0))
         for u in (first, last)
     )
     s = stretched_unit_grid(n, first, last)
@@ -104,6 +106,32 @@ def test_unit_grid_end_cells_hold_their_targets_from_the_smallest_fraction(n, fi
     for target, cell in ((first, d[0]), (last, d[-1])):
         if target:
             assert cell == pytest.approx(target, rel=1e-6)
+
+
+XI = np.linspace(0.0, 1.0, 100)
+
+
+def test_unit_grid_is_the_one_sided_tanh_map():
+    """With the last cell of tanh(3 xi) / tanh(3) as target the grid is that map at every
+    node, and the mirrored target gives the mirrored map, to 1e-10."""
+    s = np.tanh(3.0 * XI) / np.tanh(3.0)
+    np.testing.assert_allclose(
+        stretched_unit_grid(100, 0.0, 1.0 - s[-2]), s, rtol=0, atol=1e-10
+    )
+    m = 1.0 - s[::-1]
+    np.testing.assert_allclose(stretched_unit_grid(100, m[1], 0.0), m, rtol=0, atol=1e-10)
+
+
+def test_unit_grid_is_the_two_sided_vinokur_map():
+    """With the end cells of Vinokur's map at delta 4 and A 0.7 as targets the grid is that
+    map at every node to 1e-9, and equal end cells give a grid symmetric about 1/2."""
+    u = 0.5 * (1.0 + np.tanh(4.0 * (XI - 0.5)) / np.tanh(2.0))
+    s = u / (0.7 + 0.3 * u)
+    np.testing.assert_allclose(
+        stretched_unit_grid(100, s[1], 1.0 - s[-2]), s, rtol=0, atol=1e-9
+    )
+    g = stretched_unit_grid(100, 1e-3, 1e-3)
+    np.testing.assert_allclose(g + g[::-1], 1.0, rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize('n', [100, 200])
@@ -187,14 +215,13 @@ def test_mass_mode_refuses_a_cmb_cell_between_its_uniform_cell_and_the_radial_bo
 
 @pytest.mark.physics_invariant
 def test_derivative_operator_is_exact_for_a_linear_field_on_the_refined_grid():
-    """d/dr of a staggered field linear in radius equals the slope at the basic
-    nodes on the refined grid (top 1 km, CMB 2 km), the inner extrapolated node
-    included. The outer extrapolated row is left out: it has the opposite sign on
-    the uniform grid as well."""
+    """d/dr of a staggered field linear in radius equals the slope at every basic node
+    on the refined grid (top 1 km, CMB 2 km, radius mode), both extrapolated end rows
+    included."""
     m = _mesh(1e3, 2e3)
     rs = np.asarray(m.staggered.radii)
     grad = (m._d_dr_transform @ (3.0e-3 * rs)).ravel()
-    np.testing.assert_allclose(grad[:-1], 3.0e-3, rtol=1e-9)
+    np.testing.assert_allclose(grad, 3.0e-3, rtol=1e-9)
 
 
 def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):

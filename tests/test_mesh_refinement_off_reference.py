@@ -12,6 +12,7 @@ to 1e-9 relative, and the JAX solve calls the JAX RHS in both the reference and 
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +26,11 @@ GEN = ROOT / 'tools' / 'verification' / 'generate_mesh_refinement_off_reference.
 RHS_RTOL, SOLVE_RTOL = 1.0e-12, 1.0e-9
 
 
-def _generator():
+def _generator(monkeypatch):
+    """The generator module, loaded from the repository root; its sys.path entries stay in
+    this test."""
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
     spec = importlib.util.spec_from_file_location('mesh_refinement_off_generator', GEN)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -45,11 +50,11 @@ def test_the_reference_names_a_commit_and_a_jax_solve(ref):
 
 
 @pytest.mark.parametrize('mode,mass_coordinates', [('mass', True), ('radius', False)])
-def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates):
+def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates, monkeypatch):
     """With both cell thicknesses at 0 the mesh is bitwise the main mesh, the NumPy RHS
     equals main to 1e-12 and both end states equal main to 1e-9, relative to each value or
     to the largest value of the array."""
-    gen = _generator()
+    gen = _generator(monkeypatch)
     assert gen.CFG.is_file()
     out = gen._case(mass_coordinates)
     assert out['solve/jax/rhs_calls'] > 0
