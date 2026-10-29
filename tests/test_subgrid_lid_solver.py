@@ -104,6 +104,30 @@ def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
 
 
 @pytest.mark.physics_invariant
+def test_ledger_per_call_closes_with_internal_heating(eos):
+    """With internal heating the per-call energy identity closes too: the lid heats the mass
+    of its profile, delta times the mean density over the profile, in the ledger as in the
+    lid energy rate."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.energy.tidal = True
+    p.energy.tidal_array = np.array([3.0e-7])
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    y = s._S0.copy()
+    y[-2:] = (300.0, 300.0 * float(s._lid_hv.H(900.0)))
+    pw = s._step_powers(0.0, y)
+    ev = s._lid_last
+    assert ev.rates.H_lid > 0.0
+    scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(ev.rates.dE), 1.0)
+    assert abs(pw[-1]) <= 1e-10 * scale
+
+
+@pytest.mark.physics_invariant
 def test_ledger_over_a_solve(eos):
     """Over a solve the step ledger closes to round-off and the state heat to the stated
     quadrature accuracy, and the lid grows well past its phantom start."""
