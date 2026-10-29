@@ -20,7 +20,9 @@ from hypothesis import strategies as st
 from scipy.interpolate import PchipInterpolator
 
 import aragog
+import aragog.mesh as mesh_module
 from aragog.mesh import Mesh
+from aragog.mesh.pressure_eos import EOS
 from aragog.mesh.stretching import stretched_unit_grid
 from aragog.parser import Parameters
 from tests.conftest import needs_eos
@@ -46,18 +48,28 @@ def _radii(m):
 
 @pytest.mark.parametrize('mass_coordinates', [True, False])
 def test_the_default_mesh_does_not_reach_the_refined_path(mass_coordinates, monkeypatch):
-    """With both cell thicknesses at 0 the mesh builds without the refined grid and its
-    radii check; with a 1 km top cell it reaches them."""
+    """With both cell thicknesses at 0 the mesh builds without the refined grid, its radii
+    check and, in radius mode, the cell-mass density, and solves every mass-coordinate radius
+    to 1 m; with a 1 km top cell it reaches the refined grid."""
 
     def refined(*_):
         raise RuntimeError('refined path')
 
+    xtols, solve = [], mesh_module._radius_for_mass_coordinate
+    monkeypatch.setattr(
+        mesh_module,
+        '_radius_for_mass_coordinate',
+        lambda *a, **k: xtols.append(k.get('xtol', 1.0)) or solve(*a, **k),
+    )
     monkeypatch.setattr(Mesh, '_refined_unit_grid', refined)
     monkeypatch.setattr(Mesh, '_check_refined_radii', refined)
+    if not mass_coordinates:
+        monkeypatch.setattr(EOS, 'set_staggered_effective_density', refined)
     try:
         _mesh(mass_coordinates=mass_coordinates)
     except RuntimeError as exc:
         pytest.fail(f'the default mesh reached the {exc}')
+    assert set(xtols) == ({1.0} if mass_coordinates else set())
     with pytest.raises(RuntimeError, match='refined path'):
         _mesh(top=1e3, mass_coordinates=mass_coordinates)
 
