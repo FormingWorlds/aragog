@@ -1,7 +1,5 @@
-# PROTEUS config of the step-controller case V5B: tests/integration/zalmoxis_aragog_calliope.toml at PROTEUS a8bbd8751cb5040aedd90f7acb4a85755afae26b
-# with the case settings applied. Run it with the command on docs/Validation/numerics.md.
-# MAIN run of tools/verification/compare_v5_runs.py: Aragog 4ae8167d469763449b51cb5097c59f83b5472843,
-# the code without the controller rules near and below the solidus.
+# PROTEUS config of the step-controller case V5B (docs/Validation/numerics.md): tests/integration/zalmoxis_aragog_calliope.toml at PROTEUS a8bbd8751cb5040aedd90f7acb4a85755afae26b with the case settings applied.
+# MAIN run of tools/verification/compare_v5_runs.py: Aragog 4ae8167d469763449b51cb5097c59f83b5472843, the code without the controller rules near and below the solidus.
 config_version = "3.0"
 
 [star]
