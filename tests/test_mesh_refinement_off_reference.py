@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -63,12 +64,20 @@ def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates, monkey
         k.removeprefix(f'{mode}/'): ref[k] for k in ref.files if k.startswith(f'{mode}/')
     }
     assert set(out) == set(expected)
-    for key, rtol in (
+    checks = (
         *((f'mesh/{name}', MESH_RTOL) for name in gen.MESH_ARRAYS),
         ('rhs/numpy', RHS_RTOL),
         ('solve/numpy/y_end', SOLVE_RTOL),
         ('solve/jax/y_end', SOLVE_RTOL),
-    ):
+    )
+    scale = {key: float(np.max(np.abs(expected[key]))) for key, _ in checks}
+    dev = {
+        key: float(np.max(np.abs(out[key] - expected[key]))) / scale[key] for key, _ in checks
+    }
+    warnings.warn(
+        f'{mode} off-path max |d| / max |ref|: '
+        + ', '.join(f'{k} {v:.2e}' for k, v in dev.items())
+    )
+    for key, rtol in checks:
         e = expected[key]
-        atol = rtol * float(np.max(np.abs(e)))
-        np.testing.assert_allclose(out[key], e, rtol=rtol, atol=atol, err_msg=key)
+        np.testing.assert_allclose(out[key], e, rtol=rtol, atol=rtol * scale[key], err_msg=key)
