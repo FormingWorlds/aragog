@@ -35,8 +35,8 @@ FIELDS = pytest.mark.parametrize('name', ['surface_cell_thickness', 'cmb_cell_th
 BUILDERS = pytest.mark.parametrize(
     'build',
     [
-        lambda **kw: _MeshParameters(**_REQUIRED, **kw),
-        lambda **kw: MeshConfig(**_REQUIRED, **kw),
+        lambda **kw: _MeshParameters(**{**_REQUIRED, **kw}),
+        lambda **kw: MeshConfig(**{**_REQUIRED, **kw}),
     ],
     ids=['_MeshParameters', 'MeshConfig'],
 )
@@ -117,10 +117,21 @@ def test_the_loader_keeps_a_value_below_the_uniform_cell(tmp_path, name):
     assert getattr(_load(tmp_path, f'{name} = 200.0').mesh, name) == 200.0
 
 
+@BUILDERS
+@FIELDS
 @pytest.mark.parametrize('n', [1, 2])
-def test_a_cell_thickness_with_fewer_than_3_nodes_is_refused(n):
+def test_a_cell_thickness_with_fewer_than_3_nodes_is_refused(build, name, n):
     """A refined grid needs 3 nodes; 1 or 2 nodes with a cell thickness give a ValueError
     that names the field, not a ZeroDivisionError."""
-    kw = {**_REQUIRED, 'number_of_nodes': n}
-    with pytest.raises(ValueError, match='mesh.surface_cell_thickness'):
-        _MeshParameters(**kw, surface_cell_thickness=200.0)
+    with pytest.raises(ValueError, match=f'mesh.{name}'):
+        build(**{'number_of_nodes': n, name: 200.0})
+
+
+@BUILDERS
+def test_both_cells_need_4_nodes(build):
+    """With both ends set the 2 cells of a 3-node grid would have to fill the shell; 3 nodes
+    are refused with both fields named, 4 nodes are kept."""
+    with pytest.raises(ValueError, match='number_of_nodes >= 4'):
+        build(number_of_nodes=3, surface_cell_thickness=200.0, cmb_cell_thickness=200.0)
+    kept = build(number_of_nodes=4, surface_cell_thickness=200.0, cmb_cell_thickness=200.0)
+    assert (kept.surface_cell_thickness, kept.cmb_cell_thickness) == (200.0, 200.0)

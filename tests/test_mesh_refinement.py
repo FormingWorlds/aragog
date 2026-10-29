@@ -243,6 +243,9 @@ def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):
     m = Mesh(p)
     r = _radii(m)
     assert np.diff(r)[-1] == pytest.approx(1e3, abs=1e-3)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
     tab = np.loadtxt(ef)
     P_ref = PchipInterpolator(tab[:, 0], tab[:, 1])(r)
     np.testing.assert_allclose(np.asarray(m.basic_pressure).ravel(), P_ref, rtol=1e-12)
@@ -380,14 +383,30 @@ def test_the_external_eos_staggered_density_follows_the_refined_radii_in_radius_
     )
 
 
+@pytest.mark.parametrize('name', ['surface_cell_thickness', 'cmb_cell_thickness'])
 @pytest.mark.parametrize('value', [True, '50', 0.5])
-def test_mesh_refuses_a_cell_thickness_set_after_the_config_is_read(value):
+def test_mesh_refuses_a_cell_thickness_set_after_the_config_is_read(name, value):
     """A value set on the parsed parameters gets the config check in Mesh: a bool is not
     read as 1 m, a string is refused with the field name, and 0.5 m is below the floor."""
     p = Parameters.from_file(CFG)
-    p.mesh.surface_cell_thickness = value
-    with pytest.raises(ValueError, match='mesh.surface_cell_thickness must be 0'):
+    setattr(p.mesh, name, value)
+    with pytest.raises(ValueError, match=f'mesh.{name} must be 0'):
         Mesh(p)
+
+
+@pytest.mark.parametrize(('mass_coordinates', 'refused'), [(False, True), (True, False)])
+def test_the_end_cell_tolerance_depends_on_the_mesh_mode(mass_coordinates, refused):
+    """A 1 km top cell 1.5 mm off its target is refused in radius mode (1e-6 relative,
+    1 mm) and kept in mass-coordinate mode (2 mm, the root tolerance of its solved node
+    and the margin of the other)."""
+    m = _mesh(1e3, 0.0, mass_coordinates)
+    r = _radii(m).copy()
+    r[-2] = r[-1] - 1e3 - 1.5e-3
+    if refused:
+        with pytest.raises(ValueError, match='gives an end cell of'):
+            m._check_refined_radii(r)
+    else:
+        m._check_refined_radii(r)
 
 
 @pytest.mark.parametrize('end', ['top', 'cmb'])
