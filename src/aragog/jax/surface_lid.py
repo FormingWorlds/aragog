@@ -293,3 +293,128 @@ def lid_rates(
     F_top = w * F_s + (1.0 - w) * F_grid
     F_fluid = F_top + dE - H_lid - rho * h_f * ddelta
     return ddelta, dE, F_top, F_fluid, w, stop, H_lid
+
+
+class LidParams(NamedTuple):
+    """Sub-grid lid data of one solver for the JAX right-hand side (SI units).
+
+    ``e`` is the heat content per volume of the solid in temperature and ``hs`` the same in
+    entropy, both at the top-cell pressure ``P``; ``rheo``, ``closure_lid`` and ``fixed`` are
+    0/1 flags of the solid rheology, its 'lid' stress closure and its 'fixed' lid-base mode.
+    """
+
+    e: Enthalpy
+    hs: Enthalpy
+    P: float
+    S_sol: float
+    S_liq: float
+    T_sol: float
+    k: float
+    emissivity: float
+    T_eq: float
+    delta_on: float
+    delta_lo: float
+    h_top: float
+    area: float
+    volume_top: float
+    ra_crit: float
+    rheo: float
+    closure_lid: float
+    fixed: float
+    T_fixed: float
+    contrast: float
+    H_arr: float
+    phi_rheo: float
+    phi_width: float
+    gl_x: jax.Array
+    gl_w: jax.Array
+
+
+def _heat_content(lp: LidParams, eos, S):
+    """Specific heat content [J/kg] from the solidus entropy, ``int T dS`` at the top-cell
+    pressure, 8-point Gauss-Legendre split at the liquidus (as the NumPy ``_lid_enthalpy``)."""
+    knee = jnp.minimum(S, lp.S_liq)
+    total = 0.0
+    for lo, hi in ((lp.S_sol, knee), (knee, S)):
+        mid, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+        pts = mid + half * lp.gl_x
+        total = total + half * jnp.dot(lp.gl_w, eos.temperature(jnp.full(pts.shape, lp.P), pts))
+    return total
+
+
+def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
+    """Lid-base entropy, temperature, density and the heat contents of base and fluid, as the
+    NumPy ``_lid_base_state``: the solidus above the rheological transition, below it the
+    rheological lid-base temperature on the EOS, capped at the solidus, blended in entropy."""
+    from aragog.rheology import R_GAS
+    from aragog.rheology_lid import _melt_ramp
+
+    w_phi = _melt_ramp(phi_f, lp.phi_rheo, lp.phi_width, jnp)
+    arrhenius = T_f - lp.contrast * R_GAS * T_f**2 / lp.H_arr
+    T_rh = jnp.where(
+        lp.closure_lid > 0.5, T_lid_iso, jnp.where(lp.fixed > 0.5, lp.T_fixed, arrhenius)
+    )
+    T_rh = jnp.maximum(T_rh, 1.0)
+    capped = T_rh >= lp.T_sol
+    S_rh = eos.entropy_at_temperature(lp.P, jnp.where(capped, lp.T_sol - 1.0, T_rh))
+    S_rh = jnp.minimum(jnp.where(capped, lp.S_sol, S_rh), lp.S_sol)
+    S_b = jnp.where(
+        (lp.rheo > 0.5) & (w_phi < 1.0), w_phi * lp.S_sol + (1.0 - w_phi) * S_rh, lp.S_sol
+    )
+    return dict(
+        S_b=S_b,
+        T_b=eos.temperature(lp.P, S_b),
+        rho=eos.density(lp.P, S_b),
+        h_f=_heat_content(lp, eos, S_f),
+    )
+
+
+def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, heating):
+    """The lid at the top cell of one RHS evaluation, as the NumPy ``_lid_evaluate``.
+
+    ``top`` holds the top-cell temperature, density, heat capacity, conductivity, expansivity,
+    gravity, viscosity and melt fraction. ``F_in`` is the flux into the top cell from below and
+    ``F_grid`` the surface flux of the mesh [W/m^2].
+
+    Returns
+    -------
+    tuple
+        ``(F_top, F_fluid, V_fluid, ddelta, dE)``: the surface loss and the fluid flux
+        [W/m^2], the fluid volume of the top cell [m^3] and the lid rates [m/s, W/m^2].
+    """
+    from aragog.surface_lid import LID_DELTA_FLOOR
+
+    delta, E = y_lid[0], y_lid[1]
+    base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
+    q_conv = convective_base_flux(
+        top['T'] - base['T_b'],
+        top['k'],
+        top['rho'],
+        top['cp'],
+        top['alpha'],
+        jnp.abs(top['g']),
+        top['eta'],
+        lp.ra_crit,
+    )
+    F_b = jnp.maximum(jnp.maximum(q_conv, F_in), 0.0)
+    w = existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on)
+    surf = surface_state(
+        delta, E, base['T_b'], lp.k, lp.emissivity, lp.T_eq, LID_DELTA_FLOOR, lp.e
+    )
+    ddelta, dE, F_top, F_fluid, *_ = lid_rates(
+        delta=delta,
+        E_lid=E,
+        surf=surf,
+        F_b=F_b,
+        F_grid=F_grid,
+        w=w,
+        rho=base['rho'],
+        h_f=base['h_f'],
+        T_b=base['T_b'],
+        H_b=enthalpy_H(lp.hs, base['S_b']),
+        e=lp.e,
+        h_top=lp.h_top,
+        delta_lo=lp.delta_lo,
+        heating=heating,
+    )
+    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE

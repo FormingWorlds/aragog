@@ -2994,6 +2994,43 @@ class EntropySolver:
         rho = np.asarray(eos.density(np.full(S.size, P), S), dtype=float).ravel()
         return _lid.LidEnthalpy.table(T[i0 : i1 + 1], H[i0 : i1 + 1], rho[i0 : i1 + 1])
 
+    def jax_lid_params(self):
+        """The sub-grid lid data of this solver for the JAX right-hand side
+        (:class:`aragog.jax.surface_lid.LidParams`), from its EOS tables and mesh."""
+        from aragog.jax import surface_lid as jl
+
+        rheo, ph = self._lid_rheo, self.state.phase_staggered
+        S_knots = self._lid_H_of_S.x
+        hs = _lid.LidEnthalpy.table(S_knots, self._lid_H_of_S(S_knots), np.zeros(S_knots.size))
+        on = rheo is not None
+        return jl.LidParams(
+            e=jl.enthalpy(self._lid_hv),
+            hs=jl.enthalpy(hs),
+            P=self._lid_P,
+            S_sol=self._lid_S_sol,
+            S_liq=self._lid_S_liq,
+            T_sol=self._lid_T_sol,
+            k=self._lid_k,
+            emissivity=self._outer_bc_emiss,
+            T_eq=self._outer_bc_T_eq,
+            delta_on=self._lid_delta_on,
+            delta_lo=self._lid_delta_lo,
+            h_top=self._lid_h_top,
+            area=self._lid_area,
+            volume_top=float(self._volume_flat[-1]),
+            ra_crit=self._lid_ra_crit,
+            rheo=float(on),
+            closure_lid=float(self._lid_handover_armed()),
+            fixed=float(on and rheo.lid_base_mode == 'fixed'),
+            T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
+            contrast=float(rheo.lid_contrast_coeff) if on else 0.0,
+            H_arr=self._lid_H if self._lid_H is not None else 1.0,
+            phi_rheo=float(ph._phi_rheo),
+            phi_width=float(ph._phi_width),
+            gl_x=np.asarray(self._lid_gl[0]),
+            gl_w=np.asarray(self._lid_gl[1]),
+        )
+
     def _lid_enthalpy(self, S: npt.ArrayLike) -> npt.NDArray:
         """Specific heat content [J/kg] at the top-cell pressure, from the solidus entropy.
 
