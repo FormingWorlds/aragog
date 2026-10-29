@@ -431,3 +431,51 @@ def test_enthalpy_floor_warns_on_the_jax_batch_path(caplog):
     assert s._batch_powers_calls > 0
     msgs = [r.getMessage() for r in caplog.records if 'below the floor' in r.getMessage()]
     assert len(msgs) == 1
+
+
+def test_jax_base_flux_is_never_negative(monkeypatch):
+    """With no convective flux, a face flux out of the top cell into the mesh gives the JAX lid
+    the base flux 0: the same lid as a zero face flux."""
+    from aragog.jax import surface_lid as jl
+
+    s = _lid_solver()
+    y = s._S0.copy()
+    y[-2:] = (30.0, 30.0 * float(s._lid_hv.H(900.0)))
+    s._dSdt_single(0.0, y)
+    ph = s.state.phase_staggered
+
+    def top(v):
+        return float(np.asarray(v).ravel()[-1])
+
+    props = {
+        k: top(getattr(ph, f)())
+        for k, f in dict(
+            T='temperature',
+            rho='density',
+            cp='heat_capacity',
+            k='thermal_conductivity',
+            alpha='thermal_expansivity',
+            g='gravitational_acceleration',
+            eta='viscosity',
+            phi='melt_fraction',
+        ).items()
+    }
+    monkeypatch.setattr(jl, 'convective_base_flux', lambda *a: -1.0)
+    lp, eos_jax = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
+
+    def lid(F_in):
+        out = jl.lid_top(
+            lp,
+            eos_jax,
+            y[-2:],
+            float(y[s._n_stag - 1]),
+            props,
+            F_in,
+            float(s.state._heat_flux[-1]),
+            np.nan,
+            0.0,
+        )
+        return np.array([*out[:5], *out[5]], dtype=float)
+
+    np.testing.assert_array_equal(lid(-100.0), lid(0.0))
+    assert not np.array_equal(lid(50.0), lid(0.0))
