@@ -23,7 +23,7 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
-from aragog.config.boundary import check_core_bc, check_top_node
+from aragog.config.boundary import check_core_bc, check_subgrid_lid, check_top_node
 from aragog.config.energy import (
     CONVECTIVE_THRESHOLD_DEFAULT,
     EOS_FLOOR_MARGIN_DEFAULT,
@@ -110,6 +110,12 @@ class _BoundaryConditionsParameters:
     core_module_params: dict | None = None
     # Top basic-node entropy, 'linear' or 'limited' (see the BoundaryConfig docstring).
     top_node: str = 'linear'
+    # Sub-grid surface lid (see the BoundaryConfig docstring); off by default.
+    subgrid_lid: bool = False
+    lid_delta_on: float = 1.0
+    lid_delta_lo: float | None = None
+    lid_handover_cells: int = 3
+    lid_ra_crit: float = 450.0
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -137,6 +143,15 @@ class _BoundaryConditionsParameters:
         self._normalize_outer_boundary_condition()
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_top_node(self.top_node, self.core_bc)
+        check_subgrid_lid(
+            self.subgrid_lid,
+            self.lid_delta_on,
+            self.lid_delta_lo,
+            self.lid_handover_cells,
+            self.lid_ra_crit,
+            self.outer_boundary_condition,
+            self.core_bc,
+        )
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.
