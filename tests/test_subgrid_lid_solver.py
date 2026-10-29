@@ -402,6 +402,32 @@ def test_lid_depth_is_the_base_of_the_cold_region(T_cells, T_b, i):
     assert got > V4_Z[0]
 
 
+@pytest.mark.parametrize(
+    ('T_b', 'T_cells', 'want', 'surface_calls'),
+    [
+        (1400.0, (1500.0, 1600.0), 2.0 * (1331.0 - 600.0) / (1400.0 - 600.0), 1),
+        (1200.0, (1500.0, 1600.0), 2.0 + (1331.0 - 1200.0) / 300.0 * (5000.0 - 2.0), 0),
+    ],
+    ids=['in_the_lid', 'below_the_lid_base'],
+)
+def test_isotherm_depth_reads_the_surface_only_for_a_crossing_in_the_lid(
+    T_b, T_cells, want, surface_calls
+):
+    """A crossing inside the lid interpolates between the surface and the lid base and needs
+    the surface temperature; a crossing below the lid base does not call for it."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    calls = []
+
+    def T_s_of():
+        calls.append(1)
+        return 600.0
+
+    z = _isotherm_depth(1331.0, 2.0, T_b, T_s_of, (5000.0, 15000.0), T_cells)
+    assert z == pytest.approx(want, rel=1e-12)
+    assert len(calls) == surface_calls
+
+
 def test_lid_depth_without_a_crossing_is_none():
     """A column that stays below T_lid_iso has no base of a cold region: no depth, so the
     hand-over root is -1."""
