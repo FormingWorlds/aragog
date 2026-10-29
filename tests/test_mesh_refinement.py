@@ -167,15 +167,27 @@ def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):
         (lambda n, first, last: np.linspace(0.0, 1.0, n), 'gives an end cell of'),
         (lambda n, first, last: np.r_[0.0, 0.5, 0.4, np.linspace(0.6, 1.0, n - 3)],
          'not strictly increasing|Non-monotonic basic mesh'),
-        (lambda n, first, last: np.linspace(0.0, 1.0 - 1e-9, n), 'end radii'),
     ],
-    ids=['end_cell', 'monotone', 'end_radii'],
+    ids=['end_cell', 'monotone'],
 )  # fmt: skip
 def test_a_refined_mesh_that_breaks_an_invariant_is_refused(
     monkeypatch, mass_coordinates, grid, message
 ):
-    """A refined grid whose end cells miss their thickness, whose radii do not increase,
-    or whose end radii are not the shell radii raises a ValueError in Mesh."""
+    """A refined grid whose end cells miss their thickness or whose radii do not
+    increase raises a ValueError in Mesh."""
     monkeypatch.setattr('aragog.mesh.stretched_unit_grid', grid)
     with pytest.raises(ValueError, match=message):
         _mesh(1e3, 2e3, mass_coordinates)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_refined_radii_check_refuses_end_radii_off_the_shell(mass_coordinates):
+    """Both mesh modes set the end radii to the shell radii; the check passes them and
+    refuses the same radii shifted by 1 um, with the end cells unchanged."""
+    m = _mesh(1e3, 2e3, mass_coordinates)
+    r = _radii(m)
+    atol = 2e-3 if mass_coordinates else 0.0
+    m._check_refined_radii(r, r[0], r[-1], atol)
+    with pytest.raises(ValueError, match='end radii'):
+        m._check_refined_radii(r + 1e-6, r[0], r[-1], atol)
