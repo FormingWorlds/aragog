@@ -155,6 +155,7 @@ class _LidEval:
     F_b: float
     T_m: float
     H_lid: float
+    m_lid: float
     S_b: float
     T_b: float
     h_b: float
@@ -3332,6 +3333,7 @@ class EntropySolver:
             F_b=F_b,
             T_m=surf.T_m,
             H_lid=rates.H_lid,
+            m_lid=delta * self._lid_hv.profile_density(surf.s, surf.T_s, base['T_b']),
             **base,
         )
         self._lid_last = ev
@@ -5942,7 +5944,7 @@ class EntropySolver:
             vol = vol.copy()
             vol[-1] = lid.V_fluid
             heat_mass_i[-1] *= lid.V_fluid / float(self._volume_flat[-1])
-            heat_mass_i = np.r_[heat_mass_i, lid.rho * self._lid_area * lid.delta]
+            heat_mass_i = np.r_[heat_mass_i, self._lid_area * lid.m_lid]
             heating_radio_i = np.r_[heating_radio_i, heating_radio_i[-1]]
             heating_tidal_i = np.r_[heating_tidal_i, heating_tidal_i[-1]]
             r = lid.rates
