@@ -466,10 +466,10 @@ def lid_rates(
 
     Fluid of heat content ``H_f`` [J/m^3] per volume joins the lid at ``T_b`` with heat content
     ``H_b`` [J/m^3] per volume, so the Stefan rate releases ``H_f - H_b`` per volume; ``rho`` is
-    the density at the lid base, which scales the floor of that jump. The lid acts with weight ``w``; the hidden part ``1 - w``
-    relaxes to the phantom lid (thickness ``delta_lo``, linear profile) over
-    ``LID_TAU_HIDDEN``, and the surface then sees the grid flux ``F_grid``. The fluid flux
-    follows from the conservation of the energy of the fluid and the lid:
+    the density at the lid base, which scales the floor of that jump. The lid acts with weight
+    ``w``; the hidden part ``1 - w`` relaxes to the phantom lid (thickness ``delta_lo``, linear
+    profile) over ``LID_TAU_HIDDEN``, and the surface then sees the grid flux ``F_grid``. The
+    fluid flux follows from the conservation of the energy of the fluid and the lid:
     ``F_fluid = F_top + dE - H_lid - H_f d(delta)/dt``. Exact for any ``w`` and any stop.
 
     Parameters

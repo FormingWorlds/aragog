@@ -156,6 +156,7 @@ class _LidEval:
     T_m: float
     H_lid: float
     m_lid: float
+    S_f: float
     S_b: float
     T_b: float
     H_b: float
@@ -2986,13 +2987,13 @@ class EntropySolver:
         return self._n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ())) + self._n_shell()
 
     def _lid_enthalpy_table(self) -> '_lid.LidEnthalpy':
-        """Heat content per volume ``W(S) = integral of rho T dS`` at the top-cell pressure, zero
-        at the solidus: the heat per volume the mesh and the lid store. It runs over the whole
-        table, on 2048, 512 and 2048 entropy intervals (4-point Gauss-Legendre each) from the
-        table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W``
-        in entropy, and returns ``W`` and the density of the solid in temperature between the
-        flat floor of the table and the band below the solidus where the temperature stays at
-        the solidus.
+        """Heat content per volume ``W(S) = integral of rho T dS`` at the top-cell pressure,
+        zero at the solidus: the heat per volume the mesh and the lid store. It runs over the
+        whole table, on 2048, 512 and 2048 entropy intervals (4-point Gauss-Legendre each) from
+        the table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``,
+        ``W`` in entropy, and returns ``W`` and the density of the solid in temperature between
+        the flat floor of the table and the band below the solidus where the temperature stays
+        at the solidus.
 
         Raises
         ------
@@ -3003,12 +3004,11 @@ class EntropySolver:
 
         eos, P = self.entropy_eos, self._lid_P
         edges = (float(eos.S_min), self._lid_S_sol, self._lid_S_liq, float(eos.S_max))
-        S = np.concatenate(
-            [np.linspace(edges[0], edges[1], 2049)]
-            + [
-                np.linspace(a, b, n + 1)[1:]
-                for a, b, n in zip(edges[1:], edges[2:], (512, 2048))
-            ]
+        counts = (2048, 512, 2048)  # intervals below the solidus, in the melt band, above it
+        S = np.unique(
+            np.concatenate(
+                [np.linspace(a, b, n + 1) for a, b, n in zip(edges, edges[1:], counts)]
+            )
         )
         g, w = np.polynomial.legendre.leggauss(4)
         half = 0.5 * np.diff(S)[:, None]
@@ -3016,9 +3016,9 @@ class EntropySolver:
         Pn = np.full(nodes.size, P)
         rhoT = np.asarray(eos.density(Pn, nodes.ravel()) * eos.temperature(Pn, nodes.ravel()))
         H = np.concatenate([[0.0], np.cumsum((half * w * rhoT.reshape(nodes.shape)).sum(1))])
-        H -= H[2048]
+        H -= H[counts[0]]
         self._lid_W_of_S = PchipInterpolator(S, H)
-        S, H = S[:2049], H[:2049]
+        S, H = S[: counts[0] + 1], H[: counts[0] + 1]
         T = np.asarray(eos.temperature(np.full(S.size, P), S), dtype=float).ravel()
         tol = 1e-9 * T.max()
         i0 = int(np.flatnonzero(T <= T.min() + tol)[-1])
@@ -3067,20 +3067,12 @@ class EntropySolver:
 
     def _lid_W(self, S: npt.ArrayLike) -> npt.NDArray:
         """Heat content per volume ``W(S)`` [J/m^3] at the top-cell pressure, zero at the
-        solidus (:meth:`_lid_enthalpy_table`).
-
-        Raises
-        ------
-        ValueError
-            When an entropy lies outside the table; the table does not extrapolate.
-        """
+        solidus (:meth:`_lid_enthalpy_table`). Outside the table it continues linearly with
+        the end slope, as the JAX table does; :meth:`_check_lid_step` refuses such a state."""
+        pp = self._lid_W_of_S
         S = np.asarray(S, dtype=float)
-        lo, hi = self._lid_W_of_S.x[[0, -1]]
-        if not np.all((S >= lo) & (S <= hi)):
-            raise ValueError(
-                f'entropy {S} J/kg/K outside the lid heat table [{lo:.6g}, {hi:.6g}] J/kg/K'
-            )
-        return self._lid_W_of_S(S)
+        edge = np.clip(S, *pp.x[[0, -1]])
+        return pp(edge) + pp(edge, 1) * (S - edge)
 
     def _lid_base_state(self, S_f: float, T_f: float, phi_f: float) -> dict:
         """Lid-base state at the top-cell pressure for a sub-lid fluid of entropy ``S_f``.
@@ -3129,11 +3121,13 @@ class EntropySolver:
         ------
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
-            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6) or the weight leaves [0, 1].
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6), the weight leaves [0, 1]
+            or the fluid or lid-base entropy leaves the heat table.
         """
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        lo, hi = self._lid_W_of_S.x[[0, -1]]
         values = (ev.delta, ev.E, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
@@ -3142,6 +3136,10 @@ class EntropySolver:
             bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
+        elif not (lo <= ev.S_f <= hi and lo <= ev.S_b <= hi):
+            bad = (
+                f'entropy S_f {ev.S_f:.6g}, S_b {ev.S_b:.6g} J/kg/K outside the lid heat table'
+            )
         if bad is not None:
             raise RuntimeError(
                 f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: {bad}'
@@ -3251,11 +3249,10 @@ class EntropySolver:
         S_f, delta, E = float(y[i_top]), float(y[-2]), float(y[-1])
         V, W_f = float(self._volume_flat[-1]), float(self._lid_W(S_f))
         target = V * W_f + self._lid_area * (E - W_f * delta)
-        lo, hi = self._lid_W_of_S.x[[0, -1]]
         S_new = brentq(
             lambda S: V * float(self._lid_W(S)) - target,
-            lo,
-            hi,
+            float(self.entropy_eos.S_min),
+            float(self.entropy_eos.S_max),
             xtol=1e-12,
             rtol=4.0 * np.finfo(float).eps,
         )
@@ -3361,6 +3358,7 @@ class EntropySolver:
             m_lid=delta * self._lid_hv.profile_density(surf.s, surf.T_s, base['T_b']),
             H_b=H_b,
             H_f=H_f,
+            S_f=float(entropy[-1]),
             **base,
         )
         self._lid_last = ev

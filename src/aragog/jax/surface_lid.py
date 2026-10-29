@@ -359,8 +359,9 @@ class LidParams(NamedTuple):
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
-    """Lid-base entropy, temperature and density, as the NumPy ``_lid_base_state``: the solidus above the rheological transition, below it the
-    rheological lid-base temperature on the EOS, capped at the solidus, blended in entropy."""
+    """Lid-base entropy, temperature and density, as the NumPy ``_lid_base_state``: the
+    solidus above the rheological transition, below it the rheological lid-base temperature on
+    the EOS, capped at the solidus, blended in entropy."""
     from aragog.rheology import R_GAS
     from aragog.rheology_lid import _melt_ramp
 

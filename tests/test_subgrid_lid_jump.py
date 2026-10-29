@@ -11,7 +11,7 @@ from aragog import surface_lid as sl
 from tests.conftest import entropy_eos_copy, entropy_eos_jax
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
-pytestmark = [pytest.mark.smoke, pytest.mark.timeout(600), needs_eos]
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60), needs_eos]
 
 # Jump tolerance: 1e-6 relative plus 0.1 J/kg per base density.
 REL, ABS_PER_MASS = 1.0e-6, 0.1
@@ -47,16 +47,19 @@ def _solver(eos, rheology, S_top):
 
 def _reference(s, S_b, S_f):
     """``int_{S_b}^{S_f} rho T dS`` [J/m^3] at the top-cell pressure, scipy quad split at the
-    solidus and the liquidus."""
+    entropy knots of the EOS tables, the solidus and the liquidus (smooth between them)."""
     eos, P = s.entropy_eos, s._lid_P
 
     def rhoT(S):
         return float(np.asarray(eos.density(P, S) * eos.temperature(P, S)).item())
 
     lo, hi = sorted((S_b, S_f))
-    cuts = [lo, *[c for c in (s._lid_S_sol, s._lid_S_liq) if lo < c < hi], hi]
+    knots = np.concatenate(
+        [t['S'] for t in eos._tables.values()] + [[s._lid_S_sol, s._lid_S_liq]]
+    )
+    cuts = np.unique(np.r_[lo, knots[(knots > lo) & (knots < hi)], hi])
     total = sum(
-        quad(rhoT, a, b, epsabs=0.0, epsrel=1e-12, limit=200)[0] for a, b in zip(cuts, cuts[1:])
+        quad(rhoT, a, b, epsabs=0.0, epsrel=1e-9, limit=200)[0] for a, b in zip(cuts, cuts[1:])
     )
     return total if S_f >= S_b else -total
 
@@ -78,16 +81,12 @@ def _numpy_jump(s, y, monkeypatch, same=False):
     monkeypatch.setattr(sl, 'stefan_rate', spy)
     monkeypatch.setattr(s, '_lid_base_state', base)
     s._dSdt_single(0.0, y)
-    ev = s._lid_last
-    return (
-        seen['rho'] * seen['dh'],
-        (float(y[s._n_stag - 1]) if same else ev.S_b),
-        float(y[s._n_stag - 1]),
-    )
+    return seen['rho'] * seen['dh'], s._lid_last.S_b, float(y[s._n_stag - 1])
 
 
 def _jax_jump(s, y, monkeypatch, same=False):
     """``(rho dh, S_b, S_f)`` the JAX lid passes to the Stefan rate at the NumPy top-cell state."""
+    pytest.importorskip('jax')
     from aragog.jax import surface_lid as jl
 
     s._dSdt_single(0.0, y)
@@ -146,8 +145,6 @@ PATHS = {'numpy': _numpy_jump, 'jax': _jax_jump}
 @pytest.mark.parametrize('frac', [0.05, 0.3, 0.8])
 def test_jump_is_zero_at_the_fluid_entropy(eos, monkeypatch, path, frac):
     """Fluid at the lid-base entropy joins the lid without releasing heat: the jump is 0."""
-    if path == 'jax':
-        pytest.importorskip('jax')
     s, y = _solver(eos, True, lambda s: s._lid_S_sol - frac * (s._lid_S_sol - float(eos.S_min)))
     jump, S_b, S_f = PATHS[path](s, y, monkeypatch, same=True)
     assert S_b == S_f
@@ -161,8 +158,6 @@ def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac
     """With the solid rheology the lid base lies below the solidus, where the density changes
     with entropy: the jump is ``int_{S_b}^{S_f} rho T dS``, not ``rho_b`` times a specific
     heat content."""
-    if path == 'jax':
-        pytest.importorskip('jax')
     s, y = _solver(eos, True, lambda s: s._lid_S_sol - frac * (s._lid_S_sol - float(eos.S_min)))
     jump, S_b, S_f = PATHS[path](s, y, monkeypatch)
     assert S_b < s._lid_S_sol
@@ -178,8 +173,6 @@ def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac
 def test_melt_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac):
     """Without the solid rheology the lid base is the solidus: the jump of a fluid in the melt
     band or above the liquidus is ``int_{S_sol}^{S_f} rho T dS``."""
-    if path == 'jax':
-        pytest.importorskip('jax')
     s, y = _solver(eos, False, lambda s: s._lid_S_sol + frac * (s._lid_S_liq - s._lid_S_sol))
     jump, S_b, S_f = PATHS[path](s, y, monkeypatch)
     assert S_b == s._lid_S_sol
