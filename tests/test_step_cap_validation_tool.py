@@ -34,6 +34,8 @@ def test_subsolidus_when_no_cell_is_above_the_solidus():
         False,
         True,
     )
+    mixed = tool.regime(np.array([95.0, 150.0]), -np.ones(2), S_LIQ, S_SOL, MASS, DELTA)
+    assert mixed[1] is False
 
 
 def test_slow_landing_needs_a_slow_binding_cell_near_a_boundary():
@@ -124,6 +126,33 @@ def test_main_writes_the_case_result(monkeypatch, tmp_path):
     assert json.loads(out.read_text())['case'] == 'v3_r4'
 
 
+def test_v3_reference_sets_a_physical_atol_of_at_most_its_tolerance(monkeypatch):
+    """The 'fixed' reference sets _atol_sf = tol / 1e-7; the rate runs keep the solver atol."""
+    import types
+
+    seen = []
+
+    class Solver:
+        _n_stag, _P_stag_flat = 2, np.zeros(2)
+
+        def set_initial_entropy(self, S0):
+            pass
+
+        def solve(self):
+            seen.append(getattr(self, '_atol_sf', None))
+            self._solution = types.SimpleNamespace(
+                status=0, y=np.ones((2, 2)), segments=[], get=lambda key: 1
+            )
+
+    eos = types.SimpleNamespace(temperature=lambda P, S: S)
+    monkeypatch.setattr(tool, 'EntropyEOS', lambda _eos_dir: eos)
+    monkeypatch.setattr(tool, '_v3_solver', lambda *a: Solver())
+    monkeypatch.setattr(tool, 'v3_start', lambda eos, name: np.ones(2))
+    tool.v3_run(('E', 'v3_r3', 'fixed', 1e-10, 0, None))
+    tool.v3_run(('E', 'v3_r3', 'rate', 1e-8, 0, None))
+    assert seen[0] == pytest.approx(1e-3, rel=1e-12) and seen[1] is None
+
+
 def test_check_names_each_failed_tolerance():
     """check() fails a v3 error above the bound, a v4 failure, and an entropy outside the table."""
     m = dict(
@@ -198,9 +227,10 @@ def test_main_needs_an_eos_dir(monkeypatch):
     assert exc.value.code == 2
 
 
-def test_v4_refuses_a_table_that_is_not_the_paleos_low_t_set(tmp_path):
+def test_v4_refuses_a_table_that_is_not_the_paleos_low_t_set(monkeypatch, tmp_path):
     """The v4 cases stop before any solve when temperature_solid.dat has another md5."""
     (tmp_path / 'temperature_solid.dat').write_text('not the table\n')
+    monkeypatch.setattr(tool, 'EntropyEOS', lambda _eos_dir: pytest.fail('table guard passed'))
     with pytest.raises(SystemExit, match='needs the PALEOS low-T table set'):
         tool.run_v4(tmp_path, 'v4_rheo_off', 1.0)
 

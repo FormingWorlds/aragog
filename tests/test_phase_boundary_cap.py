@@ -879,9 +879,11 @@ def test_rate_cap_returns_the_lower_bound_for_non_finite_input(bad):
     """A NaN entropy, rate or mass gives the 1 yr lower bound, not the 100 yr ceiling."""
     args = dict(S=[1200.0, 1350.0], dSdt=[-1.0, -2.0], mass=[1.0, 2.0])
     args[bad] = [np.nan, args[bad][1]]
-    assert (
-        _cap(args['S'], args['dSdt'], args['mass'], rate_floor=True, bounds=(1.0, 100.0)) == 1.0
-    )
+    try:
+        got = _cap(args['S'], args['dSdt'], args['mass'], rate_floor=True, bounds=(1.0, 100.0))
+    except Exception as exc:  # a missing guard raises instead of returning the bound
+        pytest.fail(f'non-finite {bad} raised {exc!r}')
+    assert got == 1.0
     assert _cap([1200.0, 1350.0], [-1.0, -2.0], [1.0, 2.0], rate_floor=True) > 1.0
     S_liq = np.array([np.nan, S_LIQ])
     got = _rate_phase_boundary_max_step(
