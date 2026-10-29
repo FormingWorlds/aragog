@@ -50,6 +50,32 @@ def _solver(eos, lid=True, end=1.0, core_bc='quasi_steady', S0=3050.0, heating=N
     return s
 
 
+def test_state_helpers_run_on_a_carrier_without_the_lid_property(eos):
+    """A carrier object that borrows the state helpers and holds the solver attributes, as a
+    test double of a coupling code does, works with the lid off although it has no
+    ``_n_lid`` property."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    s = _solver(eos, lid=False, core_bc='energy_balance')
+
+    class Carrier:
+        set_initial_entropy = EntropySolver.set_initial_entropy
+        get_current_dSdr_cmb = EntropySolver.get_current_dSdr_cmb
+        _final_extra_state = EntropySolver._final_extra_state
+        _resolve_dSdr_cmb_init = EntropySolver._resolve_dSdr_cmb_init
+        _n_shell = EntropySolver._n_shell
+        _core_shell = EntropySolver._core_shell
+
+    c = Carrier()
+    c.__dict__.update(vars(s))
+    c._solution = SimpleNamespace(y=np.full((s._n_stag + 1, 2), 7.0e-4))
+    assert c.get_current_dSdr_cmb() == 7.0e-4
+    c.set_initial_entropy(3000.0)
+    assert c._S0.size == s._n_stag + 1
+
+
 def test_lid_off_keeps_the_state_layout(eos):
     """With the default (lid off) the state has no lid entries and no lid is evaluated."""
     s = _solver(eos, lid=False)
