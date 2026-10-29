@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from scipy.interpolate import PchipInterpolator
 
 import aragog
@@ -68,6 +70,40 @@ def test_unit_grid_rejects_cells_at_or_above_the_uniform_cell():
             stretched_unit_grid(100, bad, 0.0)
         with pytest.raises(ValueError, match='cell fraction'):
             stretched_unit_grid(100, 1e-4, bad)
+
+
+def test_unit_grid_refuses_an_end_cell_below_the_smallest_fraction():
+    """Below 1e-7 of the span the one-sided map loses the end cell (2e-5 relative at 1e-12)
+    and two nodes merge (at 1e-16), and the two-sided map does not converge."""
+    for bad in (5e-324, 1e-16, 1e-12, 9.9e-8):
+        for first, last in ((bad, 0.0), (0.0, bad), (bad, 1e-3), (1e-3, bad)):
+            with pytest.raises(ValueError, match='cell fraction'):
+                stretched_unit_grid(100, first, last)
+
+
+@pytest.mark.physics_invariant
+@settings(max_examples=150, deadline=None)
+@given(
+    n=st.sampled_from([10, 100, 200, 400]),
+    first=st.floats(min_value=0.0, max_value=1.0),
+    last=st.floats(min_value=0.0, max_value=1.0),
+)
+def test_unit_grid_end_cells_hold_their_targets_from_the_smallest_fraction(n, first, last):
+    """Each end fraction in [1e-7, 1 / (n - 1)) or 0, on one or both ends: the grid runs
+    from 0 to 1 exactly, increases strictly and each set end cell equals its target to
+    1e-6 relative."""
+    h, lo = 1.0 / (n - 1), np.log10(1e-7)
+    first, last = (
+        0.0 if u < 0.2 else min(10 ** (lo + u * (np.log10(h) - lo)), np.nextafter(h, 0))
+        for u in (first, last)
+    )
+    s = stretched_unit_grid(n, first, last)
+    d = np.diff(s)
+    assert (s[0], s[-1]) == (0.0, 1.0)
+    assert np.all(d > 0.0)
+    for target, cell in ((first, d[0]), (last, d[-1])):
+        if target:
+            assert cell == pytest.approx(target, rel=1e-6)
 
 
 @pytest.mark.parametrize('mass_coordinates', [False, True])
