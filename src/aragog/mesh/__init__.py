@@ -12,6 +12,7 @@ import numpy.typing as npt
 from scipy.optimize import brentq
 
 from aragog.config.boundary import check_top_node
+from aragog.config.mesh import check_cell_thickness
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
@@ -240,6 +241,7 @@ class Mesh:
 
         # STEP 1: Set up the basic mesh
         self.settings: _MeshParameters = parameters.mesh
+        check_cell_thickness(self.settings)
         # Start with uniform spatial spacing to initialize EOS/density
         initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
@@ -288,14 +290,11 @@ class Mesh:
 
             if self._refined:
                 span = r_surf - r_core
-                basic_mass_coordinates = r_core + span * self._refined_unit_grid(
-                    (_xi_of_r(r_core + self.settings.cmb_cell_thickness) - r_core) / span
-                    if self.settings.cmb_cell_thickness
-                    else 0.0,
-                    (r_surf - _xi_of_r(r_surf - self.settings.surface_cell_thickness)) / span
-                    if self.settings.surface_cell_thickness
-                    else 0.0,
-                ).reshape(-1, 1)
+                c, t = self.settings.cmb_cell_thickness, self.settings.surface_cell_thickness
+                first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
+                last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
+                grid = self._refined_unit_grid(first, last)
+                basic_mass_coordinates = (r_core + span * grid).reshape(-1, 1)
 
             basic_coordinates = np.empty_like(basic_mass_coordinates)
             basic_coordinates[0, 0] = r_core  # CMB: exact
@@ -332,13 +331,7 @@ class Mesh:
             basic_mass_coordinates = initial_spatial
 
         if self._refined:
-            # brentq places mass-mode radii to 1e-3 m, so an end cell holds its target to 2e-3 m.
-            self._check_refined_radii(
-                basic_coordinates[:, 0],
-                float(self.get_constant_spacing()[0, 0]),
-                float(self.get_constant_spacing()[-1, 0]),
-                atol=2e-3 if parameters.mesh.mass_coordinates else 0.0,
-            )
+            self._check_refined_radii(basic_coordinates[:, 0])
 
         self.basic: FixedMesh = FixedMesh(
             self.settings,
@@ -357,13 +350,19 @@ class Mesh:
         staggered_mass_coordinates: npt.NDArray = (
             self.basic.mass_radii[:-1] + 0.5 * self.basic.delta_mesh
         )
-        if parameters.mesh.mass_coordinates:
+        if parameters.mesh.mass_coordinates or self._refined:
             self.eos.set_staggered_effective_density(self.basic.radii)
+        if parameters.mesh.mass_coordinates:
             rb = self.basic.radii[:, 0]
             staggered_coordinates = np.array(
                 [
                     _radius_for_mass_coordinate(
-                        _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
+                        _xi_of_r,
+                        float(xi),
+                        rb[i],
+                        rb[i + 1],
+                        node=f'staggered {i}',
+                        xtol=1e-3 if self._refined else 1.0,
                     )
                     for i, xi in enumerate(staggered_mass_coordinates[:, 0])
                 ]
@@ -457,15 +456,15 @@ class Mesh:
 
     @property
     def _refined(self) -> bool:
-        return bool(
-            getattr(self.settings, 'surface_cell_thickness', 0.0)
-            or getattr(self.settings, 'cmb_cell_thickness', 0.0)
-        )
+        return bool(self.settings.surface_cell_thickness or self.settings.cmb_cell_thickness)
 
-    def _check_refined_radii(self, r, r_inner: float, r_outer: float, atol: float) -> None:
+    def _check_refined_radii(self, r) -> None:
         """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
-        start and end at ``r_inner`` and ``r_outer`` exactly, and each set end cell has its
-        thickness to ``atol`` m or to 1e-6 relative, whichever is larger."""
+        start and end at the shell radii exactly, and each set end cell has its thickness to
+        1e-6 relative, or to 2e-3 m in mass-coordinate mode if that is larger."""
+        r_inner, r_outer = self.settings.inner_radius, self.settings.outer_radius
+        # brentq places mass-mode radii to 1e-3 m, so an end cell holds its target to 2e-3 m.
+        atol = 2e-3 if self.settings.mass_coordinates else 0.0
         d = np.diff(r)
         bad = [] if np.all(d > 0.0) else ['the radii are not strictly increasing']
         if (r[0], r[-1]) != (r_inner, r_outer):

@@ -255,10 +255,9 @@ def test_the_refined_radii_check_refuses_end_radii_off_the_shell(mass_coordinate
     refuses the same radii shifted by 1 um, with the end cells unchanged."""
     m = _mesh(1e3, 2e3, mass_coordinates)
     r = _radii(m)
-    atol = 2e-3 if mass_coordinates else 0.0
-    m._check_refined_radii(r, r[0], r[-1], atol)
+    m._check_refined_radii(r)
     with pytest.raises(ValueError, match='end radii'):
-        m._check_refined_radii(r + 1e-6, r[0], r[-1], atol)
+        m._check_refined_radii(r + 1e-6)
 
 
 def _jax_args(mass_coordinates, top, bottom):

@@ -84,7 +84,7 @@ def stretched_unit_grid(n: int, first: float = 0.0, last: float = 0.0) -> npt.ND
     xi = np.linspace(0.0, 1.0, n)
     h = 1.0 / (n - 1)
     for name, val in (('first', first), ('last', last)):
-        if not (val == 0.0 or (np.isfinite(val) and MIN_CELL_FRACTION <= val < h)):
+        if not (val == 0.0 or MIN_CELL_FRACTION <= val < h):
             raise ValueError(
                 f'{name} cell fraction must be 0 or in [{MIN_CELL_FRACTION:g}, {h:.6g}), got {val}'
             )
