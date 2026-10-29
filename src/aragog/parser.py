@@ -13,7 +13,6 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
-import math
 import tomllib  # noqa: F401
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -30,6 +29,7 @@ from aragog.config.energy import (
     check_convective_threshold,
     check_eos_floor_margin,
 )
+from aragog.config.mesh import check_cell_thickness
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
     SEPARATION_BUOYANCY_DEFAULT,
@@ -302,16 +302,7 @@ class _MeshParameters:
     cmb_cell_thickness: float = 0.0
 
     def __post_init__(self):
-        for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
-            val = getattr(self, name)
-            if val == 0.0:
-                continue
-            uniform = (self.outer_radius - self.inner_radius) / (self.number_of_nodes - 1)
-            if not (math.isfinite(val) and 0.0 < val < uniform):
-                raise ValueError(
-                    f'mesh.{name} must be 0 (off) or in (0, {uniform:.6g}) m, the uniform '
-                    f'radial cell; got {val}'
-                )
+        check_cell_thickness(self)
 
 
 @dataclass

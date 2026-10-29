@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 import logging
+import numbers
 
 import attrs
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+
+def check_cell_thickness(mesh) -> None:
+    """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
+    ``mesh`` are each 0 or a real number in (0, uniform cell) m.
+
+    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``. A bool
+    (a TOML ``true``) is refused, not read as 1 m.
+    """
+    for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
+        value = getattr(mesh, name)
+        real = isinstance(value, numbers.Real) and not isinstance(value, bool)
+        if real and value == 0:
+            continue
+        uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
+        if not (real and 0 < value < uniform):
+            raise ValueError(
+                f'mesh.{name} must be 0 (off) or in (0, {uniform:.6g}) m, the uniform radial '
+                f'cell; got {value!r}'
+            )
 
 
 @attrs.define
@@ -78,3 +99,6 @@ class MeshConfig:
     mixing_length_constant_fraction: float = 0.25
     surface_cell_thickness: float = 0.0
     cmb_cell_thickness: float = 0.0
+
+    def __attrs_post_init__(self):
+        check_cell_thickness(self)
