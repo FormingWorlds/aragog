@@ -408,3 +408,34 @@ def test_hidden_lid_on_a_hot_top_cell(eos):
         -(3.0 - s._lid_delta_lo) / sl.LID_TAU_HIDDEN, rel=1e-12
     )
     assert abs(pw[-1]) <= 1e-10 * max(abs(pw[0]), abs(pw[1]), 1.0)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('source', ['fixed', 'rheological', 'lid_state'])
+def test_solid_lid_base_is_the_rheological_temperature(eos, source, monkeypatch):
+    """Below the rheological transition the lid base lies at the rheological temperature of
+    the solid rheology on the EOS, not on a constant-cp estimate of its entropy."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import _R_GAS, EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    mode = 'fixed' if source == 'fixed' else 'rheological'
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='local',
+        lid_base_mode=mode,
+        lid_base_temperature=1300.0,
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    T_f = 1350.0
+    S_f = eos.entropy_at_temperature(s._lid_P, T_f)
+    rh = {'fixed': 1300.0, 'lid_state': 1250.0}
+    expected = rh.get(source) or T_f - 2.2 * _R_GAS * T_f**2 / s._lid_H
+    lid_state = {'T_lid_iso': 1250.0} if source == 'lid_state' else None
+    monkeypatch.setattr(s.state, '_lid_state', lid_state, raising=False)
+    assert 600.0 < expected < s._lid_T_sol
+    base = s._lid_base_state(S_f, T_f, 0.0)
+    assert base['T_b'] == pytest.approx(expected, rel=1e-9)
