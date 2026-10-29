@@ -1,5 +1,5 @@
 """Build ``tests/reference/surface_lid_v2_grid.npz``: the surface flux of the V2 shell with the
-lid on 10 nodes and without the lid on 500, 1000 and 4000 nodes, at ``TIMES_YR``, on the
+lid on 10 nodes and without the lid on 10, 500, 1000 and 4000 nodes, at ``TIMES_YR``, on the
 PALEOS low-temperature table named by ``ARAGOG_LOWT_EOS_DIR``. About 25 min on one core.
 
 Run from the repository root:
@@ -28,6 +28,7 @@ if __name__ == '__main__':
     eos = entropy_eos_copy(table)
     head = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True)
     out = {'lid': surface_flux(10, True, TIMES_YR, eos)}
+    out['coarse'] = surface_flux(10, False, TIMES_YR, eos)
     print('lid', out['lid'], flush=True)
     for n in GRIDS:
         out[f'grid_{n}'] = surface_flux(n, False, TIMES_YR, eos)
