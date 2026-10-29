@@ -433,6 +433,23 @@ def test_enthalpy_floor_warns_on_the_jax_batch_path(caplog):
     assert len(msgs) == 1
 
 
+def test_entropy_outside_the_heat_table_fails_the_jax_batch_path():
+    """An accepted state whose fluid entropy lies past the end of the heat table fails the lid
+    invariant on the JAX batch path; the right-hand side only continues the table there."""
+    from scipy.interpolate import PchipInterpolator
+
+    s = _jax_cvode_lid_solver()
+    pp = s._lid_W_of_S
+    solid = pp.x <= s._lid_S_sol
+    s._lid_W_of_S = PchipInterpolator(pp.x[solid], pp(pp.x[solid]))
+    s.set_initial_entropy(3050.0)
+    with pytest.raises(Exception) as err:
+        s.solve()
+    assert isinstance(err.value, RuntimeError), repr(err.value)
+    assert 'outside the lid heat table' in str(err.value)
+    assert s._batch_powers_calls >= 1
+
+
 def test_jax_base_flux_is_never_negative(monkeypatch):
     """With no convective flux, a face flux out of the top cell into the mesh gives the JAX lid
     the base flux 0: the same lid as a zero face flux."""
