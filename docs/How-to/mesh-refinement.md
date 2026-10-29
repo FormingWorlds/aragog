@@ -1,6 +1,6 @@
 # Refining the mesh towards the surface and the CMB
 
-This page shows how to make the outermost or innermost mantle cell thinner than the uniform cell. [Mesh refinement](../Explanations/mesh_refinement.md) explains the stretched grid and its limits.
+This page shows how to make the outermost or innermost mantle cell thinner than the uniform cell. [Mesh refinement](../Explanations/mesh_refinement.md) explains the stretched grid and its limits. The tutorial [Refining the mesh at the surface](../Tutorials/mesh_refinement.md) runs a case on both meshes.
 
 ## Set the cell thickness
 

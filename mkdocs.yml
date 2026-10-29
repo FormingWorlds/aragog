@@ -35,6 +35,7 @@ nav:
       - Building a test: Tutorials/build_test.md
       - Fixed surface temperature: Tutorials/surface_temperature.md
       - Properties at the solidus: Tutorials/phase_blend.md
+      - Refining the mesh: Tutorials/mesh_refinement.md
 
   - Explanations:
       - Overview:
