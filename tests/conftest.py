@@ -6,7 +6,8 @@ import importlib.resources
 import logging
 import os
 import warnings
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
+from functools import partial
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
@@ -14,11 +15,12 @@ import numpy as np
 import pytest
 
 from aragog import CFG_DATA
+from aragog import logger as _PACKAGE_LOGGER
 from aragog.eos.entropy import EntropyEOS
 from tools.verification import _ssc_helpers
 from tools.verification._ssc_helpers import _parsed
 
-__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax']
+__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax', 'package_logger_isolation']
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -114,37 +116,50 @@ def pytest_collection_finish(session):
                 warnings.warn(f'EOS table warm-up failed: {exc!r}', stacklevel=1)
 
 
-_PACKAGE_LOGGER = logging.getLogger('fwl.aragog')
+@contextmanager
+def package_logger_isolation():
+    """Restore the level, handlers and flags of the package logger on exit.
 
-
-def _package_logger_state() -> tuple:
-    """Level, handlers, propagation and disabled flag of the ``fwl.aragog`` logger."""
+    Each handler attached in the block and not attached before it is closed, also one that the code
+    in the block detached again. Child loggers, filters and ``logging.disable`` are not covered.
+    """
     lg = _PACKAGE_LOGGER
-    return lg.level, list(lg.handlers), lg.propagate, lg.disabled
+    level, propagate, disabled = lg.level, lg.propagate, lg.disabled
+    handlers = list(lg.handlers)
+    outer_recorder = vars(lg).get('addHandler')
+    forward = outer_recorder or partial(logging.Logger.addHandler, lg)
+    added = []
 
+    def record(handler):
+        added.append(handler)
+        forward(handler)
 
-def _restore_package_logger(state: tuple) -> None:
-    """Close the handlers added since ``state`` was taken and restore the rest of it."""
-    level, handlers, propagate, disabled = state
-    for handler in _PACKAGE_LOGGER.handlers:
-        if handler not in handlers:
-            handler.close()
-    _PACKAGE_LOGGER.handlers = handlers
-    _PACKAGE_LOGGER.propagate = propagate
-    _PACKAGE_LOGGER.disabled = disabled
-    _PACKAGE_LOGGER.setLevel(level)
+    lg.addHandler = record
+    try:
+        yield
+    finally:
+        if outer_recorder is None:
+            del lg.addHandler
+        else:
+            lg.addHandler = outer_recorder
+        for handler in dict.fromkeys(added + lg.handlers):
+            if handler not in handlers:
+                handler.close()
+        lg.handlers = handlers
+        lg.propagate = propagate
+        lg.disabled = disabled
+        lg.setLevel(level)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_package_logger():
-    """Restore the package logger after each test and close the handlers the test added.
+    """Restore the package logger after each test, see ``package_logger_isolation``.
 
     ``aragog run`` sets the logger to DEBUG with a console and a file handler for the rest of the
-    process; under DEBUG the mesh formats a whole array on every state update.
+    process; under DEBUG the mesh formats whole arrays in its debug lines on every state update.
     """
-    state = _package_logger_state()
-    yield
-    _restore_package_logger(state)
+    with package_logger_isolation():
+        yield
 
 
 class Helper:

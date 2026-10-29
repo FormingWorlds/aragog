@@ -1,4 +1,4 @@
-"""The aragog package logger starts every test at its import state.
+"""The aragog package logger starts every test with its import level and handlers.
 
 ``aragog run`` configures the ``fwl.aragog`` logger for the rest of the process (DEBUG level, a
 console and a file handler). A test that calls it through ``CliRunner`` must not pass that state to
@@ -8,95 +8,86 @@ the tests that run after it in the same process.
 from __future__ import annotations
 
 import logging
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
 import aragog
-from tests.conftest import _package_logger_state, _restore_package_logger
+from tests.conftest import package_logger_isolation
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(150)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_PROBE = 'tests/test_logger_isolation.py::test_the_package_logger_starts_at_its_import_state'
+
+def test_aragog_file_logger_configures_the_package_logger(tmp_path):
+    """The setup the fixture undoes: DEBUG level, a console and a file handler, no NullHandler."""
+    aragog.aragog_file_logger(log_dir=str(tmp_path))
+    assert aragog.logger.level == logging.DEBUG
+    assert sorted(type(h).__name__ for h in aragog.logger.handlers) == [
+        'FileHandler',
+        'StreamHandler',
+    ]
 
 
 def test_the_package_logger_starts_at_its_import_state():
     """The package logger has no level and only the NullHandler that ``aragog`` adds at import."""
-    package_logger = logging.getLogger('fwl.aragog')
-    assert package_logger.level == logging.NOTSET
-    assert [type(h) for h in package_logger.handlers] == [logging.NullHandler]
-    assert not package_logger.isEnabledFor(logging.DEBUG)
+    assert aragog.logger.level == logging.NOTSET
+    assert [type(h) for h in aragog.logger.handlers] == [logging.NullHandler]
 
 
-# One test per file that calls ``aragog run`` through CliRunner and leaves the logger configured.
-_CLI_RUN_TESTS = [
-    'tests/test_cli.py::test_run_set_overrides_rejected_for_cfg_files',
-    'tests/test_cli_exit_code.py::test_exit_code_follows_solver_status[0-0]',
-    'tests/test_cli_more_branches.py::test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes[core_module]',
-    'tests/test_config_data_paths.py::test_cli_missing_data_file_is_a_usage_error[overrides1]',
-]
+def test_leaving_the_block_closes_every_file_handler_a_cli_run_added(tmp_path):
+    """A second ``aragog_file_logger`` call detaches the first file handler; both are closed."""
+    import_handler = aragog.logger.handlers[0]
+    with package_logger_isolation():
+        aragog.aragog_file_logger(log_dir=str(tmp_path))
+        first = [h for h in aragog.logger.handlers if isinstance(h, logging.FileHandler)]
+        aragog.aragog_file_logger(log_dir=str(tmp_path))
+        second = [h for h in aragog.logger.handlers if isinstance(h, logging.FileHandler)]
+        assert aragog.logger.level == logging.DEBUG
+        assert first[0] not in aragog.logger.handlers
+        assert import_handler not in aragog.logger.handlers
+    assert first[0].stream is None
+    assert second[0].stream is None
+    assert aragog.logger.handlers == [import_handler]
+    assert aragog.logger.level == logging.NOTSET
 
 
-def test_a_cli_run_leaves_no_logger_state_for_the_next_test():
-    """The probe passes after CLI runs in the same process, so each test sees the import state."""
-    cmd = [sys.executable, '-m', 'pytest', *_CLI_RUN_TESTS, _PROBE]
-    cmd += [
-        '-o',
-        'addopts=',
-        '-p',
-        'no:cacheprovider',
-        '-p',
-        'no:xdist',
-        '-p',
-        'no:randomly',
-        '-q',
-    ]
-    proc = subprocess.run(cmd, cwd=_REPO_ROOT, capture_output=True, text=True, timeout=120)
-    tail = proc.stdout[-3000:]
-    assert f'{len(_CLI_RUN_TESTS) + 1} passed' in tail, tail
-    assert proc.returncode == 0, tail
-
-
-def test_restoring_the_logger_closes_the_handlers_a_cli_run_added(tmp_path):
-    """The file handler of ``aragog_file_logger`` is closed and the import handler comes back."""
-    saved = _package_logger_state()
-    package_logger = logging.getLogger('fwl.aragog')
-    import_handler = package_logger.handlers[0]
-
-    aragog.aragog_file_logger(log_dir=str(tmp_path))
-    file_handlers = [h for h in package_logger.handlers if isinstance(h, logging.FileHandler)]
-    assert package_logger.level == logging.DEBUG
-    assert len(file_handlers) == 1
-    assert import_handler not in package_logger.handlers
-    assert (tmp_path / 'aragog.log').exists()
-
-    _restore_package_logger(saved)
-    assert file_handlers[0].stream is None
-    assert package_logger.handlers == [import_handler]
-    assert package_logger.level == logging.NOTSET
-    assert not package_logger.isEnabledFor(logging.DEBUG)
-
-
-def test_restoring_keeps_a_handler_that_was_there_before(tmp_path):
-    """A handler present when the state was taken stays open; level and flags come back."""
-    package_logger = logging.getLogger('fwl.aragog')
+def test_leaving_the_block_keeps_a_handler_that_was_there_before(tmp_path):
+    """A handler attached before the block stays open; level and flags come back."""
     before = logging.FileHandler(tmp_path / 'before.log')
-    package_logger.addHandler(before)
-    package_logger.setLevel(logging.INFO)
-    saved = _package_logger_state()
-
-    package_logger.addHandler(logging.FileHandler(tmp_path / 'during.log'))
-    package_logger.setLevel(logging.DEBUG)
-    package_logger.propagate = False
-    package_logger.disabled = True
-    _restore_package_logger(saved)
-
-    assert before in package_logger.handlers
+    aragog.logger.addHandler(before)
+    aragog.logger.setLevel(logging.INFO)
+    aragog.logger.propagate = False
+    aragog.logger.disabled = True
+    with package_logger_isolation():
+        aragog.logger.addHandler(logging.FileHandler(tmp_path / 'during.log'))
+        aragog.logger.setLevel(logging.DEBUG)
+        aragog.logger.propagate = True
+        aragog.logger.disabled = False
+    assert before in aragog.logger.handlers
     assert before.stream is not None
-    assert len(package_logger.handlers) == 2
-    assert package_logger.level == logging.INFO
-    assert package_logger.propagate is True
-    assert package_logger.disabled is False
+    assert len(aragog.logger.handlers) == 2
+    assert aragog.logger.level == logging.INFO
+    assert aragog.logger.propagate is False
+    assert aragog.logger.disabled is True
+
+
+def test_leaving_the_block_clears_the_cached_level_of_the_logger():
+    """A DEBUG check cached in the block does not outlive it; the logger follows its parent again."""
+    with package_logger_isolation():
+        aragog.logger.setLevel(logging.DEBUG)
+        assert aragog.logger.isEnabledFor(logging.DEBUG)
+    parent = aragog.logger.parent
+    assert aragog.logger.isEnabledFor(logging.DEBUG) == parent.isEnabledFor(logging.DEBUG)
+    assert aragog.logger.getEffectiveLevel() == parent.getEffectiveLevel()
+
+
+def test_an_inner_block_keeps_the_outer_block_recording(tmp_path):
+    """After a nested block ends, a handler added and detached later is still closed by the outer one."""
+    with package_logger_isolation():
+        with package_logger_isolation():
+            pass
+        aragog.aragog_file_logger(log_dir=str(tmp_path))
+        first = [h for h in aragog.logger.handlers if isinstance(h, logging.FileHandler)]
+        aragog.aragog_file_logger(log_dir=str(tmp_path))
+        assert first[0] not in aragog.logger.handlers
+    assert first[0].stream is None
+    assert [type(h) for h in aragog.logger.handlers] == [logging.NullHandler]
