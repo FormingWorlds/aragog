@@ -1487,6 +1487,26 @@ class SolverOutput:
             _arr('g_b', self.g_b, 'basic', 'm s-2', 'Gravitational acceleration at basic nodes')
 
 
+def _isotherm_depth(T_iso, delta, T_b, T_s_of, z_cells, T_cells) -> float | None:
+    """Base of the cold region [m] of the profile ``T_s`` (depth 0), ``T_b`` (``delta``) and
+    the cells (top first): the deepest point where it rises through ``T_iso``. ``T_s_of()`` is
+    called only when that point can lie in the lid. 0 when the whole profile is at or above
+    ``T_iso``, None when it stays below."""
+    z = np.asarray(z_cells, dtype=float)
+    zs = np.r_[delta, max(z[0], delta * (1.0 + 1e-12)), z[1:]]
+    Ts = np.r_[T_b, np.asarray(T_cells, dtype=float)]
+    rise = np.nonzero((Ts[:-1] < T_iso) & (Ts[1:] >= T_iso))[0]
+    if rise.size == 0:
+        T_s = T_s_of()
+        zs, Ts = np.r_[0.0, zs], np.r_[T_s, Ts]
+        if not T_s < T_iso <= T_b:
+            return 0.0 if T_s >= T_iso else None
+        i = 1
+    else:
+        i = int(rise[-1]) + 1
+    return float(zs[i - 1] + (T_iso - Ts[i - 1]) * (zs[i] - zs[i - 1]) / (Ts[i] - Ts[i - 1]))
+
+
 def _lid_slots(solver) -> int:
     """Number of lid states at the end of the state vector of ``solver``: 2 with the lid on,
     else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works too."""
@@ -3159,29 +3179,41 @@ class EntropySolver:
         ls = getattr(self.state, 'lid_state', None)
         if ls is None:
             return None
-        T_iso = float(np.asarray(ls['T_lid_iso']))
         ev = self._lid_last
-        z = self._lid_z_stag
         T = np.asarray(self.state.phase_staggered.temperature()).ravel()[::-1]
-        zs = np.r_[0.0, ev.delta, max(z[0], ev.delta * (1.0 + 1e-12)), z[1:]]
-        Ts = np.r_[ev.surf.T_s, ev.T_b, T]
-        rise = np.nonzero((Ts[:-1] < T_iso) & (Ts[1:] >= T_iso))[0]
-        if rise.size == 0:
-            return 0.0 if Ts[0] >= T_iso else None
-        i = int(rise[-1]) + 1
-        return float(
-            zs[i - 1] + (T_iso - Ts[i - 1]) * (zs[i] - zs[i - 1]) / (Ts[i] - Ts[i - 1])
+        T_iso = float(np.asarray(ls['T_lid_iso']))
+        return _isotherm_depth(
+            T_iso, ev.delta, ev.T_b, lambda: ev.surf.T_s, self._lid_z_stag, T
         )
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
         """Hand-over root of a physical state: the smallest of the margin
         ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_gate`. It is positive once
         the lid-base isotherm lies below the face of ``lid_handover_cells`` top cells in the
-        solid regime; -1 for a handed-over lid or without the stagnant-lid state."""
+        solid regime; -1 for a handed-over lid or without the stagnant-lid state. It updates
+        only the column, the lid base and, when the crossing can lie in the lid, the lid surface;
+        its value equals the root after a full right-hand side evaluation."""
         if float(y[-2]) == 0.0:
             return -1.0
-        self._dSdt_single(t_yr, y)
-        z = self._lid_depth()
+        n = self._n_stag
+        entropy = y[:n]
+        self._lid_y, self._lid_active = np.asarray(y[-2:], dtype=float), True
+        self._update_column(t_yr, entropy, float(y[n]) if y.size > n + 2 else None)
+        ls = getattr(self.state, 'lid_state', None)
+        if ls is None:
+            return -1.0
+        ph = self.state.phase_staggered
+        T = np.asarray(ph.temperature()).ravel()
+        phi = float(np.asarray(ph.melt_fraction()).ravel()[-1])
+        T_b = self._lid_base_state(float(entropy[-1]), float(T[-1]), phi)['T_b']
+        z = _isotherm_depth(
+            float(np.asarray(ls['T_lid_iso'])),
+            float(y[-2]),
+            T_b,
+            lambda: self._lid_evaluate(entropy).surf.T_s,
+            self._lid_z_stag,
+            T[::-1],
+        )
         if z is None:
             return -1.0
         return min((z - self._lid_handover_depth) / self._lid_handover_depth, *self._lid_gate())
@@ -3555,6 +3587,16 @@ class EntropySolver:
         lid = self._lid_last.rates
         return np.concatenate([rates, [lid.ddelta * SECS_PER_YEAR, lid.dE * SECS_PER_YEAR]])
 
+    def _update_column(self, time: float, entropy: npt.NDArray, extra: float | None) -> None:
+        """Refresh the surface temperature and update the state at ``entropy`` for the layouts
+        other than 'gradient'. In energy_balance and core_module ``extra`` is the CMB entropy
+        gradient, passed in place of the finite-difference estimate at that node."""
+        self._refresh_surface_temperature()
+        if self._core_bc in ('energy_balance', 'core_module'):
+            self.state.update(entropy, time, dSdr_cmb=extra)
+        else:
+            self.state.update(entropy, time)
+
     def _dSdt_mantle(
         self,
         time: npt.NDArray | float,
@@ -3612,15 +3654,10 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
-        self._refresh_surface_temperature()
-        # In energy_balance and core_module the first extra state is the CMB entropy
-        # gradient, passed to state.update() in place of the FD estimate at that node.
         if gradient_mode:
-            pass  # state.update already called above with dSdr
-        elif energy_balance or core_mod:
-            self.state.update(entropy, time, dSdr_cmb=extra)
+            self._refresh_surface_temperature()  # state.update already called above with dSdr
         else:
-            self.state.update(entropy, time)
+            self._update_column(time, entropy, extra)
 
         # Apply flux BCs directly (not via BC module, which expects 2D arrays).
         # All BC dispatch keys and constants are pre-cached in

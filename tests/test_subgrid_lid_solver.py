@@ -341,6 +341,7 @@ def test_lid_depth_is_the_isotherm_depth(eos):
     interpolated at that depth gives T_lid_iso, below the top-cell face here."""
     s = _cold_top_solver(eos)
     g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
     z = s._lid_depth()
     T_iso = float(np.asarray(s.state.lid_state['T_lid_iso']))
     T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
@@ -620,6 +621,7 @@ def test_no_handover_outside_the_solid_regime(eos, kw, w_active, molten_top):
 
     s = _gate_column(eos, **kw)
     g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
     assert s._lid_depth() > s._lid_handover_depth
     ph, act = s.state.phase_staggered, float(s.state.lid_state['w_active'])
     w_phi = float(_melt_ramp(np.ravel(ph.melt_fraction())[-1], ph._phi_rheo, ph._phi_width))
@@ -636,6 +638,7 @@ def test_handover_root_in_the_solid_regime(eos):
     positive root of the isotherm margin."""
     s = _cold_top_solver(eos)
     g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
     margin = (s._lid_depth() - s._lid_handover_depth) / s._lid_handover_depth
     assert 0.0 < g == pytest.approx(margin, rel=1e-12)
     assert min(s._lid_gate()) > margin
