@@ -28,6 +28,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+from _values_io import dump_values  # noqa: E402
 from scipy.integrate import cumulative_trapezoid, quad, solve_ivp  # noqa: E402
 from scipy.optimize import brentq  # noqa: E402
 
@@ -631,8 +632,8 @@ def item12_jax_parity() -> None:
         record(12, f'jac_tcore_min_rel_{key}', errs.min())
         record(12, f'jac_tcore_best_step_{key}', steps[np.argmin(errs)])
         ax2.loglog(steps, np.maximum(errs, 1e-17), color=col, label=state)
-    # Over a mantle above its liquidus the single-phase expansivity enters: the tables against
-    # the identity rho cp |dT/dP_S| / T that the JAX EOS uses.
+    # Over a mantle above its liquidus the single-phase expansivity enters: with and without the
+    # thermal_exp tables loaded, both paths take the identity rho cp dT/dP_S / T.
     for identity, key in ((True, 'identity'), (False, 'tables')):
         eos = eos_copy(identity_alpha=identity)
         solver = build('core_module', eos, core_params)
@@ -1434,7 +1435,7 @@ def main(argv=None) -> None:
     for i in wanted:
         t0, VALUES[str(i)] = time.perf_counter(), {}
         ITEMS[i]()
-        VALUES_FILE.write_text(json.dumps(VALUES, indent=1, sort_keys=True) + '\n')
+        VALUES_FILE.write_text(dump_values(VALUES))
         print(f'item {i}: {time.perf_counter() - t0:.1f} s', flush=True)
     print(
         f'total {time.perf_counter() - start:.1f} s; values in {VALUES_FILE.relative_to(ROOT)}'
