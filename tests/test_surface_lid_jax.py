@@ -85,3 +85,61 @@ def test_shape_gradient_is_finite_and_matches_differences():
         ]
     )
     np.testing.assert_allclose(jac[far], fd, rtol=1e-6, atol=1e-12)
+
+
+def _surface_states(n=400, seed=7):
+    rng = np.random.default_rng(seed)
+    T_eq = rng.uniform(200.0, 400.0, n)
+    T_b = rng.uniform(1300.0, 1800.0, n)
+    frac = np.concatenate([rng.uniform(0.0, 1.0, n - 4), [0.0, 1.0, 1e-9, 1 - 1e-9]])
+    return dict(
+        delta=10.0 ** rng.uniform(-3.0, 3.3, n),
+        T_m=T_eq + frac * (T_b - T_eq),
+        T_b=T_b,
+        k=rng.uniform(2.0, 6.0, n),
+        emissivity=rng.uniform(0.5, 1.0, n),
+        T_eq=T_eq,
+    )
+
+
+def test_surface_state_matches_numpy():
+    """The JAX surface solve equals the NumPy one (Brent root) on random lid states, clipped
+    ones included: same clip flag, surface temperature and fluxes to relative 1e-10."""
+    from aragog import surface_lid as sl
+    from aragog.jax.surface_lid import surface_state
+
+    st = _surface_states()
+    keys = ('delta', 'T_m', 'T_b', 'k', 'emissivity', 'T_eq')
+    got = jax.jit(jax.vmap(lambda *a: surface_state(*a, sl.LID_DELTA_FLOOR)))(
+        *(st[k] for k in keys)
+    )
+    ref = [sl.surface_state(*(st[k][i] for k in keys), sl.LID_DELTA_FLOOR) for i in range(400)]
+    np.testing.assert_array_equal(np.asarray(got[4]), [r.clipped for r in ref])
+    assert {r.clipped for r in ref} == {-1, 0, 1}
+    for j, name in enumerate(('T_s', 'F_s', 'q_b')):
+        want = np.array([getattr(r, name) for r in ref])
+        np.testing.assert_allclose(np.asarray(got[j]), want, rtol=1e-10, atol=1e-300)
+
+
+def test_surface_state_derivatives_match_differences():
+    """The implicit derivative of the surface flux in the lid thickness and the lid mean
+    temperature equals a central difference of the NumPy solve on unclipped states."""
+    from aragog import surface_lid as sl
+    from aragog.jax.surface_lid import surface_state
+
+    st = _surface_states(60, seed=11)
+    keys = ('delta', 'T_m', 'T_b', 'k', 'emissivity', 'T_eq')
+    n_checked = 0
+    for i in range(60):
+        a = [float(st[k][i]) for k in keys]
+        if sl.surface_state(*a, sl.LID_DELTA_FLOOR).clipped:
+            continue
+        for j in (0, 1):
+            h = 1e-6 * a[j]
+            up, dn = list(a), list(a)
+            up[j], dn[j] = a[j] + h, a[j] - h
+            fd = (sl.surface_state(*up, 1e-5).F_s - sl.surface_state(*dn, 1e-5).F_s) / (2 * h)
+            got = jax.grad(lambda *v: surface_state(*v, 1e-5)[1], argnums=j)(*a)
+            assert float(got) == pytest.approx(fd, rel=1e-5, abs=1e-12)
+        n_checked += 1
+    assert n_checked > 30
