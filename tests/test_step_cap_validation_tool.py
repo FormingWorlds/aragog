@@ -290,16 +290,17 @@ def test_v5b_driver_counts_steps_and_keeps_the_run_settings(monkeypatch):
 
 
 def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(monkeypatch):
-    """--reference sets 1 yr steps and the reference tolerances; --s0-eps scales call 1 only."""
+    """--reference sets 1 yr steps and tolerances; --s0-eps scales the first call that spans time."""
     cls, solver, calls = _recording_solver(monkeypatch)
     v5b.install(reference=True, s0_eps=1e-3, reference_rtol=1e-11)
+    cls._solve_cvode(solver, 0.0, 0.0, np.array([100.0, 200.0]), 1e-6, 1e-6, 5.0)
     for max_step in (5.0, np.inf):
         cls._solve_cvode(solver, 0.0, 1.0, np.array([100.0, 200.0]), 1e-6, 1e-6, max_step)
     for _, atol, rtol, max_step in calls:
         np.testing.assert_allclose(atol, [5e-12, 2.5e-12], rtol=1e-15)
         assert (rtol, max_step) == (1e-11, 0.1)
-    np.testing.assert_allclose(calls[0][0], [100.1, 200.2], rtol=1e-15)
-    assert calls[1][0].tolist() == [100.0, 200.0]
+    assert calls[0][0].tolist() == calls[2][0].tolist() == [100.0, 200.0]
+    np.testing.assert_allclose(calls[1][0], [100.1, 200.2], rtol=1e-15)
 
 
 def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):

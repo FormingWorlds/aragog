@@ -9,8 +9,8 @@ config options before the run starts:
 - ``--reference`` integrates every CVODE call at ``--reference-rtol`` (default 1e-10), a
   physical atol of the same value and 1 yr steps (``EntropySolver._solve_cvode``), so the
   reference does not depend on the step controller;
-- ``--s0-eps`` multiplies the state at the first CVODE call by 1 + eps for a round-off start
-  (PROTEUS sets the start entropy more than once before the integration starts).
+- ``--s0-eps`` multiplies the state of the first CVODE call that spans time by 1 + eps for a
+  round-off start (PROTEUS sets the start entropy and makes zero-length calls first).
 
 The result file records the CVODE steps of all calls and the wall time of the run. The driver
 stops with an error when one of these hooks is missing in the installed PROTEUS or Aragog. It
@@ -75,7 +75,7 @@ def install(reference, s0_eps=0.0, reference_rtol=1.0e-10):
         return check(handler)
 
     def counted(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
-        if first[0]:
+        if first[0] and end_time > start_time:
             first[0] = False
             y0 = np.asarray(y0, dtype=float) * (1.0 + s0_eps)
         if reference:
