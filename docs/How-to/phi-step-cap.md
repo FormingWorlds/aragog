@@ -82,6 +82,7 @@ params.energy = dataclasses.replace(
     convective_threshold=0.0,
     radionuclides=False,
 )
+params.phase_mixed.matprop_smooth_width = 0.0  # sharp phase boundaries, see below
 
 solver = EntropySolver(params, entropy_eos=eos)
 solver.initialize()
@@ -97,7 +98,9 @@ print(f'S_end in [{state.S_final.min():.2f}, {state.S_final.max():.2f}] J/(kg K)
 ```
 
 The public `SolverOutput` returned by `solver.get_state()` exposes the final physical state (`status`, `S_final`, `T_stag`, `phi_stag`, `P_stag`), while no dedicated accessor exists on `SolverOutput` for the per-segment root records (`segments`) or cumulative CVODE step count (`cvode_nst`), which are read from the public `solver.solution` `OptimizeResult` property.
+The script sets `matprop_smooth_width = 0`, so the stiff zone around each boundary has its smallest half-width, $\delta = 10\ \mathrm{J\,kg^{-1}\,K^{-1}}$.
 Running this script prints `status=0, steps=1034, segments=12`, with `first_cap=100.0 yr` in the initial segment (while the top cell is still above its solidus, $\phi_{\max} = 0.000896$), `second_cap=163.77 yr` at $t = 1611.87\ \mathrm{yr}$ once the top cell crosses the solidus ($\phi_{\max} = 0.0$) and the $100\ \mathrm{yr}$ ceiling relaxes inside the solidus stiff zone, and `final_cap=inf` over the final 9 sub-solidus segments (ending with $S_{\mathrm{end}} \in [587.31,\; 880.39]\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $T_{\mathrm{end}} \in [1735.27,\; 3316.24]\ \mathrm{K}$).
+Without the width line, the script runs at the default width 0.01 and prints `status=0, steps=1139, segments=3`, `second_cap=7935.67 yr` and a finite `final_cap=23453.14`: the ceiling is lifted, but the last segment still has a finite step limit.
 
 ## Cross-references
 
