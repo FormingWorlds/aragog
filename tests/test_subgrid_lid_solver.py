@@ -156,3 +156,67 @@ def test_jax_factory_refused_with_the_lid(eos):
         pytest.skip('scikits.odes is not installed')
     with pytest.raises(ValueError, match='no JAX right-hand side'):
         s.solve()
+
+
+def _phantom_energy(s, delta, T_m):
+    s._dSdt_single(0.0, s._S0)
+    ev = s._lid_last
+    return sl.lid_energy(ev.rho, delta, ev.h_b, ev.cp, ev.T_b, T_m), ev
+
+
+def test_lid_above_the_growth_stop_fails_the_step_check(eos):
+    """An accepted state with the lid past the growth stop raises the lid invariant."""
+    s = _solver(eos)
+    d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with pytest.raises(RuntimeError, match='lid invariant violated at step 0') as err:
+        s.solve()
+    assert 'outside' in str(err.value)
+
+
+def test_growth_stop_warns_once(eos, caplog):
+    """A growing lid at the growth stop holds below LID_CAP_FRAC h_top and warns once."""
+    import logging
+
+    s = _solver(eos, end=10.0)
+    d = (sl.LID_CAP_FRAC - 0.5 * sl.LID_CAP_WIDTH) * s._lid_h_top
+    # a lid mean just above T_eq gives the steep base gradient of a lid that grows here
+    E, ev = _phantom_energy(s, d, 257.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    msgs = [r.getMessage() for r in caplog.records if 'growth stop holds' in r.getMessage()]
+    assert len(msgs) == 1
+    assert s._solution.y[-2].max() <= sl.LID_CAP_FRAC * s._lid_h_top * (1 + 1e-6)
+    assert s._solution.y[-2].max() > d
+
+
+def test_outputs_and_netcdf(eos, tmp_path):
+    """get_state reports the lid with the lid on and NaN with it off; the netCDF snapshot
+    carries the lid scalars only with the lid on."""
+    import netCDF4
+
+    on = _solver(eos)
+    on.solve()
+    out = on.get_state()
+    ev = on._lid_last
+    assert out.lid_delta == pytest.approx(on._solution.y[-2, -1], rel=1e-15)
+    assert out.lid_T_surface < out.lid_T_mean < out.lid_T_base
+    assert out.lid_delta_eff == pytest.approx(ev.delta / sl.shape(ev.surf.s)[0], rel=1e-15)
+    assert (
+        out.lid_delta_eff < out.lid_delta
+    )  # a growing lid (s > 0) conducts better than linear
+    assert 0.0 <= out.lid_weight <= 1.0
+    off = _solver(eos, lid=False)
+    off.solve()
+    out_off = off.get_state()
+    assert np.isnan(out_off.lid_delta) and np.isnan(out_off.lid_T_base)
+    for o, name in ((out, 'on.nc'), (out_off, 'off.nc')):
+        o.to_netcdf(tmp_path / name, time=1.0)
+    with netCDF4.Dataset(tmp_path / 'on.nc') as ds:
+        assert float(ds['lid_delta'][...]) == pytest.approx(out.lid_delta, rel=1e-12)
+    with netCDF4.Dataset(tmp_path / 'off.nc') as ds:
+        assert 'lid_delta' not in ds.variables
