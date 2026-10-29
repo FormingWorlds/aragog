@@ -172,6 +172,24 @@ def test_stop_after_stall_keeps_a_failed_status():
     assert tool.stop_after_stall(res(0), {'phi_max': 0.1, 't_yr': 2.0}, 1.0).cvode_flag == 2
 
 
+def test_main_runs_a_v4_case_and_checks_it(monkeypatch, tmp_path, capsys):
+    """main() passes the end time to the v4 run, writes its result and exits 1 on a failure."""
+    seen = {}
+
+    def fake_run_v4(eos_dir, name, end_time):
+        seen.update(eos_dir=eos_dir, name=name, end_time=end_time)
+        return dict(status=-1, passed_stall_point=True, solidified=True, inside_table=True)
+
+    monkeypatch.setattr(tool, 'run_v4', fake_run_v4)
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
+    out = tmp_path / 'v4.json'
+    args = ['--case', 'v4_rheo_on', '--eos-dir', 'E', '--end-time', '5', '--output', str(out)]
+    assert tool.main([*args, '--check']) == 1
+    assert 'v4_rheo_on: FAIL status -1' in capsys.readouterr().out
+    assert seen == {'eos_dir': 'E', 'name': 'v4_rheo_on', 'end_time': 5.0}
+    assert json.loads(out.read_text())['status'] == -1
+
+
 def test_main_needs_an_eos_dir(monkeypatch):
     """Without --eos-dir and ARAGOG_TEST_EOS_DIR the command exits with a usage error."""
     monkeypatch.delenv('ARAGOG_TEST_EOS_DIR', raising=False)
@@ -301,6 +319,46 @@ def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(
         assert (rtol, max_step) == (1e-11, 0.1)
     assert calls[0][0].tolist() == calls[2][0].tolist() == [100.0, 200.0]
     np.testing.assert_allclose(calls[1][0], [100.1, 200.2], rtol=1e-15)
+
+
+def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path):
+    """main() writes the config with the output path, runs PROTEUS, and records the run."""
+    import types
+
+    import aragog.solver.entropy_solver as es
+
+    monkeypatch.setattr(es.EntropySolver, '_solve_cvode', es.EntropySolver._solve_cvode)
+    _fake_proteus(monkeypatch, check_termination=lambda handler: False)
+    seen = {}
+
+    class Rows(list):
+        @property
+        def iloc(self):
+            return self
+
+    class Runner:
+        def __init__(self, config_path):
+            seen['config'] = Path(config_path).read_text()
+
+        def start(self, offline):
+            seen['offline'] = offline
+            self.hf_all = Rows([dict.fromkeys(v5b.COLUMNS, 1.0)] * 2)
+
+    sys.modules['proteus'].Proteus = Runner
+    dumps = lambda d: f'path = {d["params"]["out"]["path"]!r}\n'  # noqa: E731
+    monkeypatch.setitem(sys.modules, 'toml', types.SimpleNamespace(dumps=dumps))
+    argv = ['--reference', '--reference-rtol', '1e-11', '--s0-eps=1e-12']
+    assert v5b.main([*argv, '--output-dir', str(tmp_path)]) == 0
+    res = json.loads((tmp_path / 'v5b_result.json').read_text())
+    assert (res['reference'], res['reference_rtol'], res['s0_eps']) == (True, 1e-11, 1e-12)
+    assert (res['cvode_steps'], res['rows'], res['solid_steps'], res['T_magma']) == (
+        0,
+        2,
+        0,
+        1.0,
+    )
+    assert res['wall_s'] >= 0.0 and seen['offline'] is True
+    assert str(tmp_path / 'output') in seen['config']
 
 
 def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):
