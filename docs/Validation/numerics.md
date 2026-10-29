@@ -299,12 +299,15 @@ The physical case for this regime is the [full solidification check](#full-solid
 ### Full solidification without solver stalling
 
 **Why this check exists.**
-In 100-node runs, deep cells at high pressure stay close to the phase boundary for millions of years.
-If the controller ties the step to their small distance from the boundary, the step size collapses and the run does not reach full solidification.
-This case has 2 such points: $83.684\text{ Myr}$ with stagnant-lid rheology and $107.655\text{ Myr}$ without it.
+A 100-node run must stay cheap through the slow final stages of solidification.
+With stagnant-lid rheology (`rheo_on`), deep cells stay close to the phase boundary for hundreds of millions of years.
+If the controller ties the step to their small distance from the boundary, the step size collapses.
+Without rheology (`rheo_off`), the mantle is fully solid after about $0.1\text{ Myr}$.
+A $100\text{ yr}$ step ceiling would then need about $10^6$ steps to reach $107.655\text{ Myr}$.
+The check uses these 2 points: $83.684\text{ Myr}$ with rheology and $107.655\text{ Myr}$ without it.
 
 **What it tests.**
-A 100-node mantle on the PALEOS low-temperature equation of state tables cools from $S_0 = 3165.90\text{ J/(kg K)}$ under a grey-body surface ($T_{\text{eq}} = 273\text{ K}$), once with stagnant-lid rheology (`rheo_on`) and once without it (`rheo_off`), until full solidification ($\phi_{\max} = 0$).
+A 100-node mantle on the PALEOS low-temperature equation of state tables cools from $S_0 = 3165.90\text{ J/(kg K)}$ under a grey-body surface ($T_{\text{eq}} = 273\text{ K}$), once with stagnant-lid rheology (`rheo_on`, until full solidification, $\phi_{\max} = 0$) and once without it (`rheo_off`, to $120\text{ Myr}$).
 
 **How we know the right answer.**
 Each run must pass its stall point and reach $\phi_{\max} = 0$ with status 0.
@@ -314,7 +317,8 @@ Its entropy must stay inside the table.
 Long planetary evolution runs require robust integration from magma ocean through complete mantle solidification into solid-state convection.
 
 **Known limit.**
-The run stops at full solidification; the check does not integrate to $10^9\text{ yr}$.
+The `rheo_on` run stops at full solidification; the `rheo_off` run stops at $120\text{ Myr}$.
+Neither run integrates to $10^9\text{ yr}$.
 The `rheo_on` run installs the JAX CVODE factory, as coupled PROTEUS runs do.
 
 ??? info "Test details"

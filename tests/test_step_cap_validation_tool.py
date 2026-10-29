@@ -201,3 +201,28 @@ def test_v5b_stop_rule_ends_three_steps_after_phi_reaches_zero(monkeypatch):
     assert solid == [3] and handler.finished_both and handler.finished_prev
     v5b.install(reference=True)
     assert es.EntropySolver._solve_cvode is not original
+
+
+def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):
+    """v4_rheo_off ends at 1.2e8 yr, v4_rheo_on at 1e9 yr; --end-time replaces both."""
+    import hashlib
+
+    (tmp_path / 'temperature_solid.dat').write_text('table\n')
+    monkeypatch.setattr(tool, 'PALEOS_LOWT_MD5', hashlib.md5(b'table\n').hexdigest())
+    monkeypatch.setattr(tool, 'EntropyEOS', lambda _eos_dir: object())
+    seen = []
+
+    class Built(Exception):
+        pass
+
+    def solver(p, entropy_eos):
+        seen.append(p.solver.end_time)
+        raise Built
+
+    monkeypatch.setattr(tool, 'EntropySolver', solver)
+    for name in ('v4_rheo_off', 'v4_rheo_on'):
+        with pytest.raises(Built):
+            tool.run_v4(tmp_path, name)
+    with pytest.raises(Built):
+        tool.run_v4(tmp_path, 'v4_rheo_off', 5.0)
+    assert seen == [1.2e8, 1.0e9, 5.0]

@@ -9,7 +9,7 @@ v3_r3        12     1.5e4       F = 20 W/m^2, 2 cells above      max|T - T_ref|,
                                 the stiff zone                   envelope, Regime 3/4 segments
 v3_r4        12     2e5         F = 200 W/m^2, start            as v3_r3, plus the entropy range
                                 S_sol + 5 J/(kg K)               against the table
-v4_rheo_off  100    1e9         abe_solid.toml, T_eq = 273 K,   stall point 107.655 Myr passed,
+v4_rheo_off  100    1.2e8       abe_solid.toml, T_eq = 273 K,   stall point 107.655 Myr passed,
                                 S0 = 3165.90 J/(kg K)            phi_max = 0, status 0
 v4_rheo_on   100    1e9         as v4_rheo_off, stagnant-lid     stall point 83.684 Myr passed,
                                 rheology, JAX CVODE factory      phi_max = 0, status 0
@@ -19,8 +19,9 @@ The v3 cases use ``_build_mushy_parameters`` of ``tests/test_phi_step_cap_armed_
 the CI test table with ``matprop_smooth_width = 0``; their fluxes are chosen for the table's
 entropy range and they test the controller only. Each runs ``'fixed'`` at rtol = atol = 1e-10
 as the reference and ``'rate'`` at 1e-8 from S0 (1 + m 1e-12), m = -2..2. The v4 cases need
-the PALEOS low-temperature table set (``paleos_lowt_spider_eos_1350x281``) and stop at the
-first segment end with phi_max = 0 after the stall point. Run from the repository root::
+the PALEOS low-temperature table set (``paleos_lowt_spider_eos_1350x281``). They stop at the
+first segment end with phi_max = 0 after the stall point, or at the end time of the case.
+Run from the repository root::
 
     python tools/verification/run_step_cap_validation.py --case v3_r3 [--eos-dir DIR] [--workers N]
     python tools/verification/run_step_cap_validation.py --case v4_rheo_on --eos-dir PALEOS_DIR
@@ -57,8 +58,8 @@ V3 = {
     'v3_r4': dict(end=2.0e5, flux=200.0, width=0.0),
 }
 V4 = {
-    'v4_rheo_off': dict(rheology=False, stall=107.655e6, max_steps=100_000),
-    'v4_rheo_on': dict(rheology=True, stall=83.684e6, max_steps=800_000),
+    'v4_rheo_off': dict(rheology=False, stall=107.655e6, max_steps=100_000, end=1.2e8),
+    'v4_rheo_on': dict(rheology=True, stall=83.684e6, max_steps=800_000, end=1.0e9),
 }
 PALEOS_LOWT_MD5 = (
     '18d6f9eb5ba654d58fe3fad30ce118f0'  # temperature_solid.dat of the 1350 x 281 set
@@ -252,7 +253,7 @@ def _v4_factory(s, eos_dir):
     s.set_jax_cvode_factory(factory)
 
 
-def run_v4(eos_dir, name, end_time):
+def run_v4(eos_dir, name, end_time=None):
     """Integrate a v4 case to phi_max = 0 past its stall point; return the result."""
     from aragog.parser import Parameters
 
@@ -275,7 +276,10 @@ def run_v4(eos_dir, name, end_time):
             p0.boundary_conditions, outer_boundary_condition=1, equilibrium_temperature=273.0
         ),
         solver=dataclasses.replace(
-            p0.solver, start_time=0.0, end_time=end_time, max_steps=case['max_steps']
+            p0.solver,
+            start_time=0.0,
+            end_time=case['end'] if end_time is None else end_time,
+            max_steps=case['max_steps'],
         ),
     )
     if case['rheology']:
@@ -337,7 +341,7 @@ def main(argv=None) -> int:
     ap.add_argument('--eos-dir', default=os.environ.get('ARAGOG_TEST_EOS_DIR'))
     ap.add_argument('--workers', type=int, default=1, help='processes for the 6 v3 runs')
     ap.add_argument('--width', type=float, default=None, help='replace the v3 width 0')
-    ap.add_argument('--end-time', type=float, default=1.0e9, help='v4 end time [yr]')
+    ap.add_argument('--end-time', type=float, default=None, help='replace the v4 end time [yr]')
     ap.add_argument('--output', type=Path, default=None)
     args = ap.parse_args(argv)
     if not args.eos_dir:
