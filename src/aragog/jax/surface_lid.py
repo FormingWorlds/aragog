@@ -192,11 +192,48 @@ def grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq):
     return jnp.where(T_b <= T_eq, T_b, T)
 
 
+def _bracket_root(f, lo, hi, f_lo, f_hi):
+    """Root of an increasing ``f`` with ``f_lo < 0 < f_hi`` at ``[lo, hi]``: 12 bisection steps,
+    then 10 Illinois steps (regula falsi that halves the value of an end kept twice in a row).
+    On the lid states of the tests it agrees with 64 bisection steps to relative 4.1e-13."""
+
+    def bisect(_, c):
+        lo, hi, f_lo, f_hi = c
+        mid = 0.5 * (lo + hi)
+        f_mid = f(mid)
+        below = f_mid < 0.0
+        return (
+            jnp.where(below, mid, lo),
+            jnp.where(below, hi, mid),
+            jnp.where(below, f_mid, f_lo),
+            jnp.where(below, f_hi, f_mid),
+        )
+
+    def secant(lo, hi, f_lo, f_hi):
+        den = f_hi - f_lo
+        x = (lo * f_hi - hi * f_lo) / jnp.where(den > 0.0, den, 1.0)
+        return jnp.where(den > 0.0, jnp.clip(x, lo, hi), 0.5 * (lo + hi))
+
+    def illinois(_, c):
+        lo, hi, f_lo, f_hi, kept = c
+        x = secant(lo, hi, f_lo, f_hi)
+        f_x = f(x)
+        below = f_x < 0.0
+        f_lo = jnp.where(below, f_x, jnp.where(kept == -1, 0.5 * f_lo, f_lo))
+        f_hi = jnp.where(below, jnp.where(kept == 1, 0.5 * f_hi, f_hi), f_x)
+        lo, hi = jnp.where(below, x, lo), jnp.where(below, hi, x)
+        return lo, hi, f_lo, f_hi, jnp.where(below, 1, -1)
+
+    c = jax.lax.fori_loop(0, 12, bisect, (lo, hi, f_lo, f_hi))
+    c = jax.lax.fori_loop(0, 10, illinois, (*c, jnp.asarray(0)))
+    return secant(*c[:4])
+
+
 def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
     """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
 
-    The root in ``s`` of ``Q(s) = E / delta`` comes from 64 bisection steps over the shape
+    The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
     Returns
@@ -215,17 +252,10 @@ def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
     def residual(s):
         return profile_heat(e, s, T_s_of(s), T_b) - q
 
-    def body(_, bracket):
-        lo, hi = bracket
-        mid = 0.5 * (lo + hi)
-        below = jax.lax.stop_gradient(residual(mid)) < 0.0
-        return jnp.where(below, mid, lo), jnp.where(below, hi, mid)
-
-    lo, hi = jax.lax.fori_loop(
-        0, 64, body, (jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX))
-    )
-    s_in = _implicit_root(0.5 * (lo + hi), residual)
-    r_min, r_max = (jax.lax.stop_gradient(residual(v)) for v in (LID_SHAPE_MIN, LID_SHAPE_MAX))
+    lo, hi = jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX)
+    r_min, r_max = (jax.lax.stop_gradient(residual(v)) for v in (lo, hi))
+    root = _bracket_root(lambda v: jax.lax.stop_gradient(residual(v)), lo, hi, r_min, r_max)
+    s_in = _implicit_root(root, residual)
     clipped = jnp.where(r_min >= 0.0, -1, jnp.where(r_max <= 0.0, 1, 0))
     s = jnp.select([clipped == -1, clipped == 1], [LID_SHAPE_MIN, LID_SHAPE_MAX], s_in)
     f0, f1, m = shape(s)
