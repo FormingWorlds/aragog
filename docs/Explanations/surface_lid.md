@@ -16,7 +16,7 @@ Between the surface and the base, the temperature follows one member of a family
 
 $$T(z) = T_s + (T_b - T_s)\, f_s(z / \delta), \qquad f_s(x) = \frac{\operatorname{erf}(\sqrt{s}\, x)}{\operatorname{erf}\sqrt{s}},$$
 
-and $f_s(x) = x$ for $s = 0$ (with the imaginary error function for $s < 0$). The shape parameter $s$ follows from the mean temperature of the crust, which the energy $E_\mathrm{lid}$ fixes. A growing crust has $s > 0$, a steady crust has the straight line $s = 0$, and a thinning crust has $s < 0$. This family contains the exact solution for a crust that freezes over melt, $\delta = 2\lambda\sqrt{\kappa t}$ with $s = \lambda^2$ (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141, pp. 197-198), so the lid grows exactly as that solution.
+and $f_s(x) = x$ for $s = 0$ (with the imaginary error function for $s < 0$). The energy $E_\mathrm{lid}$ is the heat content of the crust: the heat content per volume $H(T)$ of the solid, taken from the equation of state at the pressure of the top cell, integrated over the profile. For each shape the surface balance below fixes $T_s$, so one shape $s$ gives the stored energy. A growing crust has $s > 0$, a steady crust has the straight line $s = 0$, and a thinning crust has $s < 0$. This family contains the exact solution for a crust that freezes over melt, $\delta = 2\lambda\sqrt{\kappa t}$ with $s = \lambda^2$ (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141, pp. 197-198), so the lid grows exactly as that solution.
 
 ## The surface and the base
 
@@ -28,11 +28,13 @@ with $\varepsilon$ the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T_\m
 
 At the base the crust conducts $q_b = k (T_b - T_s) f_s'(1) / \delta$ upward, and the melt delivers $F_b$. The difference freezes new crust:
 
-$$\rho\, \Delta h\, \frac{d\delta}{dt} = q_b - F_b.$$
+$$\left(\rho\, h_f - H_b\right) \frac{d\delta}{dt} = q_b - F_b.$$
 
-Here $\rho$ is the density of the crust and $\Delta h$ \[J/kg\] the heat released when 1 kg of melt joins the crust: the integral of $T\,dS$ at the top-cell pressure from the entropy of the lid base to the entropy of the melt, which includes the latent heat of the melt fraction between them. The melt delivers $F_b$, the larger of the heat flux into the top cell from below and the flux of a boundary layer at the critical Rayleigh number `lid_ra_crit`.
+Here $\rho$ is the density at the lid base, $h_f$ \[J/kg\] the heat content of the melt and $H_b$ \[J/m³\] the heat content per volume of the crust at its base, so the left side is the heat released when melt joins the crust, latent heat of the melt fraction included. All heat contents are integrals of $T\,dS$ at the top-cell pressure from the solidus entropy. The melt delivers $F_b$, the larger of the heat flux into the top cell from below and the flux of a boundary layer at the critical Rayleigh number `lid_ra_crit`.
 
 ## Energy
+
+The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
 
 The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$. The melt loses the mass that freezes, and the crust gains it. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
 

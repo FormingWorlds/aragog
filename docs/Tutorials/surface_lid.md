@@ -121,13 +121,13 @@ print(f'temperatures: surface {on.lid_T_surface:.1f} K, mean {on.lid_T_mean:.1f}
 The output:
 
 ```text
-surface flux with the lid:          1519.9 W/m^2
+surface flux with the lid:          1543.3 W/m^2
 surface flux without the lid:     641018.2 W/m^2
-lid thickness 4.888 m, weight 1.000
-temperatures: surface 419.7 K, mean 1315.7 K, base 2149.0 K
+lid thickness 4.846 m, weight 1.000
+temperatures: surface 421.1 K, mean 1319.7 K, base 2149.0 K
 ```
 
-Without the lid, the surface node has the temperature of the hot top cell, and the grey body radiates 6.4 × 10⁵ W/m². With the lid, a crust 4.9 m thick has formed after one year; its surface has cooled to 420 K, and the planet loses 1520 W/m², about 420 times less. The lid base sits at the solidus of the top-cell pressure, 2149 K. The weight 1 says that the lid acts in full.
+Without the lid, the surface node has the temperature of the hot top cell, and the grey body radiates 6.4 × 10⁵ W/m². With the lid, a crust 4.8 m thick has formed after one year; its surface has cooled to 421 K, and the planet loses 1543 W/m², about 415 times less. The lid base sits at the solidus of the top-cell pressure, 2149 K. The weight 1 says that the lid acts in full.
 
 ## 3. Watch the crust grow
 
@@ -142,12 +142,12 @@ for t in (1.0, 4.0, 16.0):
 ```
 
 ```text
-t =    1 yr: delta =   4.888 m, delta / sqrt(t) = 4.888 m/yr^0.5
-t =    4 yr: delta =   9.883 m, delta / sqrt(t) = 4.942 m/yr^0.5
-t =   16 yr: delta =  19.943 m, delta / sqrt(t) = 4.986 m/yr^0.5
+t =    1 yr: delta =   4.846 m, delta / sqrt(t) = 4.846 m/yr^0.5
+t =    4 yr: delta =   9.800 m, delta / sqrt(t) = 4.900 m/yr^0.5
+t =   16 yr: delta =  19.781 m, delta / sqrt(t) = 4.945 m/yr^0.5
 ```
 
-The thickness grows by a factor 4.08 over a 16-fold time, and $\delta / \sqrt{t}$ changes by 2 %. The lid starts as a thin phantom crust of 0.5 m, not on the textbook profile, so the ratio still rises slowly towards its long-time value.
+The thickness grows by a factor 4.08 over a 16-fold time, and $\delta / \sqrt{t}$ changes by 2 %. The lid starts as a thin phantom crust of 0.5 m, not on the textbook profile, and the ratio still rises slowly.
 
 ## What next
 
