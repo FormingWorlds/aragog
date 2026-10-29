@@ -28,6 +28,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+from _values_io import dump_values  # noqa: E402
 from scipy.integrate import cumulative_trapezoid, quad, solve_ivp  # noqa: E402
 from scipy.optimize import brentq  # noqa: E402
 
@@ -1420,12 +1421,6 @@ ITEMS = {
     12: item12_jax_parity,
     13: item13_stable_layer,
 }
-
-
-def dump_values(values: dict) -> str:
-    """The values file text: one top-level item per line, keys sorted, no indentation."""
-    rows = (f'{json.dumps(k)}: {json.dumps(values[k], sort_keys=True)}' for k in sorted(values))
-    return '{\n' + ',\n'.join(rows) + '\n}\n'
 
 
 def main(argv=None) -> None:
