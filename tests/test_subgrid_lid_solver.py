@@ -106,26 +106,55 @@ def test_ledger_per_call_closes(eos, frac, dT, S_top, S_bot):
 @pytest.mark.physics_invariant
 def test_ledger_over_a_solve(eos):
     """Over a solve the step ledger closes to round-off and the state heat to the stated
-    quadrature accuracy; the lid grows as Neumann with the run's Stefan number (secant heat
-    capacity of the crust) within 2 % (measured 1.9 %)."""
-    from scipy.optimize import brentq
-    from scipy.special import erf
-
+    quadrature accuracy, and the lid grows well past its phantom start."""
     s = _solver(eos)
     s.solve()
     ei = s._solution.energy_integrals
     budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
     assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
     assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
-    ev = s._lid_last
-    H_b = float(s._lid_H_of_S(ev.S_b))
-    cp = (H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
-    St = cp * (ev.T_b - ev.surf.T_s) / (ev.h_f - H_b / ev.rho)
-    lam = brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
-    t = (s._solution.t[-1] - s._solution.t[0]) * 3.15576e7
-    neumann = 2.0 * lam * np.sqrt(s._lid_k / (ev.rho * cp) * t)
-    assert ev.delta == pytest.approx(neumann, rel=0.02)
-    assert ev.delta > 5.0 * s._lid_delta_lo
+    assert s._lid_last.delta > 5.0 * s._lid_delta_lo
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('n_nodes', [10, 20, 40])
+def test_lid_growth_sanity_against_quasi_static_neumann(eos, n_nodes, monkeypatch):
+    """Sanity check: with no heat from the melt (F_b forced to 0), the lid over a molten column
+    grows as the Neumann law taken step by step along the run, delta^2 = 4 int kappa
+    lambda^2(St) dt, with St and kappa from the run's own states (the secant heat capacity of
+    the crust), within 1 % at 10, 20 and 40 nodes (measured -0.45, -0.30, -0.03 %). The grey
+    surface cools during the run, so a law with one surface temperature does not apply. The
+    reference takes its heat capacity from the run, so it cannot tell a heat content at the
+    base or mean temperature from the EOS one; the resolved-mesh check of V2 does."""
+    from scipy.optimize import brentq
+    from scipy.special import erf
+
+    from aragog.solver import entropy_solver as es
+    from aragog.solver.entropy_solver import EntropySolver
+
+    rates = es._lid.lid_rates
+    monkeypatch.setattr(es._lid, 'lid_rates', lambda **kw: rates(**{**kw, 'F_b': 0.0}))
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=n_nodes, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    sol = s._solution
+    t_nd, y = (np.asarray(v) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    kappa_lam2 = []
+    for k in range(t_nd.size):
+        s._dSdt_single(t_nd[k], y[:, k])
+        ev = s._lid_last
+        H_b = float(s._lid_H_of_S(ev.S_b))
+        cp = (H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
+        St = cp * (ev.T_b - ev.surf.T_s) / (ev.h_f - H_b / ev.rho)
+        lam = brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
+        kappa_lam2.append(s._lid_k / (ev.rho * cp) * lam**2)
+    span = (s._solution.t[-1] - s._solution.t[0]) * 3.15576e7
+    t = (t_nd - t_nd[0]) / (t_nd[-1] - t_nd[0]) * span
+    assert y[-2, -1] == pytest.approx(np.sqrt(4.0 * np.trapezoid(kappa_lam2, t)), rel=1e-2)
 
 
 def test_delta_on_must_fit_the_top_cell(eos):
