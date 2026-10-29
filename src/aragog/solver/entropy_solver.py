@@ -3149,9 +3149,12 @@ class EntropySolver:
         """Depth [m] of the lid-base isotherm of the solid rheology on the column with the lid.
 
         The profile runs from the lid surface (``T_s``) to the lid base (``delta``, ``T_b``), the
-        top-cell node and the cell nodes below; the depth is where it first reaches
-        ``T_lid_iso`` of the stagnant-lid state, by linear interpolation. None without that
-        state (rheology off or not in the 'lid' closure).
+        top-cell node and the cell nodes below. The depth is the base of the cold region: the
+        deepest point where the profile rises through ``T_lid_iso`` of the stagnant-lid state,
+        by linear interpolation. In the solid regime the lid base sits at ``T_lid_iso``, so the
+        profile may only touch the isotherm there. 0 when the whole profile is at or above
+        ``T_lid_iso``; None when it stays below it, or without that state (rheology off or not in
+        the 'lid' closure).
         """
         ls = getattr(self.state, 'lid_state', None)
         if ls is None:
@@ -3162,12 +3165,10 @@ class EntropySolver:
         T = np.asarray(self.state.phase_staggered.temperature()).ravel()[::-1]
         zs = np.r_[0.0, ev.delta, max(z[0], ev.delta * (1.0 + 1e-12)), z[1:]]
         Ts = np.r_[ev.surf.T_s, ev.T_b, T]
-        hot = np.nonzero(Ts >= T_iso)[0]
-        if hot.size == 0:
-            return float(zs[-1])
-        i = int(hot[0])
-        if i == 0:
-            return 0.0
+        rise = np.nonzero((Ts[:-1] < T_iso) & (Ts[1:] >= T_iso))[0]
+        if rise.size == 0:
+            return 0.0 if Ts[0] >= T_iso else None
+        i = int(rise[-1]) + 1
         return float(
             zs[i - 1] + (T_iso - Ts[i - 1]) * (zs[i] - zs[i - 1]) / (Ts[i] - Ts[i - 1])
         )
