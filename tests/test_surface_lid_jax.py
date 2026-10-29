@@ -143,3 +143,50 @@ def test_surface_state_derivatives_match_differences():
             assert float(got) == pytest.approx(fd, rel=1e-5, abs=1e-12)
         n_checked += 1
     assert n_checked > 30
+
+
+def test_rate_functions_match_numpy():
+    """The JAX boundary-layer flux, Stefan rate with its stops and existence weight equal the
+    NumPy ones on random states that cover each branch (no flux, growth, both stops, melt-back,
+    a hidden and a present lid): the rates to relative 1e-12, the weight to absolute 1e-15."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    rng = np.random.default_rng(3)
+    n = 300
+    dT = rng.uniform(-50.0, 300.0, n)
+    args = (rng.uniform(2, 6, n), rng.uniform(2e3, 4e3, n), rng.uniform(800, 1500, n))
+    tail = (rng.uniform(1e-5, 5e-5, n), rng.uniform(5, 25, n), 10.0 ** rng.uniform(-1, 20, n))
+    got = jax.vmap(jl.convective_base_flux)(dT, *args, *tail, np.full(n, 450.0))
+    want = [
+        sl.convective_base_flux(dT[i], *(a[i] for a in args + tail), 450.0) for i in range(n)
+    ]
+    np.testing.assert_allclose(np.asarray(got), want, rtol=1e-12, atol=0)
+    assert min(want) == 0.0 and max(want) > 0.0
+
+    h_top, d_lo = 2000.0, 0.5
+    delta = np.concatenate(
+        [rng.uniform(0.0, 2000.0, n - 6), [0.3, 0.75, 1.0, 1580, 1595, 1700]]
+    )
+    q_b, F_b = rng.uniform(0, 200, n), rng.uniform(0, 200, n)
+    F_b[:5] = q_b[:5]
+    dh = rng.uniform(-1e4, 5e5, n)
+    got = jax.vmap(lambda *v: jl.stefan_rate(*v, h_top, d_lo))(
+        q_b, F_b, np.full(n, 3e3), dh, delta
+    )
+    want = np.array(
+        [sl.stefan_rate(q_b[i], F_b[i], 3e3, dh[i], delta[i], h_top, d_lo) for i in range(n)]
+    )
+    np.testing.assert_allclose(np.asarray(got).T, want, rtol=1e-12, atol=0)
+    assert len({round(f, 3) for f in want[:, 1]} & {0.0, 1.0}) == 2 and np.any(
+        (want[:, 1] > 0) & (want[:, 1] < 1)
+    )
+
+    F_b = np.concatenate([[0.0, -1.0, 1e9], 10.0 ** rng.uniform(-2, 6, n - 3)])
+    T_b = rng.uniform(1200, 1800, n)
+    got = jax.vmap(lambda f, t: jl.existence_weight(f, t, 4.0, 1.0, 255.0, 1.0))(F_b, T_b)
+    want = [sl.existence_weight(F_b[i], T_b[i], 4.0, 1.0, 255.0, 1.0) for i in range(n)]
+    # 0.5 (1 + tanh x) near the floor has an absolute error of 1 ulp of 1 in both forms
+    np.testing.assert_allclose(np.asarray(got), want, rtol=0, atol=1e-15)
+    w = np.asarray(want)
+    assert np.any(w == 0.0) and np.any(w == 1.0) and np.any((w > 0.01) & (w < 0.99))
