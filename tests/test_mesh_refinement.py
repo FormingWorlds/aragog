@@ -21,6 +21,7 @@ import aragog
 from aragog.mesh import Mesh
 from aragog.mesh.stretching import stretched_unit_grid
 from aragog.parser import Parameters
+from tests.conftest import needs_eos
 
 pytestmark = pytest.mark.unit
 
@@ -191,3 +192,57 @@ def test_the_refined_radii_check_refuses_end_radii_off_the_shell(mass_coordinate
     m._check_refined_radii(r, r[0], r[-1], atol)
     with pytest.raises(ValueError, match='end radii'):
         m._check_refined_radii(r + 1e-6, r[0], r[-1], atol)
+
+
+def _jax_args(mass_coordinates, top, bottom):
+    """abe_solid solver at its start state and the JAX ``dSdt_energy_balance`` arguments
+    with the config boundary conditions."""
+    import dataclasses
+
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.conftest import entropy_eos_copy
+    from tests.test_jax_dsdt_core_module import _build_jax_pieces
+    from tests.test_step_powers_batch import _set_initial_entropy
+
+    params = Parameters.from_file(CFG)
+    params.mesh.mass_coordinates = mass_coordinates
+    params.mesh.surface_cell_thickness, params.mesh.cmb_cell_thickness = top, bottom
+    s = EntropySolver(params, entropy_eos=entropy_eos_copy(identity_alpha=True))
+    s.initialize()
+    _set_initial_entropy(s)
+    s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
+    args = list(_build_jax_pieces(s))[:6]
+    b = params.boundary_conditions
+    args[3] = dataclasses.replace(
+        args[3],
+        outer_bc_type=int(b.outer_boundary_condition),
+        outer_bc_value=float(b.outer_boundary_value),
+        inner_bc_type=int(b.inner_boundary_condition),
+        inner_bc_value=float(b.inner_boundary_value),
+    )
+    return s, tuple(args)
+
+
+@needs_eos
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_jax_rhs_matches_numpy_on_the_refined_mesh(mass_coordinates):
+    """abe_solid with a 1 km top cell and a 2 km CMB cell: the JAX energy-balance right-hand
+    side equals the NumPy one to 1e-10 in the cells and 1e-9 in the CMB closure; on the
+    uniform mesh arrays it misses by more than 10 %, so the refined mesh reaches JAX."""
+    jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import dSdt_energy_balance
+
+    s, args = _jax_args(mass_coordinates, 1e3, 2e3)
+    assert s._core_bc == 'energy_balance'
+    assert np.diff(np.ravel(s.evaluator.mesh.basic.radii))[-1] == pytest.approx(1e3, abs=2e-3)
+    y = np.asarray(s._S0, dtype=float)
+    f_np, n = np.ravel(s.dSdt(0.0, y)), s._n_stag
+    f_jax = np.ravel(dSdt_energy_balance(0.0, jnp.asarray(y), args))
+    scale = np.abs(f_np[:n]).max()
+    np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10, atol=1e-10 * scale)
+    assert f_jax[n] == pytest.approx(f_np[n], rel=1e-9)
+    _, uniform = _jax_args(mass_coordinates, 0.0, 0.0)
+    f_u = np.ravel(dSdt_energy_balance(0.0, jnp.asarray(y), (*args[:2], uniform[2], *args[3:])))
+    assert np.abs(f_u[:n] - f_np[:n]).max() > 0.1 * scale
