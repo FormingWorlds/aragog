@@ -482,6 +482,78 @@ def test_no_handover_without_the_lid_closure(eos, closure):
     assert out.lid_delta > 0.0
 
 
+def _gate_column(eos, S_top=None, uniform=None):
+    """A 20-node 'lid'-closure column: cold below with the top cell at ``S_top``, or uniform."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = 1
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.full(s._n_stag, uniform) if uniform else np.linspace(3150.0, 3000.0, s._n_stag)
+    if S_top is not None:
+        S[-2:] = 1500.0
+        S[-1] = S_top
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('kw', 'w_active', 'molten_top'),
+    [({'uniform': 2200.0}, 'low', False), ({'S_top': 3500.0}, 'high', True)],
+    ids=['no_stagnant_lid', 'molten_top_cell'],
+)
+def test_no_handover_outside_the_solid_regime(eos, kw, w_active, molten_top):
+    """With the isotherm below the hand-over face, the root stays negative while the
+    stagnant-lid state is inactive (w_active < 0.5) or the top cell is past the rheological
+    transition (w_phi > 0.5)."""
+    from aragog.rheology_lid import _melt_ramp
+
+    s = _gate_column(eos, **kw)
+    g = s._lid_root_value(0.0, s._S0)
+    assert s._lid_depth() > s._lid_handover_depth
+    ph, act = s.state.phase_staggered, float(s.state.lid_state['w_active'])
+    w_phi = float(_melt_ramp(np.ravel(ph.melt_fraction())[-1], ph._phi_rheo, ph._phi_width))
+    assert (act < 0.5) if w_active == 'low' else (act > 0.5)
+    assert (w_phi > 0.5) == molten_top
+    assert g < 0.0
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+@pytest.mark.physics_invariant
+def test_handover_root_in_the_solid_regime(eos):
+    """An active stagnant lid, a solid top cell and the isotherm below the face give the
+    positive root of the isotherm margin."""
+    s = _cold_top_solver(eos)
+    g = s._lid_root_value(0.0, s._S0)
+    margin = (s._lid_depth() - s._lid_handover_depth) / s._lid_handover_depth
+    assert 0.0 < g == pytest.approx(margin, rel=1e-12)
+    assert min(s._lid_gate()) > margin
+
+
+def test_handover_fires_where_the_gate_opens(eos):
+    """With the isotherm already below the face, the hand-over fires where the solid-regime
+    gate opens, located by the root search."""
+    t_star = 0.4
+    s = _cold_top_solver(eos)
+    root, clock = s._lid_root_value, {}
+
+    def timed_root(t, y):
+        clock['t'] = t
+        return root(t, y)
+
+    s._lid_root_value = timed_root
+    s._lid_gate = lambda: ((clock['t'] - t_star) / t_star,)
+    s.solve()
+    assert s.get_state().lid_handover_time == pytest.approx(t_star, rel=1e-6)
+
+
 @pytest.mark.physics_invariant
 def test_hidden_lid_on_a_hot_top_cell(eos):
     """A hot convecting top cell carries more heat than a crust at T_b can radiate: the lid is
