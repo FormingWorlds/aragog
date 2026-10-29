@@ -268,3 +268,28 @@ def existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on):
     w = 0.5 * (1.0 + jnp.tanh(jnp.log10(d_eq / delta_on) / LID_EXIST_WIDTH))
     w = jnp.where(w > LID_WEIGHT_FLOOR, w, 0.0)
     return jnp.where(F_b <= 0.0, 1.0, jnp.where(inside, w, 0.0))
+
+
+def lid_rates(
+    *, delta, E_lid, surf, F_b, F_grid, w, rho, h_f, T_b, H_b, e, h_top, delta_lo, heating
+):
+    """Lid rates and the fluid flux, as :func:`aragog.surface_lid.lid_rates`; ``surf`` is the
+    tuple of :func:`surface_state`.
+
+    Returns
+    -------
+    tuple of jax.Array
+        ``(ddelta, dE, F_top, F_fluid, w, stop, H_lid)`` as ``LidRates``.
+    """
+    from aragog.surface_lid import LID_TAU_HIDDEN
+
+    T_s, F_s, q_b, s = surf[0], surf[1], surf[2], surf[3]
+    r, stop = stefan_rate(q_b, F_b, rho, h_f - H_b / rho, delta, h_top, delta_lo)
+    E_ph = delta_lo * profile_heat(e, 0.0, T_s, T_b)
+    relax = (1.0 - w) / LID_TAU_HIDDEN
+    ddelta = w * r - relax * (delta - delta_lo)
+    H_lid = heating * delta * profile_density(e, s, T_s, T_b)
+    dE = w * (q_b - F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
+    F_top = w * F_s + (1.0 - w) * F_grid
+    F_fluid = F_top + dE - H_lid - rho * h_f * ddelta
+    return ddelta, dE, F_top, F_fluid, w, stop, H_lid

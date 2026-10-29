@@ -238,3 +238,44 @@ def test_rate_functions_match_numpy():
     np.testing.assert_allclose(np.asarray(got), want, rtol=0, atol=1e-15)
     w = np.asarray(want)
     assert np.any(w == 0.0) and np.any(w == 1.0) and np.any((w > 0.01) & (w < 0.99))
+
+
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+def test_lid_rates_match_numpy(name):
+    """The JAX lid rates equal the NumPy ones on random states that cover a full, a partial and
+    a hidden lid, growth and melt-back, to relative 1e-11."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    solve = jax.jit(lambda d, E, T_b: jl.surface_state(d, E, T_b, 4.0, 1.0, 255.0, 1e-5, e))
+    rng = np.random.default_rng(5)
+    for i in range(40):
+        delta = 10.0 ** rng.uniform(-0.2, 3.0)
+        T_b = rng.uniform(1300.0, 1700.0)
+        E = delta * float(hv.H(rng.uniform(300.0, T_b)))
+        surf = sl.surface_state(delta, E, T_b, 4.0, 1.0, 255.0, 1e-5, hv)
+        kw = dict(
+            delta=delta,
+            E_lid=E,
+            F_b=rng.uniform(0.0, 2.0) * surf.q_b,
+            F_grid=rng.uniform(0.0, 1e4),
+            w=[1.0, 0.0, 0.37][i % 3],
+            rho=3100.0,
+            h_f=rng.uniform(-1e5, 6e5),
+            T_b=T_b,
+            H_b=float(hv.H(T_b)),
+            h_top=2.0e3,
+            delta_lo=0.5,
+            heating=1e-9,
+        )
+        ref = sl.lid_rates(surf=surf, hv=hv, **kw)
+        js = solve(delta, E, T_b)
+        got = jl.lid_rates(surf=js, e=e, **kw)
+        want = (ref.ddelta, ref.dE, ref.F_top, ref.w, ref.stop, ref.H_lid)
+        got = np.array(got, dtype=float)
+        np.testing.assert_allclose(got[[0, 1, 2, 4, 5, 6]], want, rtol=1e-11, atol=1e-25)
+        # F_fluid sums terms that can cancel to round-off: bound it by their size
+        terms = max(abs(ref.F_top), abs(ref.dE), abs(kw['rho'] * kw['h_f'] * ref.ddelta))
+        assert abs(got[3] - ref.F_fluid) <= 1e-11 * terms
