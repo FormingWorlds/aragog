@@ -377,6 +377,41 @@ def test_the_jax_rhs_matches_numpy_on_the_refined_mesh(mass_coordinates):
     assert np.abs(f_u[:n] - f_np[:n]).max() > 0.1 * scale
 
 
+@needs_eos
+def test_the_lid_closure_reads_the_refined_top_cell(monkeypatch):
+    """abe_solid in mass mode with a 50 m top cell and the solid rheology in 'lid' mode: the
+    stagnant-lid closure gets the refined basic radii, so its top cell is 50 m, and one
+    right-hand side is finite."""
+    from aragog.rheology import SolidRheologyParams
+    from aragog.solver import entropy_state
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.conftest import entropy_eos_copy
+
+    seen, core = [], entropy_state._compute_stagnant_lid_state_core
+    monkeypatch.setattr(
+        entropy_state,
+        '_compute_stagnant_lid_state_core',
+        lambda *a, **k: seen.append(np.ravel(k['radii']).copy()) or core(*a, **k),
+    )
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates, p.mesh.surface_cell_thickness = True, 50.0
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=1.0e7,
+        yield_stress_mu=0.1,
+        yield_stress_max=1.0e8,
+    )
+    s = EntropySolver(p, entropy_eos=entropy_eos_copy())
+    s.initialize()
+    s.set_initial_entropy(2900.0)
+    rhs = np.ravel(s.dSdt(0.0, np.asarray(s._S0, dtype=float)))
+    r = _radii(s.evaluator.mesh)
+    assert seen and np.array_equal(seen[-1], r)
+    assert seen[-1][-1] - seen[-1][-2] == pytest.approx(50.0, abs=2e-3)
+    assert np.all(np.isfinite(rhs))
+
+
 def _cell_density(m):
     """Mass over volume of each cell between the basic radii, from the mesh EOS [kg/m^3]."""
     r = np.asarray(m.basic.radii)
