@@ -155,18 +155,36 @@ def test_jump_is_zero_at_the_fluid_entropy(eos, monkeypatch, path, frac):
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('path', list(PATHS))
-@pytest.mark.parametrize('frac', [0.05, 0.3, 0.8])
+def test_jump_is_zero_for_a_fluid_at_the_solidus(eos, monkeypatch, path):
+    """Without the solid rheology the lid base is the solidus, so a fluid at the solidus
+    entropy has the lid-base entropy itself and joins the lid without releasing heat."""
+    s, y = _solver(eos, False, lambda s: s._lid_S_sol)
+    jump, S_b, S_f = PATHS[path](s, y, monkeypatch)
+    assert S_b == S_f
+    assert jump == 0.0
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('path', list(PATHS))
+@pytest.mark.parametrize('frac', [-0.5, 0.3, 0.9])
 def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac):
     """With the solid rheology the lid base lies below the solidus, where the density changes
     with entropy: the jump is ``int_{S_b}^{S_f} rho T dS``, not ``rho_b`` times a specific
-    heat content."""
-    s, y = _solver(eos, True, lambda s: s._lid_S_sol - frac * (s._lid_S_sol - float(eos.S_min)))
+    heat content. ``frac`` places the fluid between the lid base (0) and the solidus (1); a
+    fluid above the base gives a jump above the floor."""
+    s, y = _solver(eos, True, lambda s: s._lid_S_sol - 0.05 * (s._lid_S_sol - float(eos.S_min)))
+    s._dSdt_single(0.0, y)
+    S_b0 = s._lid_last.S_b
+    y[s._n_stag - 1] = S_b0 + frac * (s._lid_S_sol - S_b0)
     jump, S_b, S_f = PATHS[path](s, y, monkeypatch)
+    assert S_b == pytest.approx(S_b0, rel=1e-12)
     assert S_b < s._lid_S_sol
     rho = [float(np.asarray(eos.density(s._lid_P, S)).item()) for S in (S_b, s._lid_S_sol)]
     assert abs(rho[0] / rho[1] - 1.0) > 1e-3
     want = _reference(s, S_b, S_f)
     assert jump == pytest.approx(want, rel=REL, abs=ABS_PER_MASS * float(rho[0]))
+    if frac > 0.0:
+        assert jump > rho[0] * sl.LID_DH_MIN
 
 
 @pytest.mark.physics_invariant
@@ -192,9 +210,23 @@ def test_heat_table_is_zero_at_the_solidus_and_rises(eos):
     assert s._lid_S_sol in knots and s._lid_S_liq in knots
 
 
+@pytest.mark.parametrize('edge', ['solidus below the floor', 'solidus above the liquidus'])
+def test_heat_table_refuses_unordered_edges(eos, edge):
+    """The heat table refuses a solidus below the table floor or above the liquidus, where
+    W would be zero at the wrong entropy."""
+    s, _ = _solver(eos, False, 3000.0)
+    if edge == 'solidus below the floor':
+        s._lid_S_sol = float(eos.S_min) - 1.0
+    else:
+        s._lid_S_sol = s._lid_S_liq + 1.0
+    with pytest.raises(ValueError, match='is not increasing'):
+        s._lid_enthalpy_table()
+
+
 def test_heat_table_continues_linearly_on_both_paths(eos):
-    """Outside its range the heat table continues linearly with its end slope, the same on
-    the NumPy and JAX paths, as the clamped EOS keeps rho T constant there."""
+    """Outside its range the heat table continues linearly with its end slope, as the
+    clamped EOS keeps rho T constant there; inside and outside, the NumPy and JAX paths give
+    the same W."""
     pytest.importorskip('jax')
     from aragog.jax import surface_lid as jl
 
@@ -207,6 +239,9 @@ def test_heat_table_continues_linearly_on_both_paths(eos):
         assert got == pytest.approx(linear, rel=1e-12)
         want = float(jl.enthalpy_H(s.jax_lid_params().hs, edge + dS))
         assert got == pytest.approx(want, rel=1e-12)
+    S = np.random.default_rng(3).uniform(lo, hi, 200)
+    want = np.asarray(jl.enthalpy_H(s.jax_lid_params().hs, S))
+    np.testing.assert_allclose(s._lid_W(S), want, rtol=1e-12, atol=1e-6)
 
 
 @pytest.mark.parametrize(('dS', 'warns'), [(0.1, True), (5.0, False)])
