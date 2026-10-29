@@ -321,6 +321,19 @@ The `rheo_on` run stops at full solidification; the `rheo_off` run stops at $120
 Neither run integrates to $10^9\text{ yr}$.
 The `rheo_on` run installs the JAX CVODE factory, as coupled PROTEUS runs do.
 
+**Known limit: accuracy near $96\text{ Myr}$.**
+In the `rheo_on` run, the second cell from the top sits about $10^{-10}\text{ J/(kg K)}$ below its solidus near $96\text{ Myr}$ while it still cools.
+Without the rules near and below the solidus, this small distance limits the step to $1\text{ yr}$.
+The stiff-zone landing rule floors the distance at $0.5\,\delta$, so the step can grow to $100\text{ yr}$.
+From $96.08$ to $96.54\text{ Myr}$ the run takes $4598$ steps instead of $459\,767$.
+At tolerances of $10^{-9}$, the temperature at the end of this interval then differs from the run without these rules by up to $8.4 \times 10^{-4}\text{ K}$.
+At tolerances of $10^{-10}$ to $10^{-12}$, the result changes by less than $5.5 \times 10^{-7}\text{ K}$ and stays within $4.3 \times 10^{-6}\text{ K}$ of the run without these rules at $10^{-10}$.
+The difference at $10^{-9}$ is thus an integration error of the larger steps.
+From $96$ to $99\text{ Myr}$, the run stays $2.2$ to $2.8 \times 10^{-3}\text{ K}$ from the mean of 5 runs at tolerances of $10^{-10}$.
+This is up to 2.9 times the spread of those 5 runs.
+The offset is already $2.8 \times 10^{-3}\text{ K}$ at $96.08\text{ Myr}$, before the interval above.
+At $100.9$ and $103.5\text{ Myr}$ the offset is inside the spread again.
+
 ??? info "Test details"
     - Reference: Stall points at $83.684\text{ Myr}$ (`rheo_on`) and $107.655\text{ Myr}$ (`rheo_off`)
     - Tolerance: Each run passes its stall point and reaches $\phi_{\max} = 0$ with status 0; the entropy stays inside the table
