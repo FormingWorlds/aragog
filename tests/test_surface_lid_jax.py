@@ -41,3 +41,47 @@ def test_dawson_derivative():
     got = np.asarray(jax.vmap(jax.grad(dawson))(x))
     np.testing.assert_allclose(got, 1.0 - 2.0 * x * dawsn(x), rtol=0, atol=1e-13)
     assert float(jax.grad(dawson)(0.0)) == pytest.approx(1.0, rel=1e-14)
+
+
+def _shapes():
+    from aragog import surface_lid as sl
+
+    lo, hi = sl.LID_SHAPE_MIN, sl.LID_SHAPE_MAX
+    s = np.concatenate([-np.geomspace(-lo, 1e-8, 400), [0.0], np.geomspace(1e-8, hi, 400)])
+    return np.concatenate([s, [-1e-6, 1e-6, -1.0000001e-6, 1.0000001e-6]])
+
+
+def test_shape_matches_numpy():
+    """The JAX shape function equals the NumPy one over the full shape range of the lid, both
+    sides of the series switch included: the slopes to relative 1e-12, the mean to absolute
+    1e-14 (for s << 0 both forms lose digits in m = 1 + expm1(s) / (2 nu F(nu)), m >= 1e-4)."""
+    from aragog import surface_lid as sl
+    from aragog.jax.surface_lid import shape
+
+    s = _shapes()
+    got = np.array(jax.jit(jax.vmap(shape))(s)).T
+    ref = np.array([sl.shape(v) for v in s])
+    np.testing.assert_allclose(
+        got[:, :2], ref[:, :2], rtol=1e-12, atol=1e-300
+    )  # XLA flushes subnormals
+    np.testing.assert_allclose(got[:, 2], ref[:, 2], rtol=0, atol=1e-14)
+
+
+def test_shape_gradient_is_finite_and_matches_differences():
+    """The derivative of each output in s is finite everywhere and equals a central
+    difference of the NumPy shape function away from the series switch."""
+    from aragog import surface_lid as sl
+    from aragog.jax.surface_lid import shape
+
+    s = _shapes()
+    jac = np.array([jax.vmap(jax.grad(lambda v, i=i: shape(v)[i]))(s) for i in range(3)]).T
+    assert np.all(np.isfinite(jac))
+    far = (np.abs(s) > 1e-3) & (s > sl.LID_SHAPE_MIN * 0.99) & (s < sl.LID_SHAPE_MAX * 0.99)
+    h = 1e-6 * np.maximum(np.abs(s[far]), 1.0)
+    fd = np.array(
+        [
+            (np.array(sl.shape(v + d)) - np.array(sl.shape(v - d))) / (2 * d)
+            for v, d in zip(s[far], h)
+        ]
+    )
+    np.testing.assert_allclose(jac[far], fd, rtol=1e-6, atol=1e-12)
