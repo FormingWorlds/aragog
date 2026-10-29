@@ -408,6 +408,54 @@ def test_lid_depth_without_a_crossing_is_none():
     assert _depth_on_profile((1500.0, 1600.0, 1700.0, 1800.0), 1400.0, V4_Z, T_s=1400.0) == 0.0
 
 
+def _full_rhs_root(s, t, y):
+    """The hand-over root from a full right-hand side evaluation at ``(t, y)``."""
+    if float(y[-2]) == 0.0:
+        return -1.0
+    s._dSdt_single(t, y)
+    z = s._lid_depth()
+    if z is None:
+        return -1.0
+    return min((z - s._lid_handover_depth) / s._lid_handover_depth, *s._lid_gate())
+
+
+ROOT_CASES = [
+    {'uniform': 2200.0},
+    {'S_top': 3500.0},
+    {'S_top': 2000.0},
+    {'uniform': 3500.0, 'S_top': 2600.0},
+    {},
+]
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('kw', ROOT_CASES, ids=[str(k) for k in ROOT_CASES])
+def test_root_equals_the_full_rhs_root(eos, kw):
+    """The hand-over root evaluates only what it reads and equals the root of a full
+    right-hand side evaluation to relative 1e-12 and in sign, on lids from the phantom
+    thickness to 0.8 of the top cell; it runs the lid evaluation only when the crossing can
+    lie in the lid."""
+    s = _gate_column(eos, **kw)
+    calls, evaluate = [0], s._lid_evaluate
+
+    def counted(entropy):
+        calls[0] += 1
+        return evaluate(entropy)
+
+    rng = np.random.default_rng(5)
+    for delta in (s._lid_delta_lo, 1.0, 40.0, 0.8 * s._lid_h_top):
+        y = s._S0.copy()
+        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(400.0, 1300.0))))
+        want = _full_rhs_root(s, 0.0, y)
+        s._lid_evaluate, calls[0] = counted, 0
+        got = s._lid_root_value(0.0, y)
+        s._lid_evaluate = evaluate
+        assert got == pytest.approx(want, rel=1e-12, abs=1e-15)
+        assert np.sign(got) == np.sign(want)
+        if s._lid_depth() is None or s._lid_depth() > delta:
+            assert calls[0] == 0
+
+
 @pytest.mark.physics_invariant
 def test_merge_is_energy_exact(eos):
     """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - rho h_f delta),
