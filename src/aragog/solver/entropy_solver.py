@@ -126,6 +126,18 @@ EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
 
 logger = logging.getLogger('fwl.' + __name__)
 
+# Lid scalars of SolverOutput in the netCDF snapshot: name, unit, description.
+_LID_OUTPUT_FIELDS = (
+    ('lid_delta', 'm', 'Sub-grid lid thickness'),
+    ('lid_E', 'J m-2', 'Sub-grid lid energy per area'),
+    ('lid_T_mean', 'K', 'Mean temperature of the sub-grid lid'),
+    ('lid_T_surface', 'K', 'Surface temperature of the sub-grid lid'),
+    ('lid_T_base', 'K', 'Base temperature of the sub-grid lid'),
+    ('lid_weight', '1', 'Weight of the sub-grid lid'),
+    ('lid_delta_eff', 'm', 'Conductive thickness of the sub-grid lid'),
+    ('lid_F_base', 'W m-2', 'Flux into the base of the sub-grid lid'),
+)
+
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
 
@@ -1139,6 +1151,18 @@ class SolverOutput:
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
 
+    # Sub-grid lid at the end of the call (``subgrid_lid``; NaN with the lid off): thickness
+    # [m], energy [J/m^2], mean, surface and base temperature [K], weight [-], conductive
+    # thickness delta / f'(0) [m] and the flux into the lid base [W/m^2].
+    lid_delta: float = float('nan')
+    lid_E: float = float('nan')
+    lid_T_mean: float = float('nan')
+    lid_T_surface: float = float('nan')
+    lid_T_base: float = float('nan')
+    lid_weight: float = float('nan')
+    lid_delta_eff: float = float('nan')
+    lid_F_base: float = float('nan')
+
     # ── NetCDF output ──────────────────────────────────────────────
     @property
     def failed(self) -> bool:
@@ -1374,6 +1398,9 @@ class SolverOutput:
                 'Temperature at the top of the core shell',
                 fill_value_nan=True,
             )
+            if np.isfinite(self.lid_delta):
+                for name, unit, text in _LID_OUTPUT_FIELDS:
+                    _scalar(name, getattr(self, name), unit, text, fill_value_nan=True)
             _scalar(
                 'tcore_change_exceeded',
                 int(self.tcore_change_exceeded),
@@ -2973,6 +3000,50 @@ class EntropySolver:
             cp=float(np.asarray(eos.heat_capacity(P, S_b)).item()),
         )
 
+    def _check_lid_step(self, delta_lo: float, step_idx: int, time_yr: float) -> None:
+        """Check the lid of an accepted state (the last RHS evaluation) and warn once per run
+        when the growth stop, the enthalpy floor or the shape bound acts.
+
+        Raises
+        ------
+        RuntimeError
+            When a lid state or rate is not finite, the thickness leaves
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6) or the weight leaves [0, 1].
+        """
+        ev = self._lid_last
+        r = ev.rates
+        cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        values = (ev.delta, ev.E, r.ddelta, r.dE, r.F_top, r.F_fluid)
+        bad = None
+        if not np.all(np.isfinite(values)):
+            bad = f'non-finite lid state or rate {values}'
+        elif ev.delta > cap * (1.0 + 1e-6) or ev.delta < delta_lo * (1.0 - 1e-6):
+            bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
+        elif not 0.0 <= r.w <= 1.0:
+            bad = f'weight {r.w!r} outside [0, 1]'
+        if bad is not None:
+            raise RuntimeError(
+                f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: {bad}'
+            )
+        if r.stop < 1.0 and ev.delta > cap - _lid.LID_CAP_WIDTH * self._lid_h_top:
+            self._warn_once(
+                'lid_growth_stop',
+                f'sub-grid lid: the growth stop holds the lid near {cap:.6g} m '
+                f'({_lid.LID_CAP_FRAC} of the top cell) from t={time_yr:.6e} yr',
+            )
+        if ev.h_f - ev.h_b < _lid.LID_DH_MIN:
+            self._warn_once(
+                'lid_dh_floor',
+                f'sub-grid lid: enthalpy jump {ev.h_f - ev.h_b:.6g} J/kg below the floor '
+                f'{_lid.LID_DH_MIN} J/kg at t={time_yr:.6e} yr; the Stefan rate uses the floor',
+            )
+        if ev.surf.clipped:
+            self._warn_once(
+                'lid_shape_bound',
+                f'sub-grid lid: the lid mean lies outside the profile family at t={time_yr:.6e} '
+                'yr; the bound profile is used',
+            )
+
     def _lid_heat_change(self, y0: npt.NDArray, y1: npt.NDArray) -> float:
         """Heat content change [J] of the lid between two states, net of the fluid mass
         ``rho_lid A delta`` the lid takes from the top cell (the cell quadrature counts the cell
@@ -4148,7 +4219,7 @@ class EntropySolver:
         lid_nonlocal = bool(
             self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
         )
-        if self._core_bc == 'quasi_steady' and not lid_nonlocal:
+        if self._core_bc == 'quasi_steady' and not lid_nonlocal and not self._n_lid:
             cvode_options['linsolver'] = 'band'
             cvode_options['lband'] = 2
             cvode_options['uband'] = 2
@@ -5353,12 +5424,15 @@ class EntropySolver:
                     t_pts.size,
                 )
                 rows = []
+                lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0])) if self._n_lid else None
                 for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
                     if check_rheo:
                         self._check_rheology_eos_range(
                             self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
                         )
                     rows.append(self._step_powers(float(t), y))
+                    if lid_lo is not None:
+                        self._check_lid_step(lid_lo, step_idx, float(t))
                     if check_rheo:
                         self._check_rheology_step_invariants(
                             rheo, step_idx=step_idx, time_yr=float(t)
@@ -5906,6 +5980,19 @@ class EntropySolver:
         if self._core_bc == 'core_module':
             y_diag[n_stag] = 0.0
         self._dSdt_single(sol.t[-1], y_diag)
+        lid_out = {}
+        if self._n_lid:
+            ev = self._lid_last
+            lid_out = dict(
+                lid_delta=ev.delta,
+                lid_E=ev.E,
+                lid_T_mean=ev.T_m,
+                lid_T_surface=ev.surf.T_s,
+                lid_T_base=ev.T_b,
+                lid_weight=ev.rates.w,
+                lid_delta_eff=ev.delta / _lid.shape(ev.surf.s)[0],
+                lid_F_base=ev.F_b,
+            )
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()
         heating = self.state.heating.copy()
@@ -6138,6 +6225,7 @@ class EntropySolver:
             core_T_shell=None if shell is None else t_shell_end.copy(),
             core_layer_base=np.nan if shell is None else layer_base,
             core_T_top=np.nan if shell is None else t_top,
+            **lid_out,
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,
