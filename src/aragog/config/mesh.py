@@ -84,11 +84,11 @@ class MeshConfig:
     eos_file : str
         Path to user-defined EOS file.
     surface_cell_thickness, cmb_cell_thickness : float
-        Radial thickness [m] of the outermost and innermost basic cell. 0 (default)
-        keeps the uniform grid at that end; a positive value, below the uniform radial
-        cell, refines towards that boundary with a tanh stretching (both ends: the
-        two-sided Vinokur form). In mass-coordinate mode the stretching acts on the
-        mass coordinate and the end cells still have the given radial thickness.
+        Radial thickness [m] of the outermost and innermost basic cell. 0 (default) leaves
+        that end unset; with only the other end set, its cells grow. A set value lies in
+        [2 m, uniform radial cell) and refines towards that boundary with a tanh stretching
+        (both ends: the two-sided Vinokur form). In mass-coordinate mode the stretching acts
+        on the mass coordinate and the end cells still have the given radial thickness.
     """
 
     outer_radius: float

@@ -25,7 +25,7 @@ eos_dir = os.environ['ARAGOG_TEST_EOS_DIR']
 
 for top in (0.0, 1000.0):
     solver = EntropySolver.from_file(filename=str(cfg), eos_dir=eos_dir)
-    solver.parameters.mesh.surface_cell_thickness = top  # m; 0 keeps the uniform mesh
+    solver.parameters.mesh.surface_cell_thickness = top  # m; 0 = not set
     solver.parameters.solver.end_time = 100.0  # yr
     solver.initialize()
     solver.set_initial_entropy(2900.0)

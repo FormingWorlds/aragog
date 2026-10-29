@@ -296,8 +296,8 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
-    # Thickness [m] of the outermost and innermost basic cell; 0 leaves that end at the
-    # spacing of the uniform grid (radius or mass coordinate). See aragog.mesh.stretching.
+    # Thickness [m] of the outermost and innermost basic cell, at least 2 m; 0 leaves that end
+    # unset, and it grows when only the other end is set. See aragog.mesh.stretching.
     surface_cell_thickness: float = 0.0
     cmb_cell_thickness: float = 0.0
 

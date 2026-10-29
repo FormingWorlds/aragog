@@ -39,10 +39,10 @@ def _radii(top, bottom, mass_coordinates):
 @pytest.mark.physics_invariant
 def test_the_refined_mesh_has_the_set_end_cells(validation_plot):
     """A 200 m and a 50 m top cell, and a 200 m top cell with a 2 km CMB cell, on the
-    uniform 10.1 km grid of abe_solid: in both mesh modes the radii increase, the end radii
+    abe_solid grid (uniform cell 10.1 km in radius mode): in both mesh modes the radii increase, the end radii
     stay those of the uniform mesh and each set end cell equals its target, to 1e-6
-    relative in radius mode and 2e-3 m in mass-coordinate mode (the 1e-3 m root tolerance
-    of the 2 nodes)."""
+    relative in radius mode and 2e-3 m in mass-coordinate mode, where each of the 2 node
+    radii of an end cell is solved to 1e-3 m."""
     cells = {}
     for mass_coordinates, rel, tol in ((False, 1e-6, 0.0), (True, 0.0, 2e-3)):
         base = _radii(0.0, 0.0, mass_coordinates)

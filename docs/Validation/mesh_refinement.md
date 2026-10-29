@@ -8,7 +8,7 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 **Why this check exists.** The stretched grid comes from a root solve for the stretching parameters and, in mass-coordinate mode, a second root solve for each node radius. If either solve returns a wrong value, the end cells have the wrong thickness, the nodes cross, or the mantle no longer ends at the CMB and surface radii.
 
-**What it tests.** The mantle of `abe_solid.toml` is 1000 km thick with 100 nodes, so the uniform cell is about 10.1 km. The test builds the mesh with a 200 m top cell, a 50 m top cell, and a 200 m top cell together with a 2 km CMB cell, in radius mode and in mass-coordinate mode. For each mesh the node radii must increase, the first and last radius must equal those of the uniform mesh, and each set end cell must equal its target.
+**What it tests.** The mantle of `abe_solid.toml` is 1000 km thick with 100 nodes, so the uniform cell is about 10.1 km in radius mode. The test builds the mesh with a 200 m top cell, a 50 m top cell, and a 200 m top cell together with a 2 km CMB cell, in radius mode and in mass-coordinate mode. For each mesh the node radii must increase, the first and last radius must equal those of the uniform mesh, and each set end cell must equal its target.
 
 **How we know the right answer.** The targets are the values in the config: the test compares the width of each end cell with the number that was set.
 
@@ -21,7 +21,7 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 ??? info "Test details"
     - Reference: the end-cell thickness set in the config.
-    - Tolerance: $10^{-6}$ relative in radius mode; 2 mm in mass-coordinate mode, where each node radius is solved to 1 mm.
+    - Tolerance: $10^{-6}$ relative in radius mode; in mass-coordinate mode 2 mm or $10^{-6}$ relative, whichever is larger, since each node radius is solved to 1 mm.
     - Test id: `tests/test_mesh_refinement_validation.py::test_the_refined_mesh_has_the_set_end_cells`
     - Command: `pytest tests/test_mesh_refinement_validation.py -m reference_pinned --validation-plots`
 

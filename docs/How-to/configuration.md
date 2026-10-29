@@ -176,7 +176,7 @@ Spatial discretisation and pressure-density profile.
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
-| `surface_cell_thickness` | m | Thickness of the outermost basic cell. `0` (default) keeps the uniform spacing; otherwise a value below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)` and at least 1e-7 of the mantle thickness. See [Mesh refinement](mesh-refinement.md) |
+| `surface_cell_thickness` | m | Thickness of the outermost basic cell. `0` (default) leaves that end unset; otherwise a value of at least 2 m and below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With only one end set, the cells at the other end grow. See [Mesh refinement](mesh-refinement.md) |
 | `cmb_cell_thickness` | m | Thickness of the innermost basic cell, with the same range as `surface_cell_thickness`. Default `0` |
 
 ### `[energy]`
