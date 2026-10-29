@@ -68,3 +68,59 @@ def shape(s: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     return tuple(
         jnp.select([branch == 1, branch == 2], [a, b], c) for a, b, c in zip(grow, thin, series)
     )
+
+
+def grey_flux(T_s: jax.Array, emissivity: jax.Array, T_eq: jax.Array) -> jax.Array:
+    """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against the equilibrium ``T_eq`` [K]."""
+    from scipy.constants import Stefan_Boltzmann
+
+    return emissivity * Stefan_Boltzmann * (jnp.maximum(T_s, 0.0) ** 4 - T_eq**4)
+
+
+def surface_state(delta, T_m, T_b, k, emissivity, T_eq, delta_floor):
+    """Grey-body surface of a lid with mean temperature ``T_m``, as
+    :func:`aragog.surface_lid.surface_state`.
+
+    The root in ``s`` comes from 64 bisection steps over the shape bounds; a term that is zero
+    in value carries the implicit derivative ``ds/dp = -(dB/dp) / (dB/ds)`` of the balance B.
+    At a clipped bound ``s`` is constant.
+
+    Returns
+    -------
+    tuple of jax.Array
+        ``(T_s, F_s, q_b, s, clipped)`` in the units and meaning of ``LidSurface``.
+    """
+    from aragog.surface_lid import LID_DT_MIN, LID_SHAPE_MAX, LID_SHAPE_MIN
+
+    d = jnp.hypot(delta, delta_floor)
+    T_m = jnp.clip(T_m, T_eq + LID_DT_MIN, T_b - LID_DT_MIN)
+    D = T_b - T_m
+
+    def parts(s, T_m, D, d):
+        f0, f1, m = shape(s)
+        return (T_m - m * T_b) / (1.0 - m), f0, f1, m
+
+    def balance(s, T_m=T_m, D=D, d=d):
+        T_s, f0, _, m = parts(s, T_m, D, d)
+        return grey_flux(T_s, emissivity, T_eq) - k * D * f0 / ((1.0 - m) * d)
+
+    fixed = [jax.lax.stop_gradient(v) for v in (T_m, D, d)]
+
+    def body(_, bracket):
+        lo, hi = bracket
+        mid = 0.5 * (lo + hi)
+        above = balance(mid, *fixed) > 0.0
+        return jnp.where(above, mid, lo), jnp.where(above, hi, mid)
+
+    lo, hi = jax.lax.fori_loop(
+        0, 64, body, (jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX))
+    )
+    root = jax.lax.stop_gradient(0.5 * (lo + hi))
+    slope = jax.lax.stop_gradient(jax.grad(balance)(root, *fixed))
+    s_in = root - (balance(root) - jax.lax.stop_gradient(balance(root))) / slope
+    b_min, b_max = balance(LID_SHAPE_MIN, *fixed), balance(LID_SHAPE_MAX, *fixed)
+    clipped = jnp.where(b_min <= 0.0, -1, jnp.where(b_max >= 0.0, 1, 0))
+    s = jnp.select([clipped == -1, clipped == 1], [LID_SHAPE_MIN, LID_SHAPE_MAX], s_in)
+    T_s, f0, f1, m = parts(s, T_m, D, d)
+    dT = D / (1.0 - m)
+    return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped
