@@ -3008,8 +3008,7 @@ class EntropySolver:
                 else:
                     T_rh = T_f - rheo.lid_contrast_coeff * _R_GAS * T_f**2 / self._lid_H
                 T_rh = min(max(T_rh, 1.0), self._lid_T_sol)
-                cp_sol = float(np.asarray(eos.heat_capacity(P, S_sol)).item())
-                S_rh = S_sol + cp_sol * np.log(T_rh / self._lid_T_sol)
+                S_rh = min(float(eos.entropy_at_temperature(P, T_rh)), S_sol)
                 S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
         h_b, h_f = self._lid_enthalpy([S_b, S_f])
         return dict(
