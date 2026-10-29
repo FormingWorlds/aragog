@@ -81,7 +81,7 @@ def test_restoring_the_logger_closes_the_handlers_a_cli_run_added(tmp_path):
 
 
 def test_restoring_keeps_a_handler_that_was_there_before(tmp_path):
-    """A handler present when the state was taken stays open and attached after the restore."""
+    """A handler present when the state was taken stays open; level and flags come back."""
     package_logger = logging.getLogger('fwl.aragog')
     before = logging.FileHandler(tmp_path / 'before.log')
     package_logger.addHandler(before)
@@ -91,6 +91,7 @@ def test_restoring_keeps_a_handler_that_was_there_before(tmp_path):
     package_logger.addHandler(logging.FileHandler(tmp_path / 'during.log'))
     package_logger.setLevel(logging.DEBUG)
     package_logger.propagate = False
+    package_logger.disabled = True
     _restore_package_logger(saved)
 
     assert before in package_logger.handlers
@@ -98,3 +99,4 @@ def test_restoring_keeps_a_handler_that_was_there_before(tmp_path):
     assert len(package_logger.handlers) == 2
     assert package_logger.level == logging.INFO
     assert package_logger.propagate is True
+    assert package_logger.disabled is False
