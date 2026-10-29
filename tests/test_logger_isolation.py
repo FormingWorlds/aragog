@@ -51,7 +51,7 @@ def test_leaving_the_block_closes_every_file_handler_a_cli_run_added(tmp_path):
 
 
 def test_leaving_the_block_keeps_a_handler_that_was_there_before(tmp_path):
-    """A handler attached before the block stays open; level and flags come back."""
+    """A handler attached before the block stays open, one appended in it is closed; flags come back."""
     before = logging.FileHandler(tmp_path / 'before.log')
     aragog.logger.addHandler(before)
     aragog.logger.setLevel(logging.INFO)
@@ -59,11 +59,14 @@ def test_leaving_the_block_keeps_a_handler_that_was_there_before(tmp_path):
     aragog.logger.disabled = True
     with package_logger_isolation():
         aragog.logger.addHandler(logging.FileHandler(tmp_path / 'during.log'))
+        appended = logging.FileHandler(tmp_path / 'appended.log')
+        aragog.logger.handlers.append(appended)
         aragog.logger.setLevel(logging.DEBUG)
         aragog.logger.propagate = True
         aragog.logger.disabled = False
     assert before in aragog.logger.handlers
     assert before.stream is not None
+    assert appended.stream is None
     assert len(aragog.logger.handlers) == 2
     assert aragog.logger.level == logging.INFO
     assert aragog.logger.propagate is False
