@@ -2,7 +2,7 @@
 
 Module under test: the mesh config classes ``aragog.parser._MeshParameters`` (the path of
 the TOML loader and of PROTEUS) and ``aragog.config.MeshConfig``. Invariants: 0 is off; a
-real number in (0, (outer_radius - inner_radius) / (number_of_nodes - 1)) is kept as
+real number in [2, (outer_radius - inner_radius) / (number_of_nodes - 1)) m is kept as
 given; every other value, a bool and a string included, is refused with a ValueError that
 names the field.
 """
@@ -63,13 +63,13 @@ def test_the_default_is_off(build, name):
 @BUILDERS
 @FIELDS
 @given(
-    value=st.floats(min_value=1e-300, max_value=UNIFORM, exclude_max=True)
+    value=st.floats(min_value=2.0, max_value=UNIFORM, exclude_max=True)
     | st.sampled_from(
-        [0, 0.0, 1, 200, Fraction(1, 2), np.float64(50.0), math.nextafter(UNIFORM, 0)]
+        [0, 0.0, 2, 200, Fraction(5, 2), np.float64(50.0), math.nextafter(UNIFORM, 0)]
     )
 )
 def test_zero_and_a_value_below_the_uniform_cell_are_kept(build, name, value):
-    """0 and any real number in (0, uniform cell) are kept as given."""
+    """0 and any real number in [2 m, uniform cell) are kept as given."""
     assert getattr(build(**{name: value}), name) == value
 
 
@@ -77,11 +77,13 @@ def test_zero_and_a_value_below_the_uniform_cell_are_kept(build, name, value):
 @FIELDS
 @given(
     value=st.floats(max_value=-math.ulp(0.0))
+    | st.floats(min_value=math.ulp(0.0), max_value=2.0, exclude_max=True)
     | st.floats(min_value=UNIFORM)
     | st.sampled_from([math.nan, math.inf, -math.inf, -1e-300, UNIFORM, 10**400])
 )
 def test_a_value_outside_the_open_interval_is_refused(build, name, value):
-    """A negative value, NaN, inf and a value at or above the uniform cell are refused."""
+    """A negative value, a value in (0, 2 m), NaN, inf and a value at or above the uniform
+    cell are refused."""
     assert f'mesh.{name}' in _refused(build, name, value)
 
 
@@ -113,3 +115,12 @@ def test_the_loader_refuses_a_toml_true(tmp_path, name):
 def test_the_loader_keeps_a_value_below_the_uniform_cell(tmp_path, name):
     """200 m reaches the parsed mesh parameters unchanged."""
     assert getattr(_load(tmp_path, f'{name} = 200.0').mesh, name) == 200.0
+
+
+@pytest.mark.parametrize('n', [1, 2])
+def test_a_cell_thickness_with_fewer_than_3_nodes_is_refused(n):
+    """A refined grid needs 3 nodes; 1 or 2 nodes with a cell thickness give a ValueError
+    that names the field, not a ZeroDivisionError."""
+    kw = {**_REQUIRED, 'number_of_nodes': n}
+    with pytest.raises(ValueError, match='mesh.surface_cell_thickness'):
+        _MeshParameters(**kw, surface_cell_thickness=200.0)

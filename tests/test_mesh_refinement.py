@@ -313,3 +313,65 @@ def test_the_jax_rhs_matches_numpy_on_the_refined_mesh(mass_coordinates):
     _, uniform = _jax_args(mass_coordinates, 0.0, 0.0)
     f_u = np.ravel(dSdt_energy_balance(0.0, jnp.asarray(y), (*args[:2], uniform[2], *args[3:])))
     assert np.abs(f_u[:n] - f_np[:n]).max() > 0.1 * scale
+
+
+def _cell_density(m):
+    """Mass over volume of each cell between the basic radii, from the mesh EOS [kg/m^3]."""
+    r = np.asarray(m.basic.radii)
+    mass = np.diff(m.eos.get_mass_within_radii(r), axis=0)
+    return np.ravel(mass / (4.0 / 3.0 * np.pi * np.diff(r**3, axis=0)))
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_staggered_density_is_the_cell_mass_over_volume_on_a_refined_mesh(mass_coordinates):
+    """abe_solid with a 1 km top cell and a 2 km CMB cell, both modes: each cell's effective
+    density is its mass over its volume on the refined radii, to 1e-12."""
+    m = _mesh(1e3, 2e3, mass_coordinates)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
+
+
+@pytest.mark.physics_invariant
+def test_the_external_eos_staggered_density_follows_the_refined_radii_in_radius_mode(tmp_path):
+    """``eos_method = 2`` in radius mode with a 1 km top cell: the effective density of each
+    cell is its mass over its volume on the refined radii, to 1e-12."""
+    from tests.test_entropy_solver_eos_method2_smoke import (
+        _build_parameters_eos_method_2,
+        _write_synthetic_external_mesh,
+    )
+
+    ef = tmp_path / 'mesh.dat'
+    _write_synthetic_external_mesh(ef, n=30)
+    p = _build_parameters_eos_method_2(ef, n_nodes=40)
+    p.mesh.mass_coordinates = False
+    p.mesh.surface_cell_thickness = 1e3
+    m = Mesh(p)
+    assert np.diff(_radii(m))[-1] == pytest.approx(1e3, rel=1e-6)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
+
+
+@pytest.mark.parametrize('value', [True, '50', 0.5])
+def test_mesh_refuses_a_cell_thickness_set_after_the_config_is_read(value):
+    """A value set on the parsed parameters gets the config check in Mesh: a bool is not
+    read as 1 m, a string is refused with the field name, and 0.5 m is below the floor."""
+    p = Parameters.from_file(CFG)
+    p.mesh.surface_cell_thickness = value
+    with pytest.raises(ValueError, match='mesh.surface_cell_thickness must be 0'):
+        Mesh(p)
+
+
+@pytest.mark.parametrize('end', ['top', 'cmb'])
+def test_mass_mode_puts_the_staggered_node_inside_a_2_m_end_cell(end):
+    """Mass-coordinate mode with a 2 m end cell, the smallest allowed: the end cell holds
+    2 m and its staggered node lies in its middle half, as in every other cell."""
+    m = _mesh(2.0, 0.0, True) if end == 'top' else _mesh(0.0, 2.0, True)
+    rb, rs = _radii(m), np.ravel(m.staggered.radii)
+    frac = (rs - rb[:-1]) / np.diff(rb)
+    cell = np.diff(rb)[-1 if end == 'top' else 0]
+    assert cell == pytest.approx(2.0, abs=2e-3)
+    assert np.all((frac > 0.25) & (frac < 0.75)), frac.min()
+    assert frac[-1 if end == 'top' else 0] == pytest.approx(0.5, abs=1e-2)
