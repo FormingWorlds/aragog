@@ -140,7 +140,10 @@ def test_unit_grid_reaches_the_uniform_grid_at_the_uniform_cell(n, ends):
     """The largest float below the uniform cell, at one or both ends, gives the uniform
     grid to 1e-12."""
     f = np.nextafter(1.0 / (n - 1), 0.0)
-    s = stretched_unit_grid(n, ends[0] * f, ends[1] * f)
+    try:
+        s = stretched_unit_grid(n, ends[0] * f, ends[1] * f)
+    except ValueError as exc:
+        pytest.fail(f'the uniform limit raised: {exc}')
     np.testing.assert_allclose(s, np.linspace(0.0, 1.0, n), rtol=0, atol=1e-12)
 
 
