@@ -12,7 +12,7 @@ surface_cell_thickness = 200.0   # outermost cell [m]; 0 = not set
 cmb_cell_thickness = 2000.0      # innermost cell [m]; 0 = not set
 ```
 
-Each value must be 0 or a number of at least 2 m and below the uniform radial cell, `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With one field set, only that end is refined, and the cells at the other end grow: a 50 m top cell on `abe_solid.toml` makes the CMB cell 38.5 km instead of 9.33 km. Set both fields to hold both ends. The number of nodes does not change. A value set in Python after the config is read gets the same check when the mesh is built.
+Each value must be 0 or a number of at least 2 m and below the uniform radial cell, `(outer_radius - inner_radius) / (number_of_nodes - 1)`. One set cell needs at least 3 nodes, two set cells 4. With one field set, only that end is refined, and the cells at the other end grow: a 50 m top cell on `abe_solid.toml` makes the CMB cell 38.5 km instead of 9.33 km. Set both fields to hold both ends. The number of nodes does not change. A value set in Python after the config is read gets the same check when the mesh is built.
 
 The fields act in both mesh modes. With `mass_coordinates = true`, the default, the end cells still have the thickness you set, in radius.
 

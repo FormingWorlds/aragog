@@ -30,7 +30,7 @@ with two dimensionless parameters: $\delta$ sets how strongly the nodes cluster 
 
 ## Mass-coordinate mode
 
-With `mass_coordinates = true` (the default, and the PROTEUS path), the uniform grid is uniform in the mass coordinate $\xi_m$, not in radius ([Model overview](model.md)). The stretching then acts on $\xi_m$, and Aragog converts each target from metres into a mass-coordinate fraction, so the end cells still have the thickness you set, in radius. On a refined mesh the basic and staggered node radii come from the mass-coordinate solve, to 1 mm.
+With `mass_coordinates = true` (the default, and the PROTEUS path), the uniform grid is uniform in the mass coordinate $\xi_m$, not in radius ([Model overview](model.md)). The stretching then acts on $\xi_m$, and Aragog converts each target from metres into a mass-coordinate fraction, so the end cells still have the thickness you set, in radius. On a refined mesh the basic node radii come from the mass-coordinate solve, to 1 mm; the staggered node radii keep the 1 m tolerance of the uniform mesh, which moves them by less than $10^{-4}$ of their cell.
 
 ## Worked example
 
@@ -45,9 +45,11 @@ In mass-coordinate mode the same settings give a bottom cell of 22.1 km in the f
 
 - **0**: that end is not set. With the other end set, its cells grow to keep the node count: on `abe_solid.toml` a 1 km, 200 m or 50 m top cell makes the CMB cell 22.1, 31.0 or 38.5 km in mass-coordinate mode (23.4, 33.0 or 41.1 km in radius mode), against 9.33 km on the uniform mesh. Set the other field too to hold that end. 0 is the default for both fields.
 - **A bool, a string or any other non-number**: refused when the config is read and when the mesh is built, with an error that names the field. A TOML `true` is not read as 1 m.
-- **Negative, NaN, infinite, below 2 m, or at least the uniform radial cell** $(r_\mathrm{s} - r_\mathrm{c})/(n - 1)$: refused when the config is read and when the mesh is built. Below 2 m the node solve of the mass-coordinate mode, which keeps its search 1 m inside the boundaries, and the 1 m floors of the CMB heat flow would act on the end cell.
-- **Fewer than 3 nodes**: refused, a refined grid needs at least 3.
+- **Negative, NaN, infinite, below 2 m, or at least the uniform radial cell** $(r_\mathrm{s} - r_\mathrm{c})/(n - 1)$: refused when the config is read and when the mesh is built. The 2 m floor is a margin of 2 over the 1 m by which the node solve of the mass-coordinate mode stays inside the boundaries, so that it would clamp a node only below 1 m; at 2 m the CMB half cell also meets the 1 m floor of the `bower2018` core flux.
+- **Too few nodes**: one set cell needs at least 3 nodes, two set cells 4; fewer are refused.
+- **Below $10^{-7}$ of the mantle thickness**: refused by the grid itself when the mesh is built. With the 2 m floor this applies only to a mantle thicker than 20,000 km.
 - **Mass-coordinate mode near the uniform cell**: the uniform end cells in mass coordinates differ from the radial uniform cell. For `abe_solid.toml` the uniform CMB cell is 9.33 km, below the radial 10.1 km, so a CMB cell between the two passes the config check and is refused when the mesh is built, with both field values in the error.
+- **Cell density with an external profile** (`eos_method = 2`): on a refined mesh each cell's density is its mass over its volume, in both mesh modes, as on every mass-coordinate mesh. A uniform radius-mode mesh with an external profile takes the mean of the two face densities instead; on the test profile the two differ by up to $10^{-4}$ relative.
 - **Each refined mesh**: Aragog checks that the radii increase, that the end radii are the shell radii, and that each set end cell equals its target to $10^{-6}$ relative, or to 2 mm in mass-coordinate mode where that is larger; a violation stops the run with an error.
 
 ## Cost

@@ -21,7 +21,7 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 ??? info "Test details"
     - Reference: the end-cell thickness set in the config.
-    - Tolerance: $10^{-6}$ relative in radius mode; in mass-coordinate mode 2 mm or $10^{-6}$ relative, whichever is larger, since each node radius is solved to 1 mm.
+    - Tolerance: $10^{-6}$ relative in radius mode; in mass-coordinate mode 2 mm or $10^{-6}$ relative, whichever is larger: the solved node of an end cell is placed to 1 mm, the other is the boundary itself.
     - Test id: `tests/test_mesh_refinement_validation.py::test_the_refined_mesh_has_the_set_end_cells`
     - Command: `pytest tests/test_mesh_refinement_validation.py -m reference_pinned --validation-plots`
 
