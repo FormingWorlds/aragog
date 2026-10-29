@@ -52,7 +52,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 ## A cooling solid shell on a fine mesh
 
-**Why this check exists.** The two cases above drive the lid functions alone, with a constant heat capacity. This case runs the lid inside the solver, where the heat content of the crust comes from the equation of state, and compares it with the solver's own conduction on a mesh fine enough to resolve the crust. A lid whose heat content took the heat capacity and density of its base would miss by +2.3 to +2.5 %; with the values at 780 K, by -1.2 to -1.3 %. The test sees both.
+**Why this check exists.** The two cases above drive the lid functions alone, with a constant heat capacity. This case runs the lid inside the solver, where the heat content of the crust comes from the equation of state, and compares it with the solver's own conduction on a mesh fine enough to resolve the crust. A lid whose heat content took the heat capacity and density of its base would miss by +2.3 to +2.4 %; with the values at 780 K, by -1.2 to -1.3 %. The test sees both.
 
 **What it tests.** A solid shell 25 km thick starts at 1300 K, below the solidus (1421 K at the surface), and cools by conduction only through a black-body surface that radiates to 255 K. One run uses 10 nodes (cells of 2.8 km) with the lid; the other uses 4000 nodes (cells of 6.25 m) without the lid. The test compares their surface fluxes at 8 times from 300 to 5000 years. The surface of the fine mesh cools below 300 K, below the floor of the SPIDER test tables (about 320 K), so both runs use the PALEOS table extended to 67 K (md5 of `temperature_solid.dat`: `18d6f9eb5ba654d58fe3fad30ce118f0`).
 
