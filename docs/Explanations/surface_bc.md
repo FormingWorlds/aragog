@@ -12,7 +12,7 @@ The setting `outer_boundary_condition` in `[boundary_conditions]` picks the mode
 | 4 | The surface flux itself | flux \[W/m²\] | PROTEUS coupling: the atmosphere module gives the flux |
 | 5 | The surface temperature | temperature \[K\] | benchmarks with a fixed surface temperature, such as stagnant-lid scaling cases |
 
-Here $\varepsilon$ is the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T_\mathrm{top}$ the temperature of the surface node and $T_\mathrm{eq}$ the equilibrium temperature. The [UTBL parameterisation](../How-to/utbl-parameterisation.md) only acts in mode 1. PROTEUS uses mode 4 (or mode 1); it does not use mode 5.
+Here $\varepsilon$ is the emissivity, $\sigma$ the Stefan-Boltzmann constant, $T_\mathrm{top}$ the temperature of the surface node and $T_\mathrm{eq}$ the equilibrium temperature. With `subgrid_lid = true` (mode 1 only), a crust thinner than the top cell sits on the surface and the grey body radiates from the crust surface; see [Surface lid](surface_lid.md). The [UTBL parameterisation](../How-to/utbl-parameterisation.md) only acts in mode 1. PROTEUS uses mode 4 (or mode 1); it does not use mode 5.
 
 ## Prescribed surface temperature (mode 5)
 

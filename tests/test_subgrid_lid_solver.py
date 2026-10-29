@@ -386,3 +386,25 @@ def test_no_handover_without_the_lid_closure(eos, closure):
     out = s.get_state()
     assert np.isnan(out.lid_handover_time)
     assert out.lid_delta > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_hidden_lid_on_a_hot_top_cell(eos):
+    """A hot convecting top cell carries more heat than a crust at T_b can radiate: the lid is
+    hidden (w = 0), the surface loses the grid flux, the lid relaxes to the phantom thickness and
+    the per-call ledger closes."""
+    s = _solver(eos)
+    y = s._S0.copy()
+    y[: s._n_stag] = np.linspace(3300.0, 4500.0, s._n_stag)
+    y[-2:] = (3.0, y[-1] * 6.0)
+    off = _solver(eos, lid=False)
+    off._dSdt_single(0.0, y[: s._n_stag])
+    f_grid = float(off.state._heat_flux[-1])
+    pw = s._step_powers(0.0, y)
+    ev = s._lid_last
+    assert ev.rates.w == pytest.approx(0.0, abs=0)
+    assert ev.rates.F_top == pytest.approx(f_grid, rel=1e-12)
+    assert ev.rates.ddelta == pytest.approx(
+        -(3.0 - s._lid_delta_lo) / sl.LID_TAU_HIDDEN, rel=1e-12
+    )
+    assert abs(pw[-1]) <= 1e-10 * max(abs(pw[0]), abs(pw[1]), 1.0)

@@ -21,8 +21,9 @@ assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, kg/m^3, s)
 
 References
 ----------
-Carslaw, H. S. and Jaeger, J. C. (1959), Conduction of Heat in Solids, 2nd ed., Oxford.
-Turcotte, D. L. and Schubert, G. (2014), Geodynamics, 3rd ed., Cambridge.
+Turcotte, D. L. and Schubert, G. (2014), Geodynamics, 3rd ed., Cambridge University Press:
+section 4.18, the Stefan problem (eqs. 4.136 and 4.141, pp. 197-198), and section 4.15, the
+cooling of a half-space (eq. 4.116, p. 189).
 """
 
 from __future__ import annotations

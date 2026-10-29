@@ -35,6 +35,7 @@ nav:
       - Fixed surface temperature: Tutorials/surface_temperature.md
       - Properties at the solidus: Tutorials/phase_blend.md
       - Solid-state convection: Tutorials/solid_state_convection.md
+      - A crust on the magma ocean: Tutorials/surface_lid.md
 
   - Explanations:
       - Overview:
@@ -53,6 +54,7 @@ nav:
           - Pressure EOS: Explanations/pressure_eos.md
           - Core BC modes: Explanations/core_bc.md
           - Surface boundary conditions: Explanations/surface_bc.md
+          - Surface lid: Explanations/surface_lid.md
       - Numerics:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
@@ -65,6 +67,7 @@ nav:
       - Overview: Validation/index.md
       - Core: Validation/core.md
       - Surface boundary: Validation/surface.md
+      - Surface lid: Validation/surface_lid.md
       - Phase transitions: Validation/phase_transitions.md
       - Numerics: Validation/numerics.md
 
@@ -80,6 +83,7 @@ nav:
           - Core evolution: Reference/api/aragog.core.md
           - Rheology: Reference/api/aragog.rheology.md
           - Stagnant-lid rheology: Reference/api/aragog.rheology_lid.md
+          - Surface lid: Reference/api/aragog.surface_lid.md
       - CLI: Reference/cli.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md
