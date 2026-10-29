@@ -116,6 +116,27 @@ def test_unit_grid_reaches_the_uniform_grid_at_the_uniform_cell(n, ends):
     np.testing.assert_allclose(s, np.linspace(0.0, 1.0, n), rtol=0, atol=1e-12)
 
 
+def test_two_sided_grid_refuses_end_cells_that_three_nodes_cannot_hold():
+    """With 3 nodes both end cells must sum to 1; for 0.2 and 0.2 the solve ends on a
+    monotone grid with both cells at 0.5, which the residual check refuses."""
+    with pytest.raises(ValueError, match='did not converge'):
+        stretched_unit_grid(3, 0.2, 0.2)
+
+
+def test_radius_mode_keeps_the_shell_radii_of_a_thick_shell():
+    """For these radii r_in + (r_out - r_in) misses r_out by 1 ulp; the refined radius-mode
+    mesh still starts and ends exactly at the shell radii."""
+    r_in, r_out = 504437.1555063366, 6871404.744724282
+    assert r_in + (r_out - r_in) != r_out
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates = False
+    p.mesh.inner_radius, p.mesh.outer_radius = r_in, r_out
+    p.mesh.surface_cell_thickness = 1e3
+    r = _radii(Mesh(p))
+    assert (r[0], r[-1]) == (r_in, r_out)
+    assert np.diff(r)[-1] == pytest.approx(1e3, rel=1e-6)
+
+
 @pytest.mark.parametrize('mass_coordinates', [False, True])
 def test_mesh_end_cells_have_the_radial_thickness(mass_coordinates):
     """abe_solid (1000 km shell, 100 nodes, uniform cell 10.1 km): a 1 km top cell,
