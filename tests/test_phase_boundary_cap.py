@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from scipy.optimize import OptimizeResult
 
 import aragog.solver.entropy_solver as es
@@ -97,6 +99,35 @@ def test_rate_cap_floor_skips_a_slow_cooling_cell_below_the_solidus():
     """A slow sub-solidus cell next to a mushy cell has no boundary ahead and sets no time."""
     S, dSdt = [980.0, 1200.0], [-1e-4, -1.0]
     assert _cap(S, dSdt, rate_floor=True, fraction=1.0, bounds=WIDE) == pytest.approx(200.0)
+
+
+_cells = st.lists(
+    st.tuples(
+        st.floats(500.0, 1600.0),  # S around S_SOL = 1000 and S_LIQ = 1300
+        st.floats(-10.0, 10.0),  # dS/dt
+        st.floats(0.1, 10.0),  # mass
+    ),
+    min_size=1,
+    max_size=4,
+)
+
+
+@pytest.mark.unit
+@settings(max_examples=300, deadline=None)
+@given(cells=_cells)
+def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
+    """max_step lies in [1, 100] yr with a cell above the solidus and in [1, inf] without.
+
+    With every cell cooling (dS/dt < 0) below S_sol - delta no boundary lies ahead, so the step
+    is inf; a cell with dS/dt = 0 counts as moving up and keeps a finite step.
+    """
+    S, dSdt, mass = (np.array(c, dtype=float) for c in zip(*cells))
+    h = _cap(S, dSdt, mass, rate_floor=True, bounds=(1.0, 100.0))
+    assert h >= 1.0
+    if np.any(S > S_SOL):
+        assert h <= 100.0
+    if np.all(S < S_SOL - DELTA) and np.all(dSdt < 0.0):
+        assert np.isinf(h)
 
 
 @pytest.mark.unit
