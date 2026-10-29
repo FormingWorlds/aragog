@@ -85,12 +85,31 @@ def test_leaving_the_block_clears_the_cached_level_of_the_logger():
 
 def test_an_inner_block_keeps_the_outer_block_recording(tmp_path):
     """After a nested block ends, a handler added and detached later is still closed by the outer one."""
+    fixture_recorder = vars(aragog.logger).get('addHandler')
     with package_logger_isolation():
+        outer_recorder = vars(aragog.logger)['addHandler']
         with package_logger_isolation():
             pass
+        assert vars(aragog.logger)['addHandler'] is outer_recorder
         aragog.aragog_file_logger(log_dir=str(tmp_path))
         first = [h for h in aragog.logger.handlers if isinstance(h, logging.FileHandler)]
         aragog.aragog_file_logger(log_dir=str(tmp_path))
         assert first[0] not in aragog.logger.handlers
     assert first[0].stream is None
     assert [type(h) for h in aragog.logger.handlers] == [logging.NullHandler]
+    assert vars(aragog.logger).get('addHandler') is fixture_recorder
+
+
+def test_a_block_that_raises_still_restores_the_logger(tmp_path):
+    """An exception in the block does not skip the restore or the close of the added handlers."""
+    import_handler = aragog.logger.handlers[0]
+    fixture_recorder = vars(aragog.logger).get('addHandler')
+    with pytest.raises(RuntimeError, match='raised in the block'):
+        with package_logger_isolation():
+            aragog.aragog_file_logger(log_dir=str(tmp_path))
+            added = [h for h in aragog.logger.handlers if isinstance(h, logging.FileHandler)]
+            raise RuntimeError('raised in the block')
+    assert added[0].stream is None
+    assert aragog.logger.handlers == [import_handler]
+    assert aragog.logger.level == logging.NOTSET
+    assert vars(aragog.logger).get('addHandler') is fixture_recorder
