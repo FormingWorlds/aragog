@@ -22,7 +22,7 @@ with a sharpness parameter $\beta$ chosen so the smooth and hard clips agree to 
 
 The production EOS path uses a single evaluator class:
 
-- `EntropyEOS` loads the SPIDER-format pressure-entropy tables (`temperature_solid.dat`, `temperature_melt.dat`, `density_*`, `heat_capacity_*`, `adiabat_temp_grad_*`, `solidus_P-S.dat`, `liquidus_P-S.dat`) and exposes property lookups: `temperature(P, S)`, `density(P, S)`, `melt_fraction(P, S)`, `solidus_entropy(P)`, `liquidus_entropy(P)`, `latent_heat(P)`, `solidus_entropy_dP(P)`, `liquidus_entropy_dP(P)`.
+- `EntropyEOS` loads the SPIDER-format pressure-entropy tables (`temperature_solid.dat`, `temperature_melt.dat`, `density_*`, `heat_capacity_*`, `adiabat_temp_grad_*`, `solidus_P-S.dat`, `liquidus_P-S.dat`, and `thermal_exp_*` when present, see [thermal expansivity of a single phase](#thermal-expansivity-of-a-single-phase)) and exposes property lookups: `temperature(P, S)`, `density(P, S)`, `melt_fraction(P, S)`, `solidus_entropy(P)`, `liquidus_entropy(P)`, `latent_heat(P)`, `solidus_entropy_dP(P)`, `liquidus_entropy_dP(P)`.
 - `EntropyPhaseEvaluator` wraps `EntropyEOS` with phase-mixing logic, viscosity blending, and the cached per-cell properties used by the solver.
 
 There is no separate `SinglePhaseEvaluator` / `MixedPhaseEvaluator` / `CompositePhaseEvaluator` hierarchy in the production path: the EOS table itself spans all three regimes, and the per-cell evaluator selects between solid, mixed, and liquid branches via a smooth two-stage blend (described next).
@@ -88,6 +88,31 @@ and the heat capacity follows from $T\,dS = c_p\,dT - (\alpha T/\rho)\,dP$ along
 | `"linear"` | Linear interpolation of $c_p^\mathrm{sol}$ and $c_p^\mathrm{liq}$ in $\phi$ |
 
 The latent-blend mode tracks SPIDER's internal `cp_s` to within a few percent along the mushy trajectory, while the linear blend can underestimate by up to a factor of six in the deep mushy zone.
+
+## Thermal expansivity of a single phase
+
+The thermal expansivity $\alpha$ is the relative change of volume per kelvin at fixed pressure. It sets the buoyancy in the convective heat flux and the adiabatic temperature gradient, so every heat flux of the mantle depends on it.
+
+**How Aragog computes it.** Outside the mushy zone the phase evaluator derives $\alpha$ from the other table properties of the same phase:
+
+$$
+\alpha = \frac{\rho\, c_p}{T} \left(\frac{\partial T}{\partial P}\right)_S ,
+$$
+
+with $\rho$ in kg m$^{-3}$, $c_p$ in J kg$^{-1}$ K$^{-1}$, $(\partial T/\partial P)_S$ in K Pa$^{-1}$ and $T$ in K, so $\alpha$ is in K$^{-1}$. This is a thermodynamic identity. The Maxwell relation $(\partial T/\partial P)_S = (\partial V/\partial S)_P$ with $dS = (c_p/T)\,dT - (\alpha/\rho)\,dP$ and $V = 1/\rho$ gives $(\partial T/\partial P)_S = \alpha T / (\rho\, c_p)$. In the mushy zone the two-phase value of the blend above takes over; under `cp_blend = "linear"` its values at the solidus and the liquidus come from the same identity.
+
+**Why one source.** The NumPy evaluator and the JAX right-hand side both use this identity. When a JAX factory is set, CVODE integrates the JAX right-hand side with its Jacobian, while the output flux comes from the NumPy one; with one source of $\alpha$ the reported flux is that of the integrated equations, and a NumPy run and a JAX run of the same case integrate the same expansivity. This holds under the default `cp_blend = "latent"`; the JAX path has no `linear` branch. The `EntropyEOS` methods `thermal_expansivity`, `material_expansivity` and `thermal_expansivity_composite_blend` use it too; they take $|(\partial T/\partial P)_S|$, as the JAX EOS does. In the mushy zone `thermal_expansivity` applies the identity to the phase-weighted temperature, density, heat capacity and gradient, as the JAX EOS does, while `material_expansivity` takes the identity of each phase and weights it by volume.
+
+**The `thermal_exp` files.** A table directory can also carry `thermal_exp_solid.dat` and `thermal_exp_melt.dat`. `EntropyEOS` loads them when they are present and keeps them with the other tables, but no part of the solver reads them. The consistency check of the tables (`aragog.eos.consistency`) compares them with the identity of the other tables, on tables that its caller loads. On the SPIDER test tables, at the solid and melt states of the validation case, the table values differ from the identity by up to $7.9 \times 10^{-4}$ relative.
+
+**Why it matters for a comparison with SPIDER.** SPIDER reads the `thermal_exp` tables for its single-phase expansivity. A run of Aragog and a run of SPIDER on the same tables therefore differ in $\alpha$ outside the mushy zone, and inside it within about one blend width of the solidus and the liquidus, where the single-phase value enters the blend with a weight up to $\tfrac{1}{2}$. Over the table nodes of the SPIDER test tables, relative to the identity value, the gap is up to $1.3 \times 10^{-3}$ in the solid and $7.2 \times 10^{-4}$ in the melt below 5000 K; over the melt nodes above the liquidus at higher temperatures it reaches $6.3 \times 10^{-2}$. Under `cp_blend = "latent"` the two-phase value of the mushy zone is the same in both codes.
+
+Limits:
+
+- The evaluator keeps the sign of $(\partial T/\partial P)_S$ and lifts a negative blended $\alpha$ to about zero with the clamp $\tfrac{1}{2}(\alpha + \sqrt{\alpha^2 + \epsilon^2})$, $\epsilon = 10^{-8}$ K$^{-1}$; the `EntropyEOS` methods take $|(\partial T/\partial P)_S|$. On the SPIDER test tables $(\partial T/\partial P)_S$ is positive at every node, and the clamp acts in the mushy zone at low pressure, where the melt is denser than the solid (3616 against 3035 kg m$^{-3}$ on the boundaries at 0 GPa) and the two-phase expansivity is negative.
+- The temperature in the denominator has a floor of 1 K; the lowest temperature of the SPIDER test tables is 300 K.
+
+**Where this is checked.** [Validation: Phase transitions](../Validation/phase_transitions.md#numpy-and-jax-take-the-same-single-phase-expansivity).
 
 ## Latent heat
 

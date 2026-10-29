@@ -4,7 +4,7 @@ Aragog's entropy solver requires a directory of pressure-entropy (P-S) equation-
 
 ## Pressure-entropy EOS tables
 
-The directory passed to `EntropySolver.from_file(eos_dir=...)` (or referenced through PROTEUS) must contain ten files in the SPIDER-format $(P, S)$ layout:
+The directory passed to `EntropySolver.from_file(eos_dir=...)` (or referenced through PROTEUS) must contain ten files in the SPIDER-format $(P, S)$ layout; the `thermal_exp` pair in the table is optional:
 
 | File | Format | Description |
 |------|--------|-------------|
@@ -16,6 +16,7 @@ The directory passed to `EntropySolver.from_file(eos_dir=...)` (or referenced th
 | `heat_capacity_melt.dat` | 2D P-S grid | $c_p(P, S)$ for the liquid phase |
 | `adiabat_temp_grad_solid.dat` | 2D P-S grid | $(\partial T/\partial P)_S$ for the solid |
 | `adiabat_temp_grad_melt.dat` | 2D P-S grid | $(\partial T/\partial P)_S$ for the liquid |
+| `thermal_exp_solid.dat`, `thermal_exp_melt.dat` (optional) | 2D P-S grid | $\alpha(P, S)$ of each phase; loaded by `EntropyEOS` when present but not read by the solver, which derives $\alpha$ from the identity $\rho c_p (\partial T/\partial P)_S / T$ ([thermal expansivity of a single phase](../Explanations/phase_transitions.md#thermal-expansivity-of-a-single-phase)) |
 | `solidus_P-S.dat` | 2-column $(P, S)$ | Solidus entropy at each pressure |
 | `liquidus_P-S.dat` | 2-column $(P, S)$ | Liquidus entropy at each pressure |
 

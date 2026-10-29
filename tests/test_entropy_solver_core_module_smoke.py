@@ -729,7 +729,7 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
 
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-    eos = entropy_eos_copy(identity_alpha=True)  # the expansivity of the JAX RHS
+    eos = entropy_eos_copy(identity_alpha=True)
     zsolver = _build(
         'core_module',
         eos,
