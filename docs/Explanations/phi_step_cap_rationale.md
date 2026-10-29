@@ -116,6 +116,17 @@ The controller enforces four bounds and regime transitions:
 
 **Where this is checked.** The controller and its accuracy bounds are checked in `tests/test_phase_boundary_cap.py` and in [Numerical verification](../Validation/numerics.md).
 
+### What the default trades
+
+`rate` is the default because it keeps long runs from stalling near the solidus.
+Without the distance floor, a cell that starts a segment almost on its solidus limits the step to $1\ \mathrm{yr}$ for as long as it stays there.
+In the 100-node `rheo_on` validation case, one such interval near $96\ \mathrm{Myr}$ takes 459 767 steps with $1\ \mathrm{yr}$ steps and 4598 steps with the floor.
+The price is accuracy close to the solidus.
+In that interval the end temperature at rtol $10^{-9}$ differs by up to $8.4 \times 10^{-4}\ \mathrm{K}$ from the run with $1\ \mathrm{yr}$ steps; at rtol $10^{-10}$ to $10^{-12}$ the difference is at most $4.3 \times 10^{-6}\ \mathrm{K}$.
+In the coupled V5b case, `T_magma` ends $1.0 \times 10^{-3}\ \mathrm{K}$ from a strict reference, against $7.5 \times 10^{-4}\ \mathrm{K}$ without the rules near and below the solidus.
+There the run also takes 9.7 % more steps.
+[Numerical verification](../Validation/numerics.md#full-solidification-without-solver-stalling) states both as known limits ([V5b](../Validation/numerics.md#coupled-planetary-evolution-crossing-the-solidus-into-the-solid-regime)).
+
 ## Cross-references
 
 - [How-to: phi_step_cap](../How-to/phi-step-cap.md): config recipe and tuning advice.
