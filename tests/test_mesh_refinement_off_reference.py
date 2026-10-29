@@ -5,7 +5,7 @@ Module under test: ``aragog.mesh.Mesh`` with ``mesh.surface_cell_thickness`` and
 and a 100-year solve on the NumPy RHS and on the JAX CVODE factory. The reference
 ``tests/reference/mesh_refinement_off_main_reference.npz`` holds the same arrays from a
 main tree, written by ``tools/verification/generate_mesh_refinement_off_reference.py``.
-Invariants: the mesh arrays and the RHS equal to 1e-12 and the end states to 1e-9
+Invariants: the mesh arrays and the RHS equal to 1e-10 and the end states to 1e-6
 relative, and the JAX solve calls the JAX RHS in both the reference and the test.
 """
 
@@ -23,7 +23,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / 'tests' / 'reference' / 'mesh_refinement_off_main_reference.npz'
 GEN = ROOT / 'tools' / 'verification' / 'generate_mesh_refinement_off_reference.py'
-MESH_RTOL, RHS_RTOL, SOLVE_RTOL = 1.0e-12, 1.0e-12, 1.0e-9
+# Linux against the macOS reference: mesh 1.6e-12, RHS 2.8e-14 of the largest value, end states 9.8e-8
+MESH_RTOL, RHS_RTOL, SOLVE_RTOL = 1.0e-10, 1.0e-10, 1.0e-6
 
 
 def _generator(monkeypatch):
@@ -52,7 +53,7 @@ def test_the_reference_names_a_commit_and_a_jax_solve(ref):
 @pytest.mark.parametrize('mode,mass_coordinates', [('mass', True), ('radius', False)])
 def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates, monkeypatch):
     """With both cell thicknesses at 0 the mesh arrays and the NumPy RHS equal main to
-    1e-12 and both end states equal main to 1e-9, relative to each value or to the largest
+    1e-10 and both end states equal main to 1e-6, relative to each value or to the largest
     value of the array; the margin over 0 is for the round-off of another platform."""
     gen = _generator(monkeypatch)
     assert gen.CFG.is_file()

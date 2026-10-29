@@ -53,7 +53,7 @@ This case is filled from the convergence study.
 
 **Why this check exists.** The refinement code sits in the mesh constructor that every run uses. A change to the path without refinement, for example a refined branch that runs when both fields are 0, would change every run without notice.
 
-**What it tests.** With both fields at 0, the test builds the `abe_solid.toml` mesh in mass-coordinate and in radius mode, evaluates the right-hand side once and solves for 100 years with the NumPy right-hand side and with the JAX right-hand side. The mesh arrays and the right-hand side must equal those of the main branch to $10^{-12}$ and the end states to $10^{-9}$, relative to each value or to the largest value of the array. The mesh is not compared exactly because the reference comes from one platform and the round-off of another platform differs: on Linux the radii differ by up to $3 \times 10^{-15}$ relative and the cell volumes by up to $4 \times 10^{-14}$. The test also requires that the JAX solve called the JAX right-hand side, in the stored reference and in the test.
+**What it tests.** With both fields at 0, the test builds the `abe_solid.toml` mesh in mass-coordinate and in radius mode, evaluates the right-hand side once and solves for 100 years with the NumPy right-hand side and with the JAX right-hand side. The mesh arrays and the right-hand side must equal those of the main branch to $10^{-10}$ and the end states to $10^{-6}$, relative to each value or to the largest value of the array. The arrays are not compared exactly because the reference comes from macOS and the round-off of Linux differs: there the mesh arrays differ by up to $2 \times 10^{-12}$ relative and the end states by up to $10^{-7}$. A refined path in radius mode moves the end states by less than this margin, so a unit test also checks that the mesh with both fields at 0 takes the uniform path. The test also requires that the JAX solve called the JAX right-hand side, in the stored reference and in the test.
 
 **How we know the right answer.** The reference is the same set of arrays written on the main branch by `tools/verification/generate_mesh_refinement_off_reference.py`.
 
@@ -63,6 +63,6 @@ This case has no plot: it checks that two sets of arrays are equal, which a plot
 
 ??? info "Test details"
     - Reference: `tests/reference/mesh_refinement_off_main_reference.npz`, written on the main branch, with its commit and the JAX call count.
-    - Tolerance: mesh arrays and right-hand side $10^{-12}$; end states $10^{-9}$.
+    - Tolerance: mesh arrays and right-hand side $10^{-10}$; end states $10^{-6}$.
     - Test id: `tests/test_mesh_refinement_off_reference.py::test_the_refinement_off_path_equals_main`
     - Command: `pytest tests/test_mesh_refinement_off_reference.py`

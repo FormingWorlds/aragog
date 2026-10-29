@@ -44,6 +44,12 @@ def _radii(m):
     return np.asarray(m.basic.radii).ravel()
 
 
+@pytest.mark.parametrize('mass_coordinates', [True, False])
+def test_the_default_mesh_is_not_refined(mass_coordinates):
+    """With both cell thicknesses at 0 the mesh takes the uniform path."""
+    assert not _mesh(mass_coordinates=mass_coordinates)._refined
+
+
 def test_unit_grid_hits_both_end_cells_over_a_wide_range():
     """End cells of 0.5 to 16 km on a 2891 km span at 20 to 800 nodes, each end on
     or off: both targets to 1e-10, exact end points, strictly increasing; from 100
