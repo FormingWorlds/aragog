@@ -124,3 +124,39 @@ def surface_state(delta, T_m, T_b, k, emissivity, T_eq, delta_floor):
     T_s, f0, f1, m = parts(s, T_m, D, d)
     dT = D / (1.0 - m)
     return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped
+
+
+def convective_base_flux(dT, k, rho, cp, alpha, g, eta, ra_crit):
+    """Boundary-layer flux [W/m^2], as :func:`aragog.surface_lid.convective_base_flux`."""
+    pos = dT > 0.0
+    dT_safe = jnp.where(pos, dT, 1.0)
+    kappa = k / (rho * cp)
+    q = k * dT_safe ** (4.0 / 3.0) * (alpha * rho * g / (ra_crit * kappa * eta)) ** (1.0 / 3.0)
+    return jnp.where(pos, q, 0.0)
+
+
+def stefan_rate(q_b, F_b, rho, dh, delta, h_top, delta_lo):
+    """Base growth rate [m/s] and stop factor, as :func:`aragog.surface_lid.stefan_rate`."""
+    from aragog.surface_lid import LID_CAP_FRAC, LID_CAP_WIDTH, LID_DH_MIN
+
+    r = (q_b - F_b) / (rho * jnp.maximum(dh, LID_DH_MIN))
+    grow = jnp.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0)
+    melt = jnp.clip((delta - delta_lo) / delta_lo, 0.0, 1.0)
+    f = jnp.where(r > 0.0, grow, jnp.where(r < 0.0, melt, 1.0))
+    return r * f, f
+
+
+def existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on):
+    """Weight [0, 1] of the lid, as :func:`aragog.surface_lid.existence_weight`."""
+    from scipy.constants import Stefan_Boltzmann
+
+    from aragog.surface_lid import LID_EXIST_WIDTH, LID_WEIGHT_FLOOR
+
+    F_rad = grey_flux(T_b, emissivity, T_eq)
+    inside = (F_b > 0.0) & (F_rad > 0.0) & (F_b < F_rad)
+    F = jnp.where(inside, F_b, 0.5 * jnp.maximum(F_rad, 1.0))
+    T_s = (F / (emissivity * Stefan_Boltzmann) + T_eq**4) ** 0.25
+    d_eq = jnp.maximum(k * (T_b - T_s) / F, 1e-300)
+    w = 0.5 * (1.0 + jnp.tanh(jnp.log10(d_eq / delta_on) / LID_EXIST_WIDTH))
+    w = jnp.where(w > LID_WEIGHT_FLOOR, w, 0.0)
+    return jnp.where(F_b <= 0.0, 1.0, jnp.where(inside, w, 0.0))
