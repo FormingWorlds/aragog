@@ -50,6 +50,8 @@ LID_MEAN_RATIO_MIN: float = 1.0e-4
 LID_MEAN_RATIO_MAX: float = 0.99
 # Smallest temperature contrast [K] across the lid.
 LID_DT_MIN: float = 1.0e-6
+# Conduction floor [m] of the lid thickness.
+LID_DELTA_FLOOR: float = 1.0e-5
 
 _S_SERIES: float = 1.0e-6
 
@@ -178,6 +180,17 @@ def surface_state(
     T_s, f0, f1, m = ts_of(s)
     dT = D / (1.0 - m)
     return LidSurface(T_s=T_s, F_s=k * dT * f0 / d, q_b=k * dT * f1 / d, s=s, clipped=clipped)
+
+
+def linear_lid_surface(
+    delta: float, T_b: float, k: float, emissivity: float, T_eq: float
+) -> float:
+    """Surface temperature [K] of a linear (steady) lid: ``grey(T_s) = k (T_b - T_s) / delta``."""
+    if T_b <= T_eq:
+        return T_b
+    return brentq(
+        lambda T: grey_flux(T, emissivity, T_eq) - k * (T_b - T) / delta, T_eq, T_b, xtol=1e-12
+    )
 
 
 def convective_base_flux(
