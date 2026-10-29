@@ -1,5 +1,5 @@
-"""Build ``tests/reference/subgrid_lid_v0_reference.npz``: the off-path probe on the commit the
-sub-grid lid branches from.
+"""Build ``tests/reference/subgrid_lid_v0_reference.npz``: the off-path probe on the main commit
+the sub-grid lid branches from.
 
 Run from the repository root with that commit's ``src`` first on the path, for example
 ``PYTHONPATH=<checkout of the base>/src:. python tests/reference/build_subgrid_lid_v0_reference.py``.
@@ -16,7 +16,7 @@ import numpy as np
 import aragog
 from tests.reference.subgrid_lid_v0_probe import CASES, case_name, probe
 
-BASE_COMMIT = 'd8b157557d60325b26c4a9366a6ca1ce910657be'
+BASE_COMMIT = 'dd6c2b98b4bbaf7dcf8710ef6b7317635d01a0f7'
 OUT = Path(__file__).resolve().parent / 'subgrid_lid_v0_reference.npz'
 
 if __name__ == '__main__':

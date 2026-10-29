@@ -1,11 +1,11 @@
-"""With the sub-grid lid off, the solve path equals the commit the lid branches from.
+"""With the sub-grid lid off, the solve path equals the main commit the lid branches from.
 
 The reference (``tests/reference/subgrid_lid_v0_reference.npz``) is the off-path probe of
 ``tests/reference/subgrid_lid_v0_probe.py`` on that commit: the mesh, one right-hand side and
 a 2-yr solve, without and with the solid rheology ('lid' closure), on CVODE with the
-finite-difference Jacobian and with a JAX factory. The mesh must match exactly, the
-right-hand side to rtol 1e-12 and the solve to rtol 1e-9; a JAX case must have called the JAX
-right-hand side.
+finite-difference Jacobian and with a JAX factory (here built with ``lid_params=None``). The
+mesh must match exactly, the right-hand side to rtol 1e-12 and the solve to rtol 1e-9; a JAX
+case must have called the JAX right-hand side.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def test_lid_off_path_equals_the_base(reference, rheology, jax):
     if jax:
         pytest.importorskip('jax')
         pytest.importorskip('equinox')
-    got = probe(rheology, jax, EOS_DIR)
+    got = probe(rheology, jax, EOS_DIR, {'lid_params': None} if jax else None)
     name = case_name(rheology, jax)
 
     def ref(key):

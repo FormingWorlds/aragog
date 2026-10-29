@@ -32,7 +32,7 @@ def _parameters(rheology: bool, jax: bool):
     return p
 
 
-def _factory(solver, eos_dir, rheology: bool, info_box: list):
+def _factory(solver, eos_dir, rheology: bool, info_box: list, factory_kw: dict):
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
@@ -62,6 +62,7 @@ def _factory(solver, eos_dir, rheology: bool, info_box: list):
             heating_array=np.zeros(solver._n_stag),
             scales=scales,
             core_bc_mode=core_bc_mode,
+            **factory_kw,
         )
         info_box.append(info)
         return rhs_fn, jac_fn
@@ -69,8 +70,9 @@ def _factory(solver, eos_dir, rheology: bool, info_box: list):
     return factory
 
 
-def probe(rheology: bool, jax: bool, eos_dir) -> dict[str, np.ndarray]:
-    """Mesh, start right-hand side and 2-yr solve of one case (arrays, SI and yr)."""
+def probe(rheology: bool, jax: bool, eos_dir, factory_kw=None) -> dict[str, np.ndarray]:
+    """Mesh, start right-hand side and 2-yr solve of one case (arrays, SI and yr);
+    ``factory_kw`` goes to ``build_jax_rhs_and_jacobian``."""
     from aragog.solver.entropy_solver import EntropySolver
     from tests.conftest import entropy_eos_copy
 
@@ -80,7 +82,7 @@ def probe(rheology: bool, jax: bool, eos_dir) -> dict[str, np.ndarray]:
     s.set_initial_entropy(S)
     info_box: list = []
     if jax:
-        s.set_jax_cvode_factory(_factory(s, eos_dir, rheology, info_box))
+        s.set_jax_cvode_factory(_factory(s, eos_dir, rheology, info_box, factory_kw or {}))
     mesh = s.evaluator.mesh
     out = dict(
         r_basic=np.asarray(mesh.basic.radii, dtype=float).ravel(),
