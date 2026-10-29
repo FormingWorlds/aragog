@@ -82,10 +82,10 @@ T_V1 = np.array([1e8, 1e10, 1e12])
 def test_v1_crust_growth_follows_neumann(validation_plot):
     """V1: a lid over melt at its base temperature, no base flux and a fixed surface temperature
     grows as the Neumann solution delta = 2 lambda sqrt(kappa t), lambda exp(lambda^2) erf(lambda)
-    = St / sqrt(pi) (Carslaw and Jaeger 1959, the one-phase Stefan problem), within 1 % at
-    1e8, 1e10 and 1e12 s for St = 0.1, 1 and 3.381. A lid started at 1 m on the linear profile
-    approaches the same law. The linear-profile growth law sqrt(2 St kappa t) misses by more
-    than the tolerance at St = 1 and 3.381."""
+    = St / sqrt(pi) (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141, pp. 197-198),
+    within 1 % at 1e8, 1e10 and 1e12 s for St = 0.1, 1 and 3.381. A lid started at 1 m on the
+    linear profile approaches the same law. The linear-profile growth law sqrt(2 St kappa t)
+    misses by more than the tolerance at each St (by 1.6, 14 and 37 %)."""
     results = {}
     for St in (0.1, 1.0, 3.381):
         lam = _neumann_lambda(St)
@@ -97,9 +97,10 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
         d, _ = _evolve([d0, E0], t0, T_V1, dh=dh, F_b=0.0, surface=_dirichlet)
         ref = 2 * lam * np.sqrt(KAPPA * T_V1)
         np.testing.assert_allclose(d, ref, rtol=1e-2)
-        if St > 0.5:
-            linear = np.sqrt(2 * St * KAPPA * T_V1)
-            assert np.all(np.abs(linear / ref - 1) > 1e-2)
+        # the similarity profile holds the Neumann growth exactly: 2.4e-12 in the run
+        np.testing.assert_allclose(d, ref, rtol=1e-8)
+        linear = np.sqrt(2 * St * KAPPA * T_V1)
+        assert np.all(np.abs(linear / ref - 1) > 1e-2)
         t_lin = np.geomspace(1e5, 1e12, 30)
         E_lin = sl.lid_energy(RHO, 1.0, CP * T_B, CP, T_B, 0.5 * (T_S + T_B))
         d_lin, _ = _evolve([1.0, E_lin], 0.0, t_lin, dh=dh, F_b=0.0, surface=_dirichlet)
@@ -130,8 +131,8 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
 @pytest.mark.reference_pinned
 def test_v2_half_space_cooling(validation_plot):
     """V2: without latent heat (the enthalpy jump at its floor) the lid is a cooling half space:
-    the surface flux follows k (T_b - T_s) / sqrt(pi kappa t) (Turcotte and Schubert 2014, the
-    cooling of a semi-infinite solid) within 1 % from three lid-diffusion times of the start on.
+    the surface flux follows k (T_b - T_s) / sqrt(pi kappa t) (Turcotte and Schubert 2014,
+    section 4.15, eq. 4.116, p. 189) within 1 % from three lid-diffusion times of the start on.
     Twice that flux, the most likely slip in the denominator, misses by far."""
     St = CP * (T_B - T_S) / sl.LID_DH_MIN
     lam = _neumann_lambda(St)

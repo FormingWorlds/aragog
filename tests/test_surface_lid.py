@@ -100,8 +100,8 @@ def _neumann_case(St, delta=10.0, T_s=300.0, T_b=1400.0, k=4.0, T_eq=200.0):
 def test_surface_state_recovers_neumann(St):
     """The surface solve returns the Neumann profile of the one-phase Stefan problem.
 
-    Reference: Carslaw and Jaeger (1959), the Neumann solution; the profile is the similarity
-    family with s = lambda^2, lambda exp(lambda^2) erf(lambda) = St / sqrt(pi).
+    Reference: Turcotte and Schubert (2014), section 4.18, eqs. 4.136 and 4.141 (pp. 197-198);
+    the profile is the similarity family with s = lambda^2.
     """
     c = _neumann_case(St)
     out = sl.surface_state(c['delta'], c['T_m'], c['T_b'], c['k'], c['eps'], c['T_eq'], 0.0)
