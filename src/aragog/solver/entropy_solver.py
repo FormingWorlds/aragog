@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from aragog.jax.nondim import NonDimScales
 
+from aragog import surface_lid as _lid
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -47,6 +48,7 @@ from aragog.config.phases import (
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
+from aragog.rheology import R_GAS as _R_GAS
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
 from aragog.utilities import positive_gravity
@@ -123,6 +125,29 @@ EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
 }
 
 logger = logging.getLogger('fwl.' + __name__)
+
+# Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
+_LID_E_DENSITY_SCALE = 3.6e6
+
+
+@dataclass(frozen=True)
+class _LidEval:
+    """Sub-grid lid at one RHS evaluation: states, base state, surface and rates (SI)."""
+
+    delta: float
+    E: float
+    V_fluid: float
+    rates: '_lid.LidRates'
+    surf: '_lid.LidSurface'
+    F_b: float
+    T_m: float
+    H_lid: float
+    S_b: float
+    T_b: float
+    h_b: float
+    h_f: float
+    rho: float
+    cp: float
 
 
 def _validate_eos_radius_range(mesh_params) -> None:
@@ -1633,6 +1658,10 @@ class EntropySolver:
         offset = np.zeros(len(self._S0))
         if self._core_bc == 'core_module':  # the temperatures are integrated as their change
             offset[n_s + 1 :] = self._S0[n_s + 1 :]
+        if self._n_lid:  # lid tail: delta on the top-cell width, E_lid as its change
+            ss[-2] = self._lid_h_top
+            ss[-1] = _LID_E_DENSITY_SCALE * self._T_ref * self._lid_h_top
+            offset[-2:] = (0.0, self._S0[-1])
         return NonDimScales(state_scale=ss, t_ref=float(t_ref), state_offset=offset)
 
     @classmethod
@@ -2323,6 +2352,64 @@ class EntropySolver:
         self._outer_bc_utbl = bool(bc.param_utbl)
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
+        self._cache_lid_constants(bc)
+
+    def _cache_lid_constants(self, bc) -> None:
+        """Cache the sub-grid lid settings and the top-cell geometry.
+
+        The lid length scales read the mesh: the top-cell width is the radial step of the top
+        two basic nodes, and the hand-over depth is the depth of the face below the top
+        ``lid_handover_cells`` cells. Refuses a ``lid_delta_on`` the top cell cannot hold.
+        """
+        self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
+        self._lid_y = None
+        if not self._lid_on:
+            return
+        if self.entropy_eos is None:
+            raise ValueError('subgrid_lid needs the entropy EOS tables (no const_properties)')
+        r = self._r_basic_flat
+        n_cells = int(bc.lid_handover_cells)
+        if n_cells >= r.size - 1:
+            raise ValueError(
+                f'lid_handover_cells = {n_cells} needs more than {n_cells + 1} mesh cells'
+            )
+        self._lid_h_top = float(r[-1] - r[-2])
+        self._lid_area = float(self._area_flat[-1])
+        self._lid_delta_on = float(bc.lid_delta_on)
+        lo = bc.lid_delta_lo
+        self._lid_delta_lo = 0.5 * self._lid_delta_on if lo is None else float(lo)
+        self._lid_ra_crit = float(bc.lid_ra_crit)
+        self._lid_handover_depth = float(r[-1] - r[-1 - n_cells])
+        if self._lid_delta_on >= _lid.LID_CAP_FRAC * self._lid_h_top:
+            raise ValueError(
+                f'lid_delta_on = {self._lid_delta_on} m must lie below lid growth stop '
+                f'{_lid.LID_CAP_FRAC} x the top-cell width {self._lid_h_top:.6g} m '
+                f'= {_lid.LID_CAP_FRAC * self._lid_h_top:.6g} m'
+            )
+        eos, P = self.entropy_eos, float(self._P_stag_flat[-1])
+        self._lid_P = P
+        self._lid_S_sol = float(np.asarray(eos.solidus_entropy(P)).item())
+        self._lid_S_liq = float(np.asarray(eos.liquidus_entropy(P)).item())
+        self._lid_T_sol = float(np.asarray(eos.temperature(P, self._lid_S_sol)).item())
+        self._lid_k = float(self.state.phase_staggered._k_solid)
+        rheo = self._solid_rheology() if self._rheology_enabled else None
+        self._lid_rheo = rheo
+        self._lid_H = None
+        if rheo is not None and rheo.lid_base_mode != 'fixed':
+            from aragog.rheology import compute_arrhenius_enthalpy
+
+            self._lid_H = float(
+                compute_arrhenius_enthalpy(
+                    pressure=P,
+                    g_homologous=rheo.g_homologous,
+                    t_sol_0=rheo.t_sol_0,
+                    dt_sol_dp=rheo.dt_sol_dp,
+                    activation_energy=rheo.activation_energy,
+                    activation_volume=rheo.activation_volume,
+                    activation_volume_decay_pressure=rheo.activation_volume_decay_pressure,
+                )
+            )
+        self._lid_gl = np.polynomial.legendre.leggauss(8)
 
     @property
     def surface_temperature_bc(self) -> tuple[float, float, float] | None:
@@ -2779,6 +2866,195 @@ class EntropySolver:
                 S_arr.min(),
                 S_arr.max(),
             )
+        if self._n_lid:
+            self._S0 = np.concatenate([self._S0, self._initial_lid(float(S_arr[-1]))])
+
+    @property
+    def _n_lid(self) -> int:
+        """Number of lid states at the end of the state vector: 2 with the lid on, else 0."""
+        return 2 if getattr(self, '_lid_on', False) else 0
+
+    def set_initial_lid(self, delta: float | None, E_lid: float | None = None) -> None:
+        """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
+
+        Must be called before ``set_initial_entropy``. ``None`` clears it: the lid then starts
+        from the previous solution, or as the phantom lid (``lid_delta_lo``, linear profile).
+        """
+        if delta is None:
+            self._lid_init = None
+            return
+        if E_lid is None or not np.isfinite(delta) or not np.isfinite(E_lid) or delta <= 0:
+            raise ValueError(
+                f'set_initial_lid needs a finite delta > 0 and E_lid, got {delta}, {E_lid}'
+            )
+        self._lid_init = (float(delta), float(E_lid))
+
+    def _initial_lid(self, S_top: float) -> npt.NDArray:
+        """Lid start: the set values, else the previous solution's, else the phantom lid."""
+        init = getattr(self, '_lid_init', None)
+        if init is not None:
+            return np.array(init)
+        prev = getattr(self, '_solution', None)
+        if prev is not None and getattr(prev, 'y', None) is not None:
+            y = np.asarray(prev.y)
+            if y.ndim == 2 and y.shape[0] == self._n_core_state() + 2:
+                return y[-2:, -1].copy()
+        eos, P = self.entropy_eos, self._lid_P
+        T_f = float(np.asarray(eos.temperature(P, S_top)).item())
+        phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
+        base = self._lid_base_state(S_top, T_f, phi_f)
+        d = self._lid_delta_lo
+        T_s = _lid.linear_lid_surface(
+            d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
+        )
+        T_m = 0.5 * (base['T_b'] + T_s)
+        E = _lid.lid_energy(base['rho'], d, base['h_b'], base['cp'], base['T_b'], T_m)
+        return np.array([d, E])
+
+    def _n_core_state(self) -> int:
+        """Length of the state vector without the lid tail, for the configured core_bc."""
+        if self._core_bc == 'gradient':
+            return self._n_stag + 2
+        return self._n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ())) + self._n_shell()
+
+    def _lid_enthalpy(self, S: npt.ArrayLike) -> npt.NDArray:
+        """Specific heat content [J/kg] at the top-cell pressure, from the solidus entropy.
+
+        ``h(S) = integral of T(P_top, S') dS'`` from the solidus entropy to ``S`` (the heat
+        content the entropy equation transports), by 8-point Gauss-Legendre quadrature with the
+        path split at the liquidus.
+        """
+        x, w = self._lid_gl
+        S = np.atleast_1d(np.asarray(S, dtype=float))
+        knee = np.where(S > self._lid_S_liq, self._lid_S_liq, S)
+        lo_hi = ((np.full(S.size, self._lid_S_sol), knee), (knee, S))
+        pts, wts = [], []
+        for lo, hi in lo_hi:
+            mid, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+            pts.append(mid[:, None] + half[:, None] * x[None, :])
+            wts.append(half[:, None] * w[None, :])
+        P = np.array(pts)
+        T = np.asarray(self.entropy_eos.temperature(np.full(P.shape, self._lid_P), P))
+        return np.sum(T * np.array(wts), axis=(0, 2))
+
+    def _lid_base_state(self, S_f: float, T_f: float, phi_f: float) -> dict:
+        """Lid-base state at the top-cell pressure for a sub-lid fluid of entropy ``S_f``.
+
+        Above the rheological transition the lid base is the solidus; below it, the
+        rheological lid base of the solid rheology (``T_f - lid_contrast_coeff R T_f^2 / H``,
+        or ``lid_base_temperature`` in the 'fixed' mode, capped at the solidus), blended in
+        entropy by the melt ramp of the transition. Without rheology the base is the solidus.
+        Returns ``S_b``, ``T_b`` [K], ``h_b``, ``h_f`` [J/kg], ``rho`` [kg/m^3], ``cp`` [J/kg/K].
+        """
+        eos, P, S_sol = self.entropy_eos, self._lid_P, self._lid_S_sol
+        S_b = S_sol
+        rheo = self._lid_rheo
+        if rheo is not None:
+            from aragog.rheology_lid import _melt_ramp
+
+            ph = self.state.phase_staggered
+            w_phi = float(_melt_ramp(phi_f, ph._phi_rheo, ph._phi_width))
+            if w_phi < 1.0:
+                if rheo.lid_base_mode == 'fixed':
+                    T_rh = rheo.lid_base_temperature
+                else:
+                    T_rh = T_f - rheo.lid_contrast_coeff * _R_GAS * T_f**2 / self._lid_H
+                T_rh = min(max(T_rh, 1.0), self._lid_T_sol)
+                cp_sol = float(np.asarray(eos.heat_capacity(P, S_sol)).item())
+                S_rh = S_sol + cp_sol * np.log(T_rh / self._lid_T_sol)
+                S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
+        h_b, h_f = self._lid_enthalpy([S_b, S_f])
+        return dict(
+            S_b=S_b,
+            T_b=float(np.asarray(eos.temperature(P, S_b)).item()),
+            h_b=float(h_b),
+            h_f=float(h_f),
+            rho=float(np.asarray(eos.density(P, S_b)).item()),
+            cp=float(np.asarray(eos.heat_capacity(P, S_b)).item()),
+        )
+
+    def _lid_heat_change(self, y0: npt.NDArray, y1: npt.NDArray) -> float:
+        """Heat content change [J] of the lid between two states, net of the fluid mass
+        ``rho_lid A delta`` the lid takes from the top cell (the cell quadrature counts the cell
+        whole). Exact for a lid and fluid of equal density; else off by
+        ``A (rho_lid - rho_f) integral of delta dh_f``."""
+
+        def part(y) -> float:
+            S = float(self._stag_entropy(y)[-1])
+            eos, P = self.entropy_eos, self._lid_P
+            T, phi = (
+                float(np.asarray(f(P, S)).item()) for f in (eos.temperature, eos.melt_fraction)
+            )
+            base = self._lid_base_state(S, T, phi)
+            return float(y[-1]) - base['rho'] * base['h_f'] * float(y[-2])
+
+        return self._lid_area * (part(y1) - part(y0))
+
+    def _lid_evaluate(self, entropy: npt.NDArray) -> '_LidEval':
+        """Lid rates and top-cell fluxes at the current RHS state.
+
+        Reads the lid states set by ``_dSdt_single``; sets the surface flux the planet loses
+        in ``state._heat_flux[-1]`` and returns the flux out of the fluid and its volume.
+        """
+        delta, E = float(self._lid_y[0]), float(self._lid_y[1])
+        ph = self.state.phase_staggered
+
+        def top(values) -> float:
+            return float(np.asarray(values).ravel()[-1])
+
+        T_f, rho_f, cp_f = top(ph.temperature()), top(ph.density()), top(ph.heat_capacity())
+        base = self._lid_base_state(float(entropy[-1]), T_f, top(ph.melt_fraction()))
+        q_conv = _lid.convective_base_flux(
+            T_f - base['T_b'],
+            top(ph.thermal_conductivity()),
+            rho_f,
+            cp_f,
+            top(ph.thermal_expansivity()),
+            abs(top(ph.gravitational_acceleration())),
+            top(ph.viscosity()),
+            self._lid_ra_crit,
+        )
+        F_b = max(q_conv, float(self.state._heat_flux[-2]), 0.0)
+        eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
+        w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
+        d_pos = max(delta, _lid.LID_DELTA_FLOOR)
+        T_m = _lid.lid_mean_temperature(
+            E, base['rho'], d_pos, base['h_b'], base['cp'], base['T_b']
+        )
+        surf = _lid.surface_state(
+            delta, T_m, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR
+        )
+        heating = top(self.state.heating)
+        rates = _lid.lid_rates(
+            delta=delta,
+            E_lid=E,
+            surf=surf,
+            F_b=F_b,
+            F_grid=float(self.state._heat_flux[-1]),
+            w=w,
+            rho=base['rho'],
+            cp=base['cp'],
+            h_b=base['h_b'],
+            h_f=base['h_f'],
+            T_b=base['T_b'],
+            h_top=self._lid_h_top,
+            delta_lo=self._lid_delta_lo,
+            heating=heating,
+        )
+        self.state._heat_flux[-1] = rates.F_top
+        ev = _LidEval(
+            delta=delta,
+            E=E,
+            V_fluid=float(self._volume_flat[-1]) - self._lid_area * delta,
+            rates=rates,
+            surf=surf,
+            F_b=F_b,
+            T_m=T_m,
+            H_lid=heating * base['rho'] * delta,
+            **base,
+        )
+        self._lid_last = ev
+        return ev
 
     def _resolve_dSdr_cmb_init(self, S_arr: npt.NDArray, n_stag: int) -> float:
         """Resolve the initial CMB entropy gradient for an extended state.
@@ -2853,8 +3129,8 @@ class EntropySolver:
         n_shell = shell.n_cells
         if not t_core_override and prev is not None and getattr(prev, 'y', None) is not None:
             y = np.asarray(prev.y)
-            if y.ndim == 2 and y.shape[0] == self._n_stag + 2 + n_shell:
-                return y[-n_shell:, -1].copy()
+            if y.ndim == 2 and y.shape[0] == self._n_stag + 2 + n_shell + self._n_lid:
+                return y[self._n_stag + 2 : self._n_stag + 2 + n_shell, -1].copy()
         return np.asarray(shell.adiabatic_profile(t_core))
 
     def get_current_core_temperature(self) -> float | None:
@@ -2924,7 +3200,7 @@ class EntropySolver:
             or prev_sol is None
             or getattr(prev_sol, 'y', None) is None
             or prev_sol.y.size == 0
-            or prev_sol.y.shape[0] != n_stag + len(slots) + self._n_shell()
+            or prev_sol.y.shape[0] != n_stag + len(slots) + self._n_shell() + self._n_lid
         ):
             return None
         return float(prev_sol.y[n_stag + slots.index(slot), -1])
@@ -2959,6 +3235,20 @@ class EntropySolver:
         return self._dSdt_single(time, state_vec)
 
     def _dSdt_single(
+        self,
+        time: npt.NDArray | float,
+        state_vec: npt.NDArray,
+    ) -> npt.NDArray:
+        """Time derivative of one state column; with the sub-grid lid the two lid states
+        sit at the end of the vector and their rates are appended to the mantle rates."""
+        if not getattr(self, '_lid_on', False):
+            return self._dSdt_mantle(time, state_vec)
+        self._lid_y = np.asarray(state_vec[-2:], dtype=float)
+        rates = self._dSdt_mantle(time, state_vec[:-2])
+        lid = self._lid_last.rates
+        return np.concatenate([rates, [lid.ddelta * SECS_PER_YEAR, lid.dE * SECS_PER_YEAR]])
+
+    def _dSdt_mantle(
         self,
         time: npt.NDArray | float,
         state_vec: npt.NDArray,
@@ -3088,13 +3378,20 @@ class EntropySolver:
         else:
             self.state._heat_flux[0] = 0.0  # insulating
 
+        # The sub-grid lid sets the surface loss and leaves the top cell its fluid part.
+        lid = self._lid_evaluate(entropy) if getattr(self, '_lid_on', False) else None
+
         # Flux divergence: dE/dr at staggered nodes.
         energy_flux = self.state.heat_flux * self._area_flat
+        if lid is not None:
+            energy_flux[-1] = lid.rates.F_fluid * self._lid_area
         delta_energy_flux = np.diff(energy_flux)
 
         # Capacitance: rho * T * volume (for entropy equation)
         cap = np.asarray(self.state.capacitance_staggered()).ravel()
         capacitance = cap * self._volume_flat
+        if lid is not None:
+            capacitance[-1] = cap[-1] * lid.V_fluid
 
         # dS/dt from flux divergence [J/kg/K/s]
         dSdt = -delta_energy_flux / capacitance
@@ -3478,7 +3775,12 @@ class EntropySolver:
         - gradient: N+2 (N+1 gradients + S_surf)
         - quasi_steady: N (entropy only)
         """
-        return self._core_bc in ('bower2018', 'core_module', 'energy_balance', 'gradient')
+        return self._core_bc in (
+            'bower2018',
+            'core_module',
+            'energy_balance',
+            'gradient',
+        ) or getattr(self, '_lid_on', False)
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
@@ -3553,8 +3855,10 @@ class EntropySolver:
         # Gradient mode: the reconstruction couples all gradients to all
         # staggered nodes, making the Jacobian dense. Use no sparsity
         # hint (scipy will do full finite-difference Jacobian).
-        if self._core_bc == 'gradient' or (
-            self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid'
+        if (
+            self._core_bc == 'gradient'
+            or getattr(self, '_lid_on', False)
+            or (self._rheology_enabled and self._solid_rheology().stress_closure_mode == 'lid')
         ):
             return None
 
@@ -4591,6 +4895,11 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'use_jax_jacobian', False)
                 and self._jax_cvode_factory is not None
             )
+            if use_jax_jac and self._n_lid:
+                raise ValueError(
+                    'subgrid_lid has no JAX right-hand side; set energy.use_jax_jacobian = '
+                    'false or register no JAX CVODE factory'
+                )
             if use_jax_jac:
                 try:
                     # Pass the NonDimScales instance, which bundles
@@ -5072,6 +5381,8 @@ class EntropySolver:
         state_heat = self._step_heat_content(
             self._stag_entropy(sol.y[:, 0]), self._stag_entropy(sol.y[:, -1])
         )
+        if self._n_lid:
+            state_heat += self._lid_heat_change(sol.y[:, 0], sol.y[:, -1])
 
         # Energy-conserving step-average CMB heat flux: the trapezoidal
         # time-mean of the basic-node-0 flux whose integral over the call
@@ -5094,7 +5405,9 @@ class EntropySolver:
                 import jax
 
                 shell = budget.shell
-                t_shell_traj = np.asarray(y_arr[n_stag + 2 :, :], dtype=float).T
+                t_shell_traj = np.asarray(
+                    y_arr[n_stag + 2 : n_stag + 2 + shell.n_cells, :], dtype=float
+                ).T
                 base = np.asarray(jax.vmap(shell.layer_base)(t_shell_traj, t_core_traj))
 
                 def c_eff(t, upper):
@@ -5254,7 +5567,21 @@ class EntropySolver:
             * vol
             * (T_phase_i / np.maximum(T_phase_i, 1.0))
         )
+        lid_power = None
+        if self._n_lid:
+            # fluid part of the top cell, the lid energy and the mass the lid takes from it
+            lid = self._lid_last
+            vol = vol.copy()
+            vol[-1] = lid.V_fluid
+            heat_mass_i[-1] *= lid.V_fluid / float(self._volume_flat[-1])
+            heat_mass_i = np.r_[heat_mass_i, lid.rho * self._lid_area * lid.delta]
+            heating_radio_i = np.r_[heating_radio_i, heating_radio_i[-1]]
+            heating_tidal_i = np.r_[heating_tidal_i, heating_tidal_i[-1]]
+            r = lid.rates
+            lid_power = self._lid_area * (r.dE - lid.rho * lid.h_f * r.ddelta)
         lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+        if lid_power is not None:
+            lhs_i += lid_power
         Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
         Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
         rhs_i = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
@@ -5549,7 +5876,7 @@ class EntropySolver:
             dSdr_final = sol.y[:n_basic, -1]
             S_surf_final = float(sol.y[n_basic, -1])
             S_final, _ = self._reconstruct_entropy(dSdr_final, S_surf_final)
-        elif is_ext:
+        elif is_ext or self._n_lid:
             S_final = sol.y[:n_stag, -1]
         else:
             S_final = sol.y[:, -1]
@@ -5753,7 +6080,7 @@ class EntropySolver:
         shell = self._core_shell()
         if shell is not None:
             y_end = np.asarray(sol.y[:, -1])
-            t_shell_end = y_end[n_stag + 2 :]
+            t_shell_end = y_end[n_stag + 2 : n_stag + 2 + shell.n_cells]
             layer_base = float(shell.layer_base(t_shell_end, y_end[n_stag + 1]))
             t_top = float(shell.top_temperature(t_shell_end))
         return SolverOutput(
