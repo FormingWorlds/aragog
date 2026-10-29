@@ -9,8 +9,8 @@ config options before the run starts:
 - ``--reference`` integrates every CVODE call at ``--reference-rtol`` (default 1e-10), a
   physical atol of the same value and 1 yr steps (``EntropySolver._solve_cvode``), so the
   reference does not depend on the step controller;
-- ``--s0-eps`` multiplies the first start entropy by 1 + eps for a round-off start
-  (``EntropySolver.set_initial_entropy``).
+- ``--s0-eps`` multiplies the state at the first CVODE call by 1 + eps for a round-off start
+  (PROTEUS sets the start entropy more than once before the integration starts).
 
 The result file records the CVODE steps of all calls and the wall time of the run. The driver
 stops with an error when one of these hooks is missing in the installed PROTEUS or Aragog. It
@@ -64,7 +64,6 @@ def install(reference, s0_eps=0.0, reference_rtol=1.0e-10):
 
     check = hook(term, 'check_termination')
     solve_cvode = hook(es.EntropySolver, '_solve_cvode')
-    set_s0 = hook(es.EntropySolver, 'set_initial_entropy')
     solid, steps, first = [0], [0], [True]
 
     def check_termination(handler):
@@ -76,6 +75,9 @@ def install(reference, s0_eps=0.0, reference_rtol=1.0e-10):
         return check(handler)
 
     def counted(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
+        if first[0]:
+            first[0] = False
+            y0 = np.asarray(y0, dtype=float) * (1.0 + s0_eps)
         if reference:
             sc = self._build_nondim_scales()
             rtol, atol = reference_rtol, reference_rtol / sc.state_scale
@@ -84,16 +86,8 @@ def install(reference, s0_eps=0.0, reference_rtol=1.0e-10):
         steps[0] += int(res.get('cvode_nst', 0))
         return res
 
-    def perturbed(self, S0, *args, **kwargs):
-        if first[0]:
-            first[0] = False
-            S0 = np.asarray(S0, dtype=float) * (1.0 + s0_eps)
-        return set_s0(self, S0, *args, **kwargs)
-
     term.check_termination = check_termination  # PROTEUS imports it inside Proteus.start()
     es.EntropySolver._solve_cvode = counted
-    if s0_eps:
-        es.EntropySolver.set_initial_entropy = perturbed
     return solid, steps
 
 

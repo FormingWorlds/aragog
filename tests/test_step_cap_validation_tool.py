@@ -249,9 +249,6 @@ def test_v5b_stop_rule_ends_at_the_third_step_with_phi_zero(monkeypatch):
     import aragog.solver.entropy_solver as es
 
     monkeypatch.setattr(es.EntropySolver, '_solve_cvode', es.EntropySolver._solve_cvode)
-    monkeypatch.setattr(
-        es.EntropySolver, 'set_initial_entropy', es.EntropySolver.set_initial_entropy
-    )
     term = _fake_proteus(monkeypatch, check_termination=lambda handler: 'proteus')
     solid, _ = v5b.install(reference=False)
     handler = types.SimpleNamespace(hf_row={'Phi_global': 0.5})
@@ -262,51 +259,47 @@ def test_v5b_stop_rule_ends_at_the_third_step_with_phi_zero(monkeypatch):
 
 
 def _recording_solver(monkeypatch):
-    """Patch _solve_cvode and set_initial_entropy with recorders on a unit-scale solver."""
+    """Patch _solve_cvode with a recorder on a solver whose state scale is [2, 4] and t_ref 10."""
     import types
 
     import aragog.solver.entropy_solver as es
 
-    calls = {'cvode': [], 's0': []}
+    calls = []
 
     def solve_cvode(self, start_time, end_time, y0, atol, rtol, max_step, **kw):
-        calls['cvode'].append((atol, rtol, max_step))
+        calls.append((np.asarray(y0, dtype=float), atol, rtol, max_step))
         return {'cvode_nst': 7}
 
     monkeypatch.setattr(es.EntropySolver, '_solve_cvode', solve_cvode)
-    monkeypatch.setattr(
-        es.EntropySolver, 'set_initial_entropy', lambda self, S0: calls['s0'].append(S0)
-    )
     _fake_proteus(monkeypatch, check_termination=lambda handler: False)
     scales = types.SimpleNamespace(state_scale=np.array([2.0, 4.0]), t_ref=10.0)
     return es.EntropySolver, types.SimpleNamespace(_build_nondim_scales=lambda: scales), calls
 
 
 def test_v5b_driver_counts_steps_and_keeps_the_run_settings(monkeypatch):
-    """Without --reference each call keeps its tolerances and max_step; steps add up."""
+    """Without --reference and --s0-eps each call keeps its state, tolerances and max_step."""
     cls, solver, calls = _recording_solver(monkeypatch)
     _, steps = v5b.install(reference=False)
-    cls._solve_cvode(solver, 0.0, 1.0, None, 1e-8, 1e-8, 5.0)
+    y0 = np.array([100.0, 200.0])
+    cls._solve_cvode(solver, 0.0, 1.0, y0, 1e-8, 1e-8, 5.0)
     cls._solve_cvode(
-        solver, start_time=1.0, end_time=2.0, y0=None, atol=2e-8, rtol=1e-9, max_step=3.0
+        solver, start_time=1.0, end_time=2.0, y0=y0, atol=2e-8, rtol=1e-9, max_step=3.0
     )
-    assert calls['cvode'] == [(1e-8, 1e-8, 5.0), (2e-8, 1e-9, 3.0)] and steps == [14]
-    cls.set_initial_entropy(solver, np.array([100.0]))
-    assert calls['s0'][0].tolist() == [100.0]
+    assert [c[1:] for c in calls] == [(1e-8, 1e-8, 5.0), (2e-8, 1e-9, 3.0)] and steps == [14]
+    assert all(np.array_equal(c[0], y0) for c in calls)
 
 
-def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_start(monkeypatch):
-    """--reference sets 1 yr steps and the reference rtol and atol in every CVODE call."""
+def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(monkeypatch):
+    """--reference sets 1 yr steps and the reference tolerances; --s0-eps scales call 1 only."""
     cls, solver, calls = _recording_solver(monkeypatch)
     v5b.install(reference=True, s0_eps=1e-3, reference_rtol=1e-11)
     for max_step in (5.0, np.inf):
-        cls._solve_cvode(solver, 0.0, 1.0, None, 1e-6, 1e-6, max_step)
-    for atol, rtol, max_step in calls['cvode']:
+        cls._solve_cvode(solver, 0.0, 1.0, np.array([100.0, 200.0]), 1e-6, 1e-6, max_step)
+    for _, atol, rtol, max_step in calls:
         np.testing.assert_allclose(atol, [5e-12, 2.5e-12], rtol=1e-15)
         assert (rtol, max_step) == (1e-11, 0.1)
-    cls.set_initial_entropy(solver, np.array([100.0]))
-    cls.set_initial_entropy(solver, np.array([100.0]))
-    assert [S[0] for S in calls['s0']] == [pytest.approx(100.1, rel=1e-15), 100.0]
+    np.testing.assert_allclose(calls[0][0], [100.1, 200.2], rtol=1e-15)
+    assert calls[1][0].tolist() == [100.0, 200.0]
 
 
 def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):
