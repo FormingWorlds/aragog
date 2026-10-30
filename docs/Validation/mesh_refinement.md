@@ -92,13 +92,35 @@ The mean surface heat flux is the mean over the decade that ends at the given ti
 
 **Why this check exists.** A thinner CMB cell changes the length over which the CMB heat flow is computed, and with it the cooling of the core.
 
-**What it tests.** Two runs at the recommended surface setting with the core module, one with a refined CMB cell and one without; the compared results are the CMB temperature and the CMB heat flow.
+**What it tests.** Two runs with the core module, both at 100 nodes with a 50 m top cell, from the molten start of the convergence study up to $10^5$ years. In one run the CMB cell is set to 9327 m, the CMB cell of the uniform 100-node mesh. In the other the CMB cell is not set, and the refinement makes it 38456 m. The compared results are the CMB temperature at $10^2$, $10^3$, $10^4$ and $10^5$ years and the heat that crosses the CMB in each of the four intervals that end at these times.
 
-**How we know the right answer.** The difference between the two runs is compared with the noise floor of the convergence study.
+**How we know the right answer.** There is no exact solution, so the test asks whether the difference between the two runs is larger than the noise of the solver. A third run repeats the run with the 9327 m CMB cell from a start entropy that differs by $10^{-12}$ relative. Its relative difference from that run is the noise floor $e$ of each result, and a difference counts only when it is above $3e$.
 
 **Why it matters.** The CMB temperature drives the core evolution in PROTEUS.
 
-This case is filled from the convergence study.
+![Relative change of the CMB temperature and of the CMB heat against time, with the noise floor](../assets/validation/mesh_refinement_cmb.svg#only-light){ width="90%" }
+![Relative change of the CMB temperature and of the CMB heat against time, with the noise floor](../assets/validation/mesh_refinement_cmb_dark.svg#only-dark){ width="90%" }
+
+**How to read the plot.** The left panel shows the CMB temperature and the right panel the heat that crosses the CMB in each interval, against time on log axes. The circles are the relative difference between the runs with the 9327 m and the 38456 m CMB cell; the squares are the noise floor $3e$. A circle above its square is a real difference.
+
+**What the study finds.**
+
+- All 8 differences are above $3e$, by a factor of $3.6 \times 10^2$ to $4.0 \times 10^3$.
+- With the thinner CMB cell the CMB temperature is lower at all four times, by at most 0.47 K ($1.1 \times 10^{-4}$ relative) at $10^4$ years.
+- The heat that crosses the CMB changes by at most 0.42 %, in the interval from $10^4$ to $10^5$ years.
+- Two runs give the size of the effect of the CMB cell up to $10^5$ years, at most $1.1 \times 10^{-4}$ in the CMB temperature and 0.42 % in the CMB heat flow, but not which of the two cells gives the right answer.
+
+**Not checked.**
+
+- Whether the CMB results converge as the CMB cell gets thinner: a series of three or more CMB cells was not run.
+- The CMB results after $10^5$ years.
+
+??? info "Test details"
+    - Reference: the runs `C-cmb9327`, `C-off` and `C-on_p` in `tests/validation/data/mesh_refinement_study.json`; the test computes the differences, the noise floor and every number above from them.
+    - Runs: aragog commit bbef9c9f on Habrok, core module on, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0.
+    - Tolerance: each quoted number to the digits it is quoted with.
+    - Test id: `tests/test_mesh_refinement_study.py::test_a_refined_cmb_cell_changes_the_core_results`
+    - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`
 
 ## Without refinement the results equal the main branch
 

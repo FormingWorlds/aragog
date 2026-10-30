@@ -284,3 +284,54 @@ def test_the_long_run_and_the_tables():
     fall = np.flatnonzero(np.diff(sr) <= 0)
     assert fall.size == 1 and [f'{tr[fall[0] + q]:.0f}' for q in (0, 1)] == ['1595', '1620']
     assert [f'{rr[fall[0] + q]:.0f}' for q in (0, 1)] == ['2227', '3863']
+
+
+def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
+    """The core-module pair with a 9327 m and with an unset CMB cell against the noise floor of a
+    perturbed copy of the first, as quoted on the page."""
+    study = _study()
+    on, off, p = study['C-cmb9327'], study['C-off'], study['C-on_p']
+    for v in (on, off, p):
+        assert v['core_bc'] == 'core_module' and set(v['status']) == {0}
+        assert (
+            v['t_yr'] == [1e2, 1e3, 1e4, 1e5]
+            and v['nodes'] == 100
+            and v['surface_cell_m'] == 50
+        )
+    assert (
+        on['s_init'] == 9466.0
+        and p['s_init'] == 9466.0 * (1 + 1e-12)
+        and off['s_init'] == 9466.0
+    )
+    assert on['cmb_cell_m'] == p['cmb_cell_m'] == 9327.0 and off['cmb_cell_m'] == 0.0
+    assert [f'{v["h_cmb_m"]:.0f}' for v in (on, off)] == ['9327', '38456']
+
+    d, e = {}, {}
+    for k in ('T_cmb_K', 'F_cmb_J'):
+        d[k] = np.abs(np.array(on[k]) / np.array(off[k]) - 1)
+        e[k] = np.abs(np.array(on[k]) / np.array(p[k]) - 1)
+    ratio = np.concatenate([d[k] / (3 * e[k]) for k in d])
+    assert ratio.min() > 1 and [f'{x:.1e}' for x in (ratio.min(), ratio.max())] == [
+        '3.6e+02',
+        '4.0e+03',
+    ]
+    dT = np.array(on['T_cmb_K']) - np.array(off['T_cmb_K'])
+    assert np.all(dT < 0) and f'{-dT.min():.2f}' == '0.47' and int(np.argmin(dT)) == 2
+    assert f'{d["T_cmb_K"].max():.1e}' == '1.1e-04' and f'{d["F_cmb_J"].max():.2%}' == '0.42%'
+    assert int(np.argmax(d['F_cmb_J'])) == 3 and int(np.argmax(d['T_cmb_K'])) == 2
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(1, 2, figsize=(6.4, 2.6), sharex=True)
+        t = on['t_yr']
+        for ax, k in zip(axes, d):
+            ax.plot(t, d[k], 'o-')
+            ax.plot(t, 3 * e[k], 's--', color='0.5')
+            ax.set(xscale='log', yscale='log')
+            ax.minorticks_off()
+        fig.supxlabel('time [yr]')
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'mesh_refinement_cmb')
