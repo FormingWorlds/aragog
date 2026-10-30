@@ -2429,7 +2429,8 @@ class EntropySolver:
         n_cells = int(bc.lid_handover_cells)
         if n_cells >= r.size - 1:
             raise ValueError(
-                f'lid_handover_cells = {n_cells} needs more than {n_cells + 1} mesh cells'
+                f'lid_handover_cells = {n_cells} needs more than {n_cells} mesh cells, '
+                f'got {r.size - 1}'
             )
         self._lid_h_top = float(r[-1] - r[-2])
         self._lid_area = float(self._area_flat[-1])
