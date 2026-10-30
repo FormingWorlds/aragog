@@ -62,9 +62,9 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 |---|---|---|---|---|
 | Global melt fraction | uniform | 0.12 | 0.12 | 0.079 |
 | | 50 m top cell | 0.065 | $3.3 \times 10^{-5}$ | $2.1 \times 10^{-5}$ |
-| CMB temperature [K] | uniform | 3495.6 | 3493.1 | 3463.3 |
+| CMB temperature \[K\] | uniform | 3495.6 | 3493.1 | 3463.3 |
 | | 50 m top cell | 3465.0 | 3440.3 | 3440.3 |
-| Mean surface heat flux [W/m$^2$] | uniform | 55 | 0.61 | 0.71 |
+| Mean surface heat flux \[W/m$^2$\] | uniform | 55 | 0.61 | 0.71 |
 | | 50 m top cell | 163 | 8.0 | 0.096 |
 
 The mean surface heat flux is the mean over the decade that ends at the given time.
