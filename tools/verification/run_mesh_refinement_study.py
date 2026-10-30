@@ -9,9 +9,9 @@ surface, negative for heat loss) and ``F_cmb`` (through the CMB) in J, the CVODE
 bottom-cell entropy, the number of times the top cell falls to or below the solidus and, for a
 core-module run, the core temperature. It also keeps the first frozen interval of the top cell
 (linear between stored rows); ``--phi-rows DIR`` adds the time mean of the global melt fraction
-over [t/2, t] for each t = 1e3, 1e4, 1e5 yr that the run reaches, and ``--profiles RUN...`` the
-staggered entropy at every part end. All other derived numbers are computed by
-``tests/test_mesh_refinement_study.py``.
+from the first stored row at or after t/2 (at most 0.525 t) to t, for each t = 1e3, 1e4, 1e5 yr
+that the run reaches, and ``--profiles RUN...`` the staggered entropy at every part end. All
+other derived numbers are computed by ``tests/test_mesh_refinement_study.py``.
 
 With ``--tables DIR --cmb-pressure PA`` the header keeps, each table file named with its md5:
 the solid temperature table around the CMB pressure, its entropy nodes and last valid entropy
