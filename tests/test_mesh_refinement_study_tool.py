@@ -320,3 +320,144 @@ def test_the_rows_mode_refuses_a_run_folder_of_another_config(tmp_path):
         case.main([str(out), '--eos-dir', str(eos), '--rows', str(tmp_path / 'r.npz')])
     assert isinstance(err.value, SystemExit) and 'comes from another config' in str(err.value)
     assert not (tmp_path / 'r.npz').exists()
+
+
+def _tables(eos, density):
+    """A table folder with 2 files; ``density`` is the content of the melt density table."""
+    eos.mkdir(exist_ok=True)
+    (eos / 'temperature_solid.dat').write_text('x')
+    (eos / 'density_melt.dat').write_text(density)
+
+
+@pytest.mark.parametrize('mode', ['--resume', '--rows'])
+def test_the_driver_refuses_a_run_folder_of_other_tables(tmp_path, mode):
+    """A run folder whose part 0 records other md5s of the table files is refused by --resume
+    and --rows, also when temperature_solid.dat is unchanged, before the tables are loaded."""
+    import hashlib
+
+    eos, out = tmp_path / 'eos', tmp_path / 'run'
+    _tables(eos, 'density x1.01')
+    out.mkdir()
+    a = case.parse([str(out), '--eos-dir', str(eos)])
+    sha = case.subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=_PATH.parents[2]
+    ).stdout.strip()
+    md5 = {
+        n: hashlib.md5(c.encode()).hexdigest()
+        for n, c in (('density_melt.dat', 'density'), ('temperature_solid.dat', 'x'))
+    }
+    rec = dict(sha=sha, config_hash=case.case_config(a, _PATH.parents[2])[2], reached=True)
+    (out / 'za.json').write_text(json.dumps([rec | dict(status=0, table_md5=md5)]))
+    argv = [str(out), '--eos-dir', str(eos), mode] + (
+        [str(tmp_path / 'r.npz')] * (mode == '--rows')
+    )
+    with pytest.raises(BaseException) as err:
+        case.main(argv)
+    assert isinstance(err.value, SystemExit) and 'table set' in str(err.value)
+    assert not (tmp_path / 'r.npz').exists()
+
+
+def test_the_run_values_refuse_parts_of_two_table_sets(tmp_path, monkeypatch):
+    """Parts with different md5s of the table files give a ValueError; parts with equal ones and
+    parts without the record pass."""
+    monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
+    run, _ = _run_folder(tmp_path, np.linspace(500.0, 1e3, 8))
+    rec = json.loads((run / 'za.json').read_text())[0]
+    np.savez(run / 'za_part1.npz', **np.load(run / 'za_part0.npz'))
+    for second, refused in (({'a.dat': '1'}, False), ({'a.dat': '2'}, True), (None, False)):
+        recs = [rec | dict(table_md5={'a.dat': '1'}), rec | dict(part=1)]
+        if second is not None:
+            recs[1]['table_md5'] = second
+        (run / 'za.json').write_text(json.dumps(recs))
+        if refused:
+            with pytest.raises(ValueError, match='parts from more than one table set'):
+                tool.run_values(run)
+        else:
+            assert tool.run_values(run)['t_yr'] == [1e3, 1e3]
+
+
+class _StubSolution(dict):
+    def __init__(self, t, y):
+        super().__init__()
+        self.t, self.y, self.status = t, y, 0
+
+
+class _StubSolver:
+    """The solver calls of the case driver. With ``restarts`` set, ``solve`` takes the segment
+    path, which the driver's restart replaces; otherwise it starts at t = 0 from ``y_prev``."""
+
+    restarts, y_prev = True, np.array([7.0, 6.0])
+
+    def __init__(self, c, entropy_eos=None):
+        from types import SimpleNamespace as N
+
+        self._t_end, self._core_bc, self._y0 = c.solver.end_time, 'energy_balance', None
+        self.evaluator = N(mesh=N(basic=N(radii=np.array([[1.0], [2.0], [3.0]]))))
+
+    def initialize(self):
+        pass
+
+    def set_initial_entropy(self, s):
+        self._y0 = np.array([s, s])
+
+    def _build_nondim_scales(self):
+        return type('S', (), {'state_offset': None, 'state_scale': np.ones(2)})
+
+    def _solve_cvode_segments(self, start_time, y0, t_ref, **kw):
+        return _StubSolution(np.array([start_time * t_ref, self._t_end]), np.c_[y0, y0 - 1.0])
+
+    def solve(self):
+        if self.restarts:
+            self._solution = self._solve_cvode_segments(start_time=0.0, y0=self._y0, t_ref=1.0)
+        else:
+            self._solution = _StubSolution(
+                np.array([0.0, self._t_end]), np.c_[self.y_prev, self.y_prev]
+            )
+
+
+@pytest.mark.parametrize('restarts', [True, False])
+def test_the_driver_refuses_a_part_that_starts_at_another_time(tmp_path, monkeypatch, restarts):
+    """A resumed part that starts at t = 0 with the end state of the previous part is refused;
+    a part that starts at the end time of the previous part is kept."""
+    import sys
+    import types
+
+    monkeypatch.chdir(_PATH.parents[2])
+    monkeypatch.setitem(
+        sys.modules, '_ssc_helpers', types.SimpleNamespace(entropy_eos_copy=lambda d: None)
+    )
+    import aragog.solver.entropy_solver as es
+
+    monkeypatch.setattr(es, 'EntropySolver', _StubSolver)
+    monkeypatch.setattr(_StubSolver, 'restarts', restarts)
+    monkeypatch.setattr(
+        case, '_record', lambda s, t, y: (dict(t_yr=t, Phi_global=0.5, lid={}), {'tb': y})
+    )
+    eos, out = tmp_path / 'eos', tmp_path / 'run'
+    _tables(eos, 'density')
+    out.mkdir()
+    argv = [str(out), '--eos-dir', str(eos), '--numpy', '--samples', '1,2']
+    a = case.parse(argv)
+    sha = case.subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    rec = dict(
+        part=0,
+        sha=sha,
+        config_hash=case.case_config(a, _PATH.parents[2])[2],
+        reached=True,
+        status=0,
+        t_yr=1.0,
+    )
+    (out / 'za.json').write_text(json.dumps([rec]))
+    np.savez(out / 'za_part0.npz', t=np.array([0.0, 1.0]), y_end=np.array([7.0, 6.0]))
+    if restarts:
+        assert case.main(argv + ['--resume']) == 0
+        z = np.load(out / 'za_part1.npz')
+        assert z['t'][0] == 1.0 and list(z['y'][:, 0]) == [7.0, 6.0]
+    else:
+        with pytest.raises(
+            RuntimeError, match='part 1 does not start from the end state of part 0'
+        ):
+            case.main(argv + ['--resume'])
+        assert not (out / 'za_part1.npz').exists()
