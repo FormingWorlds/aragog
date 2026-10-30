@@ -532,13 +532,15 @@ def _end_samples(m, end):
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
-def test_the_end_gradient_is_exact_for_a_quadratic(top, bottom, n):
-    """The end rows of the d/dr transform give dq/dr of q = r^2 at both end nodes to round-off."""
+@pytest.mark.parametrize('end', ['inner', 'outer'])
+def test_the_end_gradient_is_exact_for_a_quadratic(top, bottom, n, end):
+    """The end rows of the d/dr transform give dq/dr = 1 / L of q = x^2 + x, x = (r - x0) / L,
+    at the end node x0 to round-off."""
     m = _mesh(top, bottom, False, n)
-    s = np.ravel(m.staggered.radii)
-    g = np.ravel(m.d_dr_at_basic_nodes((s**2).reshape(-1, 1)))
-    b = _radii(m)
-    np.testing.assert_allclose(g[[0, -1]], 2 * b[[0, -1]], rtol=1e-12)
+    x0, L = _end_samples(m, end)[0], 1e5
+    x = (np.ravel(m.staggered.radii) - x0) / L
+    g = np.ravel(m.d_dr_at_basic_nodes((x**2 + x).reshape(-1, 1)))
+    assert (g[0] if end == 'inner' else g[-1]) * L == pytest.approx(1.0, rel=1e-8, abs=0.0)
 
 
 @pytest.mark.unit

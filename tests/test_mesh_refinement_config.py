@@ -119,18 +119,17 @@ def test_the_loader_keeps_a_value_below_the_uniform_cell(tmp_path, name):
 
 @BUILDERS
 @FIELDS
-@pytest.mark.parametrize('n', [1, 2])
-def test_a_cell_thickness_with_fewer_than_3_nodes_is_refused(build, name, n):
-    """A refined grid needs 3 nodes; 1 or 2 nodes with a cell thickness give a ValueError
-    that names the field, not a ZeroDivisionError."""
+@pytest.mark.parametrize('n', [1, 2, 3])
+def test_a_cell_thickness_with_fewer_than_4_nodes_is_refused(build, name, n):
+    """A refined mesh needs 4 nodes; 1 to 3 nodes with a cell thickness give a ValueError
+    that names the field, not a ZeroDivisionError or an IndexError."""
     with pytest.raises(ValueError, match=f'mesh.{name}'):
         build(**{'number_of_nodes': n, name: 200.0})
 
 
 @BUILDERS
 def test_both_cells_need_4_nodes(build):
-    """With both ends set the 2 cells of a 3-node grid would have to fill the shell; 3 nodes
-    are refused with both fields named, 4 nodes are kept."""
+    """With both ends set, 3 nodes are refused and 4 nodes are kept."""
     with pytest.raises(ValueError, match='number_of_nodes >= 4'):
         build(number_of_nodes=3, surface_cell_thickness=200.0, cmb_cell_thickness=200.0)
     kept = build(number_of_nodes=4, surface_cell_thickness=200.0, cmb_cell_thickness=200.0)

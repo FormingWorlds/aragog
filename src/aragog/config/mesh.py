@@ -19,11 +19,11 @@ def check_cell_thickness(mesh) -> None:
     """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
     ``mesh`` are each 0 or a real number in [``MIN_CELL_THICKNESS``, uniform cell) m.
 
-    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; one set
-    cell needs at least 3 nodes, two set cells 4. A bool (a TOML ``true``) is refused, not
-    read as 1 m.
+    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a set cell
+    needs at least 4 nodes, as the end rows of the d/dr transform do. A bool (a TOML ``true``)
+    is refused, not read as 1 m.
     """
-    need = 3 + (bool(mesh.surface_cell_thickness) and bool(mesh.cmb_cell_thickness))
+    need = 4
     for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
         value = getattr(mesh, name)
         real = isinstance(value, numbers.Real) and not isinstance(value, bool)

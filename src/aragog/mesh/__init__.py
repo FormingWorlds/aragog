@@ -503,6 +503,9 @@ class Mesh:
     def _get_d_dr_transform_matrix(self) -> npt.NDArray:
         """Transform matrix for determining d/dr of a staggered quantity on the basic mesh.
 
+        An end row extrapolates linearly the two nearest interior differences, each sampled at
+        the midpoint of its two staggered nodes, so it is exact for a quadratic quantity.
+
         Returns:
             The transform matrix
         """
@@ -512,20 +515,16 @@ class Mesh:
         transform[1:-1, :-1] += np.diagflat(-1 / self.staggered.delta_mesh)  # k=0 diagonal
         transform[1:-1:, 1:] += np.diagflat(1 / self.staggered.delta_mesh)  # k=1 diagonal
 
-        # End rows extrapolate the gradient from the two nearest interior basic nodes. They set
-        # the initial end values of dS/dr in gradient mode; the flux computations replace the
-        # end values with the adjacent interior gradient or a boundary state variable.
-
-        # Extrapolation of gradient at inner radius
-        inner_delta_ratio = self.basic.delta_mesh[1].item() / self.basic.delta_mesh[0].item()
+        # End rows set the initial end values of dS/dr in gradient mode; the flux computations
+        # replace them with the adjacent interior gradient or a boundary state variable. The
+        # ratio is (end node to first midpoint) over (first to second midpoint).
+        db = np.ravel(self.basic.delta_mesh)
+        inner_delta_ratio = (3 * db[0] + db[1]) / (db[0] + 2 * db[1] + db[2])
         transform[0, 0] = -(inner_delta_ratio + 1) / self.staggered.delta_mesh[0].item()
         transform[0, 1] = (inner_delta_ratio + 1) / self.staggered.delta_mesh[0].item()
         transform[0, 1] += inner_delta_ratio / self.staggered.delta_mesh[1].item()
         transform[0, 2] = -inner_delta_ratio / self.staggered.delta_mesh[1].item()
-        # Extrapolation of gradient at outer radius
-        outer_delta_ratio: float = (
-            self.basic.delta_mesh[-2].item() / self.basic.delta_mesh[-1].item()
-        )
+        outer_delta_ratio = (3 * db[-1] + db[-2]) / (db[-1] + 2 * db[-2] + db[-3])
         transform[-1, -1] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
         transform[-1, -2] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
         transform[-1, -2] -= outer_delta_ratio / self.staggered.delta_mesh[-2].item()
