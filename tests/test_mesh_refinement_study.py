@@ -569,7 +569,7 @@ def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
             fig, ax = plt.subplots(figsize=FIGSIZE, layout='constrained')
             fig.get_layout_engine().set(h_pad=0.05)
             ax.plot(on['t_yr'], d[k], 'o-', label='difference')
-            ax.plot(on['t_yr'], 3 * e[k], 's--', label='noise floor 3e')
+            ax.plot(on['t_yr'], 3 * e[k], 's--', label='3 x noise floor')
             ax.set(xscale='log', yscale='log', xlabel='time [yr]', ylabel='relative difference')
             ax.set_title(titles[k])
             ax.yaxis.set_major_locator(LogLocator(numticks=4))
