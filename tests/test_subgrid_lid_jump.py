@@ -76,8 +76,8 @@ def _numpy_jump(s, y, monkeypatch, same=False):
         seen.update(rho=rho, dh=dh)
         return rate(q_b, F_b, rho, dh, *args)
 
-    def base(T_f, phi_f):
-        out = base_state(T_f, phi_f)
+    def base(*args):
+        out = base_state(*args)
         return {**out, 'S_b': float(y[s._n_stag - 1])} if same else out
 
     monkeypatch.setattr(sl, 'stefan_rate', spy)
@@ -186,6 +186,27 @@ def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac
     assert jump == pytest.approx(want, rel=REL, abs=ABS_PER_MASS * float(rho[0]))
     if frac > 0.0:
         assert jump > rho[0] * sl.LID_DH_MIN
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('path', list(PATHS))
+@pytest.mark.parametrize('dS', [-100.0, 100.0])
+def test_solid_lid_base_is_capped_at_the_fluid(eos, monkeypatch, path, dS):
+    """In the solid regime the lid base never lies above the fluid. A fluid ``dS`` below the
+    rheological lid base puts the base at the fluid entropy, so ``T_b = T_f`` and the jump is
+    0; a fluid above it leaves the base at the rheological entropy with ``T_b < T_f``."""
+    s, y = _solver(eos, True, lambda s: s._lid_S_sol - 0.05 * (s._lid_S_sol - float(eos.S_min)))
+    s._dSdt_single(0.0, y)
+    S_rh = s._lid_last.S_b
+    assert S_rh < s._lid_S_sol
+    y[s._n_stag - 1] = S_rh + dS
+    jump, S_b, S_f = PATHS[path](s, y, monkeypatch)
+    T_b, T_f = (float(np.asarray(eos.temperature(s._lid_P, v)).item()) for v in (S_b, S_f))
+    if dS < 0.0:
+        assert (S_b, jump) == (S_f, 0.0)
+    else:
+        assert S_b == pytest.approx(S_rh, rel=1e-6)
+        assert T_b < T_f and jump > 0.0
 
 
 @pytest.mark.physics_invariant
