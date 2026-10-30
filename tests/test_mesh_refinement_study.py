@@ -92,6 +92,39 @@ _MAIN = [
     'T_cmb 1e5',
 ]  # the 10 results of the pass rule; the time-mean melt fraction is a diagnostic
 _PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot order
+_TITLES = ('melt fraction', 'heat lost', 'surface heat flux', 'CMB temperature')
+_FILES = ('melt_fraction', 'heat_lost', 'surface_heat_flux', 'cmb_temperature')
+_MAX_SVG = 40_000  # bytes per validation plot file
+
+
+def _check_size(figure, name):
+    """Both theme files of the plot ``name`` are at most _MAX_SVG bytes."""
+    from proteus_mpl.validation import render
+
+    files, _ = render(figure, name)
+    assert [len(data) <= _MAX_SVG for _, data in files] == [True, True], [
+        (f, len(d)) for f, d in files
+    ]
+
+
+def _check_figure(fig, titles, series, legend):
+    """The panel titles, the y-data of the plotted lines per panel and the legend texts."""
+    axes = fig.axes
+    assert [
+        ''.join(ax.get_title(loc) for loc in ('left', 'center', 'right')) for ax in axes
+    ] == list(titles)
+    for ax, ys in zip(axes, series):
+        got = [np.asarray(line.get_ydata(), float) for line in ax.get_lines()]
+        assert len(got) == len(ys)
+        for g, y in zip(got, ys):
+            np.testing.assert_array_equal(g, y)
+    texts = [
+        t.get_text()
+        for leg in [ax.get_legend() for ax in axes] + fig.legends
+        if leg
+        for t in leg.get_texts()
+    ]
+    assert texts == list(legend)
 
 
 def _one_way(study, n):
@@ -230,25 +263,48 @@ def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
     X = {r: _metrics(runs[r]) for r in runs if r[0] == 'T' and r[-3:] in ('100', '200')}
     ref = X['T50-200']
 
-    def figure():
-        import matplotlib.pyplot as plt
+    series = {
+        k: [
+            np.array([100 * (X[f'T{q}-{n}'][k] / ref[k] - 1) for q in H_TOP])
+            for n in (100, 200)
+        ]
+        for k in _PANELS
+    }
+    assert all(series[k][1][-1] == 0.0 for k in _PANELS)
+    assert (
+        f'{series["Phi 1e5"][1][1]:.1f}' == '2.2' or f'{-series["Phi 1e5"][1][1]:.1f}' == '2.2'
+    )
 
-        fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.6), sharex=True)
-        for ax, k in zip(axes.flat, _PANELS):
-            ax.axhspan(-1, 1, color='0.9', lw=0)
-            for n, marker in ((100, 'o-'), (200, 's-')):
-                y = [100 * (X[f'T{q}-{n}'][k] / ref[k] - 1) for q in H_TOP]
-                ax.plot(H_TOP, y, marker)
-            span = max(abs(X[f'T{q}-{n}'][k] / ref[k] - 1) for q in H_TOP for n in (100, 200))
+    import matplotlib.pyplot as plt
+
+    def make(k):
+        def figure():
+            fig, ax = plt.subplots(figsize=(3.4, 3.0))
+            ax.axhspan(-1, 1, color='0.9', lw=0, label='1 %')
+            for (n, marker), y in zip(((100, 'o-'), (200, 's-')), series[k]):
+                ax.plot(H_TOP, y, marker, label=f'{n} nodes')
+            span = max(np.abs(y).max() for y in series[k]) / 100
             ax.set(xscale='log', ylim=(-130 * span, 130 * span))
+            ax.set(xlabel='top cell [m]', ylabel='change [%]')
+            ax.set_title(_TITLES[_PANELS.index(k)], fontsize='small')
             ax.set_xticks(H_TOP, [str(q) for q in H_TOP])
             ax.minorticks_off()
             ax.locator_params(axis='y', nbins=3)
-        fig.supxlabel('top cell [m]')
-        fig.tight_layout()
-        return fig
+            ax.legend(fontsize='small', frameon=False)
+            fig.tight_layout()
+            return fig
 
-    validation_plot(figure, 'mesh_refinement_convergence')
+        return figure
+
+    for k, tail in zip(_PANELS, _FILES):
+        figure = make(k)
+        fig = figure()
+        _check_figure(
+            fig, [_TITLES[_PANELS.index(k)]], [series[k]], ['1 %', '100 nodes', '200 nodes']
+        )
+        plt.close(fig)
+        _check_size(figure, f'mesh_refinement_convergence_{tail}')
+        validation_plot(figure, f'mesh_refinement_convergence_{tail}')
 
 
 def _pattern(v, i):
@@ -401,21 +457,32 @@ def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
     gap = np.array(on['T_cmb_K']) - np.array(on['T_core_K'])
     assert [f'{x:.0f}' for x in gap] == ['-2', '23', '37', '39']
 
-    def figure():
-        import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(1, 2, figsize=(6.4, 2.6), sharex=True)
-        t = on['t_yr']
-        for ax, k in zip(axes, d):
-            ax.plot(t, d[k], 'o-')
-            ax.plot(t, 3 * e[k], 's--', color='0.5')
-            ax.set(xscale='log', yscale='log')
+    titles = {'T_core_K': 'core temperature', 'F_cmb_J': 'heat across the CMB'}
+    files = {'T_core_K': 'core_temperature', 'F_cmb_J': 'heat'}
+
+    def make(k):
+        def figure():
+            fig, ax = plt.subplots(figsize=(3.4, 3.0))
+            ax.plot(on['t_yr'], d[k], 'o-', label='difference')
+            ax.plot(on['t_yr'], 3 * e[k], 's--', color='0.5', label='noise floor 3e')
+            ax.set(xscale='log', yscale='log', xlabel='time [yr]', ylabel='relative difference')
+            ax.set_title(titles[k], fontsize='small')
             ax.minorticks_off()
-        fig.supxlabel('time [yr]')
-        fig.tight_layout()
-        return fig
+            ax.legend(fontsize='small', frameon=False)
+            fig.tight_layout()
+            return fig
 
-    validation_plot(figure, 'mesh_refinement_cmb')
+        return figure
+
+    for k in d:
+        figure = make(k)
+        fig = figure()
+        _check_figure(fig, [titles[k]], [[d[k], 3 * e[k]]], ['difference', 'noise floor 3e'])
+        plt.close(fig)
+        _check_size(figure, f'mesh_refinement_cmb_{files[k]}')
+        validation_plot(figure, f'mesh_refinement_cmb_{files[k]}')
 
 
 @pytest.mark.parametrize(

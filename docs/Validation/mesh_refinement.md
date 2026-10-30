@@ -40,10 +40,17 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 **Why it matters.** It shows how much a result of a run with a refined mesh depends on the choice of the top cell.
 
-![Change of four results against the top cell thickness at 100 and 200 nodes](../assets/validation/mesh_refinement_convergence.svg#only-light){ width="90%" }
-![Change of four results against the top cell thickness at 100 and 200 nodes](../assets/validation/mesh_refinement_convergence_dark.svg#only-dark){ width="90%" }
+![Change of the global melt fraction at 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_melt_fraction.svg#only-light){ width="48%" }
+![Change of the global melt fraction at 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_melt_fraction_dark.svg#only-dark){ width="48%" }
+![Change of the heat lost up to 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_heat_lost.svg#only-light){ width="48%" }
+![Change of the heat lost up to 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_heat_lost_dark.svg#only-dark){ width="48%" }
 
-**How to read the plot.** Each panel shows one result as its change, in percent, from the 50 m run at 200 nodes, against the top cell thickness on a log axis: the global melt fraction at $10^5$ years (top left), the heat lost up to $10^5$ years (top right), the mean surface heat flux from $10^4$ to $10^5$ years (bottom left) and the CMB temperature at $10^5$ years (bottom right). Circles are runs at 100 nodes, squares runs at 200 nodes. The grey band is $\pm 1$ % around the 50 m run at 200 nodes; the noise floor $3e$ of these four results is at most 0.04 % at 200 nodes and 0.17 % at 100 nodes, too narrow to draw. For a result that converges in the top cell, the squares move towards 0 from right to left; the circles keep the offset of the node count. The gap between the circles and the squares at the same top cell is the effect of the node count: for the melt fraction it is larger than the change between top cells.
+![Change of the mean surface heat flux from 10^4 to 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_surface_heat_flux.svg#only-light){ width="48%" }
+![Change of the mean surface heat flux from 10^4 to 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_surface_heat_flux_dark.svg#only-dark){ width="48%" }
+![Change of the CMB temperature at 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_cmb_temperature.svg#only-light){ width="48%" }
+![Change of the CMB temperature at 10^5 years against the top cell](../assets/validation/mesh_refinement_convergence_cmb_temperature_dark.svg#only-dark){ width="48%" }
+
+**How to read the plots.** Each plot shows one result as its change, in percent, from the 50 m run at 200 nodes, against the top cell thickness on a log axis: the global melt fraction at $10^5$ years (top left), the heat lost up to $10^5$ years (top right), the mean surface heat flux from $10^4$ to $10^5$ years (bottom left) and the CMB temperature at $10^5$ years (bottom right). Circles are runs at 100 nodes, squares runs at 200 nodes. The grey band, marked 1 %, is $\pm 1$ % around the 50 m run at 200 nodes; the noise floor $3e$ of these four results is at most 0.04 % at 200 nodes and 0.17 % at 100 nodes, too narrow to draw. For a result that converges in the top cell, the squares move towards 0 from right to left; the circles keep the offset of the node count. The gap between the circles and the squares at the same top cell is the effect of the node count: for the melt fraction it is larger than the change between top cells.
 
 **What the study finds.** At 200 nodes 5 of the 10 results pass: the melt fraction at $10^3$ and $10^4$ years, the CMB temperature at $10^3$ years, the heat lost up to $10^5$ years and the mean surface heat flux from $10^4$ to $10^5$ years. At 100 nodes 5 of the 10 pass. Of the 5 passes at 200 nodes, 4 do not change in one direction: the 100 m value does not lie between the 200 m and the 50 m value (3 of the 5 at 100 nodes). For these results the spread shrinks, but the study does not show that they approach a limit. The noise floor $3e$ lies between $7.4 \times 10^{-8}$ and $1.4 \times 10^{-3}$ at 200 nodes. The CMB temperature of the 200 m and 100 m runs differs from the 50 m run by at most $3.4 \times 10^{-5}$, but at 200 nodes its spreads do not shrink at $10^4$ and $10^5$ years.
 
@@ -108,10 +115,12 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **Why it matters.** The core temperature and the CMB cell set the CMB heat flow of the core module. This heat flow cools the core.
 
-![Relative change of the CMB temperature and of the CMB heat against time, with the noise floor](../assets/validation/mesh_refinement_cmb.svg#only-light){ width="90%" }
-![Relative change of the CMB temperature and of the CMB heat against time, with the noise floor](../assets/validation/mesh_refinement_cmb_dark.svg#only-dark){ width="90%" }
+![Relative difference of the core temperature against time, with the noise floor](../assets/validation/mesh_refinement_cmb_core_temperature.svg#only-light){ width="48%" }
+![Relative difference of the core temperature against time, with the noise floor](../assets/validation/mesh_refinement_cmb_core_temperature_dark.svg#only-dark){ width="48%" }
+![Relative difference of the heat across the CMB per interval against time, with the noise floor](../assets/validation/mesh_refinement_cmb_heat.svg#only-light){ width="48%" }
+![Relative difference of the heat across the CMB per interval against time, with the noise floor](../assets/validation/mesh_refinement_cmb_heat_dark.svg#only-dark){ width="48%" }
 
-**How to read the plot.** The left panel shows the temperature of the core and the right panel the heat that crosses the CMB in each interval, against time on log axes. The circles are the relative difference between the runs with the 9327 m and the 38456 m CMB cell; the squares are the noise floor $3e$. A circle above its square is a real difference.
+**How to read the plots.** The left plot shows the temperature of the core and the right plot the heat that crosses the CMB in each interval, against time on log axes. The circles are the relative difference between the runs with the 9327 m and the 38456 m CMB cell; the squares are the noise floor $3e$. A circle above its square is a real difference.
 
 **What the study finds.**
 
