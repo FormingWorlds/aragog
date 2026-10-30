@@ -95,6 +95,7 @@ _PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot ord
 _TITLES = ('melt fraction', 'heat lost', 'surface heat flux', 'CMB temperature')
 _FILES = ('melt_fraction', 'heat_lost', 'surface_heat_flux', 'cmb_temperature')
 _MAX_SVG = 40_000  # bytes per validation plot file
+FIGSIZE = (3.4, 3.0)  # inches, every plot of docs/Validation/mesh_refinement.md
 
 
 def _check_size(figure, name):
@@ -125,6 +126,75 @@ def _check_figure(fig, titles, series, legend):
         for t in leg.get_texts()
     ]
     assert texts == list(legend)
+
+
+def _check_layout(figure):
+    """In both themes every legend and text of ``figure()`` lies inside the figure, covers no
+    point of a drawn line and no other text (display coordinates, 2 px margin), every text has
+    the style size of its role and the figure has the size ``FIGSIZE`` of every page plot."""
+    import matplotlib.pyplot as plt
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.transforms import Bbox
+    from proteus_mpl import use
+    from proteus_mpl.validation import _VARIANTS
+
+    for variant, _ in _VARIANTS:
+        use(variant)
+        fig = figure()
+        fig.canvas.draw()
+        r = fig.canvas.get_renderer()
+        legends = [leg for leg in [ax.get_legend() for ax in fig.axes] + fig.legends if leg]
+        boxes = [(f'legend {i}', leg.get_window_extent(r)) for i, leg in enumerate(legends)]
+        role = {t: 'legend.fontsize' for leg in legends for t in leg.get_texts()}
+        points = []
+        for ax in fig.axes:
+            texts = {t: 'axes.titlesize' for t in (ax.title, ax._left_title, ax._right_title)}
+            texts |= {ax.xaxis.label: 'axes.labelsize', ax.yaxis.label: 'axes.labelsize'}
+            for axis, key in ((ax.xaxis, 'xtick.labelsize'), (ax.yaxis, 'ytick.labelsize')):
+                lo, hi = sorted(axis.get_view_interval())
+                texts |= {
+                    t.label1: key for t in axis.get_major_ticks() if lo <= t.get_loc() <= hi
+                }
+            texts = {t: k for t, k in texts.items() if t.get_text()}
+            boxes += [(t.get_text(), t.get_window_extent(r)) for t in texts]
+            role |= texts
+            for line in ax.get_lines():
+                xy = line.get_transform().transform(np.c_[line.get_xdata(), line.get_ydata()])
+                if line.get_linestyle() not in ('None', '') and len(xy) > 1:
+                    s = np.linspace(0, 1, 50)[:, None, None]
+                    xy = (xy[:-1] + s * (xy[1:] - xy[:-1])).reshape(-1, 2)
+                points.append(xy[_inside(ax.bbox, xy)])
+        points = np.concatenate(points)
+        want = {
+            k: FontProperties(size=plt.rcParams[k]).get_size_in_points() for k in role.values()
+        }
+        size = tuple(fig.get_size_inches())
+        bad = [
+            (t.get_text(), t.get_fontsize())
+            for t, k in role.items()
+            if t.get_fontsize() != want[k]
+        ]
+        bad += [('figure size', size)] if size != FIGSIZE else []
+        bad += [
+            (n, 'outside the figure')
+            for n, b in boxes
+            if not _inside(fig.bbox, b.get_points()).all()
+        ]
+        bad += [(n, 'covers a line') for n, b in boxes if _inside(b.padded(2), points).any()]
+        bad += [
+            (n1, n2)
+            for i, (n1, b1) in enumerate(boxes)
+            for n2, b2 in boxes[i + 1 :]
+            if Bbox.intersection(b1.padded(2), b2.padded(2))
+        ]
+        plt.close(fig)
+        assert not bad, (variant, bad)
+
+
+def _inside(box, xy):
+    """Whether each point of the (n, 2) array ``xy`` lies in ``box`` (edges included)."""
+    (x0, y0), (x1, y1) = box.get_points()
+    return (xy[:, 0] >= x0) & (xy[:, 0] <= x1) & (xy[:, 1] >= y0) & (xy[:, 1] <= y1)
 
 
 def _one_way(study, n):
@@ -303,6 +373,7 @@ def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
             fig, [_TITLES[_PANELS.index(k)]], [series[k]], ['1 %', '100 nodes', '200 nodes']
         )
         plt.close(fig)
+        _check_layout(figure)
         _check_size(figure, f'mesh_refinement_convergence_{tail}')
         validation_plot(figure, f'mesh_refinement_convergence_{tail}')
 
@@ -510,6 +581,7 @@ def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
         fig = figure()
         _check_figure(fig, [titles[k]], [[d[k], 3 * e[k]]], ['difference', 'noise floor 3e'])
         plt.close(fig)
+        _check_layout(figure)
         _check_size(figure, f'mesh_refinement_cmb_{files[k]}')
         validation_plot(figure, f'mesh_refinement_cmb_{files[k]}')
 

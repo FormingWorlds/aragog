@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from tests.test_mesh_refinement import _mesh, _radii
+from tests.test_mesh_refinement_study import _check_layout
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -60,6 +61,7 @@ def test_the_refined_mesh_has_the_set_end_cells(validation_plot):
         fig.tight_layout()
         return fig
 
+    _check_layout(figure)
     validation_plot(figure, 'mesh_refinement_end_cells')
 
 
