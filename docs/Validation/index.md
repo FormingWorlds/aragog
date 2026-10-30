@@ -5,7 +5,7 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 - [Core](core.md): the core module against Nimmo (2015), the `leeds` and `leeds_thermal` models of thermal_history (Greenwood et al. 2021) and analytical limits.
 - [Surface boundary](surface.md): the prescribed surface temperature (`outer_boundary_condition = 5`) against closed-form conduction solutions and a grid-convergence study.
 - [Phase transitions](phase_transitions.md): the blend of the material properties at the solidus and the liquidus against the blend formula of SPIDER, and the NumPy and JAX right-hand sides inside the blend.
-- [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides, including the `reference_pinned` solid-rheology solver-wiring benchmarks.
+- [Numerics](numerics.md): the first-principles checks of the solver, the phase-boundary rate controller, the equation of state and the NumPy and JAX right-hand sides, including the `reference_pinned` solid-rheology solver-wiring benchmarks.
 - [Solid-state convection](../Explanations/solid_state_convection.md): the Arrhenius creep, saturating integral activation enthalpy, plastic yield, stagnant-lid closure, and viscous mixing-length top-slope benchmarks.
 
 ## Cases by process
