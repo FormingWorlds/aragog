@@ -168,6 +168,15 @@ def test_rate_cap_relaxes_upper_bound_when_all_cells_are_subsolidus():
     assert _cap([950.0, 1200.0], [-0.01, -1e-4], bounds=(1.0, 100.0)) == 100.0
 
 
+@pytest.mark.unit
+def test_rate_cap_keeps_upper_bound_for_a_heating_cell_in_the_stiff_zone():
+    """A sub-solidus cell heating within delta of the solidus keeps the 100 yr ceiling."""
+    kw = dict(fraction=0.1, bounds=(1.0, 100.0))
+    assert _cap([S_SOL - 1e-10, 950.0], [1e-4, -1e-2], **kw) == 100.0
+    assert _cap([950.0, 900.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e4)
+    assert _cap([S_SOL - 1e-10, 950.0], [-1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
+
+
 def _roots(S0, inside, cap=None):
     """Segment root on two cells (plus the CMB copy of cell 0), unit state scale."""
     return _PhaseBoundarySegmentRoot(

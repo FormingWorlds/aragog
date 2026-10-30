@@ -326,6 +326,14 @@ _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 # solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
+# Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
+_SUBSOLIDUS_RTOL = 1.0e-9
+_SUBSOLIDUS_ATOL = 1.0e-8
+
+
+def _subsolidus(S: npt.NDArray, S_sol: npt.NDArray) -> bool:
+    """Whether every entry of ``S`` is at or below its solidus entropy ``S_sol``."""
+    return bool(np.all(S <= S_sol))
 
 
 def _segment_arming_margin(
@@ -392,7 +400,8 @@ def _rate_phase_boundary_max_step(
     minimum segment progress distance of ``_PhaseBoundarySegmentRoot``. The
     rate floor covers an isentropic molten or mushy start, where interior cells
     have almost no rate until the thermal boundary layers form. Once every
-    entry is at or below the solidus (``np.all(S <= S_sol)``), the upper bound
+    entry is at or below the solidus (``np.all(S <= S_sol)``) and no entry
+    within ``delta`` of a boundary heats (``dSdt > 0``), the upper bound
     relaxes from ``bounds[1]`` to ``np.inf``.
 
     Parameters
@@ -423,7 +432,7 @@ def _rate_phase_boundary_max_step(
     -------
     float
         Maximum CVODE step size ``max_step`` [yr] in ``[bounds[0], hi]``, where
-        ``hi = np.inf`` when ``np.all(S <= S_sol)`` and ``bounds[1]``
+        ``hi = np.inf`` when the upper bound relaxes (see above) and ``bounds[1]``
         otherwise: ``fraction * min(t_c)`` clipped to ``[bounds[0], hi]`` when
         at least one entry has a finite ``t_c``; ``hi`` when no entry has a
         finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the boundaries, or
@@ -433,7 +442,9 @@ def _rate_phase_boundary_max_step(
     if t_c is None:
         return bounds[0]
     t_c = t_c[np.isfinite(t_c)]
-    hi = np.inf if np.all(S <= S_sol) else bounds[1]
+    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+    heating = np.any((dist < delta) & (dSdt > 0.0))
+    hi = np.inf if _subsolidus(S, S_sol) and not heating else bounds[1]
     return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
 
 
@@ -4111,11 +4122,13 @@ class EntropySolver:
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
         ends the call. The segments' trajectories and energy traces are joined. Segments
         starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
-        ``rtol`` at most ``1e-9`` and a physical ``atol`` at most ``1e-8`` in the unit of each
-        state entry (J/(kg K) for entropy, K for a temperature). The limits also hold after a
-        retry loosens ``solver.rtol`` or raises ``_atol_sf``; tighter caller tolerances are
-        kept. With them the V3 validation cases stay inside 1.3e-4 K without the 100 yr
-        ``max_step`` ceiling. Other segments keep the caller's ``rtol`` and ``atol``.
+        ``rtol`` at most ``_SUBSOLIDUS_RTOL`` and a physical ``atol`` at most
+        ``_SUBSOLIDUS_ATOL`` in the unit of each state entry (J/(kg K) for entropy, K for a
+        temperature). The limits also hold after a retry loosens ``solver.rtol`` or raises
+        ``_atol_sf``; tighter caller tolerances are kept. With them the sub-solidus cases of
+        ``docs/Validation/numerics.md`` stay inside 1.3e-4 K without the 100 yr ``max_step``
+        ceiling. Other segments keep the caller's ``rtol`` and ``atol``, and so does the
+        segment after ``max_segments``, which has no segment root.
 
         Parameters
         ----------
@@ -4152,6 +4165,7 @@ class EntropySolver:
         nfev = nst = nfe = 0
         trigger = 'start'
         res = None
+        atol_cap = None  # nondimensional atol limit, built once per call on first use
         for k in range(max_segments + 1):
             tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
             if tspan.size < 2:
@@ -4163,18 +4177,17 @@ class EntropySolver:
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
             h = h_min if last else h_at(t, y)
-            seg_kw = (
-                {
+            seg_kw = cvode_kw
+            if isinstance(roots, _PhaseBoundarySegmentRoot) and _subsolidus(
+                roots.S0, roots.S_sol
+            ):
+                if atol_cap is None:
+                    atol_cap = _SUBSOLIDUS_ATOL / self._build_nondim_scales().state_scale
+                seg_kw = {
                     **cvode_kw,
-                    'rtol': min(cvode_kw['rtol'], 1.0e-9),
-                    'atol': np.minimum(
-                        cvode_kw['atol'], 1.0e-8 / self._build_nondim_scales().state_scale
-                    ),
+                    'rtol': min(cvode_kw['rtol'], _SUBSOLIDUS_RTOL),
+                    'atol': np.minimum(cvode_kw['atol'], atol_cap),
                 }
-                if isinstance(roots, _PhaseBoundarySegmentRoot)
-                and np.all(roots.S0 <= roots.S_sol)
-                else cvode_kw
-            )
             log.append((t * t_ref, trigger, h * t_ref))
             logger.debug(
                 'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',
