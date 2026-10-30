@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_surface_lid_v2_grid.py::test_v2_lid_matches_the_resolved_mesh; command: pytest tests/test_surface_lid_v2_grid.py::test_v2_lid_matches_the_resolved_mesh --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 0.9820742450117447, 0.9983186115177899, 0.9925742188706282, 0.0033272037925195955], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 1.0016813884822102, 1.0179257549882554, 1.0074257811293716, -0.003327203792519728], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 1.0033472965924262, 1.0046332138590683, 1.0036235491342855, -0.00020719241008445934]], "collections": [[16, 2.4771212547196626, 3.6989700043360187, 3.0880456295278407, 0.24436974992327118, 0.9820742450117447, 1.0179257549882554, 0.9999999999999999, 0.0004950520752914356]], "values": [], "value_scales": [], "patches": [[2, 0.0, 0.0, 0.0, 0.0, 0.99, 1.01, 1.0, 0.010000000000000009]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_surface_lid_v2_grid.py::test_v2_lid_matches_the_resolved_mesh; command: pytest tests/test_surface_lid_v2_grid.py::test_v2_lid_matches_the_resolved_mesh --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 0.9820742450117447, 0.9983186115177899, 0.9925742188706282, 0.0033272037925195955], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 1.0016813884822102, 1.0179257549882554, 1.0074257811293716, -0.003327203792519728], [8, 2.4771212547196626, 3.6989700043360187, 3.088045629527841, 0.2618247320606475, 1.0035007815184203, 1.0046509167909785, 1.0037387405658187, -0.0001391530720573538]], "collections": [[16, 2.4771212547196626, 3.6989700043360187, 3.0880456295278407, 0.24436974992327118, 0.9820742450117447, 1.0179257549882554, 0.9999999999999999, 0.0004950520752914356]], "values": [], "value_scales": [], "patches": [[2, 0.0, 0.0, 0.0, 0.0, 0.99, 1.01, 1.0, 0.010000000000000009]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -895,14 +895,14 @@ z
 " style="stroke: #e23d28"/>
     </defs>
     <g clip-path="url(#pe469e4b2c3)">
-     <use xlink:href="#m86276f1368" x="77.789617" y="78.885" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="112.936961" y="81.378556" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="148.084304" y="81.770374" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="183.231648" y="82.200872" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="218.378991" y="82.3006" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="253.526335" y="82.401492" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="288.673679" y="82.450194" style="fill: #e23d28; stroke: #e23d28"/>
-     <use xlink:href="#m86276f1368" x="323.821022" y="82.518925" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="77.789617" y="78.834973" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="112.936961" y="81.309546" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="148.084304" y="81.672779" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="183.231648" y="82.058313" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="218.378991" y="82.085185" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="253.526335" y="82.060271" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="288.673679" y="81.870375" style="fill: #e23d28; stroke: #e23d28"/>
+     <use xlink:href="#m86276f1368" x="323.821022" y="81.410378" style="fill: #e23d28; stroke: #e23d28"/>
     </g>
    </g>
    <g id="patch_4">
