@@ -7,13 +7,14 @@ staggered mesh arrays, one NumPy RHS evaluation, and the end state of a 100-year
 the NumPy RHS and on the JAX CVODE factory. ``<mode>/jax/rhs_calls`` counts the calls of
 the JAX RHS during the solve; the script stops when it is 0, because ``solve()`` falls back
 to the NumPy RHS when the factory fails. The tree's commit SHA is stored as
-``source_commit``.
+``source_commit`` and the operating system and machine as ``platform``.
 
 Usage: ``python tools/verification/generate_mesh_refinement_off_reference.py <out.npz>``
 """
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import sys
 from operator import attrgetter
@@ -141,6 +142,7 @@ def _case(mass_coordinates: bool) -> dict[str, np.ndarray]:
 
 def main(path: Path) -> None:
     arrays = {'source_commit': np.asarray(_commit())}
+    arrays['platform'] = np.asarray(f'{platform.system()} {platform.machine()}')
     for mode, mass in (('mass', True), ('radius', False)):
         arrays |= {f'{mode}/{k}': v for k, v in _case(mass).items()}
     np.savez_compressed(path, **arrays)
