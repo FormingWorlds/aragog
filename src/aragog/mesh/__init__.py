@@ -90,13 +90,19 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
     return float(M_core / (4.0 / 3.0 * np.pi * R_cmb**3))
 
 
+# brentq tolerance [m] of a mass-coordinate radius: the default, and the basic nodes of a
+# refined mesh, whose end cells must hold their set thickness.
+RADIUS_XTOL = 1.0
+REFINED_XTOL = 1e-3
+
+
 def _radius_for_mass_coordinate(
     xi_of_r: Callable[[float], float],
     xi_target: float,
     r_lo: float,
     r_hi: float,
     node: int | str | None = None,
-    xtol: float = 1.0,
+    xtol: float = RADIUS_XTOL,
 ) -> float:
     """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
 
@@ -306,7 +312,12 @@ class Mesh:
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
                 basic_coordinates[j, 0] = _radius_for_mass_coordinate(
-                    _xi_of_r, xi_target, r_lo, r_hi, node=j, xtol=1e-3 if self._refined else 1.0
+                    _xi_of_r,
+                    xi_target,
+                    r_lo,
+                    r_hi,
+                    node=j,
+                    xtol=REFINED_XTOL if self._refined else RADIUS_XTOL,
                 )
             # Zero-width cells divide by zero in the gradient operators, so two
             # nodes clamped to the same endpoint must fail here.
@@ -456,10 +467,10 @@ class Mesh:
     def _check_refined_radii(self, r) -> None:
         """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
         start and end at the shell radii exactly, and each set end cell has its thickness to
-        1e-6 relative, or to 2e-3 m in mass-coordinate mode if that is larger."""
+        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger."""
         r_inner, r_outer = self.settings.inner_radius, self.settings.outer_radius
-        # brentq places mass-mode radii to 1e-3 m, so an end cell holds its target to 2e-3 m.
-        atol = 2e-3 if self.settings.mass_coordinates else 0.0
+        # brentq places a solved node to REFINED_XTOL; an end cell holds twice that.
+        atol = 2 * REFINED_XTOL if self.settings.mass_coordinates else 0.0
         d = np.diff(r)
         bad = [] if np.all(d > 0.0) else ['the radii are not strictly increasing']
         if (r[0], r[-1]) != (r_inner, r_outer):
