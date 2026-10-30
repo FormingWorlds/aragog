@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_surface_lid_validation.py::test_v3_quasi_steady_crust; command: pytest tests/test_surface_lid_validation.py::test_v3_quasi_steady_crust --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[20, -3.0, 1.0, -1.0000000000000004, 0.736842105263158, 0.23360326648378318, 0.9999997931335347, 0.5798216728135438, 0.17718013873107408], [20, -3.0, 1.0, -1.0000000000000004, 0.736842105263158, 1.0000000877908024, 3.764661913234845, 1.7833045539343737, -0.4817643598946744], [1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_surface_lid_validation.py::test_v3_quasi_steady_crust; command: pytest tests/test_surface_lid_validation.py::test_v3_quasi_steady_crust --validation-plots; summary: {"v": 1, "axes": [{"scales": ["log", "linear"], "categories": [null, null], "lines": [[20, -3.0, 1.0, -1.0000000000000004, 0.736842105263158, 0.23360326648375787, 0.999999793133535, 0.5798216728135264, 0.17718013873105543], [20, -3.0, 1.0, -1.0000000000000004, 0.736842105263158, 1.0000000877908028, 3.764661913238022, 1.7833045539342292, -0.4817643598946483], [1, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -42,7 +42,7 @@ z
      <g id="line2d_1">
       <path d="M 56.490766 177.410909 
 L 56.490766 7.2 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
@@ -160,7 +160,7 @@ z
      <g id="line2d_3">
       <path d="M 123.075063 177.410909 
 L 123.075063 7.2 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
@@ -208,7 +208,7 @@ z
      <g id="line2d_5">
       <path d="M 189.659361 177.410909 
 L 189.659361 7.2 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
@@ -229,7 +229,7 @@ L 189.659361 7.2
      <g id="line2d_7">
       <path d="M 256.243658 177.410909 
 L 256.243658 7.2 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
@@ -249,7 +249,7 @@ L 256.243658 7.2
      <g id="line2d_9">
       <path d="M 322.827956 177.410909 
 L 322.827956 7.2 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
@@ -797,7 +797,7 @@ z
      <g id="line2d_46">
       <path d="M 43.173906 136.089199 
 L 336.144815 136.089199 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_47">
       <defs>
@@ -820,7 +820,7 @@ L -3.5 0
      <g id="line2d_48">
       <path d="M 43.173906 92.267443 
 L 336.144815 92.267443 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_49">
       <g>
@@ -838,7 +838,7 @@ L 336.144815 92.267443
      <g id="line2d_50">
       <path d="M 43.173906 48.445687 
 L 336.144815 48.445687 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #1a2230; stroke-width: 0.8; stroke-linecap: square"/>
      </g>
      <g id="line2d_51">
       <g>
@@ -978,7 +978,7 @@ L 280.774715 136.610648
 L 294.792462 136.153505 
 L 308.810209 136.091387 
 L 322.827956 136.089208 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #f2f5f7; stroke-width: 2.2; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #f2f5f7; stroke-width: 2.2; stroke-linecap: square"/>
    </g>
    <g id="line2d_53">
     <path d="M 56.490766 14.93686 
@@ -1001,12 +1001,12 @@ L 280.774715 135.864802
 L 294.792462 136.061862 
 L 308.810209 136.08827 
 L 322.827956 136.089195 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke-dasharray: 8.14,3.52; stroke-dashoffset: 0; stroke: #e23d28; stroke-width: 2.2"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke-dasharray: 8.14,3.52; stroke-dashoffset: 0; stroke: #e23d28; stroke-width: 2.2"/>
    </g>
    <g id="line2d_54">
     <path d="M 43.173906 136.089199 
 L 336.144815 136.089199 
-" clip-path="url(#p67a671f8be)" style="fill: none; stroke: #808080; stroke-width: 0.8; stroke-linecap: square"/>
+" clip-path="url(#pd6272a844f)" style="fill: none; stroke: #e9eef2; stroke-width: 0.8; stroke-linecap: square"/>
    </g>
    <g id="patch_3">
     <path d="M 43.173906 177.410909 
@@ -1221,7 +1221,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p67a671f8be">
+  <clipPath id="pd6272a844f">
    <rect x="43.173906" y="7.2" width="292.970909" height="170.210909"/>
   </clipPath>
  </defs>

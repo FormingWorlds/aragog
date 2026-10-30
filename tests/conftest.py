@@ -20,7 +20,13 @@ from aragog.eos.entropy import EntropyEOS
 from tools.verification import _ssc_helpers
 from tools.verification._ssc_helpers import _parsed
 
-__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax', 'package_logger_isolation']
+__all__ = [
+    '_parsed',
+    'assert_legend_clear',
+    'entropy_eos_copy',
+    'entropy_eos_jax',
+    'package_logger_isolation',
+]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -51,6 +57,40 @@ def entropy_eos_copy(
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
     return _ssc_helpers.entropy_eos_jax(eos_dir)
+
+
+def assert_legend_clear(fig) -> None:
+    """Assert that no legend of ``fig`` covers a marker or a line of its axes.
+
+    Each drawn line is sampled at 50 points per segment in display space, markers at their
+    points, and the legend box is padded by half the marker size. Bands (patches, filled collections) may lie under it.
+    """
+    fig.canvas.draw()
+    for ax in fig.axes:
+        legend = ax.get_legend()
+        if legend is None:
+            continue
+        paths = [
+            (
+                ln.get_transform().transform(ln.get_xydata()),
+                ln.get_markersize(),
+                ln.get_linestyle(),
+            )
+            for ln in ax.get_lines()
+            if ln.get_visible()
+        ]
+        for coll in ax.collections:
+            if hasattr(coll, 'get_segments'):
+                tr = coll.get_transform()
+                paths += [(tr.transform(seg), 0.0, '-') for seg in coll.get_segments()]
+        for xy, ms, ls in paths:
+            box = legend.get_window_extent().padded(0.5 * ms * fig.dpi / 72.0)
+            s = np.linspace(0.0, 1.0, 2 if ls in ('None', '', ' ') else 50)[:, None]
+            dense = np.concatenate(
+                [xy[:1]] + [a + s * (b - a) for a, b in zip(xy[:-1], xy[1:])]
+            )
+            hit = box.count_contains(dense[np.all(np.isfinite(dense), axis=1)])
+            assert hit == 0, f'the legend of {ax.get_ylabel()!r} covers {hit} plotted points'
 
 
 def make_mesh(N: int = 10, scale_p: float = 1.0):

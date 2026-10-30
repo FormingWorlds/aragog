@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import assert_legend_clear, entropy_eos_copy
 from tests.reference.surface_lid_v2_column import (
     LOWT_EOS_MD5,
     MELT_TIMES_YR,
@@ -71,24 +71,27 @@ def test_v2_lid_matches_the_resolved_mesh(validation_plot):
 
         fig, ax = plt.subplots(figsize=(5.0, 3.4))
         ax.axhspan(1 - TOL, 1 + TOL, color='C0', alpha=0.15, label=f'{TOL:.0%} band')
-        ax.axhline(1.0, color='0.5', lw=0.8)
+        ax.axhline(1.0, color=plt.rcParams['text.color'], lw=0.8)
         bound = np.abs(grid - d['grid_1000']) / grid
         ax.errorbar(
             TIMES_YR,
             np.ones_like(grid),
             yerr=bound,
             fmt='none',
-            color='0.4',
+            color=plt.rcParams['text.color'],
             capsize=3,
             label='grid bound',
         )
         ax.plot(TIMES_YR, lid / grid, 'o', color='C1', ms=5, label='10 nodes with lid')
         ax.set_xscale('log')
+        ax.minorticks_off()
+        ax.set_xticks([300, 1000, 3000], ['300', '1000', '3000'])
         ax.set_ylim(0.97, 1.03)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel('lid / resolved flux')
         ax.legend(fontsize=8)
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
     validation_plot(figure, 'surface_lid_v2_resolved_mesh')
@@ -130,7 +133,7 @@ def test_v2_melt_lid_matches_the_resolved_mesh(validation_plot):
         ax.axhspan(
             1 - MELT_TOL, 1 + MELT_TOL, color='C0', alpha=0.15, label=f'{MELT_TOL:.0%} band'
         )
-        ax.axhline(1.0, color='0.5', lw=0.8)
+        ax.axhline(1.0, color=plt.rcParams['text.color'], lw=0.8)
         for q, mark, color in (('flux', 'o', 'C1'), ('crust', 's', 'C2')):
             ratio = d[f'lid_{q}'] / d[f'grid_4000_{q}']
             ax.plot(MELT_TIMES_YR, ratio, mark, color=color, ms=5, label=q)
@@ -140,6 +143,7 @@ def test_v2_melt_lid_matches_the_resolved_mesh(validation_plot):
         ax.set_ylabel('lid / resolved')
         ax.legend(fontsize=8)
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
     validation_plot(figure, 'surface_lid_v2_melt_resolved_mesh')

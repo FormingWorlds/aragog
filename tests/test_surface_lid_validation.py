@@ -15,6 +15,7 @@ from scipy.optimize import brentq
 from scipy.special import erf
 
 from aragog import surface_lid as sl
+from tests.conftest import assert_legend_clear
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -125,11 +126,15 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
             ax.axhline(2 * lam, color=c, lw=1.0, label=f'Neumann, St = {St:g}')
             ax.plot(T_V1 / YR, d / np.sqrt(KAPPA * T_V1), 'o', color=c, ms=6)
             ax.plot(t_lin / YR, d_lin / np.sqrt(KAPPA * t_lin), '--', color=c, lw=1.2)
+        ink = plt.rcParams['text.color']
+        ax.plot([], [], 'o', color=ink, ms=6, label='lid, similarity start')
+        ax.plot([], [], '--', color=ink, lw=1.2, label='lid, linear start')
         ax.set_xscale('log')
         ax.set_xlabel('time (yr)')
         ax.set_ylabel(r'$\delta / \sqrt{\kappa t}$')
         ax.legend(fontsize=8)
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
     validation_plot(figure, 'surface_lid_v1_neumann_growth')
@@ -167,6 +172,7 @@ def test_v2_half_space_cooling(validation_plot):
         ax.set_ylabel(r'$F_s \,/\, (k \Delta T / \sqrt{\pi \kappa t})$')
         ax.legend(fontsize=8)
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
     validation_plot(figure, 'surface_lid_v2_half_space')
@@ -203,11 +209,12 @@ def test_v3_quasi_steady_crust(validation_plot):
         ax.semilogx(
             t / tau, [s.q_b / F_b for s in surf], '--', color='C1', label=r'$q_b / F_b$'
         )
-        ax.axhline(1.0, color='0.5', lw=0.8)
+        ax.axhline(1.0, color=plt.rcParams['text.color'], lw=0.8)
         ax.set_xlabel('time / relaxation time')
         ax.set_ylabel('ratio to steady state')
         ax.legend(fontsize=8)
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
     validation_plot(figure, 'surface_lid_v3_steady_crust')
