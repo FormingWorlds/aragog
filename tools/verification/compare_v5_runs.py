@@ -97,7 +97,9 @@ def end_state(path):
     snaps = {float(p.name[:-7].replace('p', '.')): p for p in (out / 'data').glob('*_int.nc')}
     t_snap = max(snaps)
     if abs(t_snap - float(rows[-1]['Time'])) > 1.0e-3:  # the file name keeps 3 decimals
-        raise SystemExit(f'{out}: last snapshot at {t_snap}, last helpfile Time {rows[-1]["Time"]}')
+        raise SystemExit(
+            f'{out}: last snapshot at {t_snap}, last helpfile Time {rows[-1]["Time"]}'
+        )
     with netCDF4.Dataset(snaps[t_snap]) as nc:
         prof = {k: np.asarray(nc.variables[k][:], dtype=float) for k in PROFILES}
     return {**{k: float(rows[-1][k]) for k in COLUMNS}, **prof, 'rows': len(rows)}
@@ -122,6 +124,7 @@ def check_runs(case, runs, state, reference_rtol=1.0e-10):
             bad = bad or any(k not in v or v[k] != w for k, w in want.items())
             end = [(state[n]['Time'], state[n]['rows']) for n in (name, role)]
             bad = bad or end[0] != end[1]
+        # The logged version is the string set when Aragog was installed, not read from git.
         on_pin = v['Aragog'].rsplit('+g', 1)[-1][:7] == pin['Aragog'][:7]
         if bad or on_pin != (role == 'main'):
             raise SystemExit(f'{case} {name}: run {v} does not fit its role (pins {pin})')

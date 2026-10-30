@@ -1472,7 +1472,9 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
     segs = getattr(sol, 'segments', [])
     assert len(segs) >= 10
     S_all = np.asarray(sol.y)[: s._n_stag, :]
-    S_min = shared_eos.S_min  # margin 0: the table edge, as the inside_table check of the V3 tool
+    S_min = (
+        shared_eos.S_min
+    )  # margin 0: the table edge, as the inside_table check of the V3 tool
     assert np.min(S_all) >= S_min, f'Entropy {np.min(S_all)} left the table (S_min {S_min})'
     assert any(not np.isfinite(seg[2]) for seg in segs), 'max_step never relaxed to inf'
 

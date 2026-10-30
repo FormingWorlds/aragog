@@ -43,6 +43,10 @@ def test_slow_landing_needs_a_slow_binding_cell_near_a_boundary():
     S = np.array([103.0, 150.0])
     assert tool.regime(S, np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA) == (True, False)
     assert tool.regime(S, np.full(2, -1.0), S_LIQ, S_SOL, MASS, DELTA) == (False, False)
+    # Edges: 4.5 is inside alpha delta = 5; 0.7/yr is above 0.05 delta/yr = 0.5/yr.
+    S_edge = np.array([104.5, 150.0])
+    assert tool.regime(S_edge, np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA) == (True, False)
+    assert tool.regime(S, np.full(2, -0.7), S_LIQ, S_SOL, MASS, DELTA) == (False, False)
 
 
 def test_regime_takes_the_binding_cell_of_the_controller():
@@ -64,6 +68,19 @@ def test_regime_counter_counts_calls_and_restores_the_cap():
     assert tool.es._rate_phase_boundary_max_step is original
     with pytest.raises(RuntimeError), tool.regime_counter():
         raise RuntimeError
+    assert tool.es._rate_phase_boundary_max_step is original
+
+
+def test_regime_counter_raises_its_own_error_at_the_end(monkeypatch):
+    """A counter error that the caller swallows (the solver does) is raised when the block ends."""
+    original = tool.es._rate_phase_boundary_max_step
+    monkeypatch.setattr(tool, 'regime', lambda *a, **k: 1 / 0)
+    args = (np.array([103.0, 150.0]), np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA)
+    with pytest.raises(ZeroDivisionError), tool.regime_counter():
+        try:
+            tool.es._rate_phase_boundary_max_step(*args)
+        except ZeroDivisionError:
+            pass  # as the solver catches errors of the step rule
     assert tool.es._rate_phase_boundary_max_step is original
 
 

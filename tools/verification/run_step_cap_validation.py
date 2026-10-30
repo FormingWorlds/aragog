@@ -70,33 +70,45 @@ PALEOS_LOWT_MD5 = (
 )
 STARTS = (-2, -1, 0, 1, 2)
 V3_BOUND_K = 1.3e-4  # largest |dT| [K] of a v3 rate run against its reference
+SLOW_RATE = 0.05  # slow-landing rate [delta per year]
 
 
 def regime(S, dSdt, S_liq, S_sol, mass, delta, rate_floor=True, **_):
     """Return (slow landing, sub-solidus) of one segment start of the rate cap.
 
     Slow landing: the cell that sets the step (shortest time from
-    ``_rate_phase_boundary_times``) is within 0.5 delta of a boundary and moves slower than
-    0.05 delta per year (rate floored at the mass-weighted mean). Sub-solidus: no cell above
-    the solidus.
+    ``_rate_phase_boundary_times``) is within ``alpha`` delta of a boundary (``alpha`` of
+    ``_PhaseBoundarySegmentRoot``, 0.5) and moves slower than ``SLOW_RATE`` delta per year
+    (rate floored at the mass-weighted mean). Sub-solidus: no cell above the solidus.
     """
+    alpha = es._PhaseBoundarySegmentRoot.alpha
     t_c = es._rate_phase_boundary_times(S, dSdt, S_liq, S_sol, mass, delta, rate_floor)
     slow = False
     if t_c is not None and np.isfinite(t_c).any():
         b = int(np.nanargmin(np.where(np.isfinite(t_c), t_c, np.nan)))
         dist = min(abs(S[b] - S_liq[b]), abs(S[b] - S_sol[b]))
-        slow = bool(dist < 0.5 * delta and t_c[b] > 10.0)  # t_c = 0.5 delta / floored rate
-    return slow, bool(np.all(S <= S_sol))
+        # t_c = alpha delta / floored rate here, so the rate test is t_c > alpha / SLOW_RATE
+        slow = bool(dist < alpha * delta and t_c[b] > alpha / SLOW_RATE)
+    return slow, es._subsolidus(S, S_sol)
 
 
 @contextmanager
 def regime_counter():
-    """Count the segment starts of each regime while the block runs."""
+    """Count the segment starts of each regime while the block runs.
+
+    An error of the counter is raised again at the end of the block: the solver catches
+    errors of the step rule and runs on at 1 yr.
+    """
     counts = {'segments': 0, 'slow_landing': 0, 'subsolidus': 0}
     original = es._rate_phase_boundary_max_step
+    errors = []
 
     def counted(*args, **kwargs):
-        slow, sub = regime(*args[:6], **kwargs)
+        try:
+            slow, sub = regime(*args[:6], **kwargs)
+        except Exception as exc:
+            errors.append(exc)
+            raise
         counts['segments'] += 1
         counts['slow_landing'] += slow
         counts['subsolidus'] += sub
@@ -107,6 +119,8 @@ def regime_counter():
         yield counts
     finally:
         es._rate_phase_boundary_max_step = original
+    if errors:
+        raise errors[0]
 
 
 def _v3_solver(eos, case, mode, tol, width=None):
@@ -132,10 +146,7 @@ def _v3_solver(eos, case, mode, tol, width=None):
 
 def v3_start(eos, name):
     """Return the unperturbed start entropy [J/(kg K)] of a v3 case."""
-    S_sol = np.asarray(
-        eos.solidus_entropy(_v3_solver(eos, V3[name], 'rate', 1e-8)._P_stag_flat)
-    )
-    S_sol = S_sol.ravel()
+    S_sol = np.ravel(eos.solidus_entropy(_v3_solver(eos, V3[name], 'rate', 1e-8)._P_stag_flat))
     if name == 'v3_r4':
         return np.full_like(S_sol, S_sol[-1] + 5.0)
     S0 = S_sol - 15.0  # off the stiff-zone edge, so a round-off start keeps dist > delta

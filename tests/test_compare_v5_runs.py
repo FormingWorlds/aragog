@@ -55,7 +55,10 @@ def _run(
         f'[ INFO  ] Interior module   aragog version {aragog}\n'
     )
     t_snap = t_end if t_snap is None else t_snap
-    for name, T in (('99p000_int.nc', late or temp), (f'{t_snap:.3f}'.replace('.', 'p') + '_int.nc', temp)):
+    for name, T in (
+        ('99p000_int.nc', late or temp),
+        (f'{t_snap:.3f}'.replace('.', 'p') + '_int.nc', temp),
+    ):
         with netCDF4.Dataset(out / 'data' / name, 'w') as nc:
             nc.createDimension('s', len(T))
             for k in cmp.PROFILES:
@@ -70,7 +73,13 @@ def _run(
 def _v5b(tmp_path, run_T=999.5, run_temp=(1.0, 1.5)):
     """REFERENCE, MAIN and RUN of a v5b case where RUN is closer to REFERENCE than MAIN."""
     ref = _run(
-        tmp_path / 'ref', 'v5b', BRANCH, 1000.0, (1.0, 2.0), reference=True, reference_rtol=1e-10
+        tmp_path / 'ref',
+        'v5b',
+        BRANCH,
+        1000.0,
+        (1.0, 2.0),
+        reference=True,
+        reference_rtol=1e-10,
     )
     main = _run(tmp_path / 'main', 'v5b', MAIN, 1000.5, (1.0, 2.5))
     run = _run(tmp_path / 'run', 'v5b', BRANCH, run_T, run_temp)
