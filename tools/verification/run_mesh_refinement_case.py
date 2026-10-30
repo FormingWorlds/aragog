@@ -4,7 +4,7 @@ Each part is a fresh solver started from the end state of the previous part and 
 next sample time. After each part the run folder gets ``za_part<k>.npz`` (stored rows ``t``
 [yr], ``y``, the basic and staggered temperatures, ``S_sol`` the staggered solidus entropy and
 ``y_end``) and one record in ``za.json`` (time, status, melt fraction, CMB temperature, energy
-integrals, CVODE counters, mesh, source commit and the config hash).
+integrals, CVODE counters, mesh, source commit, config hash and the md5 of every table file).
 ``tools/verification/run_mesh_refinement_study.py`` reads these folders. Run it from the root of
 the aragog tree under test.
 
@@ -89,6 +89,13 @@ def case_config(a: argparse.Namespace, tree: Path) -> tuple[str, dict | None, st
         {'core_module': core} if core else {}
     )
     return text, core, hashlib.sha256((text + json.dumps(key)).encode()).hexdigest()[:16]
+
+
+def _table_md5(eos_dir: Path) -> dict:
+    """The md5 of every table file ``*.dat`` in ``eos_dir``, by file name."""
+    return {
+        p.name: hashlib.md5(p.read_bytes()).hexdigest() for p in sorted(eos_dir.glob('*.dat'))
+    }
 
 
 class _CvodeStats(logging.Handler):
@@ -222,6 +229,7 @@ def main(argv=None) -> int:
     md5 = hashlib.md5((a.eos_dir / 'temperature_solid.dat').read_bytes()).hexdigest()
     if a.eos_md5 and md5 != a.eos_md5:
         raise SystemExit(f'temperature_solid.dat md5 {md5}, expected {a.eos_md5}')
+    tables = _table_md5(a.eos_dir)
     git = ['git', 'rev-parse', 'HEAD', 'HEAD^{tree}']
     sha, tree_id = subprocess.run(
         git, capture_output=True, text=True, check=True
@@ -233,14 +241,18 @@ def main(argv=None) -> int:
     out_json = a.outdir / f'{STEM}.json'
     if a.rows:
         rows = json.loads(out_json.read_text())
-        if {r['config_hash'] for r in rows} != {config_hash}:
-            raise SystemExit(f'{out_json} comes from another config')
+        if {r['config_hash'] for r in rows} != {config_hash} or (
+            rows[0].get('table_md5', tables) != tables
+        ):
+            raise SystemExit(f'{out_json} comes from another config or table set')
     if a.resume and out_json.exists():
         rows = json.loads(out_json.read_text())
-        if {r['sha'] for r in rows} != {sha} or {r['config_hash'] for r in rows} != {
-            config_hash
-        }:
-            raise SystemExit(f'{out_json} comes from another commit or config')
+        if (
+            {r['sha'] for r in rows} != {sha}
+            or {r['config_hash'] for r in rows} != {config_hash}
+            or rows[0].get('table_md5', tables) != tables
+        ):
+            raise SystemExit(f'{out_json} comes from another commit, config or table set')
         if not rows[-1]['reached'] or rows[-1]['status'] < 0:
             raise SystemExit(
                 f'{out_json}: part {len(rows) - 1} did not reach its time; rerun it'
@@ -314,9 +326,9 @@ def main(argv=None) -> int:
         s.solve()
         wall = time.perf_counter() - w0
         tt, yy = np.asarray(s._solution.t, float), np.asarray(s._solution.y, float)
-        if (
-            y_prev is not None
-            and np.max(np.abs(yy[:, 0] - y_prev) / np.maximum(np.abs(y_prev), 1e-30)) > 1e-9
+        if y_prev is not None and (
+            abs(tt[0] - t_prev) > 1e-9 * t_prev
+            or np.max(np.abs(yy[:, 0] - y_prev) / np.maximum(np.abs(y_prev), 1e-30)) > 1e-9
         ):
             raise RuntimeError(f'part {k} does not start from the end state of part {k - 1}')
         t_got, y_end = float(tt[-1]), yy[:, -1].copy()
@@ -345,6 +357,7 @@ def main(argv=None) -> int:
             cmb_cell=a.cmb_cell,
             eos_dir=str(a.eos_dir),
             eos_md5=md5,
+            table_md5=tables,
             core_bc=s._core_bc,
             core_module_params=core,
             h_top=float(r[-1] - r[-2]),

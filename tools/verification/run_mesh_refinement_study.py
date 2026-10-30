@@ -150,6 +150,8 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         raise ValueError(f'{folder}: {len(parts)} part files for {len(rows)} records')
     if len({r['sha'] for r in rows}) != 1 or len({r.get('config_hash') for r in rows}) != 1:
         raise ValueError(f'{folder}: parts from more than one tree or config')
+    if len({json.dumps(r['table_md5'], sort_keys=True) for r in rows if 'table_md5' in r}) > 1:
+        raise ValueError(f'{folder}: parts from more than one table set')
     t, s_top, s_bot, s_end = [], [], [], []
     zs = [np.load(p) for p in parts]
     s_sol = zs[0]['S_sol'][-1]
