@@ -83,6 +83,8 @@ def _dirichlet(delta, E):
 T_V1 = np.array([1e8, 1e10, 1e12])
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(600)
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_v1_crust_growth_follows_neumann(validation_plot):
