@@ -419,13 +419,14 @@ def test_growth_stop_warns_once_on_the_jax_batch_path(caplog):
 
 
 def test_enthalpy_floor_warns_on_the_jax_batch_path(caplog):
-    """A top cell below the lid-base entropy puts the Stefan enthalpy jump under its floor;
-    the JAX batch path warns once, as the NumPy loop does."""
+    """A top cell just above the solidus, the lid-base entropy without the rheology, puts the
+    Stefan enthalpy jump under its floor; the JAX batch path warns once, as the NumPy loop
+    does."""
     import logging
 
     s = _jax_cvode_lid_solver()
     s.set_initial_lid(30.0, 30.0 * float(s._lid_hv.H(900.0)))
-    s.set_initial_entropy(s._lid_S_sol - 300.0)
+    s.set_initial_entropy(s._lid_S_sol + 0.1)
     with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
         s.solve()
     assert s._batch_powers_calls > 0
