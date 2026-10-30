@@ -164,12 +164,13 @@ def test_v5b_floor_is_the_largest_round_off_offset(tmp_path):
         ('main', dict(s0_eps=-1e-12), 's0_eps'),
         ('run', dict(drop=('reference_rtol',)), 'reference_rtol'),
         ('main', dict(drop=('reference_rtol',)), 'reference_rtol'),
+        ('main', dict(aragog=BRANCH, solid_steps=2), 'Aragog pin, solid_steps'),
     ],
 )
 def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, failed):
     """Versions, a modified tree, driver flags and the end melt fraction must fit each role.
 
-    The message names the run and, as the only failed check, the changed one.
+    The message names the run and each changed check.
     """
     run, main, ref = _v5b(tmp_path)
     kw = dict(

@@ -36,7 +36,10 @@ def test_reference_caps_every_cvode_solve_at_one_year(monkeypatch):
 
     monkeypatch.setattr(v1.EntropySolver, '_solve_cvode', record)
     case = dict(v1.CASES['B'], end=300.0, n=12)
-    v1.run_case(v1.EntropyEOS(str(EOS_DIR)), case, 'fixed', 1e-10, one_year=True)
+    try:
+        v1.run_case(v1.EntropyEOS(str(EOS_DIR)), case, 'fixed', 1e-10, one_year=True)
+    except RuntimeError as exc:
+        pytest.fail(f'the reference stopped: {exc}')
     assert seen and max(seen) <= 1.0 + 1e-12
 
 
