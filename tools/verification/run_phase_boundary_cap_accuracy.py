@@ -54,14 +54,16 @@ RATE_BOUND_K = 1.3e-4  # the bound the energy-equation docs state for 'rate' at 
 
 
 def _one_year_steps(s):
-    """Run every CVODE solve of ``s`` at ``max_step`` 1 yr."""
-    solve = s._solve_cvode
+    """Run every CVODE solve of ``s`` at ``max_step`` 1 yr; return the list of those solves."""
+    solve, calls = s._solve_cvode, []
 
     def one_year(*args, **kw):
         kw['max_step'] = 1.0 / s._build_nondim_scales().t_ref
+        calls.append(kw['max_step'])
         return solve(*args, **kw)
 
     s._solve_cvode = one_year
+    return calls
 
 
 def run_case(eos, case, mode, tol, one_year=False):
@@ -81,8 +83,7 @@ def run_case(eos, case, mode, tol, one_year=False):
     p.solver.max_steps = 10_000_000
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
-    if one_year:
-        _one_year_steps(s)
+    calls = _one_year_steps(s) if one_year else None
     if case['start'] == 'mushy':
         s.set_initial_entropy(_pick_mushy_S(eos))
     else:
@@ -91,6 +92,8 @@ def run_case(eos, case, mode, tol, one_year=False):
     sol = s._solution
     if sol.status != 0:
         raise RuntimeError(f'{mode} at {tol:g}: solver status {sol.status}')
+    if calls == []:  # without CVODE the solver falls back to Radau, which has no 1 yr steps
+        raise RuntimeError(f'{mode} at {tol:g}: the 1 yr reference ran no CVODE solve')
     T = np.asarray(eos.temperature(s._P_stag_flat, np.asarray(sol.y)[: s._n_stag, -1])).ravel()
     return T, int(sol.get('cvode_nst') or 0), int(sol.nfev)
 

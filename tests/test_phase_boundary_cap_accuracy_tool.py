@@ -35,17 +35,23 @@ def test_one_year_steps_replace_every_max_step():
     assert seen == [4.0, 4.0, 4.0]
 
 
-def test_main_runs_only_the_reference_at_one_year(monkeypatch):
-    """The 'fixed' 1e-10 reference forces 1 yr steps; the three compared runs do not."""
+@pytest.fixture
+def fake_main(monkeypatch):
+    """Run ``main`` with the given ``run_case`` and no EOS table."""
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
+    monkeypatch.setattr(v1, 'EntropyEOS', lambda _eos_dir: None)
+    return lambda run_case: monkeypatch.setattr(v1, 'run_case', run_case)
+
+
+def test_main_runs_only_the_reference_at_one_year(fake_main):
+    """The 'fixed' 1e-10 reference forces max_step 1 yr; the three compared runs do not."""
     calls = []
 
     def run_case(eos, case, mode, tol, one_year=False):
         calls.append((mode, tol, one_year))
         return np.zeros(2), 1, 1
 
-    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
-    monkeypatch.setattr(v1, 'EntropyEOS', lambda _eos_dir: None)
-    monkeypatch.setattr(v1, 'run_case', run_case)
+    fake_main(run_case)
     assert v1.main(['A']) == 0
     assert calls == [
         ('fixed', 1e-10, True),
@@ -55,17 +61,18 @@ def test_main_runs_only_the_reference_at_one_year(monkeypatch):
     ]
 
 
-def test_main_check_exits_1_when_rate_exceeds_the_bound(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    'scale, check, code', [(2.0, False, 0), (2.0, True, 1), (0.5, True, 0)]
+)
+def test_main_check_exits_1_only_when_rate_exceeds_the_bound(
+    fake_main, capsys, scale, check, code
+):
     """With --check, a 'rate' run at 1e-8 above the bound names its case and returns 1."""
-    over = v1.RATE_BOUND_K * 2.0
 
     def run_case(eos, case, mode, tol, one_year=False):
-        T = np.full(2, over if (mode, tol) == ('rate', 1e-8) else 0.0)
+        T = np.full(2, v1.RATE_BOUND_K * scale if (mode, tol) == ('rate', 1e-8) else 0.0)
         return T, 1, 1
 
-    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
-    monkeypatch.setattr(v1, 'EntropyEOS', lambda _eos_dir: None)
-    monkeypatch.setattr(v1, 'run_case', run_case)
-    assert v1.main(['A'], check=False) == 0
-    assert v1.main(['A', 'B'], check=True) == 1
-    assert 'case(s) A, B' in capsys.readouterr().out
+    fake_main(run_case)
+    assert v1.main(['A', 'B'], check=check) == code
+    assert ('case(s) A, B' in capsys.readouterr().out) == bool(code)
