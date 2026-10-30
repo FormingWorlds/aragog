@@ -1,5 +1,6 @@
 # PROTEUS config of the step-controller case V5B (docs/Validation/numerics.md): tests/integration/zalmoxis_aragog_calliope.toml at PROTEUS a8bbd8751cb5040aedd90f7acb4a85755afae26b with the case settings applied.
 # MAIN run of tools/verification/compare_v5_runs.py: Aragog 4ae8167d469763449b51cb5097c59f83b5472843, the code without the controller rules near and below the solidus.
+# Settings that differ from the source config: interior_struct.module "dummy" (no Zalmoxis structure, so its [interior_struct.zalmoxis] table is left out) with melting_dir "Monteux-600"; planet.temperature_mode "adiabatic" (source "adiabatic_from_cmb") and tsurf_init 1750; orbit.dummy.H_tide 0 (source 1e-9); atmos_clim.dummy.gamma 0.01 (source 0.5); interior_energetics heat_radiogenic false, rtol 1e-8, aragog.atol_temperature_equivalent 1e-8 and aragog.phase_boundary_cap "rate"; params.out path "step_cap_v5b", plot_mod 0 and write_mod 1; params.stop.solid.freeze_volatiles true.
 config_version = "3.0"
 
 [star]
@@ -49,6 +50,7 @@ times = "end"
 [params.out]
 path = "step_cap_v5b"
 plot_mod = 0
+write_mod = 1
 
 [params.dt]
 initial = 100.0
@@ -73,15 +75,6 @@ N_mode = "ppmw"
 N_budget = 500
 S_mode = "ppmw"
 S_budget = 500
-
-[interior_struct.zalmoxis]
-update_interval = 0
-update_dphi_abs = 0.999
-update_dtmagma_frac = 0.999
-update_dw_comp_abs = 0.999
-update_stale_ceiling = 0
-num_levels = 150
-solver_max_iter_inner = 100
 
 [interior_energetics.aragog]
 atol_temperature_equivalent = 1e-8

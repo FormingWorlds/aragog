@@ -40,7 +40,7 @@ import numpy as np
 DATA = Path(__file__).resolve().parent / 'data'
 CONFIGS = {
     'v5': DATA / 'v5_aragog_janus.toml',
-    'v5b': DATA / 'v5b_zalmoxis_aragog_calliope.toml',
+    'v5b': DATA / 'v5b_aragog_calliope.toml',
 }
 COLUMNS = (
     'Time',

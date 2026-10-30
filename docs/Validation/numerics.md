@@ -410,5 +410,5 @@ Which rule causes the gap in this run is not measured; near $96\text{ Myr}$ in t
     - Reference: 1 yr steps at rtol $10^{-10}$ and physical atol $10^{-10}$ in every CVODE call; the same coupled run with the Aragog commit without the rules of the controller near and below the solidus; 4 round-off runs for the floor
     - Tolerance: On each of the 11 columns, the error against the reference is not larger than that of the run without those rules plus the round-off floor (observed: 7 columns pass; `T_magma`, `T_surf`, `F_int` and `F_atm` fail, see the known limit)
     - Test id: V5b
-    - Config: `tools/verification/data/v5b_zalmoxis_aragog_calliope.toml`; its header records the PROTEUS commit of the case and the Aragog commit of the second run
+    - Config: `tools/verification/data/v5b_aragog_calliope.toml`; its header records the PROTEUS commit of the case and the Aragog commit of the second run
     - Command: `python tools/verification/run_v5b_proteus.py --output-dir RUN` with this Aragog, `--reference --output-dir REF` for the reference, `--s0-eps=1e-12 --output-dir RUN_P` and `--s0-eps=-1e-12 --output-dir RUN_M` for the floor; the same runs `MAIN`, `MAIN_P` and `MAIN_M` with the Aragog commit of the config header; then `python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF --floor RUN_P RUN_M MAIN_P MAIN_M`

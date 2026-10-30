@@ -1,6 +1,6 @@
 """Coupled PROTEUS run of the step-controller case V5b, with its stop rule and its reference.
 
-The case config is ``tools/verification/data/v5b_zalmoxis_aragog_calliope.toml``; its header
+The case config is ``tools/verification/data/v5b_aragog_calliope.toml``; its header
 records the PROTEUS commit of the case. The driver sets case settings that are not PROTEUS
 config options before the run starts:
 
@@ -8,7 +8,8 @@ config options before the run starts:
   (``proteus.utils.terminate.check_termination``);
 - ``--reference`` integrates every CVODE call at ``--reference-rtol`` (default 1e-10), a
   physical atol of the same value and 1 yr steps (``EntropySolver._solve_cvode``), so the
-  reference does not depend on the step controller;
+  step size and the tolerances of the reference do not depend on the step controller (its
+  segment roots still split each call);
 - ``--s0-eps`` multiplies the state of the first CVODE call that spans time by 1 + eps for a
   round-off start (PROTEUS sets the start entropy and makes zero-length calls first).
 
@@ -31,19 +32,10 @@ from pathlib import Path
 
 import numpy as np
 
-CONFIG = Path(__file__).resolve().parent / 'data' / 'v5b_zalmoxis_aragog_calliope.toml'
-SOLID_STEPS = 3
-COLUMNS = (
-    'Time',
-    'T_magma',
-    'T_surf',
-    'F_int',
-    'F_atm',
-    'Phi_global',
-    'M_mantle_liquid',
-    'M_mantle_solid',
-    'R_int',
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from compare_v5_runs import COLUMNS, SOLID_STEPS  # noqa: E402
+
+CONFIG = Path(__file__).resolve().parent / 'data' / 'v5b_aragog_calliope.toml'
 
 
 def hook(owner, name):
