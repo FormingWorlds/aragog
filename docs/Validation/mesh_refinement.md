@@ -14,8 +14,8 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 **Why it matters.** The surface and CMB heat flow are computed over the end cells, so the end cells decide how well the solver resolves the boundary layers.
 
-![Cell thickness against depth for the uniform mesh and two refined meshes of abe_solid in mass-coordinate mode](../assets/validation/mesh_refinement_end_cells.svg#only-light){ width="80%" }
-![Cell thickness against depth for the uniform mesh and two refined meshes of abe_solid in mass-coordinate mode](../assets/validation/mesh_refinement_end_cells_dark.svg#only-dark){ width="80%" }
+![Cell thickness against depth for the uniform mesh and two refined meshes of abe_solid in mass-coordinate mode](../assets/validation/mesh_refinement_end_cells.svg#only-light){ width="48%" }
+![Cell thickness against depth for the uniform mesh and two refined meshes of abe_solid in mass-coordinate mode](../assets/validation/mesh_refinement_end_cells_dark.svg#only-dark){ width="48%" }
 
 **How to read the plot.** The x-axis is the depth of each cell centre below the surface, in km; the y-axis is the cell thickness, in m, on a log scale. Each line is one mesh in mass-coordinate mode; the dots mark the two end cells, which the test asserts. The uniform mesh has cells from 9.3 to 10.9 km. With a 50 m top cell the cells grow with depth; the largest cell, 38.6 km, is the third cell above the CMB. With a 200 m top cell and a 2 km CMB cell the largest cell is 26.6 km, in the middle of the mantle.
 

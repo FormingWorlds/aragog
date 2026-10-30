@@ -95,7 +95,7 @@ _PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot ord
 _TITLES = ('melt fraction', 'heat lost', 'surface heat flux', 'CMB temperature')
 _FILES = ('melt_fraction', 'heat_lost', 'surface_heat_flux', 'cmb_temperature')
 _MAX_SVG = 40_000  # bytes per validation plot file
-FIGSIZE = (3.4, 3.0)  # inches, every plot of docs/Validation/mesh_refinement.md
+FIGSIZE = (4.4, 4.4)  # inches, every plot of docs/Validation/mesh_refinement.md
 
 
 def _check_size(figure, name):
@@ -349,19 +349,20 @@ def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
 
     def make(k):
         def figure():
-            fig, ax = plt.subplots(figsize=(3.4, 3.0))
-            ax.axhspan(-1, 1, color='0.9', lw=0, label='1 %')
+            fig, ax = plt.subplots(figsize=FIGSIZE, layout='constrained')
+            fig.get_layout_engine().set(h_pad=0.05)
+            band = plt.rcParams['text.color']
+            ax.axhspan(-1, 1, color=band, alpha=0.12, lw=0, label='1 %')
             for (n, marker), y in zip(((100, 'o-'), (200, 's-')), series[k]):
                 ax.plot(H_TOP, y, marker, label=f'{n} nodes')
-            span = max(np.abs(y).max() for y in series[k]) / 100
-            ax.set(xscale='log', ylim=(-130 * span, 130 * span))
+            span = 1.3 * max(1.0, *(np.abs(y).max() for y in series[k]))
+            ax.set(xscale='log', ylim=(-span, span))
             ax.set(xlabel='top cell [m]', ylabel='change [%]')
-            ax.set_title(_TITLES[_PANELS.index(k)], fontsize='small')
+            ax.set_title(_TITLES[_PANELS.index(k)])
             ax.set_xticks(H_TOP, [str(q) for q in H_TOP])
             ax.minorticks_off()
-            ax.locator_params(axis='y', nbins=3)
-            ax.legend(fontsize='small', frameon=False)
-            fig.tight_layout()
+            ax.locator_params(axis='y', nbins=4)
+            fig.legend(loc='outside lower center', ncols=3, handlelength=1.2, columnspacing=1.0)
             return fig
 
         return figure
@@ -558,20 +559,22 @@ def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
     assert [f'{x:.0f}' for x in gap] == ['-2', '23', '37', '39']
 
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import LogLocator
 
     titles = {'T_core_K': 'core temperature', 'F_cmb_J': 'heat across the CMB'}
     files = {'T_core_K': 'core_temperature', 'F_cmb_J': 'heat'}
 
     def make(k):
         def figure():
-            fig, ax = plt.subplots(figsize=(3.4, 3.0))
+            fig, ax = plt.subplots(figsize=FIGSIZE, layout='constrained')
+            fig.get_layout_engine().set(h_pad=0.05)
             ax.plot(on['t_yr'], d[k], 'o-', label='difference')
-            ax.plot(on['t_yr'], 3 * e[k], 's--', color='0.5', label='noise floor 3e')
+            ax.plot(on['t_yr'], 3 * e[k], 's--', label='noise floor 3e')
             ax.set(xscale='log', yscale='log', xlabel='time [yr]', ylabel='relative difference')
-            ax.set_title(titles[k], fontsize='small')
+            ax.set_title(titles[k])
+            ax.yaxis.set_major_locator(LogLocator(numticks=4))
             ax.minorticks_off()
-            ax.legend(fontsize='small', frameon=False)
-            fig.tight_layout()
+            fig.legend(loc='outside lower center', ncols=2, handlelength=1.6)
             return fig
 
         return figure

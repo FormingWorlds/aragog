@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from tests.test_mesh_refinement import _mesh, _radii
-from tests.test_mesh_refinement_study import _check_layout
+from tests.test_mesh_refinement_study import FIGSIZE, _check_layout
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -49,7 +49,8 @@ def test_the_refined_mesh_has_the_set_end_cells(validation_plot):
     def figure():
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(5.6, 3.8))
+        fig, ax = plt.subplots(figsize=FIGSIZE, layout='constrained')
+        fig.get_layout_engine().set(h_pad=0.05)
         for label, (depth, d) in cells.items():
             (line,) = ax.plot(depth / 1e3, d, lw=1.2, label=label)
             ax.plot(depth[[0, -1]] / 1e3, d[[0, -1]], 'o', ms=3, color=line.get_color())
@@ -57,8 +58,7 @@ def test_the_refined_mesh_has_the_set_end_cells(validation_plot):
         ax.minorticks_off()
         ax.set_yticks([1e1, 1e2, 1e3, 1e4])
         ax.set_xticks([0, 250, 500, 750, 1000])
-        ax.legend(fontsize=8)
-        fig.tight_layout()
+        fig.legend(loc='outside lower center', ncols=1)
         return fig
 
     _check_layout(figure)
