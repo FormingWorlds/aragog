@@ -5485,6 +5485,11 @@ class EntropySolver:
         trace = sol.get('energy_trace')
         if trace is not None:
             sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
+        # a handed-over lid (thickness 0) has energy 0, not the round-off of its offset
+        if self._n_lid:
+            for y in (sol.y, *(() if trace is None else sol.energy_trace[1:])):
+                if y is not None:
+                    y[-1] = np.where(y[-2] == 0.0, 0.0, y[-1])
         if floor_refused:
             sol.status = 1
             sol.message = 'EOS floor: the call does not advance'
