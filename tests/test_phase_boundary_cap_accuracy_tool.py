@@ -53,3 +53,19 @@ def test_main_runs_only_the_reference_at_one_year(monkeypatch):
         ('rate', 1e-8, False),
         ('rate', 1e-10, False),
     ]
+
+
+def test_main_check_exits_1_when_rate_exceeds_the_bound(monkeypatch, capsys):
+    """With --check, a 'rate' run at 1e-8 above the bound names its case and returns 1."""
+    over = v1.RATE_BOUND_K * 2.0
+
+    def run_case(eos, case, mode, tol, one_year=False):
+        T = np.full(2, over if (mode, tol) == ('rate', 1e-8) else 0.0)
+        return T, 1, 1
+
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', 'E')
+    monkeypatch.setattr(v1, 'EntropyEOS', lambda _eos_dir: None)
+    monkeypatch.setattr(v1, 'run_case', run_case)
+    assert v1.main(['A'], check=False) == 0
+    assert v1.main(['A', 'B'], check=True) == 1
+    assert 'case(s) A, B' in capsys.readouterr().out

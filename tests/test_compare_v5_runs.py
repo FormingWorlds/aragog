@@ -155,6 +155,8 @@ def test_v5b_floor_is_the_largest_round_off_offset(tmp_path):
         ('reference', dict(drop=('reference_rtol',)), 'reference: run'),
         ('run', dict(drop=('s0_eps',)), 'run: run'),
         ('main', dict(s0_eps=-1e-12), 'main: run'),
+        ('run', dict(drop=('reference_rtol',)), 'run: run'),
+        ('main', dict(drop=('reference_rtol',)), 'main: run'),
     ],
 )
 def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, message):
@@ -196,6 +198,22 @@ def test_v5b_refuses_a_round_off_run_off_its_base(tmp_path, change):
     floor[0] = _run(tmp_path / 'rp_bad', 'v5b', BRANCH, 999.5, (1.0, 1.5), **change)
     with pytest.raises(SystemExit, match='run_p: run'):
         cmp.compare('v5b', run, main, ref, floor)
+
+
+def test_v5b_accepts_runs_that_fit_their_roles(tmp_path):
+    """A reference at rtol 1e-10 and round-off runs at s0_eps = +-1e-12 pass the role checks."""
+    run, main, ref = _v5b(tmp_path)
+    floor = [
+        _run(tmp_path / 'rp', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=1e-12),
+        _run(tmp_path / 'rm', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=-1e-12),
+        _run(tmp_path / 'mp', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=1e-12),
+        _run(tmp_path / 'mm', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=-1e-12),
+    ]
+    try:
+        res = cmp.compare('v5b', run, main, ref, floor)
+    except SystemExit as exc:
+        pytest.fail(f'runs that fit their roles were refused: {exc}')
+    assert res['passed']
 
 
 def test_reference_rtol_selects_the_reference_tolerance(tmp_path):
