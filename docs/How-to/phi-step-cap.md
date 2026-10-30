@@ -45,7 +45,7 @@ When the cap fires, the solver logs an INFO line with the firing time and the re
 
 ## Runnable example: cooling through the solidus with `phase_boundary_cap = 'rate'`
 
-In addition to `phi_step_cap`, `energy.phase_boundary_cap = 'rate'` (the default) segments CVODE steps as cells cross the liquidus and solidus and relaxes the $100\ \mathrm{yr}$ step ceiling once every cell cools to or below the solidus and no cell within $\delta$ of a boundary heats (see [Why `phi_step_cap` is a SUNDIALS root function](../Explanations/phi_step_cap_rationale.md#how-phase_boundary_cap-rate-segments-steps-through-the-solidus)).
+In addition to `phi_step_cap`, `energy.phase_boundary_cap = 'rate'` (the default) segments CVODE steps as cells cross the liquidus and solidus and relaxes the $100\ \mathrm{yr}$ step ceiling in a segment that starts with every cell at or below the solidus and no cell within $\delta$ of a boundary that heats (see [Why `phi_step_cap` is a SUNDIALS root function](../Explanations/phi_step_cap_rationale.md#how-phase_boundary_cap-rate-segments-steps-through-the-solidus)).
 
 The script below initializes a 12-node Earth-sized mantle from `src/aragog/cfg/abe_solid.toml` on the SPIDER phase-boundary lookup tables (`ARAGOG_TEST_EOS_DIR`), sets the initial entropy uniformly to $S_{\mathrm{sol}}[-1] + 5.0\ \mathrm{J\,kg^{-1}\,K^{-1}}$ ($880.54\ \mathrm{J\,kg^{-1}\,K^{-1}}$, so the outermost cell starts $5.0\ \mathrm{J\,kg^{-1}\,K^{-1}}$ above its solidus $875.54\ \mathrm{J\,kg^{-1}\,K^{-1}}$ while deeper cells are already below their solidus up to $1364.69\ \mathrm{J\,kg^{-1}\,K^{-1}}$), and integrates for $200\ \mathrm{kyr}$ under a prescribed surface heat flux of $200.0\ \mathrm{W\,m^{-2}}$:
 
