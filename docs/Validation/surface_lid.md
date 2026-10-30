@@ -41,7 +41,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 ![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space.svg#only-light){ width="80%" }
 ![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The vertical axis is the surface flux of the lid divided by the half-space flux; the grey band is the tolerance of ±1 %. The dots stay at 1.0007, the small offset that the depth of the lid explains, inside the band at all times.
+**How to read the plot.** The vertical axis is the surface flux of the lid divided by the half-space flux; the shaded band is the tolerance of ±1 %. The dots stay at 1.0007, the small offset that the depth of the lid explains, inside the band at all times.
 
 ??? info "Test details"
     - Reference: Turcotte and Schubert (2014), section 4.15, eq. 4.116 (p. 189).
@@ -128,7 +128,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 PLACEHOLDER-PLOT: surface_lid_c3_molten_resolved_mesh (light and dark), written by `pytest tests/test_surface_lid_v2_grid.py -k c3_molten_lid_matches --validation-plots` once the 4000-node reference is stored.
 
-**How to read the plot.** The horizontal axis is time in years. The dots are the surface flux of the 10-node shell with the lid divided by that of the 4000-node shell. The shaded band is the tolerance of ±TBD-m4000; the grey area is the change from 1000 to 4000 nodes, the error of the fine mesh.
+**How to read the plot.** The horizontal axis is time in years. The dots are the surface flux of the 10-node shell with the lid divided by that of the 4000-node shell. The shaded band is the tolerance of ±TBD-m4000; the area marked grid bound is the change from 1000 to 4000 nodes, the error of the fine mesh.
 
 ??? info "Test details"
     - Reference: the 4000-node solver run without the lid, stored with a 1000-node run, the 10-node runs with and without the lid and the 10-node lid with its hand-over held off in `tests/reference/surface_lid_c3_molten.npz` by `tests/reference/build_surface_lid_c3_molten.py`.
@@ -149,7 +149,7 @@ PLACEHOLDER-PLOT: surface_lid_c3_molten_resolved_mesh (light and dark), written 
 
 **Why this section exists.** The cases above cover a solid shell, a shell freezing from the mush and a molten shell without the solid rheology. One start is not covered: a molten shell with the solid rheology on.
 
-**What we know.** In that case the lid base lies at the rheological temperature, at or below the solidus. With the `'local'` closure the lid never hands over; with the `'lid'` closure it does not hand over in this case either, and the 10-node run equals the `'local'` run to TBD-c4pair at all 29 times from 100 to 5000 years. On a mesh of 1000 nodes (cells of 25 m) the same shell without the lid has, at 100 years, only its top node below the solidus: 998 of its 999 nodes are above it, and the surface loses 195.2 W/m². A crust one node thick is not resolved, so the heat flux of that mesh is set by the size of its top cell and is no reference for the lid. TBD-rm4000 (the 4000-node row at 100 years).
+**What we know.** In that case the lid base lies at the rheological temperature, at or below the solidus. With the `'local'` closure the lid never hands over; with the `'lid'` closure it does not hand over in this case either, and the 10-node run equals the `'local'` run to 1.8 × 10⁻¹⁴ at all 29 times from 100 to 5000 years. On a mesh of 1000 nodes (cells of 25 m) the same shell without the lid has, at 100 years, only its top node below the solidus: 998 of its 999 nodes are above it, and the surface loses 195.2 W/m². A crust one node thick is not resolved, so the heat flux of that mesh is set by the size of its top cell and is no reference for the lid. TBD-rm4000 (the 4000-node row at 100 years).
 
 **Why it matters.** Until a mesh resolves that crust, the error of the lid for a molten start with the solid rheology is not known. Use the lid there only with this limit in mind.
 
