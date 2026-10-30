@@ -1,0 +1,38 @@
+name: Stored mesh probe
+on:
+  push:
+    branches: [tl/aragog-mesh-refinement-v2-mesh-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-probe
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
+      - run: |
+          pip install pytest hypothesis scikits-odes-sundials jax equinox diffrax
+          pip install -e .
+      - run: |
+          lscpu 2>/dev/null | grep -i 'model name' || sysctl -n machdep.cpu.brand_string
+          python tools/probe/stored_mesh_probe.py stored_mesh_${{ matrix.os }}.json
+          python -m pytest tests/test_mesh_refinement.py -q -p no:cacheprovider -k "end_gradient or smallest_accepted"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stored-mesh-${{ matrix.os }}
+          path: stored_mesh_${{ matrix.os }}.json
