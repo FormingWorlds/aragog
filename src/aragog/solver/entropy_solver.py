@@ -3195,9 +3195,12 @@ class EntropySolver:
         the lid-base isotherm lies below the face of ``lid_handover_cells`` top cells in the
         solid regime; -1 for a handed-over lid or without the stagnant-lid state. It updates
         only the column, the lid base and, when the crossing can lie in the lid, the lid surface;
-        its value equals the root after a full right-hand side evaluation."""
+        its value equals the root after a full right-hand side evaluation. Without the
+        'lid' closure the root is :meth:`_lid_solidus_root`."""
         if float(y[-2]) == 0.0:
             return -1.0
+        if not self._lid_handover_armed():
+            return self._lid_solidus_root(y)
         n = self._n_stag
         entropy = y[:n]
         self._lid_y, self._lid_active = np.asarray(y[-2:], dtype=float), True
@@ -3220,6 +3223,17 @@ class EntropySolver:
         if z is None:
             return -1.0
         return min((z - self._lid_handover_depth) / self._lid_handover_depth, *self._lid_gate())
+
+    def _lid_solidus_root(self, y: npt.NDArray) -> float:
+        """Freeze-through root without the solid rheology, where the lid base is the solidus:
+        ``(S_sol - S_f) / (S_max - S_min)`` of the top cell at the top-cell pressure, positive
+        once the cell has cooled through the solidus and the Stefan jump has closed. -1 with
+        the solid rheology, whose lid base lies at or below the solidus."""
+        if self._lid_rheo is not None:
+            return -1.0
+        eos = self.entropy_eos
+        span = float(eos.S_max) - float(eos.S_min)
+        return (self._lid_S_sol - float(y[self._n_stag - 1])) / span
 
     def _lid_gate(self) -> tuple[float, ...]:
         """Solid-regime terms of the hand-over root at the last RHS state: ``2 w_active - 1``
@@ -5174,9 +5188,10 @@ class EntropySolver:
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
 
-        # Hand-over root of the sub-grid lid (nondimensional), armed with the stagnant-lid state.
+        # Hand-over root of the sub-grid lid (nondimensional): the stagnant-lid isotherm of the
+        # 'lid' closure, or the solidus of the top cell without the solid rheology.
         lid_g = None
-        if self._n_lid and self._lid_handover_armed():
+        if self._n_lid and (self._lid_handover_armed() or self._lid_rheo is None):
 
             def lid_g(t_nd, y_nd):
                 return self._lid_root_value(t_nd * t_ref, y_nd * _state_scale + _offset)
