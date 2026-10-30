@@ -336,6 +336,11 @@ def _subsolidus(S: npt.NDArray, S_sol: npt.NDArray) -> bool:
     return bool(np.all(S <= S_sol))
 
 
+def _boundary_distance(S: npt.NDArray, S_liq: npt.NDArray, S_sol: npt.NDArray) -> npt.NDArray:
+    """Distance [J/(kg K)] of each entry of ``S`` to its nearer phase boundary."""
+    return np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+
+
 def _segment_arming_margin(
     margin: float, delta: float, cap_mode: str, core_bc: str, use_cvode: bool
 ) -> float:
@@ -364,7 +369,7 @@ def _rate_phase_boundary_times(
     Returns an array with a non-finite entry where no boundary counts, or None when ``S``,
     ``dSdt``, the boundaries or the floor are not finite.
     """
-    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+    dist = _boundary_distance(S, S_liq, S_sol)
     rate = np.abs(dSdt)
     floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
     if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
@@ -401,8 +406,9 @@ def _rate_phase_boundary_max_step(
     rate floor covers an isentropic molten or mushy start, where interior cells
     have almost no rate until the thermal boundary layers form. Once every
     entry is at or below the solidus (``np.all(S <= S_sol)``) and no entry
-    within ``delta`` of a boundary heats (``dSdt > 0``), the upper bound
-    relaxes from ``bounds[1]`` to ``np.inf``.
+    within ``delta`` of a boundary heats, the upper bound relaxes from
+    ``bounds[1]`` to ``np.inf``. An entry heats when ``dSdt > 0``, with no
+    threshold: ``dSdt == 0`` does not count as heating.
 
     Parameters
     ----------
@@ -436,8 +442,7 @@ def _rate_phase_boundary_max_step(
     if t_c is None:
         return bounds[0]
     t_c = t_c[np.isfinite(t_c)]
-    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
-    heating = np.any((dist < delta) & (dSdt > 0.0))
+    heating = np.any((_boundary_distance(S, S_liq, S_sol) < delta) & (dSdt > 0.0))
     hi = np.inf if _subsolidus(S, S_sol) and not heating else bounds[1]
     return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
 
@@ -483,7 +488,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         self.scale = np.asarray(state_scale, dtype=float).ravel()[:n_stag]
         self.n_stag = n_stag
         self.S0 = self._entropy(y0)
-        self.d0 = self._dist(self.S0)
+        self.d0 = _boundary_distance(self.S0, self.S_liq, self.S_sol)
         self.inside = bool(np.any(self.d0 < delta)) if inside is None else inside
         self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
         self.moving = np.isfinite(self.d0)
@@ -500,9 +505,6 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         S = np.asarray(y, dtype=float)[: self.n_stag] * self.scale
         return np.append(S, S[0])
 
-    def _dist(self, S):
-        return np.minimum(np.abs(S - self.S_liq), np.abs(S - self.S_sol))
-
     def components(self, t, y):
         """Root component values at nondimensional ``(t, y)``, in ``names`` order."""
         g = []
@@ -511,7 +513,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
             self.step_cap.evaluate(t, y, gc)
             g.append(float(gc[0]))
         S = self._entropy(y)
-        d = self._dist(S)
+        d = _boundary_distance(S, self.S_liq, self.S_sol)
         g.append(float(d.min()) - (2.0 if self.inside else 1.0) * self.delta)
         if 'entry' in self.names:
             g.append(float(d[self.watch].min()) - self.delta)
@@ -4119,10 +4121,10 @@ class EntropySolver:
         ``rtol`` at most ``_SUBSOLIDUS_RTOL`` and a physical ``atol`` at most
         ``_SUBSOLIDUS_ATOL`` in the unit of each state entry (J/(kg K) for entropy, K for a
         temperature). The limits also hold after a retry loosens ``solver.rtol`` or raises
-        ``_atol_sf``; tighter caller tolerances are kept. With them the sub-solidus cases of
-        ``docs/Validation/numerics.md`` stay inside 1.3e-4 K without the 100 yr ``max_step``
-        ceiling. Other segments keep the caller's ``rtol`` and ``atol``, and so does the
-        segment after ``max_segments``, which has no segment root.
+        ``_atol_sf``; tighter caller tolerances are kept. With them the sub-solidus controller
+        case V3-R4 of ``docs/Validation/numerics.md`` stays inside 1.3e-4 K without the
+        100 yr ``max_step`` ceiling. Other segments keep the caller's ``rtol`` and ``atol``,
+        and so does the segment after ``max_segments``, which has no segment root.
 
         Parameters
         ----------

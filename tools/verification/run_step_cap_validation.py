@@ -21,8 +21,10 @@ entropy range and they test the controller only. The solver floors atol at 1e-8 
 it by 10 when the mean start melt fraction is at most 0.01. Each case runs ``'fixed'`` at rtol
 1e-10 with ``solver._atol_sf`` set for a physical atol of at most 1e-10 as the reference, and
 ``'rate'`` at rtol = atol = 1e-8 from S0 (1 + m 1e-12), m = -2..2. The v4 cases need
-the PALEOS low-temperature table set (``paleos_lowt_spider_eos_1350x281``). They stop at the
-first segment end with phi_max = 0 after the stall point, or at the end time of the case.
+the PALEOS low-temperature table set (``paleos_lowt_spider_eos_1350x281``). Their stall point
+is the last time stored by the run of the code without the rules near and below the solidus,
+which stops after 1e5 steps in one output interval. They stop at the first segment end with
+phi_max = 0 after the stall point, or at the end time of the case.
 Run from the repository root::
 
     python tools/verification/run_step_cap_validation.py --case v3_r3 [--eos-dir DIR] [--workers N]
@@ -86,7 +88,7 @@ def regime(S, dSdt, S_liq, S_sol, mass, delta, rate_floor=True, **_):
     slow = False
     if t_c is not None and np.isfinite(t_c).any():
         b = int(np.nanargmin(np.where(np.isfinite(t_c), t_c, np.nan)))
-        dist = min(abs(S[b] - S_liq[b]), abs(S[b] - S_sol[b]))
+        dist = es._boundary_distance(S, S_liq, S_sol)[b]
         # t_c = alpha delta / floored rate here, so the rate test is t_c > alpha / SLOW_RATE
         slow = bool(dist < alpha * delta and t_c[b] > alpha / SLOW_RATE)
     return slow, es._subsolidus(S, S_sol)
