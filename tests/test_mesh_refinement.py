@@ -606,3 +606,95 @@ def test_a_2_m_cell_is_refused_on_a_mantle_thicker_than_20000_km(thickness, refu
     else:
         r = _radii(Mesh(p))
         assert r[-1] - r[-2] == pytest.approx(2.0, rel=1e-6)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+def test_the_interior_gradient_of_a_quadratic_is_exact_at_the_difference_midpoints(
+    top, bottom, n
+):
+    """The interior rows give (q[i] - q[i-1]) / (s[i] - s[i-1]) at basic node i: for q = x^2 + x,
+    x = (r - c) / L, this is the exact gradient at the midpoint m of the two staggered nodes, so
+    the error at the basic node is 2 (m - b) / L^2, first order in the cell growth."""
+    m = _mesh(top, bottom, False, n)
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    c, L = b[0], 1e6
+    x = (s - c) / L
+    g = np.ravel(m.d_dr_at_basic_nodes((x**2 + x).reshape(-1, 1)))[1:-1]
+    mid = 0.5 * (s[:-1] + s[1:])
+    np.testing.assert_allclose(g * L, 2 * (mid - c) / L + 1, rtol=1e-9)
+    if top or bottom:
+        assert np.max(np.abs(mid - b[1:-1])) > 1.0
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+def test_the_flux_divergence_has_second_order_error_on_a_refined_mesh(top, bottom, n):
+    """The flux divergence (A[i+1] F[i+1] - A[i] F[i]) / V[i] of the mesh areas and volumes, for
+    F = r^2, is the exact cell mean 3 (b1^4 - b0^4) / (b1^3 - b0^3); against the point value 4 s
+    at the cell midpoint s its error is 2 h^2 / (3 s) to leading order, h the cell width, checked
+    on the cells where it is above the round-off."""
+    m = _mesh(top, bottom, False, n)
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    A, V = np.ravel(m.basic.area), np.ravel(m.basic.volume)
+    D = np.diff(A * b**2) / V
+    np.testing.assert_allclose(D, 3 * np.diff(b**4) / np.diff(b**3), rtol=1e-9)  # eps r / h
+    h = np.diff(b)
+    np.testing.assert_allclose(s, 0.5 * (b[:-1] + b[1:]), rtol=1e-15)
+    e = 2 * h**2 / (3 * s)
+    big = e > 1e-8 * D  # cells whose error is far above the round-off of the r^4 differences
+    assert big.sum() >= n // 3
+    np.testing.assert_allclose((D - 4 * s)[big] / e[big], 1.0, rtol=1e-4)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_the_half_space_flux_holds_with_a_refined_top_cell(monkeypatch):
+    """The cooling half-space of the BC5 validation (Turcotte and Schubert 2014, eq. 4.116) with
+    the top cell refined to a quarter of the uniform cell: the surface flux stays within 1 % over
+    the window, and its error follows 0.063 (h_top / delta)^2 - sqrt(pi kappa t) / r_out to
+    5e-5 (measured 5.8e-6), below the error of the uniform mesh at the window start."""
+    import scipy.integrate
+    from scipy.sparse import diags
+
+    import tests.test_entropy_bc5_validation as T
+
+    top = 0.25 * T.D_2 / T.N_2
+    build = T._build_const_properties_parameters
+
+    def refined(**kw):
+        p = build(**kw)
+        p.mesh.surface_cell_thickness = top
+        return p
+
+    monkeypatch.setattr(T, '_build_const_properties_parameters', refined)
+    s = T._solver(T.N_2, T.R_OUT - T.D_2, T.T_S_2)
+    r = np.ravel(s.evaluator.mesh.basic.radii)
+    assert r[-1] - r[-2] == pytest.approx(top, rel=1e-6)
+    band = diags([1.0, 1.0, 1.0], [-1, 0, 1], shape=(T.N_2, T.N_2))
+    sol = scipy.integrate.solve_ivp(
+        T._rhs(s),
+        (0.0, T.T_WINDOW[-1]),
+        np.full(T.N_2, T._entropy(T.T_I_2)),
+        method='BDF',
+        t_eval=T.T_WINDOW,
+        rtol=1e-8,
+        atol=1e-8,
+        jac_sparsity=band,
+    )
+    assert sol.success, sol.message
+    flux = []
+    for t, y in zip(sol.t, sol.y.T):
+        T._rhs(s)(t, y)
+        flux.append(float(np.ravel(s.state.heat_flux)[-1]))
+    seconds = sol.t * T.Julian_year
+    exact = T.K * (T.T_I_2 - T.T_S_2) / np.sqrt(np.pi * T.KAPPA * seconds)
+    error = np.asarray(flux) / exact - 1.0
+    estimate = (
+        0.063 * top**2 / (T.KAPPA * seconds) - np.sqrt(np.pi * T.KAPPA * seconds) / T.R_OUT
+    )
+    assert np.max(np.abs(error)) < 1e-2
+    assert np.max(np.abs(error - estimate)) < 5e-5
+    assert abs(error[0]) < 0.063 * (T.D_2 / T.N_2) ** 2 / (T.KAPPA * seconds[0]) / 4

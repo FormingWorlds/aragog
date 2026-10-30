@@ -23,6 +23,11 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
     - Reference: the end-cell thickness set in the config.
     - Tolerance: $10^{-6}$ relative in radius mode; in mass-coordinate mode 2 mm or $10^{-6}$ relative, whichever is larger: the solved node of an end cell is placed to 1 mm, the other is the boundary itself.
     - Test id: `tests/test_mesh_refinement_validation.py::test_the_refined_mesh_has_the_set_end_cells`
+    - Derivatives on the refined mesh, in `tests/test_mesh_refinement.py`:
+        - The end rows of the gradient are exact for a quadratic field. For a cubic field they give the truncation term of the stencil.
+        - The interior rows are exact at the midpoints of their two staggered nodes.
+        - The flux divergence has the second-order error $2h^2/(3s)$ of a cell of width $h$ at radius $s$.
+        - The cooling half-space of the BC5 validation, with a top cell of a quarter of the uniform cell, follows its flux to 1 %. Its error is the error of the refined top cell.
     - Command: `pytest tests/test_mesh_refinement_validation.py -m reference_pinned --validation-plots`
 
 ## How the results change as the top cell gets thinner
@@ -80,8 +85,6 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 **Not checked.**
 
 - How much the phase of the cycle changes the mean surface heat flux from $10^4$ to $10^5$ years and the heat lost up to $10^5$ years.
-- Whether the refined mesh reproduces an exact solution, such as the cooling of a half-space.
-- The accuracy of the derivatives on stretched cells for a field that is not linear.
 - How much the noise floor varies between several perturbed copies; each floor here comes from one pair of runs, or one run in the CMB case.
 - How the cooling of the long run changes when the table has valid entries up to the solidus at the CMB.
 - Whether the alternating pattern follows the cell index (a 50 m top cell at 200 nodes to $10^8$ years) or comes from round-off (the 50 m mesh from a perturbed start).
