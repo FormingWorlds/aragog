@@ -6,6 +6,7 @@ from tests.test_mesh_refinement import _mesh
 from tests.test_mesh_refinement_study import _study
 
 out = {'platform': platform.platform(), 'machine': platform.machine(), 'numpy': np.__version__}
+import pathlib; out['cpu'] = pathlib.Path('cpu.txt').read_text().strip() if pathlib.Path('cpu.txt').exists() else ''
 import scipy; out['scipy'] = scipy.__version__
 for name, v in _study().items():
     if name == 'header':

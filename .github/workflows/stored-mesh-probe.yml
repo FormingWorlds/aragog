@@ -9,7 +9,16 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
+        rep: [1, 2, 3, 4]
+        exclude:
+          - os: macos-latest
+            rep: 2
+          - os: macos-latest
+            rep: 3
+          - os: macos-latest
+            rep: 4
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     timeout-minutes: 30
     defaults:
       run:
@@ -26,13 +35,14 @@ jobs:
             channels:
               - conda-forge
       - run: |
-          pip install pytest hypothesis scikits-odes-sundials jax equinox diffrax
+          pip install pytest pytest-timeout hypothesis scikits-odes-sundials jax equinox diffrax
           pip install -e .
       - run: |
-          lscpu 2>/dev/null | grep -i 'model name' || sysctl -n machdep.cpu.brand_string
-          python tools/probe/stored_mesh_probe.py stored_mesh_${{ matrix.os }}.json
+          (lscpu 2>/dev/null | grep -i 'model name' || sysctl -n machdep.cpu.brand_string) | tee cpu.txt
+          python tools/probe/stored_mesh_probe.py stored_mesh_${{ matrix.os }}_${{ matrix.rep }}.json
           python -m pytest tests/test_mesh_refinement.py -q -p no:cacheprovider -k "end_gradient or smallest_accepted"
-      - uses: actions/upload-artifact@v4
+      - if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: stored-mesh-${{ matrix.os }}
-          path: stored_mesh_${{ matrix.os }}.json
+          name: stored-mesh-${{ matrix.os }}-${{ matrix.rep }}
+          path: stored_mesh_${{ matrix.os }}_${{ matrix.rep }}.json
