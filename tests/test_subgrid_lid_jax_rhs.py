@@ -468,6 +468,31 @@ def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     assert s._batch_powers_calls == calls + 1
 
 
+@pytest.mark.parametrize('lid', ['before', 'after'])
+def test_handover_call_checks_the_lid_states_on_the_jax_batch_path(lid):
+    """In a call that ends with the lid handed over, the JAX batch path checks the fluid
+    entropy of the states that still carry a lid against the heat table, and not of the
+    states after the hand-over."""
+    s = _jax_cvode_lid_solver()
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    hi, k = float(s._lid_W_of_S.x[-1]), t.size // 2
+    y[s._n_stag - 1, k] = hi + 100.0
+    y[-2:, k + 1 if lid == 'before' else k :] = 0.0
+    sol.energy_trace = (t, y)
+    calls = s._batch_powers_calls
+    if lid == 'before':
+        with pytest.raises(RuntimeError, match='outside the lid heat table'):
+            s._compute_step_energy_integrals()
+    else:
+        try:
+            s._compute_step_energy_integrals()
+        except RuntimeError as err:
+            pytest.fail(f'batch path checked a handed-over state: {err}')
+    assert s._batch_powers_calls == calls + 1
+
+
 def test_entropy_on_the_heat_table_ends_passes_the_jax_batch_path():
     """Accepted states whose fluid entropy lies exactly on an end of the heat table pass the
     range check of the JAX batch path."""

@@ -884,11 +884,13 @@ def _checked(s, **change):
     [
         ({'E': float('nan')}, 'non-finite'),
         ({'ddelta': float('inf')}, 'non-finite'),
+        ({'S_f': float('nan')}, 'non-finite'),
+        ({'S_b': float('inf')}, 'non-finite'),
         ({'delta': 0.25}, 'thickness'),
         ({'w': 1.5}, 'weight'),
         ({'w': -0.5}, 'weight'),
     ],
-    ids=['E_nan', 'rate_inf', 'below_delta_lo', 'w_above_1', 'w_below_0'],
+    ids=['E_nan', 'rate_inf', 'S_f_nan', 'S_b_inf', 'below_delta_lo', 'w_above_1', 'w_below_0'],
 )
 def test_lid_step_check_refuses_bad_states(eos, change, match):
     """The step check raises on a non-finite state or rate, a lid below its lower stop and a
