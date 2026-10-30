@@ -1,0 +1,193 @@
+"""Validation of the refined mesh from the stored convergence study of abe_solid on the PALEOS
+low-temperature table (``tests/validation/data/mesh_refinement_study.json``, written by
+``tools/verification/run_mesh_refinement_study.py``). The runs need that table, which CI does not
+download, so the test reads the stored raw values, computes the noise floor, the spreads and the
+verdicts from them, and checks every number that docs/Validation/mesh_refinement.md quotes."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+pytestmark = [pytest.mark.reference_pinned, pytest.mark.timeout(60)]
+
+DATA = Path(__file__).parent / 'validation' / 'data' / 'mesh_refinement_study.json'
+TREE = 'bbef9c9f139d7d200c0de98e5e010462d597d77c'
+EOS_MD5 = '18d6f9eb5ba654d58fe3fad30ce118f0'
+PAIR = {100: ('T50-100p', 'T50-100m'), 200: ('P+', 'P-')}
+H_TOP = (200, 100, 50)
+
+
+def _study():
+    return json.loads(DATA.read_text())
+
+
+def _metrics(v):
+    """The compared results of one run: metrics 1, 2, 3 and 5 of the study, and the time-mean
+    global melt fraction (a diagnostic)."""
+    assert v['t_yr'][:4] == [1e2, 1e3, 1e4, 1e5]
+    x = {}
+    for i, t in ((1, '1e3'), (2, '1e4'), (3, '1e5')):
+        x[f'Phi {t}'] = v['Phi'][i]
+        x[f'T_cmb {t}'] = v['T_cmb_K'][i]
+    x['heat_loss 1e5'] = -sum(v['F_int_J'][:4])
+    for i, w in ((1, '1e2-1e3'), (2, '1e3-1e4'), (3, '1e4-1e5')):
+        x[f'F_top {w}'] = v['F_top_mean_W_m2'][i]
+    for t, m in v.get('Phi_time_mean', {}).items():
+        x[f'Phi_mean {float(t):.0e}'.replace('+0', '')] = m
+    return x
+
+
+def _verdict(e, s_c, s_f):
+    """Pass rule: r = s_f / s_c <= 0.75, or s_f <= 3 e; with s_c <= 3 e it needs s_f <= 3 e too."""
+    if s_c <= 3 * e:
+        return 'converged' if s_f <= 3 * e else 'no pass'
+    if s_f <= 3 * e or s_f / s_c <= 0.75:
+        return 'pass'
+    return 'no pass'
+
+
+def _convergence(study, n):
+    X = {r: _metrics(study[r]) for r in [f'T{q}-{n}' for q in H_TOP] + list(PAIR[n])}
+    out = {}
+    for k in X[f'T50-{n}']:
+        e = abs(X[PAIR[n][0]][k] / X[PAIR[n][1]][k] - 1)
+        s_c = abs(X[f'T200-{n}'][k] / X[f'T100-{n}'][k] - 1)
+        s_f = abs(X[f'T100-{n}'][k] / X[f'T50-{n}'][k] - 1)
+        out[k] = dict(e=e, s_c=s_c, s_f=s_f, r=s_f / s_c, verdict=_verdict(e, s_c, s_f))
+    return X, out
+
+
+def _recommendation(study):
+    """Per result at 200 nodes: the deviation of each top cell from T50-200, the tolerance
+    max(3 e, 1 %) and the largest top cell with it and every thinner top cell within the
+    tolerance; and the node-count change |X(Tq-200) / X(Tq-100) - 1| per top cell q."""
+    X2, c2 = _convergence(study, 200)
+    X1, _ = _convergence(study, 100)
+    out = {}
+    for k, c in c2.items():
+        tol = max(3 * c['e'], 0.01)
+        dev = {q: abs(X2[f'T{q}-200'][k] / X2['T50-200'][k] - 1) for q in H_TOP}
+        rec = next(q for q in H_TOP if all(dev[p] <= tol for p in H_TOP if p <= q))
+        node = {q: abs(X2[f'T{q}-200'][k] / X1[f'T{q}-100'][k] - 1) for q in H_TOP}
+        out[k] = dict(tol=tol, dev=dev, rec=rec, node=node)
+    return out
+
+
+_MAIN = [
+    'Phi 1e3',
+    'Phi 1e4',
+    'Phi 1e5',
+    'heat_loss 1e5',
+    'F_top 1e2-1e3',
+    'F_top 1e3-1e4',
+    'F_top 1e4-1e5',
+    'T_cmb 1e3',
+    'T_cmb 1e4',
+    'T_cmb 1e5',
+]  # metrics 1, 2, 3 and 5; the time-mean melt fraction is a diagnostic
+_PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot order
+
+
+def _frozen(v):
+    f = v['first_frozen']
+    return f['thaw_yr'] - f['freeze_yr']
+
+
+def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
+    """The pass rule of ``_verdict`` per node count, the strict recommendation of
+    ``_recommendation`` at 200 nodes, and every number of the case on the Validation page."""
+    study = _study()
+    head = study['header']
+    assert head['trees'] == [TREE]
+    runs = {k: v for k, v in study.items() if k != 'header'}
+    assert all(v['eos_md5'] == EOS_MD5 and set(v['status']) == {0} for v in runs.values())
+    for n, cmb in ((100, 9327.0), (200, 4638.0)):
+        for q in H_TOP:
+            v = runs[f'T{q}-{n}']
+            assert v['nodes'] == n and v['cmb_cell_m'] == cmb and v['s_init'] == 9466.0
+            assert abs(v['h_top_m'] / q - 1) < 1e-6 and abs(v['h_cmb_m'] / cmb - 1) < 1e-6
+    for p, m in PAIR.values():
+        assert runs[p]['s_init'] == 9466.0 * (1 + 1e-12) and runs[m]['s_init'] == 9466.0 * (
+            1 - 1e-12
+        )
+
+    c100, c200 = _convergence(study, 100)[1], _convergence(study, 200)[1]
+    passed = {k for k in _MAIN if c200[k]['verdict'] == 'pass'}
+    assert passed == {'Phi 1e3', 'Phi 1e4', 'T_cmb 1e3', 'heat_loss 1e5', 'F_top 1e4-1e5'}
+    assert sum(c100[k]['verdict'] == 'pass' for k in _MAIN) == 5
+    three_e = [3 * c200[k]['e'] for k in _MAIN]
+    assert f'{min(three_e):.1e}' == '7.4e-08' and f'{max(three_e):.1e}' == '1.4e-03'
+    assert c200['T_cmb 1e4']['verdict'] == c200['T_cmb 1e5']['verdict'] == 'no pass'
+    assert [c200[f'Phi_mean {t}']['verdict'] for t in ('1e3', '1e4', '1e5')] == [
+        'pass',
+        'pass',
+        'no pass',
+    ]
+
+    rec = _recommendation(study)
+    t_cmb_dev = max(
+        rec[k]['dev'][q] for k in _MAIN if k.startswith('T_cmb') for q in (200, 100)
+    )
+    assert f'{t_cmb_dev:.1e}' == '3.4e-05'
+    need_50 = {k for k in _MAIN if rec[k]['rec'] == 50}
+    assert need_50 == {'Phi 1e3', 'Phi 1e4', 'Phi 1e5', 'F_top 1e3-1e4', 'F_top 1e4-1e5'}
+    assert min(rec[k]['rec'] for k in _MAIN) == 50
+    assert f'{rec["Phi 1e5"]["dev"][100]:.1%}' == '2.2%'
+    assert f'{rec["F_top 1e4-1e5"]["dev"][100]:.1%}' == '1.7%'
+    node = {
+        k: rec[k]['node'][50]
+        for k in ('T_cmb 1e5', 'heat_loss 1e5', 'Phi 1e5', 'F_top 1e4-1e5')
+    }
+    assert [f'{node[k]:.1e}' for k in ('T_cmb 1e5', 'heat_loss 1e5')] == ['4.0e-04', '3.5e-03']
+    assert f'{node["Phi 1e5"]:.1%}' == '5.1%' and f'{node["F_top 1e4-1e5"]:.1%}' == '2.7%'
+    s_f = {k: c200[k]['s_f'] for k in node}
+    assert [f'{s_f[k]:.1e}' for k in ('T_cmb 1e5', 'heat_loss 1e5')] == ['3.2e-05', '5.8e-04']
+    assert f'{s_f["Phi 1e5"]:.1%}' == '2.2%'
+    assert all(node[k] > s_f[k] for k in node)
+
+    mesh_runs = [k for k in runs if k[0] in 'UTP']
+    freeze = [runs[k]['first_frozen']['freeze_yr'] for k in mesh_runs]
+    assert (round(min(freeze)), round(max(freeze))) == (768, 791)
+    assert f'{runs["U100"]["h_top_m"] / 1e3:.1f}' == '10.9'
+    frozen = [round(_frozen(runs[k])) for k in ('U100', 'T200-100', 'T50-100', 'T50-200')]
+    assert frozen == [2851, 85, 64, 51]
+    steps = [sum(runs[k]['nst'][:4]) for k in ('U100', 'T200-100', 'T50-100')]
+    assert [f'{x:.1e}' for x in steps] == ['2.4e+05', '1.4e+06', '1.9e+06']
+
+    L, T = runs['L50'], runs['T50-100']
+    assert L['config_hash'] == T['config_hash'] and L['t_yr'][-1] == 1e8
+    assert all(L[k][:4] == T[k][:4] for k in ('Phi', 'T_cmb_K', 'F_top_mean_W_m2', 'F_int_J'))
+    assert [f'{x:.2g}' for x in L['Phi'][4:]] == ['0.065', '3.3e-05', '2.1e-05']
+    assert (
+        f'{L["F_top_mean_W_m2"][4]:.0f}' == '163'
+        and f'{L["F_top_mean_W_m2"][6]:.3f}' == '0.096'
+    )
+    assert [f'{x:.1f}' for x in L['T_cmb_K'][4:]] == ['3465.0', '3440.3', '3440.3']
+    assert abs(L['T_cmb_K'][6] / L['T_cmb_K'][5] - 1) < 1e-9
+
+    assert f'{max(3 * c200[k]["e"] for k in _PANELS):.2%}' == '0.04%'
+    X = {r: _metrics(runs[r]) for r in runs if r[0] == 'T' and r[-3:] in ('100', '200')}
+    ref = X['T50-200']
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.6), sharex=True)
+        for ax, k in zip(axes.flat, _PANELS):
+            ax.axhspan(-1, 1, color='0.9', lw=0)
+            for n, marker in ((100, 'o-'), (200, 's-')):
+                y = [100 * (X[f'T{q}-{n}'][k] / ref[k] - 1) for q in H_TOP]
+                ax.plot(H_TOP, y, marker)
+            span = max(abs(X[f'T{q}-{n}'][k] / ref[k] - 1) for q in H_TOP for n in (100, 200))
+            ax.set(xscale='log', ylim=(-130 * span, 130 * span))
+            ax.set_xticks(H_TOP, [str(q) for q in H_TOP])
+            ax.minorticks_off()
+            ax.locator_params(axis='y', nbins=3)
+        fig.supxlabel('top cell [m]')
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'mesh_refinement_convergence')

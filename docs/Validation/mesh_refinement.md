@@ -29,13 +29,41 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 
 **Why this check exists.** A thinner top cell only helps if the results approach a limit. If they keep changing as the top cell gets thinner, no setting can be recommended.
 
-**What it tests.** Runs of the same magma-ocean case with top cells of 200, 100 and 50 m, at 100 and 200 nodes, with the global melt fraction, the cumulative heat loss, the mean surface heat flux in each time window and the CMB temperature as the compared results.
+**What it tests.** The case is the magma ocean of `abe_solid.toml` with a molten start (entropy 9466 J/kg/K), the stagnant-lid rheology and the PALEOS MgSiO$_3$ tables with the low-temperature extension (`paleos_lowt_spider_eos_1350x281`). It runs to $10^5$ years with top cells of 200, 100 and 50 m, at 100 and at 200 nodes. The CMB cell is held at the uniform CMB cell of each node count, 9327 m and 4638 m, so that only the top cell changes. The compared results are the global melt fraction at $10^3$, $10^4$ and $10^5$ years, the heat lost through the surface up to $10^5$ years, the mean surface heat flux in the windows $10^2$ to $10^3$, $10^3$ to $10^4$ and $10^4$ to $10^5$ years, and the CMB temperature at $10^3$, $10^4$ and $10^5$ years: 10 results per node count.
 
-**How we know the right answer.** The spread between successive top cells must shrink, or fall below the noise floor that a pair of runs with round-off changes to the start state gives.
+**How we know the right answer.** There is no exact solution, so the test asks whether the results settle. For each result $X$ it takes the spread between the 200 m and the 100 m run, $s_\mathrm{c} = |X_{200}/X_{100} - 1|$, and between the 100 m and the 50 m run, $s_\mathrm{f} = |X_{100}/X_{50} - 1|$. For an error that falls in proportion to the top cell, halving the cell halves the spread, so $s_\mathrm{f}/s_\mathrm{c} = 0.5$. A result passes when $s_\mathrm{f}/s_\mathrm{c} \le 0.75$ or when $s_\mathrm{f}$ is below the noise floor. The noise floor $e$ comes from two more 50 m runs whose start entropy differs from the first by $\pm 10^{-12}$ relative: $e = |X_+/X_- - 1|$, and no difference below $3e$ is counted. A result with $s_\mathrm{c} \le 3e$ counts as converged at 200 m only when $s_\mathrm{f} \le 3e$ too; otherwise it does not pass.
 
 **Why it matters.** This case sets the recommended top cell for PROTEUS runs.
 
-This case is filled from the convergence study.
+![Change of four results against the top cell thickness at 100 and 200 nodes](../assets/validation/mesh_refinement_convergence.svg#only-light){ width="90%" }
+![Change of four results against the top cell thickness at 100 and 200 nodes](../assets/validation/mesh_refinement_convergence_dark.svg#only-dark){ width="90%" }
+
+**How to read the plot.** Each panel shows one result as its change, in percent, from the 50 m run at 200 nodes, against the top cell thickness on a log axis: the global melt fraction at $10^5$ years (top left), the heat lost up to $10^5$ years (top right), the mean surface heat flux from $10^4$ to $10^5$ years (bottom left) and the CMB temperature at $10^5$ years (bottom right). Circles are runs at 100 nodes, squares runs at 200 nodes. The grey band is the $\pm 1$ % tolerance of the recommendation; the noise floor $3e$ is at most 0.04 % for these four results, too narrow to draw. A result that converges in the top cell moves towards 0 from right to left. The gap between the circles and the squares at the same top cell is the effect of the node count: for the melt fraction it is larger than the change between top cells.
+
+**What the study finds.** At 200 nodes 5 of the 10 results pass: the melt fraction at $10^3$ and $10^4$ years, the CMB temperature at $10^3$ years, the heat lost up to $10^5$ years and the mean surface heat flux from $10^4$ to $10^5$ years. At 100 nodes 5 of the 10 pass. The noise floor $3e$ lies between $7.4 \times 10^{-8}$ and $1.4 \times 10^{-3}$ at 200 nodes. The CMB temperature of the 200 m and 100 m runs differs from the 50 m run by at most $3.4 \times 10^{-5}$, but its spreads do not shrink at $10^4$ and $10^5$ years.
+
+- **The recommended top cell is 50 m.** The rule takes, for each result at 200 nodes, the largest top cell that stays within $\max(3e, 1\,\%)$ of the 50 m run, together with every thinner top cell. The melt fraction at all three times and the mean surface heat flux after $10^3$ years need 50 m: with a 100 m top cell the melt fraction at $10^5$ years differs by 2.2 % and the mean surface heat flux from $10^4$ to $10^5$ years by 1.7 %.
+- **100 nodes are not enough.** At a 50 m top cell, going from 100 to 200 nodes changes the CMB temperature at $10^5$ years by $4.0 \times 10^{-4}$, the heat lost up to $10^5$ years by $3.5 \times 10^{-3}$ and the melt fraction at $10^5$ years by 5.1 %. These changes are larger than the change from a 100 m to a 50 m top cell for the same results ($3.2 \times 10^{-5}$, $5.8 \times 10^{-4}$ and 2.2 % at 200 nodes). The mean surface heat flux from $10^4$ to $10^5$ years changes by 2.7 % with the node count and by 1.7 % with the top cell.
+- **The melt fraction and the heat loss at a fixed time sample one phase of a cycle.** In every run the top cell freezes for the first time between 768 and 791 years. After that it freezes and melts again in bursts, and the global melt fraction falls in steps and recovers slowly between them. A value at one time depends on where in the cycle that time falls, so the verdicts for these results are limited by the phase. The time mean of the melt fraction over the second half of each interval is less sensitive to the phase: at 200 nodes it passes at $10^3$ and $10^4$ years and not at $10^5$ years. This mean was defined after the runs and is not part of the pass rule. The CMB temperature does not cycle.
+- **The first frozen interval follows the top cell.** It lasts 2851 years on the uniform 100-node mesh (top cell 10.9 km), 85 years with a 200 m top cell and 64 years with a 50 m top cell at 100 nodes, and 51 years at 50 m and 200 nodes. It does not approach a limit, so it is reported and not tested for convergence.
+- **Cost.** Up to $10^5$ years the solver takes $2.4 \times 10^5$ steps on the uniform 100-node mesh, $1.4 \times 10^6$ with a 200 m top cell and $1.9 \times 10^6$ with a 50 m top cell, both at 100 nodes.
+
+**The long run.** A 50 m top cell at 100 nodes runs to $10^8$ years. Its first $10^5$ years equal the 50 m run above. The global melt fraction is 0.065 at $10^6$ years, $3.3 \times 10^{-5}$ at $10^7$ years and $2.1 \times 10^{-5}$ at $10^8$ years, and the mean surface heat flux falls from 163 W/m$^2$ ($10^5$ to $10^6$ years) to 0.096 W/m$^2$ ($10^7$ to $10^8$ years). The CMB temperature is 3465.0 K at $10^6$ years and 3440.3 K at $10^7$ and $10^8$ years. That last value is not a physical result. At the CMB pressure the solid temperature table has valid entries only up to an entropy below the solidus, and above it the table repeats the last valid temperature. By $10^7$ years the CMB entropy lies between the last valid entry and the next one, where the table gives the same temperature for every entropy, so the CMB temperature stops changing while the entropy still falls.
+
+**Limits of the tables.** The PALEOS liquid table in use is consistent with the PALEOS release on Zenodo ([10.5281/zenodo.19680050](https://doi.org/10.5281/zenodo.19680050)) at the one point compared, 1 bar on the liquid branch. That release has a known density step on the liquid branch, in which the entropy falls as the temperature rises ([PALEOS issue 7](https://github.com/maraattia/PALEOS/issues/7)). The study uses the table as it is and was not repeated with a corrected one.
+
+**Not checked.**
+
+- How much the phase of the cycle changes the mean surface heat flux from $10^4$ to $10^5$ years and the heat lost up to $10^5$ years.
+- Whether 400 nodes change the interior results less than the step from 100 to 200 nodes.
+- How the cooling of the long run changes when the table has valid entries up to the solidus at the CMB.
+
+??? info "Test details"
+    - Reference: the raw values of the study runs in `tests/validation/data/mesh_refinement_study.json`, written by `tools/verification/run_mesh_refinement_study.py` from the run folders; the test computes the noise floor, the spreads, the verdicts, the recommendation and every number above from them.
+    - Runs: aragog commit bbef9c9f on Habrok, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0.
+    - Tolerance: each quoted number to the digits it is quoted with.
+    - Test id: `tests/test_mesh_refinement_study.py::test_the_results_converge_as_the_top_cell_gets_thinner`
+    - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`
 
 ## A refined CMB cell and the core
 
