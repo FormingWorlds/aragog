@@ -10,7 +10,7 @@ A magma ocean freezes from its surface down. The first crust is metres thick, wh
 
 ## The two states and the profile
 
-The crust runs from the surface, at temperature $T_s$, down to its base at depth $\delta$, at temperature $T_b$. Material joins the crust at its base, so $T_b$ is the temperature at which the melt becomes rigid: the solidus above the rheological transition of the melt, and the lid-base temperature of the solid rheology below it.
+The crust runs from the surface, at temperature $T_s$, down to its base at depth $\delta$, at temperature $T_b$. Material joins the crust at its base, so $T_b$ is the temperature at which the melt becomes rigid: the solidus above the rheological transition of the melt, and the lid-base temperature of the solid rheology below it. The base is never warmer than the solidus and never warmer than the melt below the crust: $T_b \le T_f$, with $T_f$ the temperature of the top cell.
 
 Between the surface and the base, the temperature follows one member of a family of profiles. With $z$ the depth below the surface,
 
@@ -38,11 +38,25 @@ The heat content of the crust follows the equation of state across the crust, so
 
 The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
 
+### The base at the melt temperature
+
+**Why.** The lid-base temperature of the solid rheology can lie above the temperature of the melt below the crust, for example a fixed `lid_base_temperature` of 1300 K over a top cell at 1200 K. Material at the melt temperature cannot join a crust whose base is warmer: the jump $W(S_f) - W(S_b)$ would turn negative and the crust would grow from heat it does not get.
+
+**What.** Below the rheological transition the base entropy is capped at the melt, $S_b = \min(S_\mathrm{rh}, S_\mathrm{sol}, S_f)$, with $S_\mathrm{rh}$ the entropy of the rheological lid-base temperature. At the cap the jump is 0, and the balance above has no finite growth rate. The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the base, therefore has a floor `LID_DH_MIN` of 10³ J/kg, a numerical help of the solver. At the cap the crust grows at $d\delta/dt = (q_b - F_b) / (\rho_b \times 10^3\ \mathrm{J/kg})$.
+
+**Why it matters.** At the cap the growth rate depends on the floor and not on a latent heat, so the crust thickness and the surface flux there depend on the floor and on the mesh. The [Validation page](../Validation/surface_lid.md) gives the size of that dependence.
+
 ## When the crust exists, and when it goes
 
 A hot, fast-convecting melt carries more heat than a crust at $T_b$ can radiate. No crust can then form. The lid weight $w$ \[0 to 1\] compares the thickness of a crust in steady state, $\delta_\mathrm{eq} = k (T_b - T_s) / F_b$, with `lid_delta_on`: below it the lid is hidden ($w = 0$) and the surface is the mesh surface, above it the lid acts ($w = 1$). A hidden lid relaxes to a thin phantom lid of thickness `lid_delta_lo`.
 
-When the mantle near the surface is solid, a crust that has grown thicker than a few top cells is resolved by the mesh. The lid then hands over to the mesh. The solver stops when three conditions hold together: the base of the cold region (the deepest point where the column rises through the lid-base isotherm of the solid rheology) lies below the face of `lid_handover_cells` top cells, the stagnant-lid state of the solid rheology is active (its weight `w_active` above 0.5), and the top cell is below the rheological transition (the melt ramp $w_\phi$ of the lid base below 0.5). Why all three: in a molten or mushy mantle the solid rheology has no stagnant lid, so its isotherm marks no crust and can lie hundreds of kilometres deep. At the hand-over the solver merges the crust into the top cell with its energy, sets both lid states to zero and continues. A zero lid stays zero.
+When the crust is resolved by the mesh, the lid hands over to the mesh: the solver merges the crust into the top cell with its energy, sets both lid states to zero and continues. A zero lid stays zero. Which condition starts the hand-over depends on the solid rheology.
+
+**With the solid rheology and `stress_closure_mode = 'lid'`.** When the mantle near the surface is solid, a crust that has grown thicker than a few top cells is resolved by the mesh. The solver stops when three conditions hold together: the base of the cold region (the deepest point where the column rises through the lid-base isotherm of the solid rheology) lies below the face of `lid_handover_cells` top cells, the stagnant-lid state of the solid rheology is active (its weight `w_active` above 0.5), and the top cell is below the rheological transition (the melt ramp $w_\phi$ of the lid base below 0.5). Why all three: in a molten or mushy mantle the solid rheology has no stagnant lid, so its isotherm marks no crust and can lie hundreds of kilometres deep.
+
+**Without the solid rheology.** The lid base is the solidus. When the top cell cools to its solidus, $S_f \le S_\mathrm{sol}$, the jump $W(S_f) - W(S_b)$ is 0: no melt is left below the crust to freeze, and the freezing front has passed through the top cell. From there the mesh carries the cold top cell, and the lid hands over. A top cell at or below the solidus at the start of a call hands over before the call runs; a top cell that cools through the solidus during a call hands over at that time.
+
+**With the solid rheology and another closure.** The lid does not hand over. The base then lies at the rheological temperature, at or below the solidus, and a top cell can freeze through while melt stays under a thin resolved crust. No converged reference for that case exists yet, so it is a known limit (see below).
 
 ## A worked example
 
@@ -58,7 +72,7 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`.
 - The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (46,109 against 9,366).
-- The hand-over needs the solid rheology with `stress_closure_mode = 'lid'`; with another closure, or without the rheology, the lid never hands over.
+- The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over, and a molten start with that rheology is not validated: on a 1000-node mesh at 100 years the crust of that case is one node thick, so that mesh is not a converged reference.
 - The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
 
 **Where this is checked.** [Surface lid](../Validation/surface_lid.md) compares the lid with the freezing lava layer, a cooling half-space and a steady crust, and with a fine mesh for a solid shell and for a [shell that freezes from the mush](../Validation/surface_lid.md#a-shell-freezing-from-the-mush-on-a-fine-mesh), which tests the Stefan jump. It also lists the solver tests of the energy budget, the Stefan jump and the hand-over.

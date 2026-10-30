@@ -173,10 +173,10 @@ class BoundaryConfig:
         Thickness [m] of the hidden (phantom) lid and of the melt-back stop; None gives
         ``lid_delta_on / 2``.
     lid_handover_cells : int
-        The lid hands over to the mesh when the lid-base isotherm of the solid rheology reaches
-        the face below this many top cells. The hand-over needs ``phase_solid.rheology`` on
-        with ``stress_closure_mode = 'lid'``; with another closure, or without the rheology,
-        the lid never hands over.
+        With ``phase_solid.rheology`` on and ``stress_closure_mode = 'lid'``, the lid hands
+        over to the mesh when the lid-base isotherm reaches the face below this many top cells.
+        Without the rheology the lid hands over when the top cell cools to its solidus, and the
+        hand-over does not use this field; with another closure the lid never hands over.
     lid_ra_crit : float
         Critical Rayleigh number of the boundary-layer flux under the lid [-].
     """
