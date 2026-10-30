@@ -36,8 +36,9 @@ def test_the_first_frozen_interval_is_interpolated_between_rows():
     assert tool._first_frozen(t[:3], d[:3], 0.0) == {'freeze_yr': 15.0, 'thaw_yr': None}
 
 
-def _run_folder(tmp_path, t_rows):
-    """A run folder with 1 part to 1e3 yr and stored melt-fraction rows at ``t_rows``."""
+def _run_folder(tmp_path, t_rows, phi=None):
+    """A run folder with 1 part to 1e3 yr and stored melt-fraction rows ``phi`` (0.5 if None)
+    at ``t_rows``."""
     run = tmp_path / 'R'
     run.mkdir()
     rec = dict(
@@ -61,7 +62,8 @@ def _run_folder(tmp_path, t_rows):
     np.savez(run / 'za_part0.npz', t=np.array([0.0, 1e3]), y=y, S_sol=np.array([1.0, 1.0, 1.0]))
     rows = tmp_path / 'rows'
     rows.mkdir()
-    np.savez(rows / 'R.npz', t=np.asarray(t_rows), Phi=np.full(len(t_rows), 0.5))
+    phi = np.full(len(t_rows), 0.5) if phi is None else np.asarray(phi)
+    np.savez(rows / 'R.npz', t=np.asarray(t_rows), Phi=phi)
     return run, rows
 
 
@@ -89,6 +91,32 @@ def test_a_time_mean_window_that_starts_on_time_is_kept(tmp_path, start, monkeyp
         and v['P_cell_Pa'] == [1.0, 2.0, 3.0]
         and 'T_core_K' not in v
     )
+
+
+def test_the_time_mean_is_the_trapezoid_mean_over_the_window_rows(tmp_path, monkeypatch):
+    """Phi = t / 1e3 on rows that are denser near t/2, with rows before t/2 and after t: the mean
+    over [t/2, t] is 0.75; the sample mean or a window without either bound gives another value."""
+    monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
+    t = np.r_[400.0, 450.0, 500.0 + 500.0 * np.linspace(0.0, 1.0, 11) ** 2, 1050.0, 1100.0]
+    run, rows = _run_folder(tmp_path, t, t / 1e3)
+    inside = t[(t >= 500.0) & (t <= 1e3)] / 1e3
+    assert abs(inside.mean() - 0.75) > 1e-2
+    assert tool.run_values(run, rows)['Phi_time_mean']['1e+03'] == pytest.approx(
+        0.75, rel=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    't',
+    [np.linspace(500.0, 1e3, 5), np.r_[np.linspace(500.0, 990.0, 8), 1010.0]],
+    ids=['5 rows', 'no row at t'],
+)
+def test_a_time_mean_window_without_6_rows_to_t_is_refused(tmp_path, t, monkeypatch):
+    """A window of fewer than 6 rows, or one whose last row is before t, gives a ValueError."""
+    monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
+    run, rows = _run_folder(tmp_path, t)
+    with pytest.raises(ValueError, match='too few stored rows in'):
+        tool.run_values(run, rows)
 
 
 @pytest.mark.parametrize('start', [526.0, 600.0])
@@ -185,3 +213,92 @@ def test_a_core_run_keeps_the_core_temperature_and_the_freezes_per_part(tmp_path
     assert v['T_core_K'] == [4000.0, 4001.0] and v['core_bc'] == 'core_module'
     assert v['top_cell_freezes'] == [2, 1]
     assert v['first_frozen'] == {'freeze_yr': 2.0 / 3.0, 'thaw_yr': 1.5}
+
+
+def _write_table(path, p, s, values):
+    """An aragog P-S table: 5 header lines, the last with the unit scales, rows S-outer P-inner."""
+    rows = [(pi, si, values[a, b]) for a, si in enumerate(s) for b, pi in enumerate(p)]
+    head = '# a\n# b\n# c\n# d\n# 1 1 1\n'
+    path.write_text(head + '\n'.join(f'{x:.17g} {y:.17g} {z:.17g}' for x, y, z in rows) + '\n')
+
+
+def test_the_table_values_of_a_synthetic_table_set(tmp_path):
+    """On a 3 x 3 table set the CMB entries come from the last entropy node valid at both
+    pressure nodes around the CMB pressure, the last valid node per pressure node from the
+    mask, and the melt values at 1 bar from the valid melt rows."""
+    p, s = np.array([1e5, 1e9, 2e9]), np.array([1000.0, 2000.0, 3000.0])
+    t = 1000.0 + s[:, None] / 10 + p[None, :] / 1e7
+    vm = np.array([[1, 1, 1], [1, 1, 1], [1, 0, 0]])
+    for name, v in (
+        ('temperature_solid.dat', t),
+        ('temperature_melt.dat', t + 50.0),
+        ('density_melt.dat', 3000.0 + 0 * t),
+    ):
+        _write_table(tmp_path / name, p, s, v)
+    np.savetxt(tmp_path / 'valid_mask_solid.dat', vm)
+    np.savetxt(tmp_path / 'valid_mask_melt.dat', vm)
+    (tmp_path / 'solidus_P-S.dat').write_text(
+        '# a\n# b\n# c\n# d\n# 1 1\n1e5 1500.0\n2e9 2500.0\n'
+    )
+    v = tool.table_values(tmp_path, 1.5e9)
+    c = v['solid_at_cmb']
+    assert c['P_nodes_Pa'] == [1e9, 2e9] and c['S_nodes'] == [2000.0, 3000.0]
+    assert c['T_K'] == t[1:3, 1:3].tolist() and c['valid'] == [[1.0, 1.0], [0.0, 0.0]]
+    assert v['solid_last_valid']['S'] == [3000.0, 2000.0, 2000.0]
+    assert v['solidus'] == {'P_Pa': [1e5, 2e9], 'S': [1500.0, 2500.0]}
+    assert v['melt_at_1bar']['S'] == s.tolist()
+    assert v['melt_at_1bar']['T_K'] == (t[:, 0] + 50.0).tolist()
+
+
+def test_the_cell_pressure_of_a_run_record_is_the_mesh_pressure():
+    """The study tool maps the record fields nodes, surface_cell and cmb_cell onto the mesh of
+    abe_solid.toml: its staggered pressure equals that of the mesh built directly."""
+    import aragog
+    from aragog.mesh import Mesh
+    from aragog.parser import Parameters
+
+    p = Parameters.from_file(Path(aragog.__file__).parent / 'cfg' / 'abe_solid.toml')
+    p.mesh.number_of_nodes, p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = (
+        100,
+        50.0,
+        9327.0,
+    )
+    rec = dict(nodes=100, surface_cell=50.0, cmb_cell=9327.0)
+    assert tool._cell_pressure(rec) == np.ravel(Mesh(p).staggered_pressure).tolist()
+
+
+def test_the_driver_refuses_to_resume_after_a_part_with_a_negative_status(tmp_path):
+    """A last part that reached its time with CVODE status -1 also ends the resume."""
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+    (eos / 'temperature_solid.dat').write_text('x')
+    out = tmp_path / 'run'
+    out.mkdir()
+    a = case.parse([str(out), '--eos-dir', str(eos)])
+    sha = case.subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=_PATH.parents[2]
+    ).stdout.strip()
+    rec = dict(
+        sha=sha, config_hash=case.case_config(a, _PATH.parents[2])[2], reached=True, status=-1
+    )
+    (out / 'za.json').write_text(json.dumps([rec]))
+    with pytest.raises(BaseException) as err:
+        case.main([str(out), '--eos-dir', str(eos), '--resume'])
+    assert isinstance(err.value, SystemExit) and 'did not reach its time' in str(err.value)
+
+
+def test_the_cvode_counters_parse_the_solver_log_line():
+    """The CVODE line built from the solver's own format string is summed by _CvodeStats."""
+    import logging
+    import re
+
+    src = (_PATH.parents[2] / 'src/aragog/solver/entropy_solver.py').read_text()
+    m = re.search(r"'(CVODE stats: [^']*)'\s*'([^']*)'\s*'([^']*)'", src)
+    assert m, 'no CVODE stats format in the solver'
+    fmt = ''.join(m.groups())
+    args = (12, 34, 5, 6, 3, 2.5e-3, 1.0e-3, 40, 3.3, 0.42)
+    h = case._CvodeStats()
+    h.cv = dict(calls=0, nst=0, nfe=0, netf=0, last_step=None)
+    for _ in range(2):
+        h.emit(logging.LogRecord('x', logging.INFO, '', 0, fmt, args, None))
+    assert h.cv == dict(calls=2, nst=24, nfe=68, netf=12, last_step=2.5e-3)
