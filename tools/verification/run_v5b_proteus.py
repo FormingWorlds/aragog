@@ -14,8 +14,9 @@ config options before the run starts:
   round-off start (PROTEUS sets the start entropy and makes zero-length calls first).
 
 The result file records the CVODE steps of all calls and the wall time of the run. The driver
-stops with an error when one of these hooks is missing in the installed PROTEUS or Aragog. It
-needs PROTEUS and its data (``FWL_DATA``). Run from the repository root::
+stops with an error when one of these hooks is missing in the installed PROTEUS or Aragog, or
+when the run counts no CVODE step. It needs PROTEUS and its data (``FWL_DATA``). Run from
+the repository root::
 
     python tools/verification/run_v5b_proteus.py [--reference] [--s0-eps EPS] [--output-dir DIR]
 """
@@ -107,6 +108,8 @@ def main(argv=None) -> int:
     runner = Proteus(config_path=str(out / 'config.toml'))
     t0 = time.perf_counter()
     runner.start(offline=True)
+    if steps[0] <= 0:
+        raise SystemExit('no CVODE step was counted: the V5b case settings reached no solve')
     row = runner.hf_all.iloc[-1]
     result = dict(
         reference=args.reference,

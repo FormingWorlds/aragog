@@ -341,24 +341,11 @@ def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(
     np.testing.assert_allclose(calls[1][0], [100.1, 200.2], rtol=1e-15)
 
 
-@pytest.mark.parametrize(
-    'argv, flags',
-    [
-        (['--reference', '--reference-rtol', '1e-11', '--s0-eps=1e-12'], (True, 1e-11, 1e-12)),
-        (['--reference-rtol', '1e-11'], (False, None, 0.0)),
-    ],
-)
-def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path, argv, flags):
-    """main() writes the config with the output path, runs PROTEUS, and records the run.
-
-    A run without --reference records reference_rtol None, as compare_v5_runs.py requires.
-    """
+def _v5b_main(monkeypatch, tmp_path, argv, cvode_calls):
+    """Run main() on a fake PROTEUS whose run makes ``cvode_calls`` CVODE calls of 7 steps."""
     import types
 
-    import aragog.solver.entropy_solver as es
-
-    monkeypatch.setattr(es.EntropySolver, '_solve_cvode', es.EntropySolver._solve_cvode)
-    _fake_proteus(monkeypatch, check_termination=lambda handler: False)
+    cls, solver, _ = _recording_solver(monkeypatch)
     seen = {}
 
     class Rows(list):
@@ -372,22 +359,47 @@ def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path, a
 
         def start(self, offline):
             seen['offline'] = offline
+            for _ in range(cvode_calls):
+                cls._solve_cvode(solver, 0.0, 1.0, np.array([100.0, 200.0]), 1e-8, 1e-8, 5.0)
             self.hf_all = Rows([dict.fromkeys(v5b.COLUMNS, 1.0)] * 2)
 
     sys.modules['proteus'].Proteus = Runner
     dumps = lambda d: f'path = {d["params"]["out"]["path"]!r}\n'  # noqa: E731
     monkeypatch.setitem(sys.modules, 'toml', types.SimpleNamespace(dumps=dumps))
-    assert v5b.main([*argv, '--output-dir', str(tmp_path)]) == 0
+    return v5b.main([*argv, '--output-dir', str(tmp_path)]), seen
+
+
+@pytest.mark.parametrize(
+    'argv, flags',
+    [
+        (['--reference', '--reference-rtol', '1e-11', '--s0-eps=1e-12'], (True, 1e-11, 1e-12)),
+        (['--reference-rtol', '1e-11'], (False, None, 0.0)),
+    ],
+)
+def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path, argv, flags):
+    """main() writes the config with the output path, runs PROTEUS, and records the run.
+
+    A run without --reference records reference_rtol None, as compare_v5_runs.py requires.
+    """
+    rc, seen = _v5b_main(monkeypatch, tmp_path, argv, cvode_calls=2)
+    assert rc == 0
     res = json.loads((tmp_path / 'v5b_result.json').read_text())
     assert (res['reference'], res['reference_rtol'], res['s0_eps']) == flags
     assert (res['cvode_steps'], res['rows'], res['solid_steps'], res['T_magma']) == (
-        0,
+        14,
         2,
         0,
         1.0,
     )
     assert res['wall_s'] >= 0.0 and seen['offline'] is True
     assert str(tmp_path / 'output') in seen['config']
+
+
+def test_v5b_main_refuses_a_run_without_a_cvode_step(monkeypatch, tmp_path):
+    """A run where the patched CVODE call never ran writes no result."""
+    with pytest.raises(SystemExit, match='no CVODE step'):
+        _v5b_main(monkeypatch, tmp_path, ['--reference'], cvode_calls=0)
+    assert not (tmp_path / 'v5b_result.json').exists()
 
 
 def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):

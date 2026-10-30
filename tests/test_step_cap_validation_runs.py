@@ -9,9 +9,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import aragog.solver.entropy_solver as es
+
 from .conftest import EOS_DIR, needs_eos
 
 pytestmark = [pytest.mark.smoke, needs_eos]
+needs_cvode = pytest.mark.skipif(not es._CVODE_AVAILABLE, reason='needs scikits.odes CVODE')
 
 _spec = importlib.util.spec_from_file_location(
     'run_step_cap_validation',
@@ -24,6 +27,7 @@ tool = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tool)
 
 
+@needs_cvode
 @pytest.mark.parametrize('name', ['v3_r3', 'v3_r4'])
 def test_v3_rate_run_counts_its_segments_inside_the_step_ceiling(name):
     """The m = 0 rate run lands slowly in v3_r3 and reaches infinite caps in v3_r4."""
@@ -37,6 +41,15 @@ def test_v3_rate_run_counts_its_segments_inside_the_step_ceiling(name):
         assert row['subsolidus'] >= 1 and row['inf_caps'] >= 1
 
 
+def test_v3_run_refuses_a_radau_run(monkeypatch):
+    """Without CVODE the solver falls back to Radau; v3_run refuses a row with no CVODE step."""
+    monkeypatch.setattr(es, '_CVODE_AVAILABLE', False)
+    monkeypatch.setitem(tool.V3, 'v3_r3', {**tool.V3['v3_r3'], 'end': 10.0})
+    with pytest.raises(RuntimeError, match='no CVODE step'):
+        tool.v3_run((str(EOS_DIR), 'v3_r3', 'rate', 1e-8, 0, None))
+
+
+@needs_cvode
 def test_v4_rheo_on_runs_with_the_jax_factory(monkeypatch):
     """A 10 yr rheo_on run on the CI table (table guard set to it) calls the JAX factory."""
     table = (Path(EOS_DIR) / 'temperature_solid.dat').read_bytes()

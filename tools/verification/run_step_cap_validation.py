@@ -170,6 +170,9 @@ def v3_run(task):
     sol = s._solution
     if sol.status != 0:
         raise RuntimeError(f'{name} {mode} at {tol:g}, m = {m}: solver status {sol.status}')
+    steps = int(sol.get('cvode_nst') or 0)
+    if steps <= 0:
+        raise RuntimeError(f'{name} {mode} at {tol:g}, m = {m}: no CVODE step')
     S = np.asarray(sol.y)[: s._n_stag, :]
     T_end = np.asarray(eos.temperature(s._P_stag_flat, S[:, -1])).ravel()
     caps = [seg[2] for seg in getattr(sol, 'segments', None) or []]
@@ -178,7 +181,7 @@ def v3_run(task):
         mode=mode,
         tol=tol,
         m=m,
-        steps=int(sol.get('cvode_nst') or 0),
+        steps=steps,
         wall_s=time.perf_counter() - t0,
         T_end=T_end.tolist(),
         S_min=float(S.min()),
