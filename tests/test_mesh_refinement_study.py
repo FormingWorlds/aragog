@@ -582,7 +582,7 @@ def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
     for k in d:
         figure = make(k)
         fig = figure()
-        _check_figure(fig, [titles[k]], [[d[k], 3 * e[k]]], ['difference', 'noise floor 3e'])
+        _check_figure(fig, [titles[k]], [[d[k], 3 * e[k]]], ['difference', '3 x noise floor'])
         plt.close(fig)
         _check_layout(figure)
         _check_size(figure, f'mesh_refinement_cmb_{files[k]}')
