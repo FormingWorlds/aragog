@@ -325,7 +325,9 @@ def test_the_alternating_pattern_from_a_perturbed_start_and_at_200_nodes():
     L, Lp, T, T0 = study['L50'], study['L50p'], study['T50-200-long'], study['T50-200']
     assert abs(Lp['s_init'] / L['s_init'] - 1 - 1e-12) < 1e-15 and set(Lp['status']) == {0}
     assert [_pattern(Lp, i)[0] for i in (5, 6)] == [37, 10]
-    sign = [np.sign(np.subtract(v['S_end'][i], v['S_sol'])[:48]) for i in (5, 6) for v in (L, Lp)]
+    sign = [
+        np.sign(np.subtract(v['S_end'][i], v['S_sol'])[:48]) for i in (5, 6) for v in (L, Lp)
+    ]
     assert [int(np.sum(sign[k] == sign[k + 1])) for k in (0, 2)] == [46, 48]
 
     assert T['config_hash'] == T0['config_hash'] and T['t_yr'][-1] == 1e8
