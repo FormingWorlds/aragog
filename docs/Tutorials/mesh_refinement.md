@@ -53,7 +53,7 @@ top cell   1000.0 m: status 0, surface flux 1.4530e+05 W/m^2, T_magma 1265.9 K
 
 ## 2. Read the result
 
-The first line is the uniform mesh: in mass-coordinate mode its top cell is 10.9 km, thicker than the 10.1 km radial average because the density is lowest at the surface. The second line has the 1 km top cell that the config sets. Both runs end with status 0.
+The first line is the uniform mesh: in mass-coordinate mode its top cell is 10.9 km, thicker than the 10.1 km radial average. The second line has the 1 km top cell that the config sets. Both runs end with status 0.
 
 After 100 years the surface heat flux on the refined mesh is 1.0 % higher than on the uniform mesh, and the surface temperature `T_magma` is 3.2 K higher. The top cell changes the result, so a run with a thin top cell is not the same model as the uniform run. Which top cell is thin enough is the question of the convergence study on the [Validation page](../Validation/mesh_refinement.md).
 

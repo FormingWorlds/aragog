@@ -1,5 +1,6 @@
-"""The study tool ``tools/verification/run_mesh_refinement_study.py`` on synthetic input: the first
-frozen interval of the top cell, the time-mean window check and the argument and table guards."""
+"""The study tools ``run_mesh_refinement_study.py`` and ``run_mesh_refinement_case.py`` of
+``tools/verification``: the first frozen interval, the time-mean windows, the argument and table
+guards, the resume guard and the config of every stored run."""
 
 from __future__ import annotations
 
@@ -69,7 +70,25 @@ def test_a_time_mean_window_that_starts_on_time_is_kept(tmp_path, start, monkeyp
     """A run to 1e3 yr gets the mean of its 1e3 yr window only, over the stored rows."""
     monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
     run, rows = _run_folder(tmp_path, np.linspace(start, 1e3, 8))
-    assert tool.run_values(run, rows)['Phi_time_mean'] == {'1e+03': 0.5}
+    v = tool.run_values(run, rows)
+    assert v['Phi_time_mean'] == {'1e+03': 0.5}
+    assert (v['commit'], v['config_hash'], v['nodes'], v['t_yr'], v['nst']) == (
+        'a',
+        'h',
+        3,
+        [1e3],
+        [1],
+    )
+    assert (
+        v['S_bottom_cell'] == [2.0]
+        and v['top_cell_freezes'] == [0]
+        and v['first_frozen'] is None
+    )
+    assert (
+        v['S_sol'] == [1.0, 1.0, 1.0]
+        and v['P_cell_Pa'] == [1.0, 2.0, 3.0]
+        and 'T_core_K' not in v
+    )
 
 
 @pytest.mark.parametrize('start', [526.0, 600.0])
@@ -96,7 +115,7 @@ def test_the_tables_need_a_cmb_pressure_inside_the_table(tmp_path):
 
 
 def test_the_case_driver_rebuilds_the_config_of_every_stored_run(tmp_path):
-    """The command line of each stored run, read from its record, gives that run's config hash."""
+    """The command line of each stored run, read from its record, gives its config hash."""
     study = json.loads(DATA.read_text())
     for name, v in study.items():
         if name == 'header':

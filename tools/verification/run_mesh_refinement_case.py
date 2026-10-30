@@ -1,11 +1,12 @@
 """Run one case of the mesh refinement study: abe_solid.toml from a molten start, in parts.
 
-Each part is a fresh solver started from the end state of the previous part and solved to the next
-sample time. After each part the run folder gets ``za_part<k>.npz`` (stored rows ``t`` [yr], ``y``,
-the basic and staggered temperatures, ``S_sol`` the staggered solidus entropy and ``y_end``) and one
-record in ``za.json`` (time, status, melt fraction, CMB temperature, energy integrals, CVODE counters,
-mesh, source commit and the config hash). ``tools/verification/run_mesh_refinement_study.py`` reads
-these folders. Run it from the root of the aragog tree under test.
+Each part is a fresh solver started from the end state of the previous part and solved to the
+next sample time. After each part the run folder gets ``za_part<k>.npz`` (stored rows ``t``
+[yr], ``y``, the basic and staggered temperatures, ``S_sol`` the staggered solidus entropy and
+``y_end``) and one record in ``za.json`` (time, status, melt fraction, CMB temperature, energy
+integrals, CVODE counters, mesh, source commit and the config hash).
+``tools/verification/run_mesh_refinement_study.py`` reads these folders. Run it from the root of
+the aragog tree under test.
 
 Usage::
 
@@ -33,8 +34,12 @@ STEM = 'za'
 RHEOLOGY = dict(
     enabled=True, stress_closure_mode='lid', yield_stress_c=1.0e7, yield_stress_mu=0.1
 )
+RUN = dict(
+    kappah_floor=10.0, viscosity=1.0e21, emissivity=1.0, max_steps=800_000, yield_max=1.0e8
+)
 CV_RE = re.compile(
-    r'CVODE stats: nst=(-?\d+) nfe=(-?\d+) nsetups=-?\d+ netf=(-?\d+) order=-?\d+ last_step=(\S+)'
+    r'CVODE stats: nst=(-?\d+) nfe=(-?\d+) nsetups=-?\d+ netf=(-?\d+) '
+    r'order=-?\d+ last_step=(\S+)'
 )
 
 
@@ -70,10 +75,10 @@ def case_config(a: argparse.Namespace, tree: Path) -> tuple[str, dict | None, st
         raise ValueError('abe_solid.toml has no single [phase_mixed] table to add the width to')
     text = text.replace('[phase_mixed]\n', '[phase_mixed]\nmatprop_smooth_width = 0.01\n')
     core = json.loads(a.core_module_params.read_text()) if a.core_module_params else None
-    rheo = SolidRheologyParams(**RHEOLOGY, yield_stress_max=1.0e8)
-    key = dict(kappah_floor=10.0, viscosity=1.0e21, rheo=repr(rheo), emissivity=1.0)
-    key |= dict(nodes=a.nodes, s_init=repr(a.s_init), surface_cell=a.surface_cell)
-    key |= dict(numpy=a.numpy, max_steps=800_000)
+    rheo = SolidRheologyParams(**RHEOLOGY, yield_stress_max=RUN['yield_max'])
+    key = dict(kappah_floor=RUN['kappah_floor'], viscosity=RUN['viscosity'], rheo=repr(rheo))
+    key |= dict(emissivity=RUN['emissivity'], nodes=a.nodes, s_init=repr(a.s_init))
+    key |= dict(surface_cell=a.surface_cell, numpy=a.numpy, max_steps=RUN['max_steps'])
     key |= ({'cmb_cell': a.cmb_cell} if a.cmb_cell > 0 else {}) | (
         {'core_module': core} if core else {}
     )
@@ -113,12 +118,12 @@ def _install_factory(s, eos_dir, counter):
         inner_bc_value=b.inner_boundary_value,
         core_density=s.parameters.mesh.core_density,
         core_heat_capacity=b.core_heat_capacity,
-        tfac_core_avg=getattr(b, 'tfac_core_avg', 1.147),
-        cmb_area=float(getattr(s, '_cmb_area', 0.0)),
-        core_M=float(getattr(s, '_core_M', 0.0)),
-        cmb_dr_cmb=float(getattr(s, '_cmb_dr_cmb', 0.0)),
-        param_utbl=bool(getattr(b, 'param_utbl', False)),
-        param_utbl_const=float(getattr(b, 'param_utbl_const', 0.0)),
+        tfac_core_avg=b.tfac_core_avg,
+        cmb_area=float(s._cmb_area),
+        core_M=float(s._core_M),
+        cmb_dr_cmb=float(s._cmb_dr_cmb),
+        param_utbl=bool(b.param_utbl),
+        param_utbl_const=float(b.param_utbl_const),
     )
     eos = EntropyEOS_JAX(str(eos_dir))
     mesh, params = (
@@ -186,7 +191,7 @@ def _record(s, t_yr, y):
 
 
 def _steady(prev, d):
-    """Fully solid for two parts and the lid unchanged to 1 % in thickness and 1 K at its base."""
+    """Solid in two parts in a row, the lid unchanged to 1 % in depth and 1 K at its base."""
     a, b = prev['lid'], d['lid']
     if not (prev['all_subsolidus'] and d['all_subsolidus'] and a.get('d_lid') is not None):
         return False
@@ -202,6 +207,7 @@ def main(argv=None) -> int:
 
     import aragog
     from aragog.config import Config
+    from aragog.jax.solver import SECS_PER_YEAR
     from aragog.solver.entropy_solver import EntropySolver
 
     tree = Path.cwd()
@@ -217,6 +223,21 @@ def main(argv=None) -> int:
     text, core, config_hash = case_config(a, tree)
     cfg = Path(tempfile.mkdtemp()) / 'abe_solid_w.toml'
     cfg.write_text(text)
+    rows, t_prev, y_prev, k0 = [], 0.0, None, 0
+    out_json = a.outdir / f'{STEM}.json'
+    if a.resume and out_json.exists():
+        rows = json.loads(out_json.read_text())
+        if {r['sha'] for r in rows} != {sha} or {r['config_hash'] for r in rows} != {
+            config_hash
+        }:
+            raise SystemExit(f'{out_json} comes from another commit or config')
+        if not rows[-1]['reached'] or rows[-1]['status'] < 0:
+            raise SystemExit(
+                f'{out_json}: part {len(rows) - 1} did not reach its time; rerun it'
+            )
+        k0 = len(rows)
+        z = np.load(a.outdir / f'{STEM}_part{k0 - 1}.npz')
+        t_prev, y_prev = float(z['t'][-1]), np.asarray(z['y_end'], float)
     eos_np = entropy_eos_copy(a.eos_dir)
     stats = _CvodeStats()
     log = logging.getLogger('fwl.aragog.solver.entropy_solver')
@@ -230,10 +251,12 @@ def main(argv=None) -> int:
         from aragog.rheology import SolidRheologyParams
 
         c = Config.from_file(str(cfg))
-        c.solver.end_time, c.solver.max_steps = end_time, 800_000
-        c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, 1.0e21
-        c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY, yield_stress_max=1.0e8)
-        c.boundary_conditions.emissivity = 1.0
+        c.solver.end_time, c.solver.max_steps = end_time, RUN['max_steps']
+        c.energy.kappah_floor, c.phase_solid.viscosity = RUN['kappah_floor'], RUN['viscosity']
+        c.phase_solid.rheology = SolidRheologyParams(
+            **RHEOLOGY, yield_stress_max=RUN['yield_max']
+        )
+        c.boundary_conditions.emissivity = RUN['emissivity']
         c.mesh.number_of_nodes = a.nodes
         c.mesh.surface_cell_thickness, c.mesh.cmb_cell_thickness = a.surface_cell, a.cmb_cell
         if core:
@@ -250,17 +273,6 @@ def main(argv=None) -> int:
             _install_factory(s, a.eos_dir, calls)
         return s
 
-    rows, t_prev, y_prev, k0 = [], 0.0, None, 0
-    out_json = a.outdir / f'{STEM}.json'
-    if a.resume and out_json.exists():
-        rows = json.loads(out_json.read_text())
-        if {r['sha'] for r in rows} != {sha} or {r['config_hash'] for r in rows} != {
-            config_hash
-        }:
-            raise SystemExit(f'{out_json} comes from another commit or config')
-        k0 = len(rows)
-        z = np.load(a.outdir / f'{STEM}_part{k0 - 1}.npz')
-        t_prev, y_prev = float(z['t'][-1]), np.asarray(z['y_end'], float)
     w_all = time.perf_counter()
     for k, t_end in enumerate(samples[k0:], start=k0):
         if a.max_parts and k >= k0 + a.max_parts:
@@ -271,33 +283,9 @@ def main(argv=None) -> int:
             off = 0.0 if sc.state_offset is None else np.asarray(sc.state_offset)
             y_nd0, seg = (y_prev - off) / np.asarray(sc.state_scale), s._solve_cvode_segments
 
-            def restart(
-                start_time,
-                end_time,
-                y0,
-                h_at,
-                roots_at,
-                t_ref,
-                h_min,
-                max_segments=50_000,
-                eos_s_nd_bounds=None,
-                _seg=seg,
-                _t=t_prev,
-                _y=y_nd0,
-                **kw,
-            ):
-                return _seg(
-                    _t / t_ref,
-                    end_time,
-                    _y,
-                    h_at,
-                    roots_at,
-                    t_ref,
-                    h_min,
-                    max_segments=max_segments,
-                    eos_s_nd_bounds=eos_s_nd_bounds,
-                    **kw,
-                )
+            def restart(_seg=seg, _t=t_prev, _y=y_nd0, **kw):
+                kw.setdefault('max_segments', 50_000)
+                return _seg(**{**kw, 'start_time': _t / kw['t_ref'], 'y0': _y})
 
             s._solve_cvode_segments = restart
         calls[0] = 0
@@ -345,7 +333,7 @@ def main(argv=None) -> int:
             T_cmb=float(arrays['tb'][0]),
             config_hash=config_hash,
             F_top_mean_step_integral=(
-                -ei['F_int'] / (4 * np.pi * r[-1] ** 2) / ((t_got - tt[0]) * 3.15576e7)
+                -ei['F_int'] / (4 * np.pi * r[-1] ** 2) / ((t_got - tt[0]) * SECS_PER_YEAR)
                 if ei.get('F_int') is not None and t_got > tt[0]
                 else None
             ),

@@ -41,7 +41,8 @@ def _two_sided(xi: npt.NDArray, first: float, last: float) -> npt.NDArray:
     def residual(p):
         delta, logA = p
         s = grid(delta, np.exp(logA))
-        return [np.log(s[1] / first), np.log((1.0 - s[-2]) / last)]
+        with np.errstate(divide='ignore'):  # a collapsed end cell gives -inf, refused below
+            return [np.log(s[1] / first), np.log((1.0 - s[-2]) / last)]
 
     # Vinokur's start: sinh(delta) / delta = h / sqrt(first last), A = sqrt(last / first)
     b = h / np.sqrt(first * last)

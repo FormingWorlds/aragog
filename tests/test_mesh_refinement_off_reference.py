@@ -14,17 +14,20 @@ from __future__ import annotations
 import importlib.util
 import sys
 import warnings
+from operator import attrgetter
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
+from tests.conftest import needs_eos
+
+pytestmark = [pytest.mark.reference_pinned, pytest.mark.timeout(900)]
 
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / 'tests' / 'reference' / 'mesh_refinement_off_main_reference.npz'
 GEN = ROOT / 'tools' / 'verification' / 'generate_mesh_refinement_off_reference.py'
-# Linux vs macOS reference, max |d| / max |ref|: mesh 1.0e-12, RHS 2.8e-14, end states 2.3e-8
+# the margins cover the round-off of Linux against the macOS reference
 MESH_RTOL, RHS_RTOL, SOLVE_RTOL = 1.0e-10, 1.0e-10, 1.0e-6
 
 
@@ -44,6 +47,7 @@ def ref():
     return np.load(REF)
 
 
+@pytest.mark.unit
 def test_the_reference_names_a_commit_and_a_jax_solve(ref):
     """The stored file records a 40-character commit and a JAX solve with JAX RHS calls."""
     assert len(str(ref['source_commit'])) == 40
@@ -51,6 +55,23 @@ def test_the_reference_names_a_commit_and_a_jax_solve(ref):
         assert int(ref[f'{mode}/solve/jax/rhs_calls']) > 0
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize('mode,mass_coordinates', [('mass', True), ('radius', False)])
+def test_the_off_path_mesh_arrays_equal_the_reference(ref, mode, mass_coordinates, monkeypatch):
+    """The mesh arrays with both cell thicknesses at 0, which need no EOS table, equal the
+    stored reference to 1e-10 of the largest value of each array."""
+    gen = _generator(monkeypatch)
+    mesh = gen.Mesh(gen._parameters(mass_coordinates))
+    for name in gen.MESH_ARRAYS:
+        e = ref[f'{mode}/mesh/{name}']
+        tol = MESH_RTOL * np.max(np.abs(e))
+        np.testing.assert_allclose(
+            attrgetter(name)(mesh), e, rtol=MESH_RTOL, atol=tol, err_msg=name
+        )
+
+
+@pytest.mark.integration
+@needs_eos
 @pytest.mark.parametrize('mode,mass_coordinates', [('mass', True), ('radius', False)])
 def test_the_refinement_off_path_equals_main(ref, mode, mass_coordinates, monkeypatch):
     """With both cell thicknesses at 0 the mesh arrays and the NumPy RHS equal main to

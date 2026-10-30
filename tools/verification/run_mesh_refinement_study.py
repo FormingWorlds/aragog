@@ -1,31 +1,28 @@
 """Write the raw values of the mesh refinement study runs to one compact JSON file.
 
-Each run folder holds ``za.json`` (one record per part, written at the part end) and
-``za_part<k>.npz`` (the stored output rows of part k: ``t`` [yr], ``y`` with the staggered
-entropy in its first rows, ``S_sol`` the staggered solidus entropy). For every run the file
-keeps the mesh (node count, measured top and CMB cell), the config hash and, per part, the end
-time, status, global melt fraction, CMB temperature, the time-mean surface heat flux of the
-part and the energy integrals ``F_int`` (heat lost at the surface, J) and ``F_cmb`` (heat
-gained at the CMB, J). It also keeps the first frozen interval of the top cell: from the first
-time the top cell entropy is at or below the solidus (linear between stored rows) to the first
-time after it that it is above the solidus again, and the number of times per part that the top cell
-falls to or below the solidus. With ``--phi-rows DIR`` it adds the time mean
-of the global melt fraction over [t/2, t] for t = 1e3, 1e4, 1e5 yr, from ``DIR/<run>.npz``
-(arrays ``t`` and ``Phi`` on the stored rows; a run without that file has no time mean). No
-derived number is stored: ``tests/test_mesh_refinement_study.py`` computes them. With ``--tables DIR``
-(the aragog P-S tables of the runs) and ``--cmb-pressure PA`` the header also keeps the solid
-temperature table at the two pressure nodes around the CMB pressure, for the last entropy node valid at
-both and the next node, and the melt temperature and density on the valid nodes at 1 bar; with
-``--raw-liquid FILE`` it keeps the rows at 1 bar of that PALEOS (P, T) liquid table. Each table file is
-named with its md5, and the header keeps the entropy nodes and the largest valid entropy of the solid
-table at every pressure node, and the solidus of the tables. Every run keeps its staggered solidus entropy and the staggered pressure of its mesh, rebuilt from
-``abe_solid.toml`` with the run's node count and end cells; the runs named with ``--profiles`` also keep
-the staggered entropy at every part end.
+Each run folder holds ``za.json`` (one record per part) and ``za_part<k>.npz`` (the stored rows
+of part k), as ``tools/verification/run_mesh_refinement_case.py`` writes them. Per run the file
+keeps the mesh, the config hash, the staggered solidus entropy, the staggered pressure of the
+mesh rebuilt from ``abe_solid.toml`` and, per part, the end time, status, global melt fraction,
+CMB temperature, time-mean surface heat flux, the energy integrals ``F_int`` (through the
+surface, negative for heat loss) and ``F_cmb`` (through the CMB) in J, the CVODE step count, the
+bottom-cell entropy, the number of times the top cell falls to or below the solidus and, for a
+core-module run, the core temperature. It also keeps the first frozen interval of the top cell
+(linear between stored rows); ``--phi-rows DIR`` adds the time mean of the global melt fraction
+over [t/2, t] for each t = 1e3, 1e4, 1e5 yr that the run reaches, and ``--profiles RUN...`` the
+staggered entropy at every part end. All other derived numbers are computed by
+``tests/test_mesh_refinement_study.py``.
+
+With ``--tables DIR --cmb-pressure PA`` the header keeps, each table file named with its md5:
+the solid temperature table around the CMB pressure, its entropy nodes and last valid entropy
+per pressure node, the solidus, and the melt temperature and density at 1 bar; ``--raw-liquid
+FILE`` adds the 1 bar rows of a PALEOS (P, T) liquid table.
 
 Usage::
 
     python tools/verification/run_mesh_refinement_study.py <run root> <out.json> <run>...
-        [--phi-rows DIR] [--note TEXT] [--tables DIR --cmb-pressure PA] [--raw-liquid FILE] [--profiles RUN...]
+        [--phi-rows DIR] [--note TEXT] [--tables DIR --cmb-pressure PA] [--raw-liquid FILE]
+        [--profiles RUN...]
 """
 
 from __future__ import annotations
@@ -74,7 +71,7 @@ def _ps_table(path: Path):
 
 
 def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> dict:
-    """Raw table entries around the CMB pressure (solid) and at 1 bar (melt, raw PALEOS liquid)."""
+    """Raw table entries around the CMB pressure and at 1 bar, and the solidus."""
     p, s, t = _ps_table(tables / 'temperature_solid.dat')
     vm = np.loadtxt(tables / 'valid_mask_solid.dat')
     k = int(np.searchsorted(p, p_cmb))
@@ -130,7 +127,7 @@ def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> 
 
 
 def _cell_pressure(r0: dict) -> list:
-    """Staggered pressure [Pa] of the run's mesh: abe_solid.toml with its nodes and end cells."""
+    """Staggered pressure [Pa] of the mesh of abe_solid.toml with the run's nodes and cells."""
     import aragog
     from aragog.mesh import Mesh
     from aragog.parser import Parameters
@@ -164,7 +161,8 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
     t, idx = np.unique(np.concatenate(t), return_index=True)
     r0 = rows[0]
     out = {
-        'tree': r0['sha'],
+        'commit': r0['sha'],
+        'tree': r0.get('tree'),
         'config_hash': r0.get('config_hash'),
         'nodes': r0['nodes'],
         'surface_cell_m': r0.get('surface_cell', 0.0),
@@ -187,6 +185,10 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         'first_frozen': _first_frozen(t, np.concatenate(s_top)[idx], s_sol),
         'top_cell_freezes': _freezes(t, np.concatenate(s_top)[idx] - s_sol, rows),
     }
+    if r0.get('core_bc') == 'core_module':
+        out['T_core_K'] = [
+            float(np.load(p)['y_end'][np.load(p)['S_sol'].size + 1]) for p in parts
+        ]
     sol = [np.load(p)['S_sol'] for p in parts]
     if any(not np.array_equal(x, sol[0]) for x in sol):
         raise ValueError(f'{folder}: the solidus entropy differs between parts')
@@ -198,7 +200,7 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         z = np.load(phi_rows / f'{folder.name}.npz')
         tp, phi = z['t'], z['Phi']
         mean = {}
-        for ts in (1e3, 1e4, 1e5):
+        for ts in [x for x in (1e3, 1e4, 1e5) if x <= rows[-1]['t_yr']]:
             m = (tp >= 0.5 * ts) & (tp <= ts * (1 + 1e-9))
             if m.sum() < 6 or tp[m][-1] < ts * (1 - 1e-9):
                 raise ValueError(
@@ -234,8 +236,7 @@ def main(argv=None) -> None:
         }
     }
     res.update({r: run_values(a.root / r, a.phi_rows, r in a.profiles) for r in a.runs})
-    trees = {v['tree'] for k, v in res.items() if k != 'header'}
-    res['header']['trees'] = sorted(trees)
+    res['header']['commits'] = sorted({v['commit'] for k, v in res.items() if k != 'header'})
     if a.tables is not None:
         res['header'].update(table_values(a.tables, a.cmb_pressure, a.raw_liquid))
     text = (

@@ -1,8 +1,9 @@
 """Validation of the refined mesh from the stored convergence study of abe_solid on the PALEOS
 low-temperature table (``tests/validation/data/mesh_refinement_study.json``, written by
-``tools/verification/run_mesh_refinement_study.py``). The runs need that table, which CI does not
-download, so the test reads the stored raw values, computes the noise floor, the spreads and the
-verdicts from them, and checks every number that docs/Validation/mesh_refinement.md quotes."""
+``tools/verification/run_mesh_refinement_study.py``). The runs need that table, which CI does
+not download, so the test reads the stored raw values, computes the noise floor, the spreads
+and the verdicts from them, and checks every number that docs/Validation/mesh_refinement.md
+quotes."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.reference_pinned, pytest.mark.timeout(60)]
 
 DATA = Path(__file__).parent / 'validation' / 'data' / 'mesh_refinement_study.json'
-TREE = 'bbef9c9f139d7d200c0de98e5e010462d597d77c'
+COMMIT = 'bbef9c9f139d7d200c0de98e5e010462d597d77c'
 EOS_MD5 = '18d6f9eb5ba654d58fe3fad30ce118f0'
 PAIR = {100: ('T50-100p', 'T50-100m'), 200: ('P+', 'P-')}
 H_TOP = (200, 100, 50)
@@ -42,7 +43,7 @@ def _metrics(v):
 
 
 def _verdict(e, s_c, s_f):
-    """Pass rule: r = s_f / s_c <= 0.75, or s_f <= 3 e; with s_c <= 3 e it needs s_f <= 3 e too."""
+    """Pass: s_f / s_c <= 0.75 or s_f <= 3e; with s_c <= 3e, converged only when s_f <= 3e."""
     if s_c <= 3 * e:
         return 'converged' if s_f <= 3 * e else 'no pass'
     if s_f <= 3 * e or s_f / s_c <= 0.75:
@@ -57,7 +58,7 @@ def _convergence(study, n):
         e = abs(X[PAIR[n][0]][k] / X[PAIR[n][1]][k] - 1)
         s_c = abs(X[f'T200-{n}'][k] / X[f'T100-{n}'][k] - 1)
         s_f = abs(X[f'T100-{n}'][k] / X[f'T50-{n}'][k] - 1)
-        out[k] = dict(e=e, s_c=s_c, s_f=s_f, r=s_f / s_c, verdict=_verdict(e, s_c, s_f))
+        out[k] = dict(e=e, s_c=s_c, s_f=s_f, verdict=_verdict(e, s_c, s_f))
     return X, out
 
 
@@ -104,12 +105,12 @@ def _frozen(v):
     return f['thaw_yr'] - f['freeze_yr']
 
 
-def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
+def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
     """The pass rule of ``_verdict`` per node count, the strict recommendation of
     ``_recommendation`` at 200 nodes, and every number of the case on the Validation page."""
     study = _study()
     head = study['header']
-    assert head['trees'] == [TREE]
+    assert head['commits'] == [COMMIT]
     runs = {k: v for k, v in study.items() if k != 'header'}
     assert all(v['eos_md5'] == EOS_MD5 and set(v['status']) == {0} for v in runs.values())
     for n, cmb in ((100, 9327.0), (200, 4638.0)):
@@ -203,6 +204,8 @@ def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
     assert abs(L['T_cmb_K'][6] / L['T_cmb_K'][5] - 1) < 1e-9
 
     assert f'{max(3 * c200[k]["e"] for k in _PANELS):.2%}' == '0.04%'
+    assert f'{max(3 * c100[k]["e"] for k in _PANELS):.2%}' == '0.17%'
+    assert [f'{runs[u]["h_cmb_m"]:.1f}' for u in ('U100', 'U200')] == ['9327.4', '4638.4']
     X = {r: _metrics(runs[r]) for r in runs if r[0] == 'T' and r[-3:] in ('100', '200')}
     ref = X['T50-200']
 
@@ -228,16 +231,16 @@ def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
 
 
 def _pattern(v, i):
-    """Sign changes of S - S_sol between neighbours in the lowest 48 cells at the end of part i, and
-    the number of cells within 5 J/kg/K of the solidus."""
+    """Sign changes of S - S_sol between neighbours in the lowest 48 cells at the end of part
+    i, and the number of cells within 5 J/kg/K of the solidus."""
     d = np.subtract(v['S_end'][i], v['S_sol'])
     sign = np.sign(d[:48])
     return int(np.sum(sign[1:] != sign[:-1])), int(np.sum(np.abs(d) < 5))
 
 
 def test_the_long_run_and_the_tables():
-    """The 10^8 year runs on the 50 m and on the uniform mesh, the fill plateau of the solid table at
-    the CMB and the melt table against the PALEOS liquid table at 1 bar, as quoted on the page."""
+    """The 10^8 year runs on the 50 m and the uniform mesh, the fill plateau of the solid table
+    at the CMB and the melt table against the PALEOS liquid table at 1 bar, as on the page."""
     study = _study()
     head, L, U, U0 = study['header'], study['L50'], study['U100-long'], study['U100']
     assert head['md5']['temperature_solid.dat'] == EOS_MD5
@@ -290,6 +293,8 @@ def test_the_long_run_and_the_tables():
     assert all(abs(L['T_cmb_K'][i] / plateau - 1) < 1e-12 for i in (5, 6))
     s_bot = L['S_bottom_cell'][5:]
     assert s_valid < s_bot[1] < s_bot[0] < s_fill and s_valid < L['S_sol'][0]
+    assert all(x > s_fill for x in U['S_bottom_cell'][5:])
+    assert f'{U["F_cmb_J"][6] / L["F_cmb_J"][6]:.0f}' == '85'
     assert all(U['Phi'][i] / L['Phi'][i] > 1e3 for i in (5, 6)) and len(L['S_sol']) == 99
     assert [f'{x:.2f}' for x in (s_valid, s_fill, *s_bot)] == [
         '3070.70',
@@ -304,6 +309,7 @@ def test_the_long_run_and_the_tables():
 
     lv, sol = head['solid_last_valid'], head['solidus']
     p_node, s_last, grid = (np.array(lv[k]) for k in ('P_nodes_Pa', 'S', 'S_grid'))
+    assert p_node.size == 1350
     s_sol = np.interp(p_node, sol['P_Pa'], sol['S'])
     between = np.array([np.sum((grid > a) & (grid < b)) for a, b in zip(s_last, s_sol)])
     above = s_sol > s_last
@@ -339,7 +345,7 @@ def test_the_long_run_and_the_tables():
 
 
 def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
-    """The core-module pair with a 9327 m and with an unset CMB cell against the noise floor of a
+    """The core-module pair with a 9327 m and an unset CMB cell against the noise floor of a
     perturbed copy of the first, as quoted on the page."""
     study = _study()
     on, off, p = study['C-cmb9327'], study['C-off'], study['C-on_p']
@@ -359,18 +365,20 @@ def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
     assert [f'{v["h_cmb_m"]:.0f}' for v in (on, off)] == ['9327', '38456']
 
     d, e = {}, {}
-    for k in ('T_cmb_K', 'F_cmb_J'):
+    for k in ('T_core_K', 'F_cmb_J'):
         d[k] = np.abs(np.array(on[k]) / np.array(off[k]) - 1)
         e[k] = np.abs(np.array(on[k]) / np.array(p[k]) - 1)
     ratio = np.concatenate([d[k] / (3 * e[k]) for k in d])
     assert ratio.min() > 1 and [f'{x:.1e}' for x in (ratio.min(), ratio.max())] == [
-        '3.6e+02',
-        '4.0e+03',
+        '3.4e+02',
+        '3.8e+03',
     ]
-    dT = np.array(on['T_cmb_K']) - np.array(off['T_cmb_K'])
-    assert np.all(dT < 0) and f'{-dT.min():.2f}' == '0.47' and int(np.argmin(dT)) == 2
-    assert f'{d["T_cmb_K"].max():.1e}' == '1.1e-04' and f'{d["F_cmb_J"].max():.2%}' == '0.42%'
-    assert int(np.argmax(d['F_cmb_J'])) == 3 and int(np.argmax(d['T_cmb_K'])) == 2
+    dT = np.array(on['T_core_K']) - np.array(off['T_core_K'])
+    assert np.all(dT < 0) and f'{-dT.min():.2f}' == '0.51' and int(np.argmin(dT)) == 2
+    assert f'{d["T_core_K"].max():.1e}' == '1.2e-04' and f'{d["F_cmb_J"].max():.2%}' == '0.42%'
+    assert int(np.argmax(d['F_cmb_J'])) == 3 and int(np.argmax(d['T_core_K'])) == 2
+    gap = np.array(on['T_cmb_K']) - np.array(on['T_core_K'])
+    assert [f'{x:.0f}' for x in gap] == ['-2', '23', '37', '39']
 
     def figure():
         import matplotlib.pyplot as plt
@@ -403,3 +411,20 @@ def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
 def test_the_pass_rule_on_every_branch(e, s_c, s_f, verdict):
     """Converged needs both spreads within 3e; otherwise s_f within 3e or s_f / s_c <= 0.75."""
     assert _verdict(e, s_c, s_f) == verdict
+
+
+def test_every_stored_mesh_is_rebuilt_at_this_commit():
+    """The mesh of each stored run, built here from abe_solid.toml with the run's nodes and end
+    cells, has the stored top and CMB cell and staggered pressure to 1e-9: the runs and the
+    stored pressures come from other platforms, whose radius solves differ at round-off."""
+    from tests.test_mesh_refinement import _mesh
+
+    for name, v in _study().items():
+        if name == 'header':
+            continue
+        m = _mesh(v['surface_cell_m'], v['cmb_cell_m'], True, v['nodes'])
+        r = np.ravel(m.basic.radii)
+        np.testing.assert_allclose(
+            [r[-1] - r[-2], r[1] - r[0]], [v['h_top_m'], v['h_cmb_m']], rtol=1e-9
+        )
+        np.testing.assert_allclose(np.ravel(m.staggered_pressure), v['P_cell_Pa'], rtol=1e-9)

@@ -466,7 +466,7 @@ def test_mesh_refuses_a_cell_thickness_set_after_the_config_is_read(name, value)
 def test_the_end_cell_tolerance_depends_on_the_mesh_mode(mass_coordinates, refused):
     """A 1 km top cell 1.5 mm off its target is refused in radius mode (1e-6 relative,
     1 mm) and kept in mass-coordinate mode (2 mm, the root tolerance of its solved node
-    and the margin of the other)."""
+    and the margin of the other); 3 mm off is refused in both modes."""
     m = _mesh(1e3, 0.0, mass_coordinates)
     r = _radii(m).copy()
     r[-2] = r[-1] - 1e3 - 1.5e-3
@@ -474,6 +474,9 @@ def test_the_end_cell_tolerance_depends_on_the_mesh_mode(mass_coordinates, refus
         with pytest.raises(ValueError, match='gives an end cell of'):
             m._check_refined_radii(r)
     else:
+        m._check_refined_radii(r)
+    r[-2] = r[-1] - 1e3 - 3e-3
+    with pytest.raises(ValueError, match='gives an end cell of'):
         m._check_refined_radii(r)
 
 
