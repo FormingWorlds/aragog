@@ -17,9 +17,10 @@ Neumann growth exactly (``s = lambda^2``) and reduces to the linear profile in s
 Material joins the lid at its base by the Stefan condition ``(W(S_f) - W(S_b)) d(delta)/dt =
 q_b - F_b``, where ``q_b`` is the conduction into the lid at its base, ``F_b`` the flux the
 fluid below delivers and ``W(S) = int rho T dS`` the heat content per volume at the top-cell
-pressure, at the fluid entropy ``S_f`` and the lid-base entropy ``S_b``. The mesh stores heat in
-this measure; the lid holds it as a function of temperature, the same measure wherever the
-temperature rises with entropy (not inside a band of constant temperature below the solidus).
+pressure, at the fluid entropy ``S_f`` and the lid-base entropy ``S_b``. The reported heat
+content of the mesh uses this measure; the lid holds it as a function of temperature, the same
+measure wherever the temperature rises with entropy (not inside a band of constant temperature
+below the solidus).
 
 The functions here are pure: the solver evaluates the material properties, passes them in and
 assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, kg/m^3, s).
