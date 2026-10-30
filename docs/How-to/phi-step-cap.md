@@ -25,7 +25,7 @@ at every internal CVODE step. CVODE returns at the exact zero-crossing (flag `CV
 
 The scipy fallbacks (`Radau`, `BDF`) register the equivalent logic as a `solve_ivp` event with `terminal=True` and `direction=-1`. Both paths see the same TOML config and behave consistently up to integrator class.
 
-The mushy-zone gating (the `near_liq` / `near_sol` / `in_mushy` checks inside `EntropySolver.solve()` before rootfn registration) prevents the rootfn from arming on profiles that are far from the rheological transition: in those regimes, the cap would never fire and the rootfn evaluation is wasted work.
+The mushy-zone check (the `near_liq` / `near_sol` / `in_mushy` tests inside `EntropySolver.solve()` before rootfn registration) prevents the rootfn from arming on profiles that are far from the rheological transition: in those regimes, the cap would never fire and the rootfn evaluation is wasted work.
 
 ## Picking a value
 
@@ -40,12 +40,12 @@ When the cap fires, the solver logs an INFO line with the firing time and the re
 ## Common pitfalls
 
 - With `phi_step_cap = 0.05` and loose tolerances (`atol = rtol = 1e-5`), CVODE may step coarsely enough that the cap never arms. Tighten tolerances to `1e-8` or below for cap-driven runs.
-- When `phi_step_cap` is set on a fully molten or fully solid profile, the gating skips registration so the value is silently inert. This is intentional, not a bug.
+- When `phi_step_cap` is set on a fully molten or fully solid profile, the mushy-zone check skips registration so the value is silently inert. This is intentional, not a bug.
 - Under the PROTEUS retry ladder, if `solve()` returns a partial trajectory because the cap fired, the PROTEUS wrapper accepts that as a successful step and continues. The cap is not a failure mode.
 
 ## Runnable example: cooling through the solidus with `phase_boundary_cap = 'rate'`
 
-In addition to `phi_step_cap`, `energy.phase_boundary_cap = 'rate'` (the default) segments CVODE steps as cells cross the liquidus and solidus and relaxes the $100\ \mathrm{yr}$ step ceiling once every cell cools to or below the solidus (see [Why `phi_step_cap` is a SUNDIALS root function](../Explanations/phi_step_cap_rationale.md#how-phase_boundary_cap-rate-segments-steps-through-the-solidus)).
+In addition to `phi_step_cap`, `energy.phase_boundary_cap = 'rate'` (the default) segments CVODE steps as cells cross the liquidus and solidus and relaxes the $100\ \mathrm{yr}$ step ceiling once every cell cools to or below the solidus and no cell within $\delta$ of a boundary heats (see [Why `phi_step_cap` is a SUNDIALS root function](../Explanations/phi_step_cap_rationale.md#how-phase_boundary_cap-rate-segments-steps-through-the-solidus)).
 
 The script below initializes a 12-node Earth-sized mantle from `src/aragog/cfg/abe_solid.toml` on the SPIDER phase-boundary lookup tables (`ARAGOG_TEST_EOS_DIR`), sets the initial entropy uniformly to $S_{\mathrm{sol}}[-1] + 5.0\ \mathrm{J\,kg^{-1}\,K^{-1}}$ ($880.54\ \mathrm{J\,kg^{-1}\,K^{-1}}$, so the outermost cell starts $5.0\ \mathrm{J\,kg^{-1}\,K^{-1}}$ above its solidus $875.54\ \mathrm{J\,kg^{-1}\,K^{-1}}$ while deeper cells are already below their solidus up to $1364.69\ \mathrm{J\,kg^{-1}\,K^{-1}}$), and integrates for $200\ \mathrm{kyr}$ under a prescribed surface heat flux of $200.0\ \mathrm{W\,m^{-2}}$:
 

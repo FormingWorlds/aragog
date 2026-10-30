@@ -407,26 +407,20 @@ def _rate_phase_boundary_max_step(
     Parameters
     ----------
     S, dSdt : npt.NDArray
-        Entropy [J/(kg K)] (finite real array) and its time derivative
-        [J/(kg K yr)] (finite real array).
+        Entropy [J/(kg K)] and its time derivative [J/(kg K yr)].
     S_liq, S_sol : npt.NDArray
-        Liquidus and solidus entropy at each entry's pressure [J/(kg K)]
-        (finite real arrays with ``S_sol <= S_liq``).
+        Liquidus and solidus entropy at each entry's pressure [J/(kg K)], ``S_sol <= S_liq``.
     mass : npt.NDArray
-        Weight of each entry in the rate floor [kg] (non-negative, with
-        positive sum when ``rate_floor`` is True); zero excludes an entry.
+        Weight of each entry in the rate floor [kg]; zero excludes an entry.
     delta : float
-        Half-width of the stiff zone around each boundary [J/(kg K)]
-        (positive, ``delta >= _RATE_CAP_MIN_DELTA = 10.0``).
+        Half-width of the stiff zone around each boundary [J/(kg K)], at least
+        ``_RATE_CAP_MIN_DELTA``.
     fraction : float, default 0.1
-        Dimensionless fraction of the shortest time to a boundary used as
-        ``max_step`` [-], in ``(0, 1]``.
+        Fraction of the shortest time to a boundary used as ``max_step``, in ``(0, 1]``.
     bounds : tuple[float, float], default (1.0, 100.0)
-        Lower and molten/mushy upper clip [yr], with
-        ``0 < bounds[0] <= bounds[1]``.
+        Lower and molten/mushy upper clip [yr], ``0 < bounds[0] <= bounds[1]``.
     rate_floor : bool, default True
-        Whether to apply the mass-weighted mean ``|dS/dt|`` rate floor
-        [J/(kg K yr)].
+        Whether to apply the mass-weighted mean ``|dS/dt|`` rate floor.
 
     Returns
     -------

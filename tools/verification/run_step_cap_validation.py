@@ -9,7 +9,7 @@ v3_r3        12     1.5e4       F = 20 W/m^2, 2 cells above      max|T - T_ref|,
                                 the stiff zone                   envelope, segment counts
 v3_r4        12     2e5         F = 200 W/m^2, start            as v3_r3, plus the entropy range
                                 S_sol + 5 J/(kg K)               against the table
-v4_rheo_off  100    1.2e8       abe_solid.toml, T_eq = 273 K,   stall point 107.655 Myr passed,
+v4_rheo_off  100    1.2e8       abe_solid.toml, T_eq = 273 K,   stall point 107.575 Myr passed,
                                 S0 = 3165.90 J/(kg K)            phi_max = 0, status 0
 v4_rheo_on   100    1e9         as v4_rheo_off, stagnant-lid     stall point 83.684 Myr passed,
                                 rheology, JAX CVODE factory      phi_max = 0, status 0
@@ -62,7 +62,7 @@ V3 = {
     'v3_r4': dict(end=2.0e5, flux=200.0, width=0.0, max_steps=1500, inf_cap=True),
 }
 V4 = {
-    'v4_rheo_off': dict(rheology=False, stall=107.655e6, max_steps=100_000, end=1.2e8),
+    'v4_rheo_off': dict(rheology=False, stall=107.575e6, max_steps=100_000, end=1.2e8),
     'v4_rheo_on': dict(rheology=True, stall=83.684e6, max_steps=800_000, end=1.0e9),
 }
 PALEOS_LOWT_MD5 = (
