@@ -877,6 +877,15 @@ def test_lid_step_check_refuses_an_entropy_outside_the_heat_table(eos, change):
         _checked(s, **dict(change))
 
 
+@pytest.mark.parametrize('field', ['S_f', 'S_b'])
+@pytest.mark.parametrize('end', [0, -1])
+def test_lid_step_check_accepts_an_entropy_on_the_table_ends(eos, field, end):
+    """An entropy exactly on an end of the heat table passes the step check."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    _checked(s, **{field: float(s._lid_W_of_S.x[end])})
+
+
 @pytest.mark.parametrize(
     ('change', 'text'),
     [({'H_f': -1.0e12}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],

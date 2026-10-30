@@ -468,6 +468,23 @@ def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     assert s._batch_powers_calls == calls + 1
 
 
+def test_entropy_on_the_heat_table_ends_passes_the_jax_batch_path():
+    """Accepted states whose fluid entropy lies exactly on an end of the heat table pass the
+    range check of the JAX batch path."""
+    s = _jax_cvode_lid_solver()
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    lo, hi = s._lid_W_of_S.x[[0, -1]]
+    k = t.size // 2
+    y[s._n_stag - 1, k - 1 : k + 1] = (lo, hi)
+    assert [s._stag_entropy(y[:, i])[-1] for i in (k - 1, k)] == [lo, hi]
+    sol.energy_trace = (t, y)
+    calls = s._batch_powers_calls
+    s._compute_step_energy_integrals()
+    assert s._batch_powers_calls == calls + 1
+
+
 def test_jax_base_flux_is_never_negative(monkeypatch):
     """With no convective flux, a face flux out of the top cell into the mesh gives the JAX lid
     the base flux 0: the same lid as a zero face flux."""

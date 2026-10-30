@@ -83,6 +83,7 @@ def _numpy_jump(s, y, monkeypatch, same=False):
     monkeypatch.setattr(sl, 'stefan_rate', spy)
     monkeypatch.setattr(s, '_lid_base_state', base)
     s._dSdt_single(0.0, y)
+    assert s._lid_last.S_f == float(y[s._n_stag - 1])
     return seen['rho'] * seen['dh'], s._lid_last.S_b, float(y[s._n_stag - 1])
 
 
@@ -225,9 +226,11 @@ def test_heat_table_refuses_unordered_edges(eos, edge):
 
 def test_heat_table_continues_linearly_on_both_paths(eos):
     """Outside its range the heat table continues linearly with its end slope, as the
-    clamped EOS keeps rho T constant there; inside and outside, the NumPy and JAX paths give
-    the same W."""
+    clamped EOS keeps rho T constant there, also for a curved table; inside and outside, the
+    NumPy and JAX paths give the same W."""
     pytest.importorskip('jax')
+    from scipy.interpolate import PchipInterpolator
+
     from aragog.jax import surface_lid as jl
 
     s, _ = _solver(eos, False, 3000.0)
@@ -239,6 +242,12 @@ def test_heat_table_continues_linearly_on_both_paths(eos):
         assert got == pytest.approx(linear, rel=1e-12)
         want = float(jl.enthalpy_H(s.jax_lid_params().hs, edge + dS))
         assert got == pytest.approx(want, rel=1e-12)
+    curved = PchipInterpolator(np.linspace(lo, hi, 9), np.linspace(lo, hi, 9) ** 2)
+    s._lid_W_of_S, d = curved, 50.0
+    for edge, dS in ((lo, -d), (hi, d)):
+        linear = float(curved(edge)) + float(curved(edge, 1)) * dS
+        assert float(s._lid_W(edge + dS)) == pytest.approx(linear, rel=1e-12)
+    s._lid_W_of_S = pp
     S = np.random.default_rng(3).uniform(lo, hi, 200)
     want = np.asarray(jl.enthalpy_H(s.jax_lid_params().hs, S))
     np.testing.assert_allclose(s._lid_W(S), want, rtol=1e-12, atol=1e-6)
