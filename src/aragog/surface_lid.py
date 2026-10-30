@@ -23,7 +23,7 @@ measure wherever the temperature rises with entropy (not inside a band of consta
 below the solidus).
 
 The functions here are pure: the solver evaluates the material properties, passes them in and
-assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, kg/m^3, s).
+assembles the rates. All quantities are SI (K, m, W/m^2, J/kg, J/m^2, J/m^3, kg/m^3, s).
 
 References
 ----------

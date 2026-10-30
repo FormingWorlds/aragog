@@ -2992,9 +2992,10 @@ class EntropySolver:
         capacitance blends the phases near the solidus and liquidus and differs there by under
         1e-3), and of the lid where the temperature rises with entropy. It runs over the whole
         table, on 2048, 512 and 2048 entropy intervals (4-point Gauss-Legendre each) from the
-        table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W`` in entropy, and returns ``W``
-        and the density of the solid in temperature between the flat floor of the table and the
-        band below the solidus where the temperature stays at the solidus.
+        table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W``
+        in entropy, and returns ``W`` and the density of the solid in temperature between the
+        flat floor of the table and the band below the solidus where the temperature stays at
+        the solidus.
 
         Raises
         ------
@@ -3131,7 +3132,7 @@ class EntropySolver:
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
         lo, hi = self._lid_W_of_S.x[[0, -1]]
-        values = (ev.delta, ev.E, r.ddelta, r.dE, r.F_top, r.F_fluid)
+        values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
@@ -3290,7 +3291,8 @@ class EntropySolver:
     def _lid_heat_change(self, y0: npt.NDArray, y1: npt.NDArray) -> float:
         """Heat content change [J] of the lid between two states, net of the fluid volume
         ``A delta`` the lid takes from the top cell at the fluid heat per volume ``W(S_f)`` (the
-        cell quadrature counts the cell whole)."""
+        cell quadrature counts the cell whole). The volume form closes the energy; the lid mass
+        ``rho_lid A delta`` differs from the fluid mass ``rho_f A delta`` it replaces."""
 
         def part(y) -> float:
             if float(y[-2]) == 0.0:  # handed over: no lid
@@ -5753,16 +5755,17 @@ class EntropySolver:
                 if check_rheo:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
-                if self._n_lid and self._lid_active:
+                if self._n_lid:
                     lo, hi = self._lid_W_of_S.x[[0, -1]]
                     S_f = np.array([self._stag_entropy(y)[-1] for y in y_pts.T])
-                    bad = np.flatnonzero(~((S_f >= lo) & (S_f <= hi)))
+                    bad = np.flatnonzero((y_pts[-2] != 0.0) & ~((S_f >= lo) & (S_f <= hi)))
                     if bad.size:
                         k = int(bad[0])
                         raise RuntimeError(
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
+                if self._n_lid and self._lid_active:
                     lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
                     self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
                 if check_rheo:
