@@ -116,6 +116,43 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
     - Test id: `tests/test_surface_lid_v2_grid.py::test_v2_melt_lid_matches_the_resolved_mesh`; on the SPIDER test tables `::test_v2_melt_lid_run_on_the_test_tables` reruns the lid shell against a stored pin.
     - Command: `pytest tests/test_surface_lid_v2_grid.py -k melt` (set `ARAGOG_LOWT_EOS_DIR` to the extended table to repeat the lid run on it; add `--validation-plots` to write the plot pair)
 
+## A molten shell freezing through on a fine mesh
+
+**Why this check exists.** A magma ocean that starts fully molten cools fast at its surface. On a coarse mesh the top cell freezes through within a few years, long before a resolved crust would be thick. Without the solid rheology the lid base is the solidus, so once the top cell is at the solidus no melt is left below the lid to freeze. A lid kept past that point keeps a crust the mesh no longer has: with the hand-over held off, the lid misses the flux of the fine mesh by TBD-m4000 (between TBD-m4000 and TBD-m4000 of the fine-mesh flux), and the test sees it.
+
+**What it tests.** The shell of the cases above, 25 km thick, starts molten: at every node the entropy lies 1.1 times the way from the solidus to the liquidus. It convects, the solid rheology is off, and it cools through a black-body surface that radiates to 255 K, on the extended PALEOS table. One run uses 10 nodes (top cell 2.8 km) with the lid; the other uses 4000 nodes without the lid. The test compares their surface fluxes at 29 times from 100 to 5000 years. The 10-node lid hands over to the mesh when its top cell cools through the solidus, at 7.9 years; from then on it must run as the 10-node shell without the lid.
+
+**How we know the right answer.** A run on 1000 nodes bounds the error of the 4000-node mesh: TBD-m4000. After the hand-over, the 10-node shell with the lid and the one without it agree to 3.0 × 10⁻⁶ at every time, so the difference to the fine mesh is the error of the coarse mesh itself.
+
+**Why it matters.** A run of a magma ocean from a molten start passes through this stage. The lid must step aside once the coarse mesh can carry the cold top cell; otherwise it keeps a crust that is no longer there and the heat loss of the planet is wrong by a factor of up to TBD-m4000.
+
+PLACEHOLDER-PLOT: surface_lid_c3_molten_resolved_mesh (light and dark), written by `pytest tests/test_surface_lid_v2_grid.py -k c3_molten_lid_matches --validation-plots` once the 4000-node reference is stored.
+
+**How to read the plot.** The horizontal axis is time in years. The dots are the surface flux of the 10-node shell with the lid divided by that of the 4000-node shell. The shaded band is the tolerance of ±TBD-m4000; the grey area is the change from 1000 to 4000 nodes, the error of the fine mesh.
+
+??? info "Test details"
+    - Reference: the 4000-node solver run without the lid, stored with a 1000-node run, the 10-node runs with and without the lid and the 10-node lid with its hand-over held off in `tests/reference/surface_lid_c3_molten.npz` by `tests/reference/build_surface_lid_c3_molten.py`.
+    - Tolerance: relative TBD-m4000 at each time against the 4000-node run; the lid against the 10-node run without the lid within 10⁻⁵ (measured 3.0 × 10⁻⁶); the hand-over within the first 100 years (measured 7.9 years).
+    - Discrimination: with the hand-over held off, the lid misses the 4000-node flux by more than 50 % at some time.
+    - Test id: `tests/test_surface_lid_v2_grid.py::test_c3_molten_lid_matches_the_resolved_mesh`; on the SPIDER test tables `::test_c3_molten_lid_run_on_the_test_tables` reruns the lid shell against a stored pin and checks its hand-over.
+    - Command: `pytest tests/test_surface_lid_v2_grid.py -k c3` (set `ARAGOG_LOWT_EOS_DIR` to the extended table to repeat the lid run on it; add `--validation-plots` to write the plot pair)
+
+## The lid base at the melt temperature: mesh and floor
+
+**Why this section exists.** Below the rheological transition the lid base is capped at the melt temperature. At the cap the Stefan jump is 0 and the growth rate runs at the floor of 10³ J/kg (see [the Explanation](../Explanations/surface_lid.md#the-base-at-the-melt-temperature)), so the late crust depends on the floor and on the mesh.
+
+**What we know.** TBD-step5: the R1 column with the solid rheology and the 'lid' closure on 100, 200 and 400 nodes to 4 × 10⁵ years, the lid thickness and surface flux at 10⁵, 2 × 10⁵, 3 × 10⁵ and 4 × 10⁵ years, and the 100-node run with the floor at 10², 10³ and 10⁴ J/kg.
+
+**Why it matters.** Late in such a run the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
+
+## Where the lid is not validated
+
+**Why this section exists.** The cases above cover a solid shell, a shell freezing from the mush and a molten shell without the solid rheology. One start is not covered: a molten shell with the solid rheology on.
+
+**What we know.** In that case the lid base lies at the rheological temperature, at or below the solidus. With the `'local'` closure the lid never hands over; with the `'lid'` closure it does not hand over in this case either, and the 10-node run equals the `'local'` run to TBD-c4pair at all 29 times from 100 to 5000 years. On a mesh of 1000 nodes (cells of 25 m) the same shell without the lid has, at 100 years, only its top node below the solidus: 998 of its 999 nodes are above it, and the surface loses 195.2 W/m². A crust one node thick is not resolved, so the heat flux of that mesh is set by the size of its top cell and is no reference for the lid. TBD-rm4000 (the 4000-node row at 100 years).
+
+**Why it matters.** Until a mesh resolves that crust, the error of the lid for a molten start with the solid rheology is not known. Use the lid there only with this limit in mind.
+
 ## A crust in steady state
 
 **Why this check exists.** Under a constant heat flux from below, a crust must settle at the thickness where it conducts exactly that flux. A lid whose growth law or surface balance is wrong settles at the wrong thickness, or its profile stays curved; the test sees both.

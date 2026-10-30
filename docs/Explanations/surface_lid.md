@@ -32,12 +32,6 @@ $$\left(W(S_f) - W(S_b)\right) \frac{d\delta}{dt} = q_b - F_b, \qquad W(S) = \in
 
 Here $W$ \[J/m³\] is the heat content per volume at the top-cell pressure, counted from the solidus entropy $S_\mathrm{sol}$. It is the measure of the heat content the solver reports. The entropy equation of the mesh has the capacitance $\rho T$ with the two phases blended near the solidus and the liquidus; there it differs from the table $\rho T$ in $W$ by less than 0.1 %. The crust holds heat in the same measure, as a function of its temperature, wherever the temperature rises with entropy. Some tables keep the temperature at the solidus over a band of entropy below $S_\mathrm{sol}$; a crust profile at the solidus temperature then holds the heat of the lower end of that band, not $W(S_\mathrm{sol}) = 0$. $S_f$ is the entropy of the melt and $S_b$ that of the crust at its base. The left side is the heat released when melt joins the crust, latent heat of the melt fraction included; a melt at the base entropy releases none. The density sits inside the integral because it changes along the way from $S_b$ to $S_f$. The melt delivers $F_b$, the larger of the heat flux into the top cell from below and the flux of a boundary layer at the critical Rayleigh number `lid_ra_crit`.
 
-## Energy
-
-The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
-
-The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
-
 ### The base at the melt temperature
 
 **Why.** The lid-base temperature of the solid rheology can lie above the temperature of the melt below the crust, for example a fixed `lid_base_temperature` of 1300 K over a top cell at 1200 K. Material at the melt temperature cannot join a crust whose base is warmer: the jump $W(S_f) - W(S_b)$ would turn negative and the crust would grow from heat it does not get.
@@ -45,6 +39,12 @@ The top cell keeps its melt part: its volume shrinks by the crust volume, area t
 **What.** Below the rheological transition the base entropy is capped at the melt, $S_b = \min(S_\mathrm{rh}, S_\mathrm{sol}, S_f)$, with $S_\mathrm{rh}$ the entropy of the rheological lid-base temperature. At the cap the jump is 0, and the balance above has no finite growth rate. The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the base, therefore has a floor `LID_DH_MIN` of 10³ J/kg, a numerical help of the solver. At the cap the crust grows at $d\delta/dt = (q_b - F_b) / (\rho_b \times 10^3\ \mathrm{J/kg})$.
 
 **Why it matters.** At the cap the growth rate depends on the floor and not on a latent heat, so the crust thickness and the surface flux there depend on the floor and on the mesh. The [Validation page](../Validation/surface_lid.md) gives the size of that dependence.
+
+## Energy
+
+The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
+
+The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
 
 ## When the crust exists, and when it goes
 
@@ -56,7 +56,15 @@ When the crust is resolved by the mesh, the lid hands over to the mesh: the solv
 
 **Without the solid rheology.** The lid base is the solidus. When the top cell cools to its solidus, $S_f \le S_\mathrm{sol}$, the jump $W(S_f) - W(S_b)$ is 0: no melt is left below the crust to freeze, and the freezing front has passed through the top cell. From there the mesh carries the cold top cell, and the lid hands over. A top cell at or below the solidus at the start of a call hands over before the call runs; a top cell that cools through the solidus during a call hands over at that time.
 
-**With the solid rheology and another closure.** The lid does not hand over. The base then lies at the rheological temperature, at or below the solidus, and a top cell can freeze through while melt stays under a thin resolved crust. No converged reference for that case exists yet, so it is a known limit (see below).
+**With the solid rheology and another closure.** The lid does not hand over. The base then lies at the rheological temperature, at or below the solidus, and a top cell can freeze through while melt stays under a thin resolved crust.
+
+## Where the lid is valid
+
+**Why.** The lid replaces a crust the mesh cannot resolve, so it is right only where its answer has been compared with a mesh that does resolve that crust.
+
+**What.** The [Validation page](../Validation/surface_lid.md) compares the lid with fine meshes for three starts: a solid shell below the solidus, a shell in the mush that freezes from its surface, and a molten shell without the solid rheology, where the lid hands over at the solidus. A molten start with the solid rheology on, with either closure, is not validated: on a 1000-node mesh its crust is one node thick at 100 years, so no converged reference exists yet.
+
+**Why it matters.** Use the lid for a molten start with the solid rheology only with this limit in mind; its heat loss there has no measured error.
 
 ## A worked example
 
@@ -72,7 +80,7 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`.
 - The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (46,109 against 9,366).
-- The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over, and a molten start with that rheology is not validated: on a 1000-node mesh at 100 years the crust of that case is one node thick, so that mesh is not a converged reference.
+- The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over. A molten start with the solid rheology is not validated (see [Where the lid is valid](#where-the-lid-is-valid)).
 - The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
 
 **Where this is checked.** [Surface lid](../Validation/surface_lid.md) compares the lid with the freezing lava layer, a cooling half-space and a steady crust, and with a fine mesh for a solid shell and for a [shell that freezes from the mush](../Validation/surface_lid.md#a-shell-freezing-from-the-mush-on-a-fine-mesh), which tests the Stefan jump. It also lists the solver tests of the energy budget, the Stefan jump and the hand-over.
