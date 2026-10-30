@@ -232,7 +232,10 @@ def test_end_state_needs_the_last_snapshot_at_the_last_row(tmp_path):
     The snapshot file name keeps 3 decimals: a row at 1000.5004 names 1000p500.
     """
     assert cmp.end_state(_run(tmp_path / 'ok', 'v5', BRANCH))['rows'] == 2
-    assert cmp.end_state(_run(tmp_path / 'ok4', 'v5', BRANCH, t_end=1000.5004))['rows'] == 2
+    try:
+        assert cmp.end_state(_run(tmp_path / 'ok4', 'v5', BRANCH, t_end=1000.5004))['rows'] == 2
+    except SystemExit as exc:
+        pytest.fail(f'a row 4e-4 from its snapshot time was refused: {exc}')
     with pytest.raises(
         SystemExit, match='last snapshot at 1000.502, last helpfile Time 1000.5'
     ):

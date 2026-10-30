@@ -40,6 +40,7 @@ def test_slow_landing_needs_a_slow_binding_cell_near_a_boundary():
     """A cell 3 J/(kg K) above the solidus binds; it is a slow landing only below 0.05 delta/yr."""
     S = np.array([103.0, 150.0])
     assert tool.regime(S, np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA) == (True, False)
+    assert tool.regime(S[::-1], np.full(2, -0.1), S_LIQ, S_SOL, MASS, DELTA) == (True, False)
     assert tool.regime(S, np.full(2, -1.0), S_LIQ, S_SOL, MASS, DELTA) == (False, False)
     # Edges: 4.5 is inside alpha delta = 5; 0.7/yr is above 0.05 delta/yr = 0.5/yr.
     S_edge = np.array([104.5, 150.0])
