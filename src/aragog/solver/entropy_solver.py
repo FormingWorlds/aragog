@@ -2967,7 +2967,7 @@ class EntropySolver:
         eos, P = self.entropy_eos, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
-        base = self._lid_base_state(T_f, phi_f)
+        base = self._lid_base_state(T_f, phi_f, S_top)
         d = self._lid_delta_lo
         T_s = _lid.linear_lid_surface(
             d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
@@ -3075,16 +3075,17 @@ class EntropySolver:
         edge = np.clip(S, *pp.x[[0, -1]])
         return pp(edge) + pp(edge, 1) * (S - edge)
 
-    def _lid_base_state(self, T_f: float, phi_f: float) -> dict:
+    def _lid_base_state(self, T_f: float, phi_f: float, S_f: float) -> dict:
         """Lid-base state at the top-cell pressure for a sub-lid fluid at ``T_f`` [K] with melt
-        fraction ``phi_f``.
+        fraction ``phi_f`` and entropy ``S_f`` [J/kg/K].
 
         Above the rheological transition the lid base is the solidus; below it, the
-        rheological lid base of the solid rheology, capped at the solidus: the lid-base
-        isotherm ``T_lid_iso`` of the stagnant-lid state when the state has one, else
-        ``T_f - lid_contrast_coeff R T_f^2 / H`` (or ``lid_base_temperature`` in the 'fixed'
-        mode). The two are blended in entropy by the melt ramp of the transition. Without
-        rheology the base is the solidus.
+        rheological lid base of the solid rheology, capped at the solidus and at the fluid
+        entropy: the lid-base isotherm ``T_lid_iso`` of the stagnant-lid state when the state
+        has one, else ``T_f - lid_contrast_coeff R T_f^2 / H`` (or ``lid_base_temperature`` in
+        the 'fixed' mode). The two are blended in entropy by the melt ramp of the transition.
+        Without rheology the base is the solidus. At the fluid cap ``T_b = T_f``, the jump is 0
+        and the Stefan rate runs at the enthalpy floor ``LID_DH_MIN`` by design.
         Returns ``S_b``, ``T_b`` [K], ``rho`` [kg/m^3], ``cp`` [J/kg/K].
         """
         eos, P, S_sol = self.entropy_eos, self._lid_P, self._lid_S_sol
@@ -3106,7 +3107,7 @@ class EntropySolver:
                 T_rh = max(T_rh, 1.0)
                 # the EOS holds T at the solidus over a band below S_sol: the cap is S_sol
                 S_rh = S_sol if T_rh >= self._lid_T_sol else eos.entropy_at_temperature(P, T_rh)
-                S_rh = min(float(S_rh), S_sol)
+                S_rh = min(float(S_rh), S_sol, float(S_f))
                 S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
         return dict(
             S_b=S_b,
@@ -3206,7 +3207,7 @@ class EntropySolver:
         ph = self.state.phase_staggered
         T = np.asarray(ph.temperature()).ravel()
         phi = float(np.asarray(ph.melt_fraction()).ravel()[-1])
-        T_b = self._lid_base_state(float(T[-1]), phi)['T_b']
+        T_b = self._lid_base_state(float(T[-1]), phi, float(entropy[-1]))['T_b']
         z = _isotherm_depth(
             float(np.asarray(ls['T_lid_iso'])),
             float(y[-2]),
@@ -3312,7 +3313,7 @@ class EntropySolver:
             return float(np.asarray(values).ravel()[-1])
 
         T_f, rho_f, cp_f = top(ph.temperature()), top(ph.density()), top(ph.heat_capacity())
-        base = self._lid_base_state(T_f, top(ph.melt_fraction()))
+        base = self._lid_base_state(T_f, top(ph.melt_fraction()), float(entropy[-1]))
         H_b, H_f = (float(v) for v in self._lid_W([base['S_b'], float(entropy[-1])]))
         q_conv = _lid.convective_base_flux(
             T_f - base['T_b'],

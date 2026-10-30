@@ -358,10 +358,10 @@ class LidParams(NamedTuple):
     phi_width: float
 
 
-def lid_base(lp: LidParams, eos, T_f, phi_f, T_lid_iso):
+def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
     """Lid-base entropy, temperature and density, as the NumPy ``_lid_base_state``: the
     solidus above the rheological transition, below it the rheological lid-base temperature on
-    the EOS, capped at the solidus, blended in entropy."""
+    the EOS, capped at the solidus and at the fluid entropy ``S_f``, blended in entropy."""
     from aragog.rheology import R_GAS
     from aragog.rheology_lid import _melt_ramp
 
@@ -373,7 +373,7 @@ def lid_base(lp: LidParams, eos, T_f, phi_f, T_lid_iso):
     T_rh = jnp.maximum(T_rh, 1.0)
     capped = T_rh >= lp.T_sol
     S_rh = eos.entropy_at_temperature(lp.P, jnp.where(capped, lp.T_sol - 1.0, T_rh))
-    S_rh = jnp.minimum(jnp.where(capped, lp.S_sol, S_rh), lp.S_sol)
+    S_rh = jnp.minimum(jnp.minimum(jnp.where(capped, lp.S_sol, S_rh), lp.S_sol), S_f)
     S_b = jnp.where(
         (lp.rheo > 0.5) & (w_phi < 1.0), w_phi * lp.S_sol + (1.0 - w_phi) * S_rh, lp.S_sol
     )
@@ -402,7 +402,7 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     from aragog.surface_lid import LID_DELTA_FLOOR
 
     delta, E = y_lid[0], y_lid[1]
-    base = lid_base(lp, eos, top['T'], top['phi'], T_lid_iso)
+    base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
     H_f = enthalpy_H(lp.hs, S_f)
     q_conv = convective_base_flux(
         top['T'] - base['T_b'],

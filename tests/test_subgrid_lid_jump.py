@@ -167,12 +167,12 @@ def test_jump_is_zero_for_a_fluid_at_the_solidus(eos, monkeypatch, path):
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('path', list(PATHS))
-@pytest.mark.parametrize('frac', [-0.5, 0.3, 0.9])
+@pytest.mark.parametrize('frac', [0.3, 0.9])
 def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac):
     """With the solid rheology the lid base lies below the solidus, where the density changes
     with entropy: the jump is ``int_{S_b}^{S_f} rho T dS``, not ``rho_b`` times a specific
-    heat content. ``frac`` places the fluid between the lid base (0) and the solidus (1); a
-    fluid above the base gives a jump above the floor."""
+    heat content. ``frac`` places the fluid between the lid base (0) and the solidus (1),
+    which gives a jump above the floor."""
     s, y = _solver(eos, True, lambda s: s._lid_S_sol - 0.05 * (s._lid_S_sol - float(eos.S_min)))
     s._dSdt_single(0.0, y)
     S_b0 = s._lid_last.S_b
@@ -184,8 +184,7 @@ def test_solid_regime_jump_is_the_integral_of_rho_T(eos, monkeypatch, path, frac
     assert abs(rho[0] / rho[1] - 1.0) > 1e-3
     want = _reference(s, S_b, S_f)
     assert jump == pytest.approx(want, rel=REL, abs=ABS_PER_MASS * float(rho[0]))
-    if frac > 0.0:
-        assert jump > rho[0] * sl.LID_DH_MIN
+    assert jump > rho[0] * sl.LID_DH_MIN
 
 
 @pytest.mark.physics_invariant

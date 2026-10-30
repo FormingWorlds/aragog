@@ -774,7 +774,7 @@ def test_solid_lid_base_is_the_rheological_temperature(eos, source, monkeypatch)
     lid_state = {'T_lid_iso': 1250.0} if source == 'lid_state' else None
     monkeypatch.setattr(s.state, '_lid_state', lid_state, raising=False)
     assert 600.0 < expected < s._lid_T_sol
-    base = s._lid_base_state(T_f, 0.0)
+    base = s._lid_base_state(T_f, 0.0, float(eos.entropy_at_temperature(s._lid_P, T_f)))
     assert base['T_b'] == pytest.approx(expected, rel=1e-9)
 
 
@@ -805,11 +805,11 @@ def test_lid_base_blends_in_entropy_by_the_melt_ramp(eos, monkeypatch):
     w = float(_melt_ramp(phi, ph._phi_rheo, ph._phi_width))
     assert 0.1 < w < 0.9
     S_rh = float(eos.entropy_at_temperature(s._lid_P, 1250.0))
-    base = s._lid_base_state(1400.0, phi)
+    base = s._lid_base_state(1400.0, phi, s._lid_S_sol)
     assert base['S_b'] == pytest.approx(w * s._lid_S_sol + (1.0 - w) * S_rh, rel=1e-12)
     assert S_rh < base['S_b'] < s._lid_S_sol
     w1 = float(_melt_ramp(1.0, ph._phi_rheo, ph._phi_width))  # below 1: a blend at phi 1 too
-    S_b1 = s._lid_base_state(1400.0, 1.0)['S_b']
+    S_b1 = s._lid_base_state(1400.0, 1.0, s._lid_S_sol)['S_b']
     assert S_b1 == pytest.approx(w1 * s._lid_S_sol + (1.0 - w1) * S_rh, rel=1e-12)
 
 
@@ -820,14 +820,14 @@ def test_lid_base_is_capped_at_the_solidus(eos, monkeypatch, dT):
     solidus entropy, never above it."""
     s = _base_solver(eos, monkeypatch, 1.0)
     monkeypatch.setattr(s.state, '_lid_state', {'T_lid_iso': s._lid_T_sol + dT})
-    base = s._lid_base_state(1300.0, 0.0)
+    base = s._lid_base_state(1300.0, 0.0, s._lid_S_sol)
     assert base['S_b'] == s._lid_S_sol
 
 
 def test_lid_base_temperature_floor(eos, monkeypatch):
     """A rheological temperature below 1 K is read as 1 K on the EOS."""
     s = _base_solver(eos, monkeypatch, -50.0)
-    base = s._lid_base_state(1300.0, 0.0)
+    base = s._lid_base_state(1300.0, 0.0, float(eos.entropy_at_temperature(s._lid_P, 1300.0)))
     assert base['S_b'] == pytest.approx(
         float(eos.entropy_at_temperature(s._lid_P, 1.0)), rel=1e-12
     )
