@@ -119,7 +119,7 @@ def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
     """max_step lies in [1, 100] yr with a cell above the solidus and in [1, inf] without.
 
     With every cell cooling (dS/dt < 0) below S_sol - delta no boundary lies ahead, so the step
-    is inf; a cell with dS/dt = 0 counts as moving up and keeps a finite step.
+    is inf.
     """
     S, dSdt, mass = (np.array(c, dtype=float) for c in zip(*cells))
     h = _cap(S, dSdt, mass, rate_floor=True, bounds=(1.0, 100.0))
@@ -591,6 +591,48 @@ def test_rate_mode_short_call_matches_fixed_over_the_same_span(shared_eos):
     np.testing.assert_array_equal(ends[('fixed', None)], S0)
     np.testing.assert_array_equal(ends[('rate', None)], ends[('fixed', 2)])
     assert np.max(np.abs(ends[('rate', None)] - S0)) > 0.0
+
+
+@pytest.mark.unit
+def test_solve_cvode_segments_clamps_every_state_entry_in_its_own_unit():
+    """Sub-solidus segments set atol * state_scale = min(caller, 1e-8) per entry, scales built once."""
+    scale = np.array([100.0, 2.0, 0.5])  # two entropy cells and one temperature entry
+    built = []
+    s = EntropySolver.__new__(EntropySolver)
+    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 3)
+    s._build_nondim_scales = lambda: built.append(1) or MagicMock(state_scale=scale)
+    seen = []
+
+    def fake_solve_cvode(**kw):
+        seen.append((kw['rtol'], np.asarray(kw['atol']) * scale))
+        t0, t1 = kw['tspan'][0], kw['tspan'][-1]
+        if len(seen) == 1:
+            t1 = 0.5 * (t0 + t1)  # the first segment ends at a root
+        res = OptimizeResult(t=np.array([t0, t1]), y=np.column_stack([kw['y0'], kw['y0']]))
+        res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
+        res.cvode_flag = 2 if len(seen) == 1 else 0
+        return res
+
+    s._solve_cvode = fake_solve_cvode
+    roots = lambda y, inside: _PhaseBoundarySegmentRoot(  # noqa: E731
+        np.full(3, S_LIQ), np.full(3, S_SOL), y, DELTA, inside, scale, 2
+    )
+    caller = np.array([1e-6, 1e-12, 1e-7])  # physical atol per entry
+    s._solve_cvode_segments(
+        start_time=0.0,
+        end_time=1.0,
+        y0=np.array([9.0, 400.0, 3000.0]),  # S = 900 and 800 J/(kg K), below S_SOL
+        roots_at=roots,
+        h_at=lambda t, y: 0.5,
+        t_ref=1.0,
+        h_min=1.0,
+        rtol=1e-7,
+        atol=caller / scale,
+    )
+    assert len(seen) == 2 and len(built) == 1
+    for rtol, atol_phys in seen:
+        assert rtol == 1e-9
+        np.testing.assert_allclose(atol_phys, [1e-8, 1e-12, 1e-8], rtol=1e-15)
 
 
 @pytest.mark.unit
@@ -1430,7 +1472,8 @@ def test_rate_mode_relaxes_hundred_year_cap_after_phi_max_reaches_zero(shared_eo
     segs = getattr(sol, 'segments', [])
     assert len(segs) >= 10
     S_all = np.asarray(sol.y)[: s._n_stag, :]
-    assert np.min(S_all) >= -1406.28, f'Entropy fell below S_min + 200: {np.min(S_all)}'
+    S_min = shared_eos.S_min  # margin 0: the table edge, as the inside_table check of the V3 tool
+    assert np.min(S_all) >= S_min, f'Entropy {np.min(S_all)} left the table (S_min {S_min})'
     assert any(not np.isfinite(seg[2]) for seg in segs), 'max_step never relaxed to inf'
 
 
