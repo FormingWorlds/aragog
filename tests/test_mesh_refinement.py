@@ -510,3 +510,76 @@ def test_the_staggered_radii_are_within_1e4_of_their_cell(top, bottom, monkeypat
     m = _mesh(top, bottom, True)
     shift = np.abs(r1 - np.ravel(m.staggered.radii)) / np.diff(_radii(m))
     assert shift.max() < 1e-4 and shift.max() > 0
+
+
+_ENDS = [
+    (50.0, 9327.0, 100),
+    (50.0, 4638.0, 200),
+    (2.0, 0.0, 100),
+    (200.0, 2e3, 100),
+    (0.0, 0.0, 100),
+]
+
+
+def _end_samples(m, end):
+    """End node x0, the two nearest interior-difference midpoints m1, m2 and their spacings."""
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    if end == 'outer':
+        b, s = b[::-1], s[::-1]
+    return b[0], 0.5 * (s[0] + s[1]), 0.5 * (s[1] + s[2]), s[1] - s[0], s[2] - s[1]
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+def test_the_end_gradient_is_exact_for_a_quadratic(top, bottom, n):
+    """The end rows of the d/dr transform give dq/dr of q = r^2 at both end nodes to round-off."""
+    m = _mesh(top, bottom, False, n)
+    s = np.ravel(m.staggered.radii)
+    g = np.ravel(m.d_dr_at_basic_nodes((s**2).reshape(-1, 1)))
+    b = _radii(m)
+    np.testing.assert_allclose(g[[0, -1]], 2 * b[[0, -1]], rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+@pytest.mark.parametrize('end', ['inner', 'outer'])
+def test_the_end_gradient_of_a_cubic_has_the_stencil_truncation_term(top, bottom, n, end):
+    """For q = ((r - x0) / L)^3 the end value is the linear extrapolation through the difference
+    midpoints m1, m2 of the differences, whose cubic error is d^2 q''' / 24 each: the exact
+    gradient 0 at x0 shifted by -q'''(x0 - m1)(x0 - m2) / 2 + ((1 + R) d1^2 - R d2^2) q''' / 24."""
+    m = _mesh(top, bottom, False, n)
+    x0, m1, m2, d1, d2 = _end_samples(m, end)
+    L = 1e5
+    s = np.ravel(m.staggered.radii)
+    g = np.ravel(m.d_dr_at_basic_nodes((((s - x0) / L) ** 3).reshape(-1, 1)))
+    q3 = 6.0 / L**3
+    R = (x0 - m1) / (m1 - m2)
+    expected = -0.5 * q3 * (x0 - m1) * (x0 - m2) + ((1 + R) * d1**2 - R * d2**2) * q3 / 24
+    got = g[0] if end == 'inner' else g[-1]
+    assert expected != 0.0
+    assert got == pytest.approx(expected, rel=1e-6, abs=0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('top', 'bottom'), [(200.0, 0.0), (0.0, 200.0), (200.0, 200.0)])
+def test_the_smallest_accepted_node_count_builds_a_mesh(top, bottom):
+    """The smallest node count the cell-thickness check accepts builds a mesh with its d/dr
+    transform, not an IndexError."""
+    from aragog.config.mesh import check_cell_thickness
+
+    p = Parameters.from_file(CFG)
+    p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = top, bottom
+    for n in range(1, 10):
+        p.mesh.number_of_nodes = n
+        try:
+            check_cell_thickness(p.mesh)
+            break
+        except ValueError:
+            continue
+    try:
+        m = Mesh(p)
+    except Exception as err:  # noqa: BLE001
+        pytest.fail(f'{n} nodes pass the check but the mesh build raises {err!r}')
+    assert m._d_dr_transform.shape == (n, n - 1)
