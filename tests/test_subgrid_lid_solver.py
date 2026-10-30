@@ -626,10 +626,10 @@ def test_resume_after_handover_matches_the_lid_off_run(eos):
     assert s.get_state().lid_delta == pytest.approx(0.0, abs=0)
 
 
-@pytest.mark.parametrize('closure', ['local', None])
+@pytest.mark.parametrize('closure', ['local'])
 def test_no_handover_without_the_lid_closure(eos, closure):
-    """The hand-over needs the stagnant-lid state of the 'lid' stress closure: with the 'local'
-    closure, or without the rheology, the column whose trigger has passed keeps its lid."""
+    """The isotherm hand-over needs the stagnant-lid state of the 'lid' stress closure: with
+    the 'local' closure the column whose isotherm trigger has passed keeps its lid."""
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -724,6 +724,79 @@ def test_handover_fires_where_the_gate_opens(eos):
     s._lid_gate = lambda: ((clock['t'] - t_star) / t_star,)
     s.solve()
     assert s.get_state().lid_handover_time == pytest.approx(t_star, rel=1e-6)
+
+
+def _top_at(eos, dS, end=1.0):
+    """A 10-node column without the solid rheology, the top cell ``dS`` above its solidus."""
+    s = _solver(eos, end=end)
+    S = s._S0[: s._n_stag].copy()
+    S[-1] = s._lid_S_sol + dS
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
+    """Without the solid rheology the lid hands over inside the call where the top cell cools
+    through its solidus (the lid-base state), on every integrator path; a top cell that stays
+    above the solidus keeps its lid."""
+    s = _top_at(eos, 0.2)
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    merge, seen = s._lid_merge, []
+    s._lid_merge = lambda y: (seen.append(float(y[s._n_stag - 1])), merge(y))[1]
+    s.solve()
+    t_x = s.get_state().lid_handover_time
+    assert 0.0 < t_x < 1.0
+    assert seen[0] == pytest.approx(s._lid_S_sol, rel=1e-7)
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    warm = _top_at(eos, 2.0)
+    warm.solve()
+    assert np.isnan(warm.get_state().lid_handover_time)
+    assert warm._solution.y[-2, -1] > 0.0
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('dS', 'hands_over'), [(-5.0, True), (0.0, True), (5.0, False)])
+def test_top_cell_at_or_below_the_solidus_hands_over_at_the_start(eos, dS, hands_over):
+    """Without the solid rheology a top cell at or below its solidus at the call start hands
+    the lid over before the run (lid states 0 from the first output); above it, it does not."""
+    s = _top_at(eos, dS, end=0.01)
+    s.solve()
+    y0 = s._solution.y[-2:, 0]
+    if hands_over:
+        assert s.get_state().lid_handover_time == pytest.approx(0.0, abs=0)
+        assert np.all(y0 == 0.0)
+    else:
+        assert np.isnan(s.get_state().lid_handover_time)
+        assert y0[0] > 0.0
+
+
+@pytest.mark.parametrize('mode', ['fixed', 'rheological'])
+def test_no_solidus_handover_with_the_rheology(eos, mode):
+    """With the solid rheology and a closure other than 'lid' the lid base lies below the
+    solidus: the hand-over root is -1 and the lid stays, also on a top cell below the solidus."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=0.01)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, stress_closure_mode='local', lid_base_mode=mode
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.full(s._n_stag, 3050.0)
+    S[-1] = s._lid_S_sol - 5.0
+    s.set_initial_entropy(S)
+    assert s._lid_root_value(0.0, s._S0) == pytest.approx(-1.0, abs=0)
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+    assert s._solution.y[-2, -1] > 0.0
 
 
 @pytest.mark.physics_invariant
