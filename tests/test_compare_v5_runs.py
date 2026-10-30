@@ -217,6 +217,15 @@ def test_v5b_accepts_runs_that_fit_their_roles(tmp_path):
     assert res['passed']
 
 
+@pytest.mark.parametrize('folder', ['', 'output'])
+def test_versions_reads_the_driver_result_beside_the_output_folder(tmp_path, folder):
+    """Given RUN or RUN/output, versions() reads the driver flags from RUN/v5b_result.json."""
+    _run(tmp_path, 'v5b', BRANCH, reference=True, reference_rtol=1e-10)
+    v = cmp.versions(tmp_path / folder)
+    flags = {k: v.get(k) for k in ('reference', 'reference_rtol', 'solid_steps', 's0_eps')}
+    assert flags == dict(reference=True, reference_rtol=1e-10, solid_steps=3, s0_eps=0.0)
+
+
 def test_reference_rtol_selects_the_reference_tolerance(tmp_path):
     """A reference at rtol 1e-11 is refused by default and accepted with reference_rtol 1e-11."""
     run, main, _ = _v5b(tmp_path)

@@ -82,7 +82,7 @@ def versions(path):
         PROTEUS=re.search(r'PROTEUS git hash\s+(\S+)', log).group(1),
         Aragog=re.search(r'Interior module\s+aragog version\s+(\S+)', log).group(1),
     )
-    driver = Path(path) / 'v5b_result.json'
+    driver = _folder(path).parent / 'v5b_result.json'  # the driver writes it beside output/
     if driver.exists():
         d = json.loads(driver.read_text())
         keys = ('reference', 'reference_rtol', 'solid_steps', 's0_eps')
