@@ -150,10 +150,10 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         raise ValueError(f'{folder}: {len(parts)} part files for {len(rows)} records')
     if len({r['sha'] for r in rows}) != 1 or len({r.get('config_hash') for r in rows}) != 1:
         raise ValueError(f'{folder}: parts from more than one tree or config')
-    t, s_top, s_sol, s_bot, s_end = [], [], None, [], []
-    for p in parts:
-        z = np.load(p)
-        s_sol = z['S_sol'][-1] if s_sol is None else s_sol
+    t, s_top, s_bot, s_end = [], [], [], []
+    zs = [np.load(p) for p in parts]
+    s_sol = zs[0]['S_sol'][-1]
+    for z in zs:
         s_bot.append(float(z['y'][0, -1]))
         s_end.append(z['y'][: z['S_sol'].size, -1].tolist())
         t.append(z['t'])
@@ -186,10 +186,11 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         'top_cell_freezes': _freezes(t, np.concatenate(s_top)[idx] - s_sol, rows),
     }
     if r0.get('core_bc') == 'core_module':
-        out['T_core_K'] = [
-            float(np.load(p)['y_end'][np.load(p)['S_sol'].size + 1]) for p in parts
-        ]
-    sol = [np.load(p)['S_sol'] for p in parts]
+        from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
+        k = EXTRA_STATE_SLOTS['core_module'].index('T_core')
+        out['T_core_K'] = [float(z['y_end'][z['S_sol'].size + k]) for z in zs]
+    sol = [z['S_sol'] for z in zs]
     if any(not np.array_equal(x, sol[0]) for x in sol):
         raise ValueError(f'{folder}: the solidus entropy differs between parts')
     out['S_sol'] = sol[0].tolist()

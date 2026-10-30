@@ -13,6 +13,11 @@ Usage::
     python tools/verification/run_mesh_refinement_case.py <outdir> --eos-dir DIR
         [--eos-md5 MD5] [--samples 1e2,1e3,1e4,1e5] [--nodes 100] [--surface-cell M]
         [--cmb-cell M] [--s-init S] [--core-module-params JSON] [--resume] [--max-parts K]
+        [--rows OUT.npz]
+
+With ``--rows`` nothing is solved: the run folder's solver is rebuilt from the same arguments
+(the config hash must match its records) and ``OUT.npz`` gets the time ``t`` [yr] and the global
+melt fraction ``Phi`` of every stored row, the input of the study tool's ``--phi-rows``.
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument(
         '--max-parts', type=int, default=0, help='stop after this many parts; 0 = all'
     )
+    ap.add_argument('--rows', type=Path, help='write t and Phi of every stored row; no solve')
     return ap.parse_args(argv)
 
 
@@ -225,6 +231,10 @@ def main(argv=None) -> int:
     cfg.write_text(text)
     rows, t_prev, y_prev, k0 = [], 0.0, None, 0
     out_json = a.outdir / f'{STEM}.json'
+    if a.rows:
+        rows = json.loads(out_json.read_text())
+        if {r['config_hash'] for r in rows} != {config_hash}:
+            raise SystemExit(f'{out_json} comes from another config')
     if a.resume and out_json.exists():
         rows = json.loads(out_json.read_text())
         if {r['sha'] for r in rows} != {sha} or {r['config_hash'] for r in rows} != {
@@ -269,9 +279,19 @@ def main(argv=None) -> int:
         s = EntropySolver(c, entropy_eos=eos_np)
         s.initialize()
         s.set_initial_entropy(a.s_init)
-        if not a.numpy:
+        if not (a.numpy or a.rows):
             _install_factory(s, a.eos_dir, calls)
         return s
+
+    if a.rows:
+        s, t, phi = make(samples[-1]), [], []
+        for k in range(len(rows)):
+            z = np.load(a.outdir / f'{STEM}_part{k}.npz')
+            for j in range(z['t'].size):
+                t.append(float(z['t'][j]))
+                phi.append(_record(s, t[-1], z['y'][:, j])[0]['Phi_global'])
+        np.savez(a.rows, t=np.array(t), Phi=np.array(phi))
+        return 0
 
     w_all = time.perf_counter()
     for k, t_end in enumerate(samples[k0:], start=k0):

@@ -302,3 +302,17 @@ def test_the_cvode_counters_parse_the_solver_log_line():
     for _ in range(2):
         h.emit(logging.LogRecord('x', logging.INFO, '', 0, fmt, args, None))
     assert h.cv == dict(calls=2, nst=24, nfe=68, netf=12, last_step=2.5e-3)
+
+
+def test_the_rows_mode_refuses_a_run_folder_of_another_config(tmp_path):
+    """--rows evaluates stored rows only with the solver of the run's own config hash."""
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+    (eos / 'temperature_solid.dat').write_text('x')
+    out = tmp_path / 'run'
+    out.mkdir()
+    (out / 'za.json').write_text(json.dumps([dict(sha='a', config_hash='other')]))
+    with pytest.raises(BaseException) as err:
+        case.main([str(out), '--eos-dir', str(eos), '--rows', str(tmp_path / 'r.npz')])
+    assert isinstance(err.value, SystemExit) and 'comes from another config' in str(err.value)
+    assert not (tmp_path / 'r.npz').exists()
