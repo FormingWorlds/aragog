@@ -577,6 +577,39 @@ def test_handover_in_the_call(eos, method):
         assert any(seg[1] == 'lid' for seg in sol.segments)
 
 
+def test_handover_leaves_exact_zero_lid_states(eos):
+    """After a hand-over the lid states of the solution and of the energy trace are exact
+    zeros, also when the energy offset of the nondimensional state does not map 0 back to 0,
+    so a resume from them is a handed-over lid."""
+    from aragog.jax.nondim import NonDimScales
+
+    s = _solver(eos, end=1.0)
+    build = s._build_nondim_scales
+
+    def scales():
+        sc = build()
+        off, ss = sc.state_offset.copy(), sc.state_scale
+        for k in range(1, 1000):
+            off[-1] = sc.state_offset[-1] * (1.0 + k * 1e-6)
+            if (0.0 - off[-1]) / ss[-1] * ss[-1] + off[-1] != 0.0:
+                return NonDimScales(state_scale=ss, t_ref=sc.t_ref, state_offset=off)
+        pytest.fail('no energy offset with an inexact round trip of 0')
+
+    s._build_nondim_scales = scales
+    s._lid_handover_armed = lambda: True
+    s._lid_root_value = lambda t, y: -1.0 if y[-2] == 0.0 else (t - 0.4) / 0.4
+    s.solve()
+    sol = s._solution
+    assert s.get_state().lid_handover_time == pytest.approx(0.4, rel=1e-6)
+    np.testing.assert_array_equal(sol.y[-2:, -1], [0.0, 0.0])
+    tr = sol.energy_trace[1]
+    off = tr[-2] == 0.0
+    assert off.any() and np.all(tr[-1, off] == 0.0)
+    r = _solver(eos, end=1.0)
+    r.set_initial_lid(float(sol.y[-2, -1]), float(sol.y[-1, -1]))
+    assert r._lid_init == (0.0, 0.0)
+
+
 @pytest.mark.physics_invariant
 def test_resume_after_handover_matches_the_lid_off_run(eos):
     """A run resumed with the handed-over lid (0, 0) evolves as the run without the lid."""
