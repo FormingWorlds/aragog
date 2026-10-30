@@ -30,14 +30,14 @@ with two dimensionless parameters: $\delta$ sets how strongly the nodes cluster 
 
 ## Mass-coordinate mode
 
-With `mass_coordinates = true` (the default, and the PROTEUS path), the uniform grid is uniform in the mass coordinate $\xi_m$, not in radius ([Model overview](model.md)). The stretching then acts on $\xi_m$, and Aragog converts each target from metres into a mass-coordinate fraction, so the end cells still have the thickness you set, in radius. On a refined mesh the basic node radii come from the mass-coordinate solve, to 1 mm; the staggered node radii keep the 1 m tolerance of the uniform mesh, which moves them by less than $10^{-4}$ of their cell.
+With `mass_coordinates = true` (the default), the uniform grid is uniform in the mass coordinate $\xi_m$, not in radius ([Model overview](model.md)). The stretching then acts on $\xi_m$, and Aragog converts each target from metres into a mass-coordinate fraction, so the end cells still have the thickness you set, in radius. On a refined mesh the basic node radii come from the mass-coordinate solve, to 1 mm; the staggered node radii keep the 1 m tolerance of the uniform mesh, which moves them by less than $10^{-4}$ of their cell.
 
 ## Worked example
 
 `abe_solid.toml` has a 1000 km mantle and 100 nodes, so the uniform cell in radius mode is 10.1 km. In radius mode:
 
-- A 1 km top cell makes the bottom cell grow to 23.4 km. Neighbouring cells differ by at most 4.6 %.
-- A 1 km top cell and a 2 km CMB cell make the largest cell 21.5 km. Neighbouring cells differ by at most 8.4 %.
+- A 1 km top cell makes the bottom cell grow to 23.4 km. The larger of two neighbouring cells is at most 4.6 % larger than the smaller.
+- A 1 km top cell and a 2 km CMB cell make the largest cell 21.5 km. The larger of two neighbouring cells is at most 8.4 % larger than the smaller.
 
 In mass-coordinate mode the same settings give a bottom cell of 22.1 km in the first case and a largest cell of 21.5 km in the second.
 
@@ -54,6 +54,6 @@ In mass-coordinate mode the same settings give a bottom cell of 22.1 km in the f
 
 ## Cost
 
-The convergence study on the Validation page gives the wall time and the step count for each setting.
+The convergence study on the Validation page gives the number of solver steps up to $10^5$ years on the uniform 100-node mesh and with a 200 m and a 50 m top cell.
 
 **Where this is checked.** [Validation: mesh refinement](../Validation/mesh_refinement.md).

@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.reference_pinned, pytest.mark.timeout(60)]
+pytestmark = [pytest.mark.unit, pytest.mark.reference_pinned, pytest.mark.timeout(60)]
 
 DATA = Path(__file__).parent / 'validation' / 'data' / 'mesh_refinement_study.json'
 TREE = 'bbef9c9f139d7d200c0de98e5e010462d597d77c'
@@ -92,6 +92,13 @@ _MAIN = [
 _PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot order
 
 
+def _one_way(study, n):
+    """Per result: whether X200, X100, X50 change in one direction at ``n`` nodes."""
+    X, _ = _convergence(study, n)
+    a, b, c = (X[f'T{q}-{n}'] for q in H_TOP)
+    return {k: (b[k] - a[k]) * (c[k] - b[k]) > 0 for k in a}
+
+
 def _frozen(v):
     f = v['first_frozen']
     return f['thaw_yr'] - f['freeze_yr']
@@ -119,6 +126,12 @@ def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
     passed = {k for k in _MAIN if c200[k]['verdict'] == 'pass'}
     assert passed == {'Phi 1e3', 'Phi 1e4', 'T_cmb 1e3', 'heat_loss 1e5', 'F_top 1e4-1e5'}
     assert sum(c100[k]['verdict'] == 'pass' for k in _MAIN) == 5
+    one_way = {n: _one_way(study, n) for n in (100, 200)}
+    assert [
+        sum(not one_way[n][k] for k in _MAIN if c[k]['verdict'] == 'pass')
+        for n, c in ((100, c100), (200, c200))
+    ] == [3, 4]
+    assert c200['Phi 1e5']['verdict'] == c200['F_top 1e3-1e4']['verdict'] == 'no pass'
     three_e = [3 * c200[k]['e'] for k in _MAIN]
     assert f'{min(three_e):.1e}' == '7.4e-08' and f'{max(three_e):.1e}' == '1.4e-03'
     assert c200['T_cmb 1e4']['verdict'] == c200['T_cmb 1e5']['verdict'] == 'no pass'
@@ -149,12 +162,32 @@ def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
     assert f'{s_f["Phi 1e5"]:.1%}' == '2.2%'
     assert all(node[k] > s_f[k] for k in node)
 
-    mesh_runs = [k for k in runs if k[0] in 'UTP']
-    freeze = [runs[k]['first_frozen']['freeze_yr'] for k in mesh_runs]
+    no_core = [k for k, v in runs.items() if v['core_bc'] != 'core_module']
+    assert len(no_core) == 15
+    freeze = [runs[k]['first_frozen']['freeze_yr'] for k in no_core]
     assert (round(min(freeze)), round(max(freeze))) == (768, 791)
+    assert [sum(runs[k]['top_cell_freezes'][:4]) for k in ('T50-100', 'T50-200')] == [61, 72]
     assert f'{runs["U100"]["h_top_m"] / 1e3:.1f}' == '10.9'
-    frozen = [round(_frozen(runs[k])) for k in ('U100', 'T200-100', 'T50-100', 'T50-200')]
-    assert frozen == [2851, 85, 64, 51]
+    frozen = {n: [_frozen(runs[f'T{q}-{n}']) for q in H_TOP] for n in (100, 200)}
+    assert {n: [f'{x:.0f}' for x in f] for n, f in frozen.items()} == {
+        100: ['85', '68', '64'],
+        200: ['79', '58', '51'],
+    }
+    for n, f in frozen.items():
+        e = abs(_frozen(runs[PAIR[n][0]]) / _frozen(runs[PAIR[n][1]]) - 1)
+        assert _verdict(e, abs(f[0] / f[1] - 1), abs(f[1] / f[2] - 1)) == 'pass'
+    assert [round(_frozen(runs[k])) for k in ('U100', 'U200', 'U400')] == [2851, 513, 255]
+    uni = {r: _metrics(runs[r]) for r in ('U100', 'U200', 'U400')}
+    step = [
+        f'{abs(uni[b][k] / uni[a][k] - 1):.{d}%}'
+        for k, a, b, d in (
+            ('Phi 1e3', 'U100', 'U200', 2),
+            ('Phi 1e3', 'U200', 'U400', 1),
+            ('F_top 1e3-1e4', 'U100', 'U200', 1),
+            ('F_top 1e3-1e4', 'U200', 'U400', 1),
+        )
+    ]
+    assert step == ['0.21%', '7.6%', '3.4%', '3.6%']
     steps = [sum(runs[k]['nst'][:4]) for k in ('U100', 'T200-100', 'T50-100')]
     assert [f'{x:.1e}' for x in steps] == ['2.4e+05', '1.4e+06', '1.9e+06']
 
@@ -246,10 +279,8 @@ def test_the_long_run_and_the_tables():
     assert f'{L["F_top_mean_W_m2"][5]:.1f}' == '8.0'
     assert [_pattern(L, i) for i in (4, 5, 6)] == [(0, 0), (39, 53), (10, 38)]
     assert [_pattern(U, i) for i in (4, 5, 6)] == [(0, 0)] * 3
-    assert (
-        f'{min(np.abs(np.subtract(U["S_end"][i], U["S_sol"])).min() for i in (4, 5, 6)):.0f}'
-        == '145'
-    )
+    closest = min(np.abs(np.subtract(e, U['S_sol'])).min() for e in U['S_end'])
+    assert 144 <= closest < 145
 
     c = head['solid_at_cmb']
     (p1, p2), (s_valid, s_fill), T = c['P_nodes_Pa'], c['S_nodes'], c['T_K']
@@ -270,6 +301,27 @@ def test_the_long_run_and_the_tables():
         '3439.49',
         '3443.24',
     ] and f'{c["P_cmb_Pa"] / 1e9:.2f}' == '43.38'
+
+    lv, sol = head['solid_last_valid'], head['solidus']
+    p_node, s_last, grid = (np.array(lv[k]) for k in ('P_nodes_Pa', 'S', 'S_grid'))
+    s_sol = np.interp(p_node, sol['P_Pa'], sol['S'])
+    between = np.array([np.sum((grid > a) & (grid < b)) for a, b in zip(s_last, s_sol)])
+    above = s_sol > s_last
+    assert f'{np.diff(grid).min():.1f}' == f'{np.diff(grid).max():.1f}' == '80.1'
+    assert [
+        int(above.sum()),
+        int(np.sum(above & (between == 0))),
+        int(np.sum(between == 1)),
+    ] == [1301, 853, 448]
+    cells = {}
+    for k, v in study.items():
+        if k != 'header':
+            j = np.searchsorted(p_node, v['P_cell_Pa'])
+            cells[k] = np.array(v['S_sol']) > np.minimum(s_last[j - 1], s_last[j])
+    assert all(c[-1] for c in cells.values())
+    assert [
+        int(cells[k].sum()) for k in ('T50-100', 'L50', 'C-cmb9327', 'T50-200', 'U100')
+    ] == [93, 93, 93, 185, 86]
 
     m, r = head['melt_at_1bar'], head['raw_liquid_at_1bar']
     assert r['md5'] == '4b5c14255ca845880a2e940110861df1'
@@ -335,3 +387,19 @@ def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
         return fig
 
     validation_plot(figure, 'mesh_refinement_cmb')
+
+
+@pytest.mark.parametrize(
+    ('e', 's_c', 's_f', 'verdict'),
+    [
+        (1.0, 3.0, 3.0, 'converged'),
+        (1.0, 3.0, 3.1, 'no pass'),
+        (1.0, 4.0, 3.0, 'pass'),
+        (1.0, 8.0, 6.0, 'pass'),
+        (1.0, 8.0, 6.1, 'no pass'),
+        (0.0, 1.0, 0.5, 'pass'),
+    ],
+)
+def test_the_pass_rule_on_every_branch(e, s_c, s_f, verdict):
+    """Converged needs both spreads within 3e; otherwise s_f within 3e or s_f / s_c <= 0.75."""
+    assert _verdict(e, s_c, s_f) == verdict

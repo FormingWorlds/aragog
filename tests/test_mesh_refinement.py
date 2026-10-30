@@ -263,17 +263,8 @@ def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):
     JAX ``MeshArrays`` carry the same radii, pressure and gravity."""
     pytest.importorskip('jax')
     from aragog.jax.phase import MeshArrays
-    from tests.test_entropy_solver_eos_method2_smoke import (
-        _build_parameters_eos_method_2,
-        _write_synthetic_external_mesh,
-    )
 
-    ef = tmp_path / 'mesh.dat'
-    _write_synthetic_external_mesh(ef, n=30)
-    p = _build_parameters_eos_method_2(ef, n_nodes=40)
-    p.mesh.mass_coordinates = True
-    p.mesh.surface_cell_thickness = 1e3
-    m = Mesh(p)
+    m, ef = _external_mesh(tmp_path, True)
     r = _radii(m)
     assert np.diff(r)[-1] == pytest.approx(1e3, abs=1e-3)
     np.testing.assert_allclose(
@@ -412,6 +403,21 @@ def test_the_lid_closure_reads_the_refined_top_cell(monkeypatch):
     assert np.all(np.isfinite(rhs))
 
 
+def _external_mesh(tmp_path, mass_coordinates, top=1e3):
+    """Mesh of a synthetic ``eos_method = 2`` file with a ``top`` m top cell, and the file."""
+    from tests.test_entropy_solver_eos_method2_smoke import (
+        _build_parameters_eos_method_2,
+        _write_synthetic_external_mesh,
+    )
+
+    ef = tmp_path / 'mesh.dat'
+    _write_synthetic_external_mesh(ef, n=30)
+    p = _build_parameters_eos_method_2(ef, n_nodes=40)
+    p.mesh.mass_coordinates = mass_coordinates
+    p.mesh.surface_cell_thickness = top
+    return Mesh(p), ef
+
+
 def _cell_density(m):
     """Mass over volume of each cell between the basic radii, from the mesh EOS [kg/m^3]."""
     r = np.asarray(m.basic.radii)
@@ -433,18 +439,12 @@ def test_the_staggered_density_is_the_cell_mass_over_volume_on_a_refined_mesh(ma
 @pytest.mark.physics_invariant
 def test_the_external_eos_staggered_density_follows_the_refined_radii_in_radius_mode(tmp_path):
     """``eos_method = 2`` in radius mode with a 1 km top cell: the effective density of each
-    cell is its mass over its volume on the refined radii, to 1e-12."""
-    from tests.test_entropy_solver_eos_method2_smoke import (
-        _build_parameters_eos_method_2,
-        _write_synthetic_external_mesh,
-    )
-
-    ef = tmp_path / 'mesh.dat'
-    _write_synthetic_external_mesh(ef, n=30)
-    p = _build_parameters_eos_method_2(ef, n_nodes=40)
-    p.mesh.mass_coordinates = False
-    p.mesh.surface_cell_thickness = 1e3
-    m = Mesh(p)
+    cell is its mass over its volume on the refined radii, to 1e-12; the uniform radius-mode
+    mesh takes the mean of the two face densities, which differs by less than 1e-4."""
+    m, _ = _external_mesh(tmp_path, False)
+    u, _ = _external_mesh(tmp_path, False, 0.0)
+    d = np.abs(np.ravel(u.staggered_effective_density) / _cell_density(u) - 1).max()
+    assert 1e-5 < d < 1e-4
     assert np.diff(_radii(m))[-1] == pytest.approx(1e3, rel=1e-6)
     np.testing.assert_allclose(
         np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
@@ -488,3 +488,22 @@ def test_mass_mode_puts_the_staggered_node_inside_a_2_m_end_cell(end):
     assert cell == pytest.approx(2.0, abs=2e-3)
     assert np.all((frac > 0.25) & (frac < 0.75)), frac.min()
     assert frac[-1 if end == 'top' else 0] == pytest.approx(0.5, abs=1e-2)
+
+
+@pytest.mark.parametrize(('top', 'bottom'), [(50.0, 0.0), (2.0, 0.0), (0.0, 2.0), (200.0, 2e3)])
+def test_the_staggered_radii_are_within_1e4_of_their_cell(top, bottom, monkeypatch):
+    """On a refined mass-coordinate mesh the staggered radii, solved to 1 m, lie within 1e-4 of
+    their cell of the radii solved to 1e-9 m."""
+    r1 = np.ravel(_mesh(top, bottom, True).staggered.radii)
+    solve = mesh_module._radius_for_mass_coordinate
+
+    def tight(*a, **k):
+        k['xtol'] = (
+            1e-9 if str(k.get('node', '')).startswith('staggered') else k.get('xtol', 1.0)
+        )
+        return solve(*a, **k)
+
+    monkeypatch.setattr(mesh_module, '_radius_for_mass_coordinate', tight)
+    m = _mesh(top, bottom, True)
+    shift = np.abs(r1 - np.ravel(m.staggered.radii)) / np.diff(_radii(m))
+    assert shift.max() < 1e-4 and shift.max() > 0

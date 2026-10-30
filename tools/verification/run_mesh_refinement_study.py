@@ -8,7 +8,8 @@ time, status, global melt fraction, CMB temperature, the time-mean surface heat 
 part and the energy integrals ``F_int`` (heat lost at the surface, J) and ``F_cmb`` (heat
 gained at the CMB, J). It also keeps the first frozen interval of the top cell: from the first
 time the top cell entropy is at or below the solidus (linear between stored rows) to the first
-time after it that it is above the solidus again. With ``--phi-rows DIR`` it adds the time mean
+time after it that it is above the solidus again, and the number of times per part that the top cell
+falls to or below the solidus. With ``--phi-rows DIR`` it adds the time mean
 of the global melt fraction over [t/2, t] for t = 1e3, 1e4, 1e5 yr, from ``DIR/<run>.npz``
 (arrays ``t`` and ``Phi`` on the stored rows; a run without that file has no time mean). No
 derived number is stored: ``tests/test_mesh_refinement_study.py`` computes them. With ``--tables DIR``
@@ -16,8 +17,10 @@ derived number is stored: ``tests/test_mesh_refinement_study.py`` computes them.
 temperature table at the two pressure nodes around the CMB pressure, for the last entropy node valid at
 both and the next node, and the melt temperature and density on the valid nodes at 1 bar; with
 ``--raw-liquid FILE`` it keeps the rows at 1 bar of that PALEOS (P, T) liquid table. Each table file is
-named with its md5. For the runs named with ``--profiles`` it keeps the staggered entropy at every part
-end and the staggered solidus entropy.
+named with its md5, and the header keeps the entropy nodes and the largest valid entropy of the solid
+table at every pressure node, and the solidus of the tables. Every run keeps its staggered solidus entropy and the staggered pressure of its mesh, rebuilt from
+``abe_solid.toml`` with the run's node count and end cells; the runs named with ``--profiles`` also keep
+the staggered entropy at every part end.
 
 Usage::
 
@@ -51,6 +54,13 @@ def _first_frozen(t, s_top, s_sol):
     return {'freeze_yr': cross(fz[0]), 'thaw_yr': thaw}
 
 
+def _freezes(t, d, rows):
+    """Number of downward crossings of the solidus by the top cell in each part."""
+    at = t[1:][(d[:-1] > 0) & (d[1:] <= 0)]
+    ends = [0.0] + [r['t_yr'] for r in rows]
+    return [int(np.sum((at > a) & (at <= b))) for a, b in zip(ends[:-1], ends[1:])]
+
+
 def _md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
@@ -68,9 +78,12 @@ def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> 
     p, s, t = _ps_table(tables / 'temperature_solid.dat')
     vm = np.loadtxt(tables / 'valid_mask_solid.dat')
     k = int(np.searchsorted(p, p_cmb))
+    if not 0 < k < p.size:
+        raise ValueError(f'CMB pressure {p_cmb} Pa is outside the pressure nodes of {tables}')
     j = int(np.flatnonzero((vm[:, k - 1] == 1) & (vm[:, k] == 1)).max())
     names = ['temperature_solid.dat', 'valid_mask_solid.dat', 'temperature_melt.dat']
-    names += ['density_melt.dat', 'valid_mask_melt.dat']
+    names += ['density_melt.dat', 'valid_mask_melt.dat', 'solidus_P-S.dat']
+    last = vm.shape[0] - 1 - np.argmax(vm[::-1] == 1, axis=0)
     out = {
         'tables': tables.name,
         'md5': {n: _md5(tables / n) for n in names},
@@ -81,7 +94,17 @@ def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> 
             'T_K': t[j : j + 2, k - 1 : k + 1].tolist(),
             'valid': vm[j : j + 2, k - 1 : k + 1].tolist(),
         },
+        'solid_last_valid': {
+            'P_nodes_Pa': p.tolist(),
+            'S': s[last].tolist(),
+            'S_grid': s.tolist(),
+        },
     }
+    sol = np.loadtxt(tables / 'solidus_P-S.dat') * np.array(
+        (tables / 'solidus_P-S.dat').read_text().splitlines()[4].lstrip('#').split(),
+        dtype=float,
+    )
+    out['solidus'] = {'P_Pa': sol[:, 0].tolist(), 'S': sol[:, 1].tolist()}
     p, s, t = _ps_table(tables / 'temperature_melt.dat')
     rho = _ps_table(tables / 'density_melt.dat')[2]
     if abs(p[0] / 1e5 - 1) > 1e-12:
@@ -104,6 +127,19 @@ def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> 
             's': r[:, 3].tolist(),
         }
     return out
+
+
+def _cell_pressure(r0: dict) -> list:
+    """Staggered pressure [Pa] of the run's mesh: abe_solid.toml with its nodes and end cells."""
+    import aragog
+    from aragog.mesh import Mesh
+    from aragog.parser import Parameters
+
+    p = Parameters.from_file(Path(aragog.__file__).parent / 'cfg' / 'abe_solid.toml')
+    p.mesh.number_of_nodes = r0['nodes']
+    p.mesh.surface_cell_thickness = r0.get('surface_cell', 0.0)
+    p.mesh.cmb_cell_thickness = r0.get('cmb_cell', 0.0)
+    return np.ravel(Mesh(p).staggered_pressure).tolist()
 
 
 def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = False) -> dict:
@@ -148,12 +184,14 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         'nst': [r['cvode']['nst'] for r in rows],
         'S_bottom_cell': s_bot,
         'first_frozen': _first_frozen(t, np.concatenate(s_top)[idx], s_sol),
+        'top_cell_freezes': _freezes(t, np.concatenate(s_top)[idx] - s_sol, rows),
     }
+    sol = [np.load(p)['S_sol'] for p in parts]
+    if any(not np.array_equal(x, sol[0]) for x in sol):
+        raise ValueError(f'{folder}: the solidus entropy differs between parts')
+    out['S_sol'] = sol[0].tolist()
+    out['P_cell_Pa'] = _cell_pressure(r0)
     if profiles:
-        sol = [np.load(p)['S_sol'] for p in parts]
-        if any(not np.array_equal(x, sol[0]) for x in sol):
-            raise ValueError(f'{folder}: the solidus entropy differs between parts')
-        out['S_sol'] = sol[0].tolist()
         out['S_end'] = s_end
     if phi_rows is not None and (phi_rows / f'{folder.name}.npz').exists():
         z = np.load(phi_rows / f'{folder.name}.npz')
@@ -164,6 +202,10 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
             if m.sum() < 6 or tp[m][-1] < ts * (1 - 1e-9):
                 raise ValueError(
                     f'{folder.name}: too few stored rows in [{ts / 2:g}, {ts:g}] yr'
+                )
+            if tp[m][0] > 0.525 * ts:
+                raise ValueError(
+                    f'{folder.name}: window [{ts / 2:g}, {ts:g}] yr starts at {tp[m][0]:g} yr'
                 )
             mean[f'{ts:.0e}'] = float(np.trapezoid(phi[m], tp[m]) / (tp[m][-1] - tp[m][0]))
         out['Phi_time_mean'] = mean
@@ -182,6 +224,8 @@ def main(argv=None) -> None:
     ap.add_argument('--raw-liquid', type=Path)
     ap.add_argument('--profiles', nargs='*', default=[])
     a = ap.parse_args(argv)
+    if (a.tables is None) != (a.cmb_pressure is None):
+        ap.error('--tables and --cmb-pressure go together')
     res = {
         'header': {
             'generator': 'tools/verification/run_mesh_refinement_study.py',

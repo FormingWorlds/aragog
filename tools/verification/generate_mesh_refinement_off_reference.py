@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from operator import attrgetter
 from pathlib import Path
 
 import numpy as np
@@ -121,10 +122,7 @@ def _case(mass_coordinates: bool) -> dict[str, np.ndarray]:
     out = {}
     mesh = Mesh(_parameters(mass_coordinates))
     for name in MESH_ARRAYS:
-        obj = mesh
-        for part in name.split('.'):
-            obj = getattr(obj, part)
-        out[f'mesh/{name}'] = np.asarray(obj, dtype=float)
+        out[f'mesh/{name}'] = np.asarray(attrgetter(name)(mesh), dtype=float)
     s = _solver(_parameters(mass_coordinates))
     out['rhs/numpy'] = np.asarray(s.dSdt(0.0, np.asarray(s._S0, float)), float)
     s.solve()

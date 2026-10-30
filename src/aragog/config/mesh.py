@@ -91,7 +91,8 @@ class MeshConfig:
         that end unset; with only the other end set, its cells grow. A set value lies in
         [2 m, uniform radial cell) and refines towards that boundary with a tanh stretching
         (both ends: the two-sided Vinokur form). In mass-coordinate mode the stretching acts
-        on the mass coordinate and the end cells still have the given radial thickness.
+        on the mass coordinate and the end cells still have the given radial thickness; there a
+        value at or above the uniform end cell of that mode is refused when the mesh is built.
     """
 
     outer_radius: float
