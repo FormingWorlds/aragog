@@ -22,37 +22,56 @@ _spec.loader.exec_module(cmp)
 BRANCH, MAIN = '26.10.29.dev12+g507e408a', '26.10.22.dev8+g4ae8167d'
 
 
-def _run(root, case, aragog, T_magma=1000.0, temp=(1.0, 2.0), late=None, **driver):
+def _run(
+    root,
+    case,
+    aragog,
+    T_magma=1000.0,
+    temp=(1.0, 2.0),
+    late=None,
+    t_end=1000.5,
+    t_snap=None,
+    extra_rows=0,
+    drop=(),
+    **driver,
+):
     """Write a run folder: helpfile rows, PROTEUS log, 2 snapshots, and the v5b driver result.
 
-    ``driver`` overrides the v5b result keys (reference, solid_steps, s0_eps) and Phi_global.
+    ``driver`` overrides the v5b result keys (reference, reference_rtol, solid_steps, s0_eps)
+    and Phi_global; ``drop`` removes result keys. The last row is at ``t_end``, the last
+    snapshot at ``t_snap`` (default ``t_end``).
     """
     pin = cmp.pins(cmp.CONFIGS[case])
     phi = driver.pop('Phi_global', 0.0 if case == 'v5b' else 1.0)
     out = root / 'output'
     (out / 'data').mkdir(parents=True)
     last = {**dict.fromkeys(cmp.COLUMNS, 1.0), 'T_magma': T_magma, 'Phi_global': phi}
-    rows = [dict.fromkeys(cmp.COLUMNS, 0.0), last]
+    last['Time'] = t_end
+    rows = [dict.fromkeys(cmp.COLUMNS, 0.0)] * (1 + extra_rows) + [last]
     lines = ['\t'.join(cmp.COLUMNS)] + ['\t'.join(str(r[k]) for k in cmp.COLUMNS) for r in rows]
     (out / 'runtime_helpfile.csv').write_text('\n'.join(lines) + '\n')
     (out / 'proteus_00.log').write_text(
         f'[ INFO  ] PROTEUS git hash  {pin["PROTEUS"]}\n'
         f'[ INFO  ] Interior module   aragog version {aragog}\n'
     )
-    for name, T in (('99p000_int.nc', late or temp), ('1000p500_int.nc', temp)):
+    t_snap = t_end if t_snap is None else t_snap
+    for name, T in (('99p000_int.nc', late or temp), (f'{t_snap:.3f}'.replace('.', 'p') + '_int.nc', temp)):
         with netCDF4.Dataset(out / 'data' / name, 'w') as nc:
             nc.createDimension('s', len(T))
             for k in cmp.PROFILES:
                 nc.createVariable(k, 'f8', ('s',))[:] = np.asarray(T)
     if case == 'v5b':
-        res = {'reference': False, 'solid_steps': 3, 's0_eps': 0.0, **driver}
+        res = {'reference': False, 'reference_rtol': None, 'solid_steps': 3, 's0_eps': 0.0}
+        res = {k: v for k, v in {**res, **driver}.items() if k not in drop}
         (root / 'v5b_result.json').write_text(json.dumps(res))
     return root
 
 
 def _v5b(tmp_path, run_T=999.5, run_temp=(1.0, 1.5)):
     """REFERENCE, MAIN and RUN of a v5b case where RUN is closer to REFERENCE than MAIN."""
-    ref = _run(tmp_path / 'ref', 'v5b', BRANCH, 1000.0, (1.0, 2.0), reference=True)
+    ref = _run(
+        tmp_path / 'ref', 'v5b', BRANCH, 1000.0, (1.0, 2.0), reference=True, reference_rtol=1e-10
+    )
     main = _run(tmp_path / 'main', 'v5b', MAIN, 1000.5, (1.0, 2.5))
     run = _run(tmp_path / 'run', 'v5b', BRANCH, run_T, run_temp)
     return run, main, ref
@@ -123,6 +142,10 @@ def test_v5b_floor_is_the_largest_round_off_offset(tmp_path):
         ('main', dict(solid_steps=2), 'main: run'),
         ('run', dict(s0_eps=1e-12), 'run: run'),
         ('run', dict(Phi_global=0.1), 'run: run'),
+        ('reference', dict(reference_rtol=1e-9), 'reference: run'),
+        ('reference', dict(drop=('reference_rtol',)), 'reference: run'),
+        ('run', dict(drop=('s0_eps',)), 'run: run'),
+        ('main', dict(s0_eps=-1e-12), 'main: run'),
     ],
 )
 def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, message):
@@ -131,7 +154,7 @@ def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, me
     kw = dict(
         run=('run', 999.5, (1.0, 1.5), {}),
         main=('main', 1000.5, (1.0, 2.5), {}),
-        reference=('ref', 1000.0, (1.0, 2.0), {'reference': True}),
+        reference=('ref', 1000.0, (1.0, 2.0), {'reference': True, 'reference_rtol': 1e-10}),
     )
     name, T, temp, driver = kw[role]
     aragog = change.pop('aragog', MAIN if role == 'main' else BRANCH)
@@ -140,6 +163,46 @@ def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, me
     paths[role] = bad
     with pytest.raises(SystemExit, match=message):
         cmp.compare('v5b', paths['run'], paths['main'], paths['reference'])
+
+
+@pytest.mark.parametrize(
+    'change',
+    [
+        dict(s0_eps=0.5),
+        dict(drop=('s0_eps',)),
+        dict(s0_eps=1e-12, t_end=1001.5),
+        dict(s0_eps=1e-12, extra_rows=1),
+    ],
+)
+def test_v5b_refuses_a_round_off_run_off_its_base(tmp_path, change):
+    """A round-off run needs s0_eps = +-1e-12 and the end time and row count of its base run."""
+    run, main, ref = _v5b(tmp_path)
+    floor = [
+        _run(tmp_path / 'rp', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=1e-12),
+        _run(tmp_path / 'rm', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=-1e-12),
+        _run(tmp_path / 'mp', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=1e-12),
+        _run(tmp_path / 'mm', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=-1e-12),
+    ]
+    assert cmp.compare('v5b', run, main, ref, floor)['passed']
+    floor[0] = _run(tmp_path / 'rp_bad', 'v5b', BRANCH, 999.5, (1.0, 1.5), **change)
+    with pytest.raises(SystemExit, match='run_p: run'):
+        cmp.compare('v5b', run, main, ref, floor)
+
+
+def test_reference_rtol_selects_the_reference_tolerance(tmp_path):
+    """A reference at rtol 1e-11 is refused by default and accepted with reference_rtol 1e-11."""
+    run, main, _ = _v5b(tmp_path)
+    ref11 = _run(tmp_path / 'r11', 'v5b', BRANCH, reference=True, reference_rtol=1e-11)
+    with pytest.raises(SystemExit, match='reference: run'):
+        cmp.compare('v5b', run, main, ref11)
+    assert cmp.compare('v5b', run, main, ref11, reference_rtol=1e-11)['passed']
+
+
+def test_end_state_needs_the_last_snapshot_at_the_last_row(tmp_path):
+    """A last snapshot that is not at the Time of the last helpfile row stops the comparison."""
+    assert cmp.end_state(_run(tmp_path / 'ok', 'v5', BRANCH))['rows'] == 2
+    with pytest.raises(SystemExit, match='last snapshot at 1001.5, last helpfile Time 1000.5'):
+        cmp.end_state(_run(tmp_path / 'late', 'v5', BRANCH, t_snap=1001.5))
 
 
 def test_runs_must_be_distinct_and_v5_must_stay_molten(tmp_path):

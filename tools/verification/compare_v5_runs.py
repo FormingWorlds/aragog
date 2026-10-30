@@ -10,15 +10,19 @@ one as ``output``.
 RUN uses this Aragog code. MAIN uses the Aragog commit without the controller rules near and
 below the solidus. REFERENCE is ``run_v5b_proteus.py --reference`` with the code of RUN. The
 header of each case config records the PROTEUS commit of the case and the Aragog commit of MAIN.
-The script stops unless every run used that PROTEUS commit from an unmodified tree, only the
-MAIN runs used that Aragog commit, and RUN and REFERENCE used one Aragog version. For v5b it
-also checks the driver flags of each run (``v5b_result.json``) and an end ``Phi_global`` of 0;
-for v5 an end ``Phi_global`` of 1. ``--floor`` takes the v5b round-off runs. The result file
-holds the versions of each run. Run from the repository root::
+The script stops unless every run logged that PROTEUS commit (the log gives the commit, not the
+state of the tree), only the MAIN runs used that Aragog commit, no Aragog version carries a
+``.d<date>`` suffix (a modified tree), and RUN and REFERENCE used one Aragog version. The last
+interior snapshot of each run must be at the time of its last helpfile row. For v5b it also
+checks the driver flags of each run (``v5b_result.json``): REFERENCE at ``--reference-rtol``
+(default 1e-10), the round-off runs of ``--floor`` at ``s0_eps`` = +-1e-12 with the end time and
+row count of their base run, the other runs at ``s0_eps`` = 0, and an end ``Phi_global`` of 0;
+for v5 an end ``Phi_global`` of 1. The result file holds the versions of each run. Run from the
+repository root::
 
     python tools/verification/compare_v5_runs.py --case v5 RUN MAIN [--output FILE]
     python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF \
-        [--floor RUN_P RUN_M MAIN_P MAIN_M] [--output FILE]
+        [--reference-rtol RTOL] [--floor RUN_P RUN_M MAIN_P MAIN_M] [--output FILE]
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ COLUMNS = (
 )
 PROFILES = ('temp_s', 'entropy_s')
 SOLID_STEPS = 3  # coupling steps with Phi_global = 0 at the end of a v5b run
+S0_EPS = 1.0e-12  # relative start offset of the v5b round-off runs
 
 
 def pins(config):
@@ -79,7 +84,8 @@ def versions(path):
     driver = Path(path) / 'v5b_result.json'
     if driver.exists():
         d = json.loads(driver.read_text())
-        found.update({k: d.get(k) for k in ('reference', 'solid_steps', 's0_eps')})
+        keys = ('reference', 'reference_rtol', 'solid_steps', 's0_eps')
+        found.update({k: d[k] for k in keys if k in d})
     return found
 
 
@@ -87,36 +93,41 @@ def end_state(path):
     """Return the last helpfile row and the profiles of the last interior snapshot of one run."""
     out = _folder(path)
     with open(out / 'runtime_helpfile.csv') as f:
-        row = list(csv.DictReader(f, delimiter='\t'))[-1]
-    snap = max(
-        (out / 'data').glob('*_int.nc'), key=lambda p: float(p.name[:-7].replace('p', '.'))
-    )
-    with netCDF4.Dataset(snap) as nc:
+        rows = list(csv.DictReader(f, delimiter='\t'))
+    snaps = {float(p.name[:-7].replace('p', '.')): p for p in (out / 'data').glob('*_int.nc')}
+    t_snap = max(snaps)
+    if abs(t_snap - float(rows[-1]['Time'])) > 1.0e-3:  # the file name keeps 3 decimals
+        raise SystemExit(f'{out}: last snapshot at {t_snap}, last helpfile Time {rows[-1]["Time"]}')
+    with netCDF4.Dataset(snaps[t_snap]) as nc:
         prof = {k: np.asarray(nc.variables[k][:], dtype=float) for k in PROFILES}
-    return {**{k: float(row[k]) for k in COLUMNS}, **prof}
+    return {**{k: float(rows[-1][k]) for k in COLUMNS}, **prof, 'rows': len(rows)}
 
 
-def check_runs(case, runs, state):
-    """Stop unless each run fits its role: versions, driver flags and end melt fraction."""
+def check_runs(case, runs, state, reference_rtol=1.0e-10):
+    """Stop unless each run fits its role: versions, driver flags, end time and melt fraction."""
     pin = pins(CONFIGS[case])
     for name, v in runs.items():
-        role, sign = (
-            name.split('_')[0],
-            {'p': 1, 'm': -1}.get(name[-1] if '_' in name else '', 0),
-        )
+        role, _, tag = name.partition('_')
+        sign = {'p': 1, 'm': -1}.get(tag, 0)
         bad = bool(re.search(r'\.d\d{8}', v['Aragog'])) or v['PROTEUS'] != pin['PROTEUS']
         bad = bad or v['Aragog'] != runs['main' if role == 'main' else 'run']['Aragog']
         bad = bad or state[name]['Phi_global'] != (0.0 if case == 'v5b' else 1.0)
         if case == 'v5b':
-            want = dict(reference=role == 'reference', solid_steps=SOLID_STEPS)
-            bad = bad or any(v.get(k) != w for k, w in want.items())
-            bad = bad or np.sign(v.get('s0_eps') or 0.0) != sign
+            want = dict(
+                reference=role == 'reference',
+                reference_rtol=reference_rtol if role == 'reference' else None,
+                solid_steps=SOLID_STEPS,
+                s0_eps=sign * S0_EPS,
+            )
+            bad = bad or any(k not in v or v[k] != w for k, w in want.items())
+            end = [(state[n]['Time'], state[n]['rows']) for n in (name, role)]
+            bad = bad or end[0] != end[1]
         on_pin = v['Aragog'].rsplit('+g', 1)[-1][:7] == pin['Aragog'][:7]
         if bad or on_pin != (role == 'main'):
             raise SystemExit(f'{case} {name}: run {v} does not fit its role (pins {pin})')
 
 
-def compare(case, run, main, reference=None, floor=None):
+def compare(case, run, main, reference=None, floor=None, reference_rtol=1.0e-10):
     """Return the per-column result and the verdict of one case.
 
     ``floor`` holds the v5b round-off runs RUN_P, RUN_M, MAIN_P, MAIN_M (``--s0-eps`` +- eps);
@@ -129,7 +140,7 @@ def compare(case, run, main, reference=None, floor=None):
         raise SystemExit('each run folder must be given once')
     found = {k: versions(p) for k, p in paths.items()}
     st = {k: end_state(p) for k, p in paths.items()}
-    check_runs(case, found, st)
+    check_runs(case, found, st, reference_rtol)
     columns = {}
     for k in (*COLUMNS, *PROFILES):
         if case == 'v5':
@@ -156,12 +167,15 @@ def main(argv=None) -> int:
     ap.add_argument('run', type=Path)
     ap.add_argument('main', type=Path)
     ap.add_argument('--reference', type=Path, default=None)
+    ap.add_argument('--reference-rtol', type=float, default=1.0e-10)
     ap.add_argument('--floor', type=Path, nargs=4, default=None, metavar='DIR')
     ap.add_argument('--output', type=Path, default=None)
     args = ap.parse_args(argv)
     if (args.case == 'v5b') != (args.reference is not None) or args.case == 'v5' and args.floor:
         ap.error('--reference is required for v5b; v5 takes neither --reference nor --floor')
-    result = compare(args.case, args.run, args.main, args.reference, args.floor)
+    result = compare(
+        args.case, args.run, args.main, args.reference, args.floor, args.reference_rtol
+    )
     for k, c in result['columns'].items():
         print(f'{k:16s} ' + ' '.join(f'{n}={v}' for n, v in c.items()))
     print(f'{args.case}: ' + ('PASS' if result['passed'] else 'FAIL'))
