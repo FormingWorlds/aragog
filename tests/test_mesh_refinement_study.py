@@ -415,16 +415,27 @@ def test_the_pass_rule_on_every_branch(e, s_c, s_f, verdict):
 
 def test_every_stored_mesh_is_rebuilt_at_this_commit():
     """The mesh of each stored run, built here from abe_solid.toml with the run's nodes and end
-    cells, has the stored top and CMB cell and staggered pressure to 1e-9: the runs and the
-    stored pressures come from other platforms, whose radius solves differ at round-off."""
+    cells, has the stored top and CMB cell to 1e-9 and the stored staggered pressure within
+    2 (xtol + 1e-12 r) max(rho g): each staggered radius is a brentq root to that bound, so
+    two platforms can place it that far apart."""
+    import inspect
+
+    from aragog.mesh import _radius_for_mass_coordinate
     from tests.test_mesh_refinement import _mesh
 
+    xtol = inspect.signature(_radius_for_mass_coordinate).parameters['xtol'].default
+    h, p = [], []
     for name, v in _study().items():
         if name == 'header':
             continue
         m = _mesh(v['surface_cell_m'], v['cmb_cell_m'], True, v['nodes'])
-        r = np.ravel(m.basic.radii)
-        np.testing.assert_allclose(
-            [r[-1] - r[-2], r[1] - r[0]], [v['h_top_m'], v['h_cmb_m']], rtol=1e-9
+        r, rs = np.ravel(m.basic.radii), np.ravel(m.staggered.radii)
+        P = np.ravel(m.staggered_pressure)
+        h.append(
+            np.abs(np.array([r[-1] - r[-2], r[1] - r[0]]) / [v['h_top_m'], v['h_cmb_m']] - 1)
         )
-        np.testing.assert_allclose(np.ravel(m.staggered_pressure), v['P_cell_Pa'], rtol=1e-9)
+        bound = 2 * (xtol + 1e-12 * rs.max()) * np.max(np.abs(np.diff(P) / np.diff(rs)))
+        p.append(np.max(np.abs(P - v['P_cell_Pa'])) / bound)
+    assert len(h) == 18
+    assert np.max(h) <= 1e-9
+    assert max(p) <= 1.0
