@@ -373,7 +373,11 @@ def test_the_run_values_refuse_parts_of_two_table_sets(tmp_path, monkeypatch):
             with pytest.raises(ValueError, match='parts from more than one table set'):
                 tool.run_values(run)
         else:
-            assert tool.run_values(run)['t_yr'] == [1e3, 1e3]
+            try:
+                v = tool.run_values(run)
+            except Exception as exc:
+                pytest.fail(f'run_values refused one table set: {exc!r}')
+            assert v['t_yr'] == [1e3, 1e3]
 
 
 class _StubSolution(dict):
@@ -418,7 +422,8 @@ class _StubSolver:
 @pytest.mark.parametrize('restarts', [True, False])
 def test_the_driver_refuses_a_part_that_starts_at_another_time(tmp_path, monkeypatch, restarts):
     """A resumed part that starts at t = 0 with the end state of the previous part is refused;
-    a part that starts at the end time of the previous part is kept."""
+    a part that starts at the end time of the previous part is kept with the md5 of every table
+    file."""
     import sys
     import types
 
@@ -452,9 +457,17 @@ def test_the_driver_refuses_a_part_that_starts_at_another_time(tmp_path, monkeyp
     (out / 'za.json').write_text(json.dumps([rec]))
     np.savez(out / 'za_part0.npz', t=np.array([0.0, 1.0]), y_end=np.array([7.0, 6.0]))
     if restarts:
-        assert case.main(argv + ['--resume']) == 0
+        try:
+            rc = case.main(argv + ['--resume'])
+        except RuntimeError as exc:
+            pytest.fail(f'a part that starts at the end time was refused: {exc}')
         z = np.load(out / 'za_part1.npz')
-        assert z['t'][0] == 1.0 and list(z['y'][:, 0]) == [7.0, 6.0]
+        assert rc == 0 and z['t'][0] == 1.0 and list(z['y'][:, 0]) == [7.0, 6.0]
+        md5 = json.loads((out / 'za.json').read_text())[1]['table_md5']
+        assert md5 == case._table_md5(eos) and sorted(md5) == [
+            'density_melt.dat',
+            'temperature_solid.dat',
+        ]
     else:
         with pytest.raises(
             RuntimeError, match='part 1 does not start from the end state of part 0'
