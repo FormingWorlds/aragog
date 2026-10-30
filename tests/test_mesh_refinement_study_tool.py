@@ -367,7 +367,7 @@ def test_the_run_values_refuse_parts_of_two_table_sets(tmp_path, monkeypatch):
     for second, refused in (({'a.dat': '1'}, False), ({'a.dat': '2'}, True), (None, False)):
         recs = [rec | dict(table_md5={'a.dat': '1'}), rec | dict(part=1)]
         if second is not None:
-            recs[1].get('table_md5') = second
+            recs[1]['table_md5'] = second
         (run / 'za.json').write_text(json.dumps(recs))
         if refused:
             with pytest.raises(ValueError, match='parts from more than one table set'):
