@@ -481,7 +481,10 @@ def test_entropy_on_the_heat_table_ends_passes_the_jax_batch_path():
     assert [s._stag_entropy(y[:, i])[-1] for i in (k - 1, k)] == [lo, hi]
     sol.energy_trace = (t, y)
     calls = s._batch_powers_calls
-    s._compute_step_energy_integrals()
+    try:
+        s._compute_step_energy_integrals()
+    except RuntimeError as err:
+        pytest.fail(f'batch path refused a table end: {err}')
     assert s._batch_powers_calls == calls + 1
 
 

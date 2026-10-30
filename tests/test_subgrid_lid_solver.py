@@ -883,7 +883,10 @@ def test_lid_step_check_accepts_an_entropy_on_the_table_ends(eos, field, end):
     """An entropy exactly on an end of the heat table passes the step check."""
     s = _solver(eos)
     s._dSdt_single(0.0, s._S0)
-    _checked(s, **{field: float(s._lid_W_of_S.x[end])})
+    try:
+        _checked(s, **{field: float(s._lid_W_of_S.x[end])})
+    except RuntimeError as err:
+        pytest.fail(f'step check refused a table end: {err}')
 
 
 @pytest.mark.parametrize(
