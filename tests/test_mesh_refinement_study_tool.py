@@ -64,19 +64,20 @@ def _run_folder(tmp_path, t_rows):
     return run, rows
 
 
-@pytest.mark.parametrize('start', [500.0, 512.0])
+@pytest.mark.parametrize('start', [500.0, 524.0])
 def test_a_time_mean_window_that_starts_on_time_is_kept(tmp_path, start, monkeypatch):
+    """A run to 1e3 yr gets the mean of its 1e3 yr window only, over the stored rows."""
     monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
     run, rows = _run_folder(tmp_path, np.linspace(start, 1e3, 8))
-    with pytest.raises(ValueError, match='too few stored rows in \\[5000, 10000\\]'):
-        tool.run_values(run, rows)
+    assert tool.run_values(run, rows)['Phi_time_mean'] == {'1e+03': 0.5}
 
 
-def test_a_time_mean_window_that_starts_late_is_refused(tmp_path, monkeypatch):
-    """Rows from 0.6 t to t cover only 80 % of [t/2, t]: refused, not averaged over the rest."""
+@pytest.mark.parametrize('start', [526.0, 600.0])
+def test_a_time_mean_window_that_starts_late_is_refused(tmp_path, start, monkeypatch):
+    """Rows from more than 5 % of t/2 after t/2 do not cover [t/2, t]: refused."""
     monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0, 3.0])
-    run, rows = _run_folder(tmp_path, np.linspace(600.0, 1e3, 8))
-    with pytest.raises(ValueError, match='window \\[500, 1000\\] yr starts at 600'):
+    run, rows = _run_folder(tmp_path, np.linspace(start, 1e3, 8))
+    with pytest.raises(ValueError, match=f'window \\[500, 1000\\] yr starts at {start:g}'):
         tool.run_values(run, rows)
 
 
@@ -115,3 +116,22 @@ def test_the_case_driver_rebuilds_the_config_of_every_stored_run(tmp_path):
         assert case.case_config(case.parse(argv), _PATH.parents[2])[2] == v['config_hash'], name
     with pytest.raises(SystemExit):
         case.parse([str(tmp_path)])
+
+
+def test_the_driver_refuses_to_resume_after_a_failed_part(tmp_path):
+    """A last part that did not reach its time ends the resume before any table is read."""
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+    (eos / 'temperature_solid.dat').write_text('x')
+    out = tmp_path / 'run'
+    out.mkdir()
+    a = case.parse([str(out), '--eos-dir', str(eos)])
+    sha = case.subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=_PATH.parents[2]
+    ).stdout.strip()
+    rec = dict(
+        sha=sha, config_hash=case.case_config(a, _PATH.parents[2])[2], reached=False, status=0
+    )
+    (out / 'za.json').write_text(json.dumps([rec]))
+    with pytest.raises(SystemExit, match='did not reach its time'):
+        case.main([str(out), '--eos-dir', str(eos), '--resume'])
