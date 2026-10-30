@@ -128,9 +128,13 @@ def test_a_time_mean_window_that_starts_late_is_refused(tmp_path, start, monkeyp
         tool.run_values(run, rows)
 
 
-def test_the_tables_need_a_cmb_pressure_inside_the_table(tmp_path):
-    with pytest.raises(SystemExit):
+def test_the_tables_need_a_cmb_pressure_inside_the_table(tmp_path, capsys):
+    """--tables without --cmb-pressure ends the study tool with the argument error, and a CMB
+    pressure outside the pressure nodes of the table gives a ValueError."""
+    with pytest.raises(SystemExit) as err:
         tool.main([str(tmp_path), str(tmp_path / 'o.json'), 'R', '--tables', str(tmp_path)])
+    assert err.value.code == 2
+    assert '--tables and --cmb-pressure go together' in capsys.readouterr().err
     d = tmp_path / 'tab'
     d.mkdir()
     head = '#\n#\n#\n#\n# 1.0 1.0 1.0\n'

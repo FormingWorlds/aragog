@@ -95,6 +95,8 @@ def test_unit_grid_hits_both_end_cells_over_a_wide_range():
 
 
 def test_unit_grid_rejects_cells_at_or_above_the_uniform_cell():
+    """A cell fraction below 0, at or above the uniform cell 1 / (n - 1), or NaN is refused at
+    either end."""
     for bad in (-1e-3, 1.0 / 99, 0.5, np.nan):
         with pytest.raises(ValueError, match='cell fraction'):
             stretched_unit_grid(100, bad, 0.0)
@@ -222,6 +224,8 @@ def test_mesh_end_cells_have_the_radial_thickness(mass_coordinates):
 
 
 def test_mesh_rejects_a_cell_thicker_than_the_uniform_cell():
+    """A top or CMB cell of 20 km, above the 10.1 km uniform cell of abe_solid, is refused with
+    the field name."""
     p = Parameters.from_file(CFG)
     with pytest.raises(ValueError, match='surface_cell_thickness'):
         type(p.mesh)(**{**vars(p.mesh), 'surface_cell_thickness': 20e3})
@@ -585,3 +589,20 @@ def test_the_smallest_accepted_node_count_builds_a_mesh(top, bottom):
     except Exception as err:  # noqa: BLE001
         pytest.fail(f'{n} nodes pass the check but the mesh build raises {err!r}')
     assert m._d_dr_transform.shape == (n, n - 1)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('thickness', 'refused'), [(1.9e7, False), (2.1e7, True)])
+def test_a_2_m_cell_is_refused_on_a_mantle_thicker_than_20000_km(thickness, refused):
+    """In radius mode a 2 m top cell is MIN_CELL_FRACTION = 1e-7 of a 20,000 km mantle: a
+    19,000 km mantle builds the cell, a 21,000 km mantle gives the error of the refined grid."""
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates = False
+    p.mesh.outer_radius = p.mesh.inner_radius + thickness
+    p.mesh.surface_cell_thickness = 2.0
+    if refused:
+        with pytest.raises(ValueError, match=r'give no refined grid of 100 nodes: last cell'):
+            Mesh(p)
+    else:
+        r = _radii(Mesh(p))
+        assert r[-1] - r[-2] == pytest.approx(2.0, rel=1e-6)

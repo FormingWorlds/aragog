@@ -27,8 +27,9 @@ def _study():
 
 
 def _metrics(v):
-    """The compared results of one run: metrics 1, 2, 3 and 5 of the study, and the time-mean
-    global melt fraction (a diagnostic)."""
+    """The compared results of one run: the global melt fraction, the CMB temperature, the heat
+    lost through the surface and the mean surface heat flux, and the time-mean global melt
+    fraction (a diagnostic)."""
     assert v['t_yr'][:4] == [1e2, 1e3, 1e4, 1e5]
     x = {}
     for i, t in ((1, '1e3'), (2, '1e4'), (3, '1e5')):
@@ -42,11 +43,11 @@ def _metrics(v):
     return x
 
 
-def _verdict(e, s_c, s_f):
-    """Pass: s_f / s_c <= 0.75 or s_f <= 3e; with s_c <= 3e, converged only when s_f <= 3e."""
+def _verdict(e, s_c, s_f, threshold=0.75):
+    """Pass: s_f / s_c <= threshold or s_f <= 3e; with s_c <= 3e, converged only when s_f <= 3e."""
     if s_c <= 3 * e:
         return 'converged' if s_f <= 3 * e else 'no pass'
-    if s_f <= 3 * e or s_f / s_c <= 0.75:
+    if s_f <= 3 * e or s_f / s_c <= threshold:
         return 'pass'
     return 'no pass'
 
@@ -89,7 +90,7 @@ _MAIN = [
     'T_cmb 1e3',
     'T_cmb 1e4',
     'T_cmb 1e5',
-]  # metrics 1, 2, 3 and 5; the time-mean melt fraction is a diagnostic
+]  # the 10 results of the pass rule; the time-mean melt fraction is a diagnostic
 _PANELS = ('Phi 1e5', 'heat_loss 1e5', 'F_top 1e4-1e5', 'T_cmb 1e5')  # plot order
 
 
@@ -127,6 +128,26 @@ def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
     passed = {k for k in _MAIN if c200[k]['verdict'] == 'pass'}
     assert passed == {'Phi 1e3', 'Phi 1e4', 'T_cmb 1e3', 'heat_loss 1e5', 'F_top 1e4-1e5'}
     assert sum(c100[k]['verdict'] == 'pass' for k in _MAIN) == 5
+    ratio = {
+        n: [c[k]['s_f'] / c[k]['s_c'] for k in _MAIN] for n, c in ((100, c100), (200, c200))
+    }
+    assert [f'{min(x for x in ratio[n] if x > 0.75):.3f}' for n in (100, 200)] == [
+        '0.776',
+        '0.790',
+    ]
+    lo = max(x for n in ratio for x in ratio[n] if x <= 0.75)
+    hi = min(x for n in ratio for x in ratio[n] if x > 0.75)
+    assert (f'{lo:.3f}', f'{hi:.3f}') == ('0.626', '0.776')
+    for th in (lo, np.nextafter(hi, 0.0)):
+        assert [
+            sum(_verdict(c[k]['e'], c[k]['s_c'], c[k]['s_f'], th) == 'pass' for k in _MAIN)
+            for c in (c100, c200)
+        ] == [5, 5]
+    assert [c200[f'T_cmb {t}']['s_f'] > c200[f'T_cmb {t}']['s_c'] for t in ('1e4', '1e5')] == [
+        True,
+        True,
+    ]
+    assert c100['T_cmb 1e5']['s_f'] < c100['T_cmb 1e5']['s_c']
     one_way = {n: _one_way(study, n) for n in (100, 200)}
     assert [
         sum(not one_way[n][k] for k in _MAIN if c[k]['verdict'] == 'pass')
@@ -344,7 +365,7 @@ def test_the_long_run_and_the_tables():
     assert [f'{rr[fall[0] + q]:.0f}' for q in (0, 1)] == ['2227', '3863']
 
 
-def test_a_refined_cmb_cell_changes_the_core_results(validation_plot):
+def test_a_coarsened_cmb_cell_changes_the_core_results(validation_plot):
     """The core-module pair with a 9327 m and an unset CMB cell against the noise floor of a
     perturbed copy of the first, as quoted on the page."""
     study = _study()
