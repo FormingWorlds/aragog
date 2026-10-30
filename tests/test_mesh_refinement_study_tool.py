@@ -154,3 +154,30 @@ def test_the_driver_refuses_to_resume_after_a_failed_part(tmp_path):
     (out / 'za.json').write_text(json.dumps([rec]))
     with pytest.raises(SystemExit, match='did not reach its time'):
         case.main([str(out), '--eos-dir', str(eos), '--resume'])
+
+
+def test_a_core_run_keeps_the_core_temperature_and_the_freezes_per_part(tmp_path, monkeypatch):
+    """Two parts of a core-module run: the core temperature is the state after the staggered
+    entropy and the CMB gradient, and each top-cell freeze counts in the part where it falls."""
+    monkeypatch.setattr(tool, '_cell_pressure', lambda r0: [1.0, 2.0])
+    run = tmp_path / 'C'
+    run.mkdir()
+    base = dict(sha='a', config_hash='h', nodes=3, h_top=1.0, h_cmb=1.0, s_init=1.0, status=0)
+    base |= dict(Phi_global=0.5, T_cmb=4e3, F_top_mean_step_integral=1.0, core_bc='core_module')
+    base |= dict(energy_integrals={'F_int': -1.0, 'F_cmb': 1.0}, cvode={'nst': 1})
+    recs, top = [], {0: [2.0, -1.0, 1.0, -1.0], 1: [-1.0, 1.0, -1.0, 2.0]}
+    for k, t in ((0, [0.0, 1.0, 2.0, 3.0]), (1, [3.0, 4.0, 5.0, 6.0])):
+        recs.append(base | dict(part=k, t_yr=t[-1]))
+        y = np.array([[0.0] * 4, top[k]])
+        np.savez(
+            run / f'za_part{k}.npz',
+            t=np.array(t),
+            y=y,
+            S_sol=np.zeros(2),
+            y_end=np.array([0.0, top[k][-1], -0.5, 4000.0 + k]),
+        )
+    (run / 'za.json').write_text(json.dumps(recs))
+    v = tool.run_values(run)
+    assert v['T_core_K'] == [4000.0, 4001.0] and v['core_bc'] == 'core_module'
+    assert v['top_cell_freezes'] == [2, 1]
+    assert v['first_frozen'] == {'freeze_yr': 2.0 / 3.0, 'thaw_yr': 1.5}
