@@ -16,6 +16,12 @@ _PATH = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_mesh_refinem
 _SPEC = importlib.util.spec_from_file_location('run_mesh_refinement_study', _PATH)
 tool = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(tool)
+_CASE = importlib.util.spec_from_file_location(
+    'run_mesh_refinement_case', _PATH.with_name('run_mesh_refinement_case.py')
+)
+case = importlib.util.module_from_spec(_CASE)
+_CASE.loader.exec_module(case)
+DATA = Path(__file__).parent / 'validation' / 'data' / 'mesh_refinement_study.json'
 
 
 def test_the_first_frozen_interval_is_interpolated_between_rows():
@@ -86,3 +92,26 @@ def test_the_tables_need_a_cmb_pressure_inside_the_table(tmp_path):
     for p_cmb in (5.0, 10.0, 35.0):
         with pytest.raises(ValueError, match='outside the pressure nodes'):
             tool.table_values(d, p_cmb)
+
+
+def test_the_case_driver_rebuilds_the_config_of_every_stored_run(tmp_path):
+    """The command line of each stored run, read from its record, gives that run's config hash."""
+    study = json.loads(DATA.read_text())
+    for name, v in study.items():
+        if name == 'header':
+            continue
+        argv = [str(tmp_path), '--eos-dir', str(tmp_path), '--nodes', str(v['nodes'])]
+        argv += [
+            '--surface-cell',
+            repr(v['surface_cell_m']),
+            '--cmb-cell',
+            repr(v['cmb_cell_m']),
+        ]
+        argv += ['--s-init', repr(v['s_init'])]
+        if v['core_module_params']:
+            f = tmp_path / f'{name}.json'
+            f.write_text(json.dumps(v['core_module_params']))
+            argv += ['--core-module-params', str(f)]
+        assert case.case_config(case.parse(argv), _PATH.parents[2])[2] == v['config_hash'], name
+    with pytest.raises(SystemExit):
+        case.parse([str(tmp_path)])

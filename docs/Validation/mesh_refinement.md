@@ -84,7 +84,7 @@ The mean surface heat flux is the mean over the decade that ends at the given ti
 
 ??? info "Test details"
     - Reference: the raw values of the study runs in `tests/validation/data/mesh_refinement_study.json`, written by `tools/verification/run_mesh_refinement_study.py` from the run folders; the test computes the noise floor, the spreads, the verdicts, the recommendation and every number above from them.
-    - Runs: on a Linux cluster, with the aragog source recorded in the header of the JSON file, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0. The test checks the stored output and does not rerun the runs.
+    - Runs: on a Linux cluster, with the aragog source recorded in the header of the JSON file, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0. Each run is `python tools/verification/run_mesh_refinement_case.py <run folder> --eos-dir <tables> --samples 1e2,1e3,1e4,1e5 --nodes <n> --surface-cell <top> --cmb-cell <cmb> --s-init <S>` with the values of that run in the JSON file; the long runs sample to $10^8$ years. The test checks the stored output and does not rerun the runs; `tests/test_mesh_refinement_study_tool.py` checks that this command gives the config of every stored run.
     - Tolerance: each quoted number to the digits it is quoted with.
     - Tables: the solid table at the CMB pressure and the melt table at 1 bar, with their md5, and the 1 bar rows of `paleos_mgsio3_tables_pt_proteus_liquid.dat` from Zenodo 19680050 (md5 4b5c14255ca845880a2e940110861df1), in the header of the same file.
     - Test ids: `tests/test_mesh_refinement_study.py::test_the_results_converge_as_the_top_cell_gets_thinner` and `tests/test_mesh_refinement_study.py::test_the_long_run_and_the_tables`
@@ -119,7 +119,7 @@ The mean surface heat flux is the mean over the decade that ends at the given ti
 
 ??? info "Test details"
     - Reference: the runs `C-cmb9327`, `C-off` and `C-on_p` in `tests/validation/data/mesh_refinement_study.json`; the test computes the differences, the noise floor and every number above from them.
-    - Runs: on a Linux cluster, with the aragog source recorded in the header of the JSON file, core module on, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0.
+    - Runs: on a Linux cluster, with the aragog source recorded in the header of the JSON file, made with the command of the convergence study plus `--core-module-params <file>` holding the core module parameters stored with each run, core module on, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0.
     - Tolerance: each quoted number to the digits it is quoted with.
     - Test id: `tests/test_mesh_refinement_study.py::test_a_refined_cmb_cell_changes_the_core_results`
     - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`

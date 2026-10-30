@@ -173,6 +173,7 @@ def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = Fals
         'h_cmb_m': r0['h_cmb'],
         's_init': r0['s_init'],
         'core_bc': r0.get('core_bc'),
+        'core_module_params': r0.get('core_module_params'),
         'eos_md5': r0.get('eos_md5'),
         't_yr': [r['t_yr'] for r in rows],
         'status': [r['status'] for r in rows],
