@@ -48,21 +48,44 @@ This page checks the mesh that Aragog refines towards the surface and the core-m
 - **The first frozen interval follows the top cell.** It lasts 2851 years on the uniform 100-node mesh (top cell 10.9 km), 85 years with a 200 m top cell and 64 years with a 50 m top cell at 100 nodes, and 51 years at 50 m and 200 nodes. It does not approach a limit, so it is reported and not tested for convergence.
 - **Cost.** Up to $10^5$ years the solver takes $2.4 \times 10^5$ steps on the uniform 100-node mesh, $1.4 \times 10^6$ with a 200 m top cell and $1.9 \times 10^6$ with a 50 m top cell, both at 100 nodes.
 
-**The long run.** A 50 m top cell at 100 nodes runs to $10^8$ years. Its first $10^5$ years equal the 50 m run above. The global melt fraction is 0.065 at $10^6$ years, $3.3 \times 10^{-5}$ at $10^7$ years and $2.1 \times 10^{-5}$ at $10^8$ years, and the mean surface heat flux falls from 163 W/m$^2$ ($10^5$ to $10^6$ years) to 0.096 W/m$^2$ ($10^7$ to $10^8$ years). The CMB temperature is 3465.0 K at $10^6$ years and 3440.3 K at $10^7$ and $10^8$ years. That last value is not a physical result. At the CMB pressure the solid temperature table has valid entries only up to an entropy below the solidus, and above it the table repeats the last valid temperature. By $10^7$ years the CMB entropy lies between the last valid entry and the next one, where the table gives the same temperature for every entropy, so the CMB temperature stops changing while the entropy still falls.
+**The long run.** A 50 m top cell at 100 nodes runs to $10^8$ years. Its first $10^5$ years equal the 50 m run above. The global melt fraction is 0.065 at $10^6$ years, $3.3 \times 10^{-5}$ at $10^7$ years and $2.1 \times 10^{-5}$ at $10^8$ years, and the mean surface heat flux falls from 163 W/m$^2$ ($10^5$ to $10^6$ years) to 0.096 W/m$^2$ ($10^7$ to $10^8$ years). The CMB temperature is 3465.0 K at $10^6$ years and 3440.3 K at $10^7$ and $10^8$ years.
 
-**Limits of the tables.** The PALEOS liquid table in use is consistent with the PALEOS release on Zenodo ([10.5281/zenodo.19680050](https://doi.org/10.5281/zenodo.19680050)) at the one point compared, 1 bar on the liquid branch. That release has a known density step on the liquid branch, in which the entropy falls as the temperature rises ([PALEOS issue 7](https://github.com/maraattia/PALEOS/issues/7)). The study uses the table as it is and was not repeated with a corrected one.
+**Why the CMB temperature stops at 3440.3 K.**
+
+- *Why it happens.* The solid temperature table has valid entries only where PALEOS gives a value for every property. At the CMB pressure, 43.38 GPa, the last valid entropy node is 3070.70 J/kg/K, below the solidus entropy of the lowest cell. At the next node, 3150.82 J/kg/K, and above it, the table repeats the temperature of the last valid node: 3439.49 K and 3443.24 K at the two pressure nodes around the CMB pressure.
+- *What it is.* The entropy of the lowest cell is 3111.09 J/kg/K at $10^7$ years and 3110.24 J/kg/K at $10^8$ years. Both values lie between the last valid node and the next one. Both nodes give the same temperature, so the table gives 3440.3 K for every entropy in between. The CMB temperature stays constant while the entropy still falls.
+- *Why it matters.* After $10^7$ years the CMB temperature of this run is set by the table, not by the cooling of the mantle. A run that uses it, for example one coupled to the core, needs a table with valid entries up to the solidus at the CMB.
+
+**The uniform mesh in the long run.** The uniform 100-node mesh (top cell 10.9 km) also runs to $10^8$ years with the same settings. Its first $10^5$ years equal the uniform run above. At $10^7$ and $10^8$ years its melt fraction is more than $10^3$ times that of the 50 m mesh:
+
+| Result | Mesh | $10^6$ years | $10^7$ years | $10^8$ years |
+|---|---|---|---|---|
+| Global melt fraction | uniform | 0.12 | 0.12 | 0.079 |
+| | 50 m top cell | 0.065 | $3.3 \times 10^{-5}$ | $2.1 \times 10^{-5}$ |
+| CMB temperature [K] | uniform | 3495.6 | 3493.1 | 3463.3 |
+| | 50 m top cell | 3465.0 | 3440.3 | 3440.3 |
+| Mean surface heat flux [W/m$^2$] | uniform | 55 | 0.61 | 0.71 |
+| | 50 m top cell | 163 | 8.0 | 0.096 |
+
+The mean surface heat flux is the mean over the decade that ends at the given time.
+
+**An alternating pattern on the 50 m mesh.** On the 50 m mesh the difference between the entropy and the solidus entropy changes sign from one cell to the next. In the lowest 48 cells it changes sign 0 times at $10^6$ years, 39 times at $10^7$ years and 10 times at $10^8$ years, out of 47 cell pairs. At $10^7$ years 53 of the 99 cells lie within 5 J/kg/K of the solidus, and 38 at $10^8$ years. The uniform mesh does not show the pattern, but it cannot test it: none of its cells comes within 145 J/kg/K of the solidus up to $10^8$ years. The cause of the pattern is not known.
+
+**Limits of the tables.** The PALEOS liquid table in use agrees with the MgSiO$_3$ liquid table of the PALEOS release on Zenodo ([10.5281/zenodo.19680050](https://doi.org/10.5281/zenodo.19680050)) at 1 bar. On all 122 valid melt nodes at 1 bar, from 1831 K to 4862 K, the density differs by at most $3.4 \times 10^{-5}$ (relative) and the entropy by at most 0.34 J/kg/K, with the Zenodo values interpolated linearly in temperature. That release has a known density step on the liquid branch, in which the entropy falls as the temperature rises ([PALEOS issue 7](https://github.com/maraattia/PALEOS/issues/7)). At 1 bar the step lies between 1595 K and 1620 K, where the density rises from 2227 to 3863 kg/m$^3$, below the lowest valid melt node. The study uses the table as it is and was not repeated with a corrected one.
 
 **Not checked.**
 
 - How much the phase of the cycle changes the mean surface heat flux from $10^4$ to $10^5$ years and the heat lost up to $10^5$ years.
 - Whether 400 nodes change the interior results less than the step from 100 to 200 nodes.
 - How the cooling of the long run changes when the table has valid entries up to the solidus at the CMB.
+- Whether the alternating pattern follows the cell index (a 50 m top cell at 200 nodes to $10^8$ years) or comes from round-off (the 50 m mesh from a perturbed start).
 
 ??? info "Test details"
     - Reference: the raw values of the study runs in `tests/validation/data/mesh_refinement_study.json`, written by `tools/verification/run_mesh_refinement_study.py` from the run folders; the test computes the noise floor, the spreads, the verdicts, the recommendation and every number above from them.
     - Runs: aragog commit bbef9c9f on Habrok, PALEOS table `temperature_solid.dat` md5 18d6f9eb5ba654d58fe3fad30ce118f0.
     - Tolerance: each quoted number to the digits it is quoted with.
-    - Test id: `tests/test_mesh_refinement_study.py::test_the_results_converge_as_the_top_cell_gets_thinner`
+    - Tables: the solid table at the CMB pressure and the melt table at 1 bar, with their md5, and the 1 bar rows of `paleos_mgsio3_tables_pt_proteus_liquid.dat` from Zenodo 19680050 (md5 4b5c14255ca845880a2e940110861df1), in the header of the same file.
+    - Test ids: `tests/test_mesh_refinement_study.py::test_the_results_converge_as_the_top_cell_gets_thinner` and `tests/test_mesh_refinement_study.py::test_the_long_run_and_the_tables`
     - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`
 
 ## A refined CMB cell and the core

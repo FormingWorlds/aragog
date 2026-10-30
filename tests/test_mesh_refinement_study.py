@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.reference_pinned, pytest.mark.timeout(60)]
@@ -191,3 +192,95 @@ def test_the_results_converge_as_the_top_cell_gets_thinner(validation_plot):
         return fig
 
     validation_plot(figure, 'mesh_refinement_convergence')
+
+
+def _pattern(v, i):
+    """Sign changes of S - S_sol between neighbours in the lowest 48 cells at the end of part i, and
+    the number of cells within 5 J/kg/K of the solidus."""
+    d = np.subtract(v['S_end'][i], v['S_sol'])
+    sign = np.sign(d[:48])
+    return int(np.sum(sign[1:] != sign[:-1])), int(np.sum(np.abs(d) < 5))
+
+
+def test_the_long_run_and_the_tables():
+    """The 10^8 year runs on the 50 m and on the uniform mesh, the fill plateau of the solid table at
+    the CMB and the melt table against the PALEOS liquid table at 1 bar, as quoted on the page."""
+    study = _study()
+    head, L, U, U0 = study['header'], study['L50'], study['U100-long'], study['U100']
+    assert head['md5']['temperature_solid.dat'] == EOS_MD5
+    assert (
+        U['config_hash'] == U0['config_hash']
+        and U['t_yr'][-1] == 1e8
+        and set(U['status']) == {0}
+    )
+    assert all(U[k][:4] == U0[k][:4] for k in ('Phi', 'T_cmb_K', 'F_top_mean_W_m2', 'F_int_J'))
+    rows = [
+        [f'{v["Phi"][i]:.2g}' for i in (4, 5, 6)]
+        + [f'{v["T_cmb_K"][i]:.1f}' for i in (4, 5, 6)]
+        + [f'{v["F_top_mean_W_m2"][i]:.2g}' for i in (4, 5, 6)]
+        for v in (U, L)
+    ]
+    assert rows[0] == [
+        '0.12',
+        '0.12',
+        '0.079',
+        '3495.6',
+        '3493.1',
+        '3463.3',
+        '55',
+        '0.61',
+        '0.71',
+    ]
+    assert rows[1] == [
+        '0.065',
+        '3.3e-05',
+        '2.1e-05',
+        '3465.0',
+        '3440.3',
+        '3440.3',
+        '1.6e+02',
+        '8',
+        '0.096',
+    ]
+
+    assert f'{L["F_top_mean_W_m2"][5]:.1f}' == '8.0'
+    assert [_pattern(L, i) for i in (4, 5, 6)] == [(0, 0), (39, 53), (10, 38)]
+    assert [_pattern(U, i) for i in (4, 5, 6)] == [(0, 0)] * 3
+    assert (
+        f'{min(np.abs(np.subtract(U["S_end"][i], U["S_sol"])).min() for i in (4, 5, 6)):.0f}'
+        == '145'
+    )
+
+    c = head['solid_at_cmb']
+    (p1, p2), (s_valid, s_fill), T = c['P_nodes_Pa'], c['S_nodes'], c['T_K']
+    assert c['valid'] == [[1, 1], [0, 0]] and T[1] == T[0] and p1 < c['P_cmb_Pa'] < p2
+    w = (c['P_cmb_Pa'] - p1) / (p2 - p1)
+    plateau = T[1][0] + w * (T[1][1] - T[1][0])
+    assert all(abs(L['T_cmb_K'][i] / plateau - 1) < 1e-12 for i in (5, 6))
+    s_bot = L['S_bottom_cell'][5:]
+    assert s_valid < s_bot[1] < s_bot[0] < s_fill and s_valid < L['S_sol'][0]
+    assert all(U['Phi'][i] / L['Phi'][i] > 1e3 for i in (5, 6)) and len(L['S_sol']) == 99
+    assert [f'{x:.2f}' for x in (s_valid, s_fill, *s_bot)] == [
+        '3070.70',
+        '3150.82',
+        '3111.09',
+        '3110.24',
+    ]
+    assert [f'{x:.2f}' for x in T[0]] == [
+        '3439.49',
+        '3443.24',
+    ] and f'{c["P_cmb_Pa"] / 1e9:.2f}' == '43.38'
+
+    m, r = head['melt_at_1bar'], head['raw_liquid_at_1bar']
+    assert r['md5'] == '4b5c14255ca845880a2e940110861df1'
+    tr, rr, sr = (np.array(r[k]) for k in ('T_K', 'rho', 's'))
+    tm = np.array(m['T_K'])
+    above = tr >= tm.min()
+    assert np.all(np.diff(sr[above]) > 0) and tm.max() <= tr.max()
+    d_rho = np.abs(np.array(m['rho']) / np.interp(tm, tr, rr) - 1).max()
+    d_s = np.abs(np.array(m['S']) - np.interp(tm, tr, sr)).max()
+    assert len(tm) == 122 and [f'{x:.0f}' for x in (tm.min(), tm.max())] == ['1831', '4862']
+    assert f'{d_rho:.1e}' == '3.4e-05' and f'{d_s:.2f}' == '0.34'
+    fall = np.flatnonzero(np.diff(sr) <= 0)
+    assert fall.size == 1 and [f'{tr[fall[0] + q]:.0f}' for q in (0, 1)] == ['1595', '1620']
+    assert [f'{rr[fall[0] + q]:.0f}' for q in (0, 1)] == ['2227', '3863']

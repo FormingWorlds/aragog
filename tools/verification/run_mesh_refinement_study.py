@@ -11,17 +11,24 @@ time the top cell entropy is at or below the solidus (linear between stored rows
 time after it that it is above the solidus again. With ``--phi-rows DIR`` it adds the time mean
 of the global melt fraction over [t/2, t] for t = 1e3, 1e4, 1e5 yr, from ``DIR/<run>.npz``
 (arrays ``t`` and ``Phi`` on the stored rows; a run without that file has no time mean). No
-derived number is stored: ``tests/test_mesh_refinement_study.py`` computes them.
+derived number is stored: ``tests/test_mesh_refinement_study.py`` computes them. With ``--tables DIR``
+(the aragog P-S tables of the runs) and ``--cmb-pressure PA`` the header also keeps the solid
+temperature table at the two pressure nodes around the CMB pressure, for the last entropy node valid at
+both and the next node, and the melt temperature and density on the valid nodes at 1 bar; with
+``--raw-liquid FILE`` it keeps the rows at 1 bar of that PALEOS (P, T) liquid table. Each table file is
+named with its md5. For the runs named with ``--profiles`` it keeps the staggered entropy at every part
+end and the staggered solidus entropy.
 
 Usage::
 
     python tools/verification/run_mesh_refinement_study.py <run root> <out.json> <run>...
-        [--phi-rows DIR] [--note TEXT]
+        [--phi-rows DIR] [--note TEXT] [--tables DIR --cmb-pressure PA] [--raw-liquid FILE] [--profiles RUN...]
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -44,7 +51,62 @@ def _first_frozen(t, s_top, s_sol):
     return {'freeze_yr': cross(fz[0]), 'thaw_yr': thaw}
 
 
-def run_values(folder: Path, phi_rows: Path | None = None) -> dict:
+def _md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _ps_table(path: Path):
+    """Pressure nodes [Pa], entropy nodes [J/kg/K] and the quantity on the (S, P) grid [SI]."""
+    head = path.read_text().splitlines()[4].lstrip('#').split()
+    a = np.loadtxt(path) * np.array(head, dtype=float)
+    p, s = np.unique(a[:, 0]), np.unique(a[:, 1])
+    return p, s, a[:, 2].reshape(s.size, p.size)
+
+
+def table_values(tables: Path, p_cmb: float, raw_liquid: Path | None = None) -> dict:
+    """Raw table entries around the CMB pressure (solid) and at 1 bar (melt, raw PALEOS liquid)."""
+    p, s, t = _ps_table(tables / 'temperature_solid.dat')
+    vm = np.loadtxt(tables / 'valid_mask_solid.dat')
+    k = int(np.searchsorted(p, p_cmb))
+    j = int(np.flatnonzero((vm[:, k - 1] == 1) & (vm[:, k] == 1)).max())
+    names = ['temperature_solid.dat', 'valid_mask_solid.dat', 'temperature_melt.dat']
+    names += ['density_melt.dat', 'valid_mask_melt.dat']
+    out = {
+        'tables': tables.name,
+        'md5': {n: _md5(tables / n) for n in names},
+        'solid_at_cmb': {
+            'P_cmb_Pa': p_cmb,
+            'P_nodes_Pa': p[k - 1 : k + 1].tolist(),
+            'S_nodes': s[j : j + 2].tolist(),
+            'T_K': t[j : j + 2, k - 1 : k + 1].tolist(),
+            'valid': vm[j : j + 2, k - 1 : k + 1].tolist(),
+        },
+    }
+    p, s, t = _ps_table(tables / 'temperature_melt.dat')
+    rho = _ps_table(tables / 'density_melt.dat')[2]
+    if abs(p[0] / 1e5 - 1) > 1e-12:
+        raise ValueError(f'{tables}: the first melt pressure node is {p[0]} Pa, not 1 bar')
+    ok = np.loadtxt(tables / 'valid_mask_melt.dat')[:, 0] == 1
+    out['melt_at_1bar'] = {
+        'S': s[ok].tolist(),
+        'T_K': t[ok, 0].tolist(),
+        'rho': rho[ok, 0].tolist(),
+    }
+    if raw_liquid is not None:
+        r = np.loadtxt(raw_liquid, usecols=(0, 1, 2, 4))
+        r = r[r[:, 0] == 1e5]
+        r = r[np.argsort(r[:, 1])]
+        out['raw_liquid_at_1bar'] = {
+            'file': raw_liquid.name,
+            'md5': _md5(raw_liquid),
+            'T_K': r[:, 1].tolist(),
+            'rho': r[:, 2].tolist(),
+            's': r[:, 3].tolist(),
+        }
+    return out
+
+
+def run_values(folder: Path, phi_rows: Path | None = None, profiles: bool = False) -> dict:
     """Raw values of one run folder."""
     rows = json.loads((folder / 'za.json').read_text())
     parts = sorted(
@@ -55,10 +117,12 @@ def run_values(folder: Path, phi_rows: Path | None = None) -> dict:
         raise ValueError(f'{folder}: {len(parts)} part files for {len(rows)} records')
     if len({r['sha'] for r in rows}) != 1 or len({r.get('config_hash') for r in rows}) != 1:
         raise ValueError(f'{folder}: parts from more than one tree or config')
-    t, s_top, s_sol = [], [], None
+    t, s_top, s_sol, s_bot, s_end = [], [], None, [], []
     for p in parts:
         z = np.load(p)
         s_sol = z['S_sol'][-1] if s_sol is None else s_sol
+        s_bot.append(float(z['y'][0, -1]))
+        s_end.append(z['y'][: z['S_sol'].size, -1].tolist())
         t.append(z['t'])
         s_top.append(z['y'][z['S_sol'].size - 1])
     t, idx = np.unique(np.concatenate(t), return_index=True)
@@ -82,8 +146,15 @@ def run_values(folder: Path, phi_rows: Path | None = None) -> dict:
         'F_int_J': [r['energy_integrals']['F_int'] for r in rows],
         'F_cmb_J': [r['energy_integrals']['F_cmb'] for r in rows],
         'nst': [r['cvode']['nst'] for r in rows],
+        'S_bottom_cell': s_bot,
         'first_frozen': _first_frozen(t, np.concatenate(s_top)[idx], s_sol),
     }
+    if profiles:
+        sol = [np.load(p)['S_sol'] for p in parts]
+        if any(not np.array_equal(x, sol[0]) for x in sol):
+            raise ValueError(f'{folder}: the solidus entropy differs between parts')
+        out['S_sol'] = sol[0].tolist()
+        out['S_end'] = s_end
     if phi_rows is not None and (phi_rows / f'{folder.name}.npz').exists():
         z = np.load(phi_rows / f'{folder.name}.npz')
         tp, phi = z['t'], z['Phi']
@@ -106,6 +177,10 @@ def main(argv=None) -> None:
     ap.add_argument('runs', nargs='+')
     ap.add_argument('--phi-rows', type=Path)
     ap.add_argument('--note', default='')
+    ap.add_argument('--tables', type=Path)
+    ap.add_argument('--cmb-pressure', type=float)
+    ap.add_argument('--raw-liquid', type=Path)
+    ap.add_argument('--profiles', nargs='*', default=[])
     a = ap.parse_args(argv)
     res = {
         'header': {
@@ -113,9 +188,11 @@ def main(argv=None) -> None:
             'note': a.note,
         }
     }
-    res.update({r: run_values(a.root / r, a.phi_rows) for r in a.runs})
+    res.update({r: run_values(a.root / r, a.phi_rows, r in a.profiles) for r in a.runs})
     trees = {v['tree'] for k, v in res.items() if k != 'header'}
     res['header']['trees'] = sorted(trees)
+    if a.tables is not None:
+        res['header'].update(table_values(a.tables, a.cmb_pressure, a.raw_liquid))
     text = (
         '{\n'
         + ',\n'.join(
