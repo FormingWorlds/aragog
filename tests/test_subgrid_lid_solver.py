@@ -246,8 +246,10 @@ def test_delta_on_must_fit_the_top_cell(eos):
 
 
 def test_handover_cells_must_fit_the_mesh(eos):
-    """A hand-over below the whole mesh is refused at setup."""
-    with pytest.raises(ValueError, match='needs more than'):
+    """A hand-over face must leave one cell below it: on 9 cells, 8 top cells pass and 9 are
+    refused at setup with the cell count it needs."""
+    assert _solver(eos, lid_handover_cells=8)._lid_handover_depth > 0.0
+    with pytest.raises(ValueError, match='needs more than 9 mesh cells, got 9'):
         _solver(eos, lid_handover_cells=9)
 
 
