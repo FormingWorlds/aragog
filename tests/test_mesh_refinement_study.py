@@ -218,7 +218,7 @@ def test_the_results_change_as_the_top_cell_gets_thinner(validation_plot):
     assert all(node[k] > s_f[k] for k in node)
 
     no_core = [k for k, v in runs.items() if v['core_bc'] != 'core_module']
-    assert len(no_core) == 15
+    assert len(no_core) == 17
     freeze = [runs[k]['first_frozen']['freeze_yr'] for k in no_core]
     assert (round(min(freeze)), round(max(freeze))) == (768, 791)
     assert [sum(runs[k]['top_cell_freezes'][:4]) for k in ('T50-100', 'T50-200')] == [61, 72]
@@ -313,6 +313,33 @@ def _pattern(v, i):
     d = np.subtract(v['S_end'][i], v['S_sol'])
     sign = np.sign(d[:48])
     return int(np.sum(sign[1:] != sign[:-1])), int(np.sum(np.abs(d) < 5))
+
+
+def test_the_alternating_pattern_from_a_perturbed_start_and_at_200_nodes():
+    """The 50 m run from an initial entropy changed by 1e-12 and the 50 m top cell at 200 nodes,
+    both to 10^8 years: the sign changes of S - S_sol and the cells near the solidus, as on the
+    page."""
+    from tests.test_mesh_refinement import _mesh
+
+    study = _study()
+    L, Lp, T, T0 = study['L50'], study['L50p'], study['T50-200-long'], study['T50-200']
+    assert abs(Lp['s_init'] / L['s_init'] - 1 - 1e-12) < 1e-15 and set(Lp['status']) == {0}
+    assert [_pattern(Lp, i)[0] for i in (5, 6)] == [37, 10]
+    sign = [np.sign(np.subtract(v['S_end'][i], v['S_sol'])[:48]) for i in (5, 6) for v in (L, Lp)]
+    assert [int(np.sum(sign[k] == sign[k + 1])) for k in (0, 2)] == [46, 48]
+
+    assert T['config_hash'] == T0['config_hash'] and T['t_yr'][-1] == 1e8
+    assert set(T['status']) == {0}
+    assert all(T[k][:4] == T0[k][:4] for k in ('Phi', 'T_cmb_K', 'F_top_mean_W_m2', 'F_int_J'))
+    mid = []
+    for v in (L, T):
+        r = np.ravel(_mesh(v['surface_cell_m'], v['cmb_cell_m'], True, v['nodes']).basic.radii)
+        mid.append(0.5 * (r[1:] + r[:-1]))
+    sel = (mid[1] >= mid[0][0]) & (mid[1] <= mid[0][47])
+    d = [np.subtract(T['S_end'][i], T['S_sol']) for i in (5, 6)]
+    assert int(sel.sum()) == 102 and d[0].size == 199
+    assert [int(np.sum(np.diff(np.sign(x[sel])) != 0)) for x in d] == [36, 12]
+    assert [int(np.sum(np.abs(x) < 5)) for x in d] == [116, 82]
 
 
 def test_the_long_run_and_the_tables():
@@ -528,6 +555,6 @@ def test_every_stored_mesh_is_rebuilt_at_this_commit():
         dP = np.abs(P - v['P_cell_Pa'])
         p.append(np.max(dP / (np.abs(np.gradient(P, rs)) * PLATFORM_DR)))
         warnings.warn(f'{name}: max |P - stored| {dP.max():.6g} Pa', stacklevel=1)
-    assert len(h) == 18
+    assert len(h) == 20
     assert np.max(h) <= 1e-9
     assert max(p) <= 1.0
