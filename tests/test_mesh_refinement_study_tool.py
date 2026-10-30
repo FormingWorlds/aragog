@@ -110,8 +110,11 @@ def test_the_tables_need_a_cmb_pressure_inside_the_table(tmp_path):
     (d / 'temperature_solid.dat').write_text(head + rows)
     (d / 'valid_mask_solid.dat').write_text('# mask\n1 1 1\n0 1 1\n')
     for p_cmb in (5.0, 10.0, 35.0):
-        with pytest.raises(ValueError, match='outside the pressure nodes'):
+        with pytest.raises(Exception) as err:
             tool.table_values(d, p_cmb)
+        assert isinstance(err.value, ValueError) and 'outside the pressure nodes' in str(
+            err.value
+        )
 
 
 def test_the_case_driver_rebuilds_the_config_of_every_stored_run(tmp_path):
@@ -152,8 +155,9 @@ def test_the_driver_refuses_to_resume_after_a_failed_part(tmp_path):
         sha=sha, config_hash=case.case_config(a, _PATH.parents[2])[2], reached=False, status=0
     )
     (out / 'za.json').write_text(json.dumps([rec]))
-    with pytest.raises(SystemExit, match='did not reach its time'):
+    with pytest.raises(BaseException) as err:
         case.main([str(out), '--eos-dir', str(eos), '--resume'])
+    assert isinstance(err.value, SystemExit) and 'did not reach its time' in str(err.value)
 
 
 def test_a_core_run_keeps_the_core_temperature_and_the_freezes_per_part(tmp_path, monkeypatch):
