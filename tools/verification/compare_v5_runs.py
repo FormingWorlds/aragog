@@ -56,6 +56,7 @@ COLUMNS = (
 PROFILES = ('temp_s', 'entropy_s')
 SOLID_STEPS = 3  # coupling steps with Phi_global = 0 at the end of a v5b run
 S0_EPS = 1.0e-12  # relative start offset of the v5b round-off runs
+REFERENCE_RTOL = 1.0e-10  # rtol of every CVODE call of the v5b reference run
 
 
 def pins(config):
@@ -105,15 +106,31 @@ def end_state(path):
     return {**{k: float(rows[-1][k]) for k in COLUMNS}, **prof, 'rows': len(rows)}
 
 
-def check_runs(case, runs, state, reference_rtol=1.0e-10):
-    """Stop unless each run fits its role: versions, driver flags, end time and melt fraction."""
+def check_runs(case, runs, state, reference_rtol=REFERENCE_RTOL):
+    """Stop unless each run fits its role: versions, driver flags, end time and melt fraction.
+
+    The message names each failed check of the first run that does not fit.
+    """
     pin = pins(CONFIGS[case])
     for name, v in runs.items():
         role, _, tag = name.partition('_')
         sign = {'p': 1, 'm': -1}.get(tag, 0)
-        bad = bool(re.search(r'\.d\d{8}', v['Aragog'])) or v['PROTEUS'] != pin['PROTEUS']
-        bad = bad or v['Aragog'] != runs['main' if role == 'main' else 'run']['Aragog']
-        bad = bad or state[name]['Phi_global'] != (0.0 if case == 'v5b' else 1.0)
+        # The logged version is the string set when Aragog was installed, not read from git.
+        on_pin = v['Aragog'].rsplit('+g', 1)[-1][:7] == pin['Aragog'][:7]
+        failed = [
+            label
+            for label, ok in (
+                ('modified tree', not re.search(r'\.d\d{8}', v['Aragog'])),
+                ('PROTEUS commit', v['PROTEUS'] == pin['PROTEUS']),
+                (
+                    'Aragog version',
+                    v['Aragog'] == runs['main' if role == 'main' else 'run']['Aragog'],
+                ),
+                ('Aragog pin', on_pin == (role == 'main')),
+                ('Phi_global', state[name]['Phi_global'] == (0.0 if case == 'v5b' else 1.0)),
+            )
+            if not ok
+        ]
         if case == 'v5b':
             want = dict(
                 reference=role == 'reference',
@@ -121,16 +138,18 @@ def check_runs(case, runs, state, reference_rtol=1.0e-10):
                 solid_steps=SOLID_STEPS,
                 s0_eps=sign * S0_EPS,
             )
-            bad = bad or any(k not in v or v[k] != w for k, w in want.items())
+            failed += [k for k, w in want.items() if k not in v or v[k] != w]
             end = [(state[n]['Time'], state[n]['rows']) for n in (name, role)]
-            bad = bad or end[0] != end[1]
-        # The logged version is the string set when Aragog was installed, not read from git.
-        on_pin = v['Aragog'].rsplit('+g', 1)[-1][:7] == pin['Aragog'][:7]
-        if bad or on_pin != (role == 'main'):
-            raise SystemExit(f'{case} {name}: run {v} does not fit its role (pins {pin})')
+            if end[0] != end[1]:
+                failed.append(f'end time and rows of {role}')
+        if failed:
+            raise SystemExit(
+                f'{case} {name}: run {v} does not fit its role (pins {pin}); '
+                f'failed: {", ".join(failed)}'
+            )
 
 
-def compare(case, run, main, reference=None, floor=None, reference_rtol=1.0e-10):
+def compare(case, run, main, reference=None, floor=None, reference_rtol=REFERENCE_RTOL):
     """Return the per-column result and the verdict of one case.
 
     ``floor`` holds the v5b round-off runs RUN_P, RUN_M, MAIN_P, MAIN_M (``--s0-eps`` +- eps);
@@ -170,7 +189,7 @@ def main(argv=None) -> int:
     ap.add_argument('run', type=Path)
     ap.add_argument('main', type=Path)
     ap.add_argument('--reference', type=Path, default=None)
-    ap.add_argument('--reference-rtol', type=float, default=1.0e-10)
+    ap.add_argument('--reference-rtol', type=float, default=REFERENCE_RTOL)
     ap.add_argument('--floor', type=Path, nargs=4, default=None, metavar='DIR')
     ap.add_argument('--output', type=Path, default=None)
     args = ap.parse_args(argv)

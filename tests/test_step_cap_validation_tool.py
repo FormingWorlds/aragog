@@ -327,7 +327,7 @@ def test_v5b_driver_counts_steps_and_keeps_the_run_settings(monkeypatch):
 
 
 def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(monkeypatch):
-    """--reference sets 1 yr steps and tolerances; --s0-eps scales the first call that spans time."""
+    """--reference sets max_step 1 yr and tolerances; --s0-eps scales the first call that spans time."""
     cls, solver, calls = _recording_solver(monkeypatch)
     v5b.install(reference=True, s0_eps=1e-3, reference_rtol=1e-11)
     cls._solve_cvode(solver, 0.0, 0.0, np.array([100.0, 200.0]), 1e-6, 1e-6, 5.0)
@@ -340,8 +340,18 @@ def test_v5b_reference_is_strict_in_every_call_and_s0_eps_moves_the_first_state(
     np.testing.assert_allclose(calls[1][0], [100.1, 200.2], rtol=1e-15)
 
 
-def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path):
-    """main() writes the config with the output path, runs PROTEUS, and records the run."""
+@pytest.mark.parametrize(
+    'argv, flags',
+    [
+        (['--reference', '--reference-rtol', '1e-11', '--s0-eps=1e-12'], (True, 1e-11, 1e-12)),
+        (['--reference-rtol', '1e-11'], (False, None, 0.0)),
+    ],
+)
+def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path, argv, flags):
+    """main() writes the config with the output path, runs PROTEUS, and records the run.
+
+    A run without --reference records reference_rtol None, as compare_v5_runs.py requires.
+    """
     import types
 
     import aragog.solver.entropy_solver as es
@@ -366,10 +376,9 @@ def test_v5b_main_writes_the_result_with_steps_and_wall(monkeypatch, tmp_path):
     sys.modules['proteus'].Proteus = Runner
     dumps = lambda d: f'path = {d["params"]["out"]["path"]!r}\n'  # noqa: E731
     monkeypatch.setitem(sys.modules, 'toml', types.SimpleNamespace(dumps=dumps))
-    argv = ['--reference', '--reference-rtol', '1e-11', '--s0-eps=1e-12']
     assert v5b.main([*argv, '--output-dir', str(tmp_path)]) == 0
     res = json.loads((tmp_path / 'v5b_result.json').read_text())
-    assert (res['reference'], res['reference_rtol'], res['s0_eps']) == (True, 1e-11, 1e-12)
+    assert (res['reference'], res['reference_rtol'], res['s0_eps']) == flags
     assert (res['cvode_steps'], res['rows'], res['solid_steps'], res['T_magma']) == (
         0,
         2,

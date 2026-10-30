@@ -33,13 +33,14 @@ def _run(
     t_snap=None,
     extra_rows=0,
     drop=(),
+    proteus=None,
     **driver,
 ):
     """Write a run folder: helpfile rows, PROTEUS log, 2 snapshots, and the v5b driver result.
 
     ``driver`` overrides the v5b result keys (reference, reference_rtol, solid_steps, s0_eps)
-    and Phi_global; ``drop`` removes result keys. The last row is at ``t_end``, the last
-    snapshot at ``t_snap`` (default ``t_end``).
+    and Phi_global; ``drop`` removes result keys; ``proteus`` replaces the logged PROTEUS
+    commit. The last row is at ``t_end``, the last snapshot at ``t_snap`` (default ``t_end``).
     """
     pin = cmp.pins(cmp.CONFIGS[case])
     phi = driver.pop('Phi_global', 0.0 if case == 'v5b' else 1.0)
@@ -51,7 +52,7 @@ def _run(
     lines = ['\t'.join(cmp.COLUMNS)] + ['\t'.join(str(r[k]) for k in cmp.COLUMNS) for r in rows]
     (out / 'runtime_helpfile.csv').write_text('\n'.join(lines) + '\n')
     (out / 'proteus_00.log').write_text(
-        f'[ INFO  ] PROTEUS git hash  {pin["PROTEUS"]}\n'
+        f'[ INFO  ] PROTEUS git hash  {proteus or pin["PROTEUS"]}\n'
         f'[ INFO  ] Interior module   aragog version {aragog}\n'
     )
     t_snap = t_end if t_snap is None else t_snap
@@ -84,6 +85,16 @@ def _v5b(tmp_path, run_T=999.5, run_temp=(1.0, 1.5)):
     main = _run(tmp_path / 'main', 'v5b', MAIN, 1000.5, (1.0, 2.5))
     run = _run(tmp_path / 'run', 'v5b', BRANCH, run_T, run_temp)
     return run, main, ref
+
+
+def _floor(tmp_path, run_T=(999.5, 999.5), main_T=(1000.5, 1000.5)):
+    """RUN_P, RUN_M, MAIN_P and MAIN_M at s0_eps = +-1e-12 with the T_magma values given."""
+    return [
+        _run(tmp_path / 'rp', 'v5b', BRANCH, run_T[0], (1.0, 1.5), s0_eps=1e-12),
+        _run(tmp_path / 'rm', 'v5b', BRANCH, run_T[1], (1.0, 1.5), s0_eps=-1e-12),
+        _run(tmp_path / 'mp', 'v5b', MAIN, main_T[0], (1.0, 2.5), s0_eps=1e-12),
+        _run(tmp_path / 'mm', 'v5b', MAIN, main_T[1], (1.0, 2.5), s0_eps=-1e-12),
+    ]
 
 
 def test_both_configs_record_the_proteus_and_aragog_pins(tmp_path):
@@ -127,12 +138,7 @@ def test_v5b_floor_is_the_largest_round_off_offset(tmp_path):
     """A gap smaller than the round-off offset of either code passes; a larger one fails."""
     run, main, ref = _v5b(tmp_path, run_T=1000.75)
     assert not cmp.compare('v5b', run, main, ref)['columns']['T_magma']['passed']
-    floor = [
-        _run(tmp_path / 'rp', 'v5b', BRANCH, 1000.75, (1.0, 1.5), s0_eps=1e-12),
-        _run(tmp_path / 'rm', 'v5b', BRANCH, 1000.65, (1.0, 1.5), s0_eps=-1e-12),
-        _run(tmp_path / 'mp', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=1e-12),
-        _run(tmp_path / 'mm', 'v5b', MAIN, 1000.25, (1.0, 2.5), s0_eps=-1e-12),
-    ]
+    floor = _floor(tmp_path, (1000.75, 1000.65), (1000.5, 1000.25))
     col = cmp.compare('v5b', run, main, ref, floor)['columns']['T_magma']
     assert col == dict(error_run=0.75, error_main=0.5, floor=0.25, passed=True)
     floor[3] = _run(tmp_path / 'mm2', 'v5b', MAIN, 1000.4, (1.0, 2.5), s0_eps=-1e-12)
@@ -140,27 +146,31 @@ def test_v5b_floor_is_the_largest_round_off_offset(tmp_path):
 
 
 @pytest.mark.parametrize(
-    'role, change, message',
+    'role, change, failed',
     [
-        ('main', dict(aragog=BRANCH), 'main: run'),
-        ('run', dict(aragog=MAIN), 'run: run'),
-        ('main', dict(aragog=MAIN + '.d20261029'), 'main: run'),
-        ('reference', dict(aragog='26.10.29.dev1+gdeadbee'), 'reference: run'),
-        ('reference', dict(reference=False), 'reference: run'),
-        ('run', dict(reference=True), 'run: run'),
-        ('main', dict(solid_steps=2), 'main: run'),
-        ('run', dict(s0_eps=1e-12), 'run: run'),
-        ('run', dict(Phi_global=0.1), 'run: run'),
-        ('reference', dict(reference_rtol=1e-9), 'reference: run'),
-        ('reference', dict(drop=('reference_rtol',)), 'reference: run'),
-        ('run', dict(drop=('s0_eps',)), 'run: run'),
-        ('main', dict(s0_eps=-1e-12), 'main: run'),
-        ('run', dict(drop=('reference_rtol',)), 'run: run'),
-        ('main', dict(drop=('reference_rtol',)), 'main: run'),
+        ('main', dict(aragog=BRANCH), 'Aragog pin'),
+        ('run', dict(aragog=MAIN), 'Aragog pin'),
+        ('main', dict(aragog=MAIN + '.d20261029'), 'modified tree'),
+        ('main', dict(proteus='b' * 40), 'PROTEUS commit'),
+        ('reference', dict(aragog='26.10.29.dev1+gdeadbee'), 'Aragog version'),
+        ('reference', dict(reference=False), 'reference'),
+        ('run', dict(reference=True), 'reference'),
+        ('main', dict(solid_steps=2), 'solid_steps'),
+        ('run', dict(s0_eps=1e-12), 's0_eps'),
+        ('run', dict(Phi_global=0.1), 'Phi_global'),
+        ('reference', dict(reference_rtol=1e-9), 'reference_rtol'),
+        ('reference', dict(drop=('reference_rtol',)), 'reference_rtol'),
+        ('run', dict(drop=('s0_eps',)), 's0_eps'),
+        ('main', dict(s0_eps=-1e-12), 's0_eps'),
+        ('run', dict(drop=('reference_rtol',)), 'reference_rtol'),
+        ('main', dict(drop=('reference_rtol',)), 'reference_rtol'),
     ],
 )
-def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, message):
-    """Versions, a modified tree, driver flags and the end melt fraction must fit each role."""
+def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, failed):
+    """Versions, a modified tree, driver flags and the end melt fraction must fit each role.
+
+    The message names the run and, as the only failed check, the changed one.
+    """
     run, main, ref = _v5b(tmp_path)
     kw = dict(
         run=('run', 999.5, (1.0, 1.5), {}),
@@ -172,43 +182,33 @@ def test_v5b_refuses_a_run_that_does_not_fit_its_role(tmp_path, role, change, me
     bad = _run(tmp_path / f'{name}_bad', 'v5b', aragog, T, temp, **{**driver, **change})
     paths = dict(run=run, main=main, reference=ref)
     paths[role] = bad
-    with pytest.raises(SystemExit, match=message):
+    with pytest.raises(SystemExit, match=rf'{role}: run .*; failed: {failed}$'):
         cmp.compare('v5b', paths['run'], paths['main'], paths['reference'])
 
 
 @pytest.mark.parametrize(
-    'change',
+    'change, failed',
     [
-        dict(s0_eps=0.5),
-        dict(drop=('s0_eps',)),
-        dict(s0_eps=1e-12, t_end=1001.5),
-        dict(s0_eps=1e-12, extra_rows=1),
+        (dict(s0_eps=0.5), 's0_eps'),
+        (dict(drop=('s0_eps',)), 's0_eps'),
+        (dict(s0_eps=1e-12, t_end=1001.5), 'end time and rows of run'),
+        (dict(s0_eps=1e-12, extra_rows=1), 'end time and rows of run'),
     ],
 )
-def test_v5b_refuses_a_round_off_run_off_its_base(tmp_path, change):
+def test_v5b_refuses_a_round_off_run_off_its_base(tmp_path, change, failed):
     """A round-off run needs s0_eps = +-1e-12 and the end time and row count of its base run."""
     run, main, ref = _v5b(tmp_path)
-    floor = [
-        _run(tmp_path / 'rp', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=1e-12),
-        _run(tmp_path / 'rm', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=-1e-12),
-        _run(tmp_path / 'mp', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=1e-12),
-        _run(tmp_path / 'mm', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=-1e-12),
-    ]
+    floor = _floor(tmp_path)
     assert cmp.compare('v5b', run, main, ref, floor)['passed']
     floor[0] = _run(tmp_path / 'rp_bad', 'v5b', BRANCH, 999.5, (1.0, 1.5), **change)
-    with pytest.raises(SystemExit, match='run_p: run'):
+    with pytest.raises(SystemExit, match=rf'run_p: run .*; failed: {failed}$'):
         cmp.compare('v5b', run, main, ref, floor)
 
 
 def test_v5b_accepts_runs_that_fit_their_roles(tmp_path):
     """A reference at rtol 1e-10 and round-off runs at s0_eps = +-1e-12 pass the role checks."""
     run, main, ref = _v5b(tmp_path)
-    floor = [
-        _run(tmp_path / 'rp', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=1e-12),
-        _run(tmp_path / 'rm', 'v5b', BRANCH, 999.5, (1.0, 1.5), s0_eps=-1e-12),
-        _run(tmp_path / 'mp', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=1e-12),
-        _run(tmp_path / 'mm', 'v5b', MAIN, 1000.5, (1.0, 2.5), s0_eps=-1e-12),
-    ]
+    floor = _floor(tmp_path)
     try:
         res = cmp.compare('v5b', run, main, ref, floor)
     except SystemExit as exc:
@@ -220,16 +220,22 @@ def test_reference_rtol_selects_the_reference_tolerance(tmp_path):
     """A reference at rtol 1e-11 is refused by default and accepted with reference_rtol 1e-11."""
     run, main, _ = _v5b(tmp_path)
     ref11 = _run(tmp_path / 'r11', 'v5b', BRANCH, reference=True, reference_rtol=1e-11)
-    with pytest.raises(SystemExit, match='reference: run'):
+    with pytest.raises(SystemExit, match='reference: run .*; failed: reference_rtol$'):
         cmp.compare('v5b', run, main, ref11)
     assert cmp.compare('v5b', run, main, ref11, reference_rtol=1e-11)['passed']
 
 
 def test_end_state_needs_the_last_snapshot_at_the_last_row(tmp_path):
-    """A last snapshot that is not at the Time of the last helpfile row stops the comparison."""
+    """The last snapshot must be within 1e-3 of the Time of the last helpfile row.
+
+    The snapshot file name keeps 3 decimals: a row at 1000.5004 names 1000p500.
+    """
     assert cmp.end_state(_run(tmp_path / 'ok', 'v5', BRANCH))['rows'] == 2
-    with pytest.raises(SystemExit, match='last snapshot at 1001.5, last helpfile Time 1000.5'):
-        cmp.end_state(_run(tmp_path / 'late', 'v5', BRANCH, t_snap=1001.5))
+    assert cmp.end_state(_run(tmp_path / 'ok4', 'v5', BRANCH, t_end=1000.5004))['rows'] == 2
+    with pytest.raises(
+        SystemExit, match='last snapshot at 1000.502, last helpfile Time 1000.5'
+    ):
+        cmp.end_state(_run(tmp_path / 'late', 'v5', BRANCH, t_snap=1000.502))
 
 
 def test_runs_must_be_distinct_and_v5_must_stay_molten(tmp_path):
@@ -238,7 +244,7 @@ def test_runs_must_be_distinct_and_v5_must_stay_molten(tmp_path):
     with pytest.raises(SystemExit, match='given once'):
         cmp.compare('v5b', run, main, run)
     molten = _run(tmp_path / 'v5r', 'v5', BRANCH, Phi_global=0.5)
-    with pytest.raises(SystemExit, match='run: run'):
+    with pytest.raises(SystemExit, match='run: run .*; failed: Phi_global$'):
         cmp.compare('v5', molten, _run(tmp_path / 'v5m', 'v5', MAIN))
 
 

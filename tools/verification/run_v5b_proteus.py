@@ -7,8 +7,8 @@ config options before the run starts:
 - the run stops at the 3rd coupling step with ``Phi_global`` = 0
   (``proteus.utils.terminate.check_termination``);
 - ``--reference`` integrates every CVODE call at ``--reference-rtol`` (default 1e-10), a
-  physical atol of the same value and 1 yr steps (``EntropySolver._solve_cvode``), so the
-  step size and the tolerances of the reference do not depend on the step controller (its
+  physical atol of the same value and a 1 yr ``max_step`` (``EntropySolver._solve_cvode``), so
+  the step size and the tolerances of the reference do not depend on the step controller (its
   segment roots still split each call);
 - ``--s0-eps`` multiplies the state of the first CVODE call that spans time by 1 + eps for a
   round-off start (PROTEUS sets the start entropy and makes zero-length calls first).
@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from compare_v5_runs import COLUMNS, SOLID_STEPS  # noqa: E402
+from compare_v5_runs import COLUMNS, REFERENCE_RTOL, S0_EPS, SOLID_STEPS  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parent / 'data' / 'v5b_aragog_calliope.toml'
 
@@ -48,7 +48,7 @@ def hook(owner, name):
     return fn
 
 
-def install(reference, s0_eps=0.0, reference_rtol=1.0e-10):
+def install(reference, s0_eps=0.0, reference_rtol=REFERENCE_RTOL):
     """Patch the stop rule, count the CVODE steps, and set the reference and start options."""
     import proteus.utils.terminate as term
 
@@ -87,8 +87,10 @@ def main(argv=None) -> int:
     """Run V5b once and print the last helpfile row."""
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--reference', action='store_true')
-    ap.add_argument('--reference-rtol', type=float, default=1.0e-10)
-    ap.add_argument('--s0-eps', type=float, default=0.0)
+    ap.add_argument('--reference-rtol', type=float, default=REFERENCE_RTOL)
+    ap.add_argument(
+        '--s0-eps', type=float, default=0.0, help=f'+-{S0_EPS:g} for the round-off runs'
+    )
     ap.add_argument('--output-dir', type=Path, default=None)
     args = ap.parse_args(argv)
     out = (args.output_dir or Path(tempfile.mkdtemp(prefix='v5b_'))).resolve()
