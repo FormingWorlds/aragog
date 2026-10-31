@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -390,10 +391,58 @@ def test_validate_radionuclide_accepts_exactly_the_valid_domain(values):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('field', range(5))
-@pytest.mark.parametrize('bad', [True, False, '1.0', None])
+@pytest.mark.parametrize(
+    'bad',
+    [True, False, np.bool_(True), '1.0', None, 10**400, np.array('x', dtype=object), 1j],
+    ids=[
+        'true',
+        'false',
+        'np_bool',
+        'str',
+        'none',
+        'int_above_float',
+        'object_array',
+        'complex',
+    ],
+)
 def test_validate_radionuclide_refuses_a_value_that_is_not_a_number(field, bad):
-    """A TOML true or a string where a number belongs is refused, not read as 1 or compared."""
+    """A TOML true, a string, an integer above the float range or another value that is not
+    a real float is refused with a ValueError, not read as 1 or compared."""
     values = [1.0, 1.0, 1.0, 0.0, 1.0e9]
     values[field] = bad
     with pytest.raises(ValueError, match='Radionuclide X: .*must be numbers'):
         validate_radionuclide('X', *values, ppm=False)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'wrap',
+    [np.asarray, np.float32, lambda v: np.asarray(v, dtype=np.float64), Fraction],
+    ids=['0d_array', 'float32', '0d_float64', 'fraction'],
+)
+def test_parameters_accept_numeric_scalars_of_any_real_type(wrap):
+    """0-d NumPy arrays, NumPy scalars and fractions pass as floats do: a rebuild of Parameters
+    converts the concentration once and gives the heating of the same isotope as floats."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    k40 = {**K40_PPM, 'concentration': 310}
+    try:
+        q, (r,) = _with(p, {k: v if k == 'name' else wrap(v) for k, v in k40.items()})
+    except ValueError as exc:
+        pytest.fail(f'a numeric scalar was refused: {exc}')
+    _, (ref,) = _with(p, k40)
+    tol = 1e-6 if wrap is np.float32 else 0.0
+    assert float(r.concentration) == pytest.approx(ref.concentration, rel=tol, abs=0.0)
+    assert float(r.get_heating(0.0)) == pytest.approx(ref.get_heating(0.0), rel=tol, abs=0.0)
+    replace(q)  # a second rebuild must not convert the concentration again
+    assert float(r.concentration) == pytest.approx(ref.concentration, rel=tol, abs=0.0)
+
+
+@pytest.mark.unit
+def test_validate_radionuclide_accepts_jax_scalars():
+    """Concrete JAX scalars pass as floats do."""
+    jnp = pytest.importorskip('jax.numpy')
+    values = [jnp.asarray(v) for v in (2.8761e-5, 1.1668e-4, 310.0, 4.55e9, 1248e6)]
+    try:
+        validate_radionuclide('K40', *values, start_time=0.0)
+    except ValueError as exc:
+        pytest.fail(f'a JAX scalar was refused: {exc}')
