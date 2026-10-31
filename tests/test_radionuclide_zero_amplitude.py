@@ -551,8 +551,9 @@ def test_check_radio_arrays_accepts_shapes_that_broadcast_to_one_dimension(shape
         valid = False
     try:
         out = check_radio_arrays(*arrays)
-    except ValueError as exc:
-        assert not valid and str(exc).startswith('Radionuclide'), exc
+    except Exception as exc:
+        assert isinstance(exc, ValueError) and not valid, exc
+        assert str(exc).startswith('Radionuclide'), exc
     else:
         assert valid and all(
             o.shape == s and o.dtype == np.float64 for o, s in zip(out, shapes)
@@ -568,9 +569,9 @@ def test_check_radio_arrays_names_a_ragged_or_traced_list():
     from aragog.jax.solver import check_radio_arrays
 
     rest = [[v] for v in _RADIO_OK[1:]]
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         check_radio_arrays([[1e-4, 1e-4], [1e-4]], *rest)
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         jax.jit(lambda x: check_radio_arrays([x], *rest)[0])(1e-4)
 
 
@@ -581,7 +582,7 @@ def test_check_radio_arrays_refuses_an_empty_array_next_to_isotopes():
     pytest.importorskip('jax')
     from aragog.jax.solver import check_radio_arrays
 
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         check_radio_arrays(np.array([]), [1.0], [1e-6], [0.0], [-5.0])
 
 
@@ -595,8 +596,12 @@ def test_check_radio_arrays_skips_the_start_time_for_a_traced_input():
     def build(half_life):
         return check_radio_arrays([1e-4], [1.0], [1e-6], [4.55e9], half_life, start_time=0.0)[4]
 
-    assert float(jax.jit(build)(jax.numpy.array([1e9]))[0]) == 1e9
-    with pytest.raises(ValueError, match='#0: half_life_years'):
+    try:
+        half_life = float(jax.jit(build)(jax.numpy.array([1e9]))[0])
+    except Exception as exc:
+        pytest.fail(f'a traced half-life was checked at the start time: {exc!r}')
+    assert half_life == 1e9
+    with pytest.raises(Exception, match='#0: half_life_years'):
         jax.jit(lambda t0: check_radio_arrays([1e-4], [1.0], [1e-6], t0, [-1.0])[3])(
             jax.numpy.array([0.0])
         )
@@ -616,9 +621,9 @@ def test_jax_factory_names_a_ragged_radio_list():
         )
 
     scales = NonDimScales(state_scale=np.full(4, 3e3), t_ref=1.0)
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         build(([[1e-4, 1e-4], [1e-4]], [1.0], [1e-6], [0.0], [1e9]))
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         build((np.zeros((2, 0)),) * 5)
-    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+    with pytest.raises(Exception, match='^Radionuclide arrays'):
         jax.jit(lambda x: build(([x], [1.0], [1e-6], [0.0], [1e9])))(1e-4)

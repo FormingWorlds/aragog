@@ -265,5 +265,8 @@ def test_only_an_unsupported_core_bc_falls_back_to_the_fd_jacobian(unsupported, 
             with pytest.raises(ValueError, match='factory refused'):
                 solver.solve()
             return
-        solver.solve()
+        try:
+            solver.solve()
+        except Exception as exc:
+            pytest.fail(f'the NumPy RHS must follow an UnsupportedCoreBCError, got {exc!r}')
     assert solver._solution.status == 0 and 'factory refused' in caplog.text
