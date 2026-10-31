@@ -60,11 +60,14 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
 
 
 def assert_legend_clear(fig) -> None:
-    """Assert that no legend of ``fig`` covers a marker or a line of its axes.
+    """Assert that no legend of ``fig`` covers a marker or a line of its axes, or a text.
 
     Each drawn line is sampled at 50 points per segment in display space, markers at their
     points, and the legend box is padded by half the marker size. Bands (patches, filled collections) may lie under it.
+    No visible text of the figure outside the legend may overlap the legend box.
     """
+    from matplotlib.text import Text
+
     fig.canvas.draw()
     for ax in fig.axes:
         legend = ax.get_legend()
@@ -91,6 +94,12 @@ def assert_legend_clear(fig) -> None:
             )
             hit = box.count_contains(dense[np.all(np.isfinite(dense), axis=1)])
             assert hit == 0, f'the legend of {ax.get_ylabel()!r} covers {hit} plotted points'
+        box, own = legend.get_window_extent(), set(legend.findobj())
+        for text in fig.findobj(Text):
+            if text.get_visible() and text.get_text() and text not in own:
+                assert not box.overlaps(text.get_window_extent()), (
+                    f'a legend covers the text {text.get_text()!r}'
+                )
 
 
 def make_mesh(N: int = 10, scale_p: float = 1.0):
