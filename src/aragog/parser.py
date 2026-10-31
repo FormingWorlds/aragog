@@ -13,6 +13,7 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
+import numbers
 import tomllib  # noqa: F401
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -463,12 +464,19 @@ def validate_radionuclide(
         ppm: Whether ``concentration`` is in ppm.
 
     Raises:
-        ValueError: for a half-life below the smallest normal float (about 2.2e-308 yr, which
+        ValueError: for an input that is not a real number (a bool, a string, None), a
+            half-life below the smallest normal float (about 2.2e-308 yr, which
             keeps the time derivative of a zero-amplitude isotope finite) or not a number, a
             heat production, abundance or concentration that is negative, a heat production,
             abundance, concentration or t0_years that is not finite, or a heating that is not
             finite at ``start_time``.
     """
+    values = (heat_production, abundance, concentration, t0_years, half_life_years)
+    if not all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in values):
+        raise ValueError(
+            f'Radionuclide {name}: heat_production, abundance, concentration, t0_years and '
+            f'half_life_years must be numbers, got {values}'
+        )
     if not half_life_years >= np.finfo(float).tiny:
         raise ValueError(
             f'Radionuclide {name}: half_life_years must be positive and at least '
