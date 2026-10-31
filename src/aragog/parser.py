@@ -13,7 +13,6 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
-import numbers
 import tomllib  # noqa: F401
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -464,19 +463,33 @@ def validate_radionuclide(
         ppm: Whether ``concentration`` is in ppm.
 
     Raises:
-        ValueError: for an input that is not a real number (a bool, a string, None), a
-            half-life below the smallest normal float (about 2.2e-308 yr, which
-            keeps the time derivative of a zero-amplitude isotope finite) or not a number, a
-            heat production, abundance or concentration that is negative, a heat production,
-            abundance, concentration or t0_years that is not finite, or a heating that is not
-            finite at ``start_time``.
+        ValueError: for an input that does not convert to a float (an integer above the
+            float range, a complex), that is a bool, a string or None, or that is an array or
+            NumPy scalar of a type other than integer or float (0-d arrays and JAX scalars of
+            those types pass), a half-life below the smallest normal float (about 2.2e-308 yr,
+            which keeps the time derivative of a zero-amplitude isotope finite) or not a
+            number, a heat production, abundance or concentration that is negative, a heat
+            production, abundance, concentration or t0_years that is not finite, or a heating
+            that is not finite at ``start_time``.
     """
     values = (heat_production, abundance, concentration, t0_years, half_life_years)
-    if not all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in values):
+    try:
+        # A bool, a string or a non-numeric array would pass float(); refuse those first.
+        if any(
+            v is None
+            or isinstance(v, (bool, str, bytes))
+            or getattr(getattr(v, 'dtype', None), 'kind', 'f') not in 'iuf'
+            for v in values
+        ):
+            raise TypeError
+        heat_production, abundance, concentration, t0_years, half_life_years = map(
+            float, values
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f'Radionuclide {name}: heat_production, abundance, concentration, t0_years and '
             f'half_life_years must be numbers, got {values}'
-        )
+        ) from exc
     if not half_life_years >= np.finfo(float).tiny:
         raise ValueError(
             f'Radionuclide {name}: half_life_years must be positive and at least '
@@ -688,7 +701,8 @@ class Parameters:
         for r in self.radionuclides:
             if not r._is_mass_fraction():
                 r._ppm = r.concentration
-                r.concentration *= _PPM
+                # A new object: in place, an array would also scale the _ppm record it shares.
+                r.concentration = r.concentration * _PPM
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
