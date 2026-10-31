@@ -925,11 +925,11 @@ class TestCvodeEnergyOutputGrid:
         assert err_2pt < 1e-5 and err_dense < 1e-5, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # No CMB flux and no sources: F_int closes the heat content change, 4e-6 at 512 points.
-        heat = s2._step_heat_content(
-            *(s2._stag_entropy(sol2.y[:, i]) for i in (0, -1)), n_quad=512
-        )
+        S0, Sf = (s2._stag_entropy(sol2.y[:, i]) for i in (0, -1))
+        heat = s2._step_heat_content(S0, Sf, n_quad=512)
         assert d2['F_cmb'] == d2['Q_radio'] == d2['Q_tidal'] == 0.0
         assert d2['F_int'] == pytest.approx(heat, rel=2e-5)
+        assert dN['F_int'] == pytest.approx(heat, rel=2e-5)
         # The output grid must not perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
