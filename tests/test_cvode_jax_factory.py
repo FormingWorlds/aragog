@@ -230,6 +230,24 @@ def test_unsupported_core_bc_mode_falls_back_without_jax(mode, monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ('mode', 'err'),
+    [('quasi_steady', RuntimeError), ('unknown', ValueError), ('core_module', ValueError)],
+)
+def test_a_supported_or_unknown_mode_without_jax_does_not_fall_back(mode, err, monkeypatch):
+    """Without JAX a supported mode raises the missing-JAX RuntimeError, and a typo mode or
+    core_module without a budget a plain ValueError; none is UnsupportedCoreBCError."""
+    import sys
+
+    from aragog.solver.cvode_jax import UnsupportedCoreBCError, build_jax_rhs_and_jacobian
+
+    monkeypatch.setitem(sys.modules, 'jax.numpy', None)
+    with pytest.raises(err) as exc_info:
+        build_jax_rhs_and_jacobian(None, None, None, None, np.zeros(4), None, core_bc_mode=mode)
+    assert not isinstance(exc_info.value, UnsupportedCoreBCError)
+
+
+@pytest.mark.unit
 def test_radio_isotope_params_wrong_length_raises():
     """``radio_isotope_params`` must be a 5-tuple
     (heat_prod, abundance, concentration, t0_years, half_life_years).
