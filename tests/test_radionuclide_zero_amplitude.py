@@ -410,8 +410,11 @@ def test_validate_radionuclide_refuses_a_value_that_is_not_a_number(field, bad):
     a real float is refused with a ValueError, not read as 1 or compared."""
     values = [1.0, 1.0, 1.0, 0.0, 1.0e9]
     values[field] = bad
-    with pytest.raises(ValueError, match='Radionuclide X: .*must be numbers'):
+    with pytest.raises(Exception) as err:
         validate_radionuclide('X', *values, ppm=False)
+    assert err.type is ValueError and re.search(
+        'Radionuclide X: .*must be numbers', str(err.value)
+    )
 
 
 @pytest.mark.unit
@@ -427,8 +430,8 @@ def test_parameters_accept_numeric_scalars_of_any_real_type(wrap):
     k40 = {**K40_PPM, 'concentration': 310}
     try:
         q, (r,) = _with(p, {k: v if k == 'name' else wrap(v) for k, v in k40.items()})
-    except ValueError as exc:
-        pytest.fail(f'a numeric scalar was refused: {exc}')
+    except Exception as exc:
+        pytest.fail(f'a numeric scalar was refused: {exc!r}')
     _, (ref,) = _with(p, k40)
     tol = 1e-6 if wrap is np.float32 else 0.0
     assert float(r.concentration) == pytest.approx(ref.concentration, rel=tol, abs=0.0)
