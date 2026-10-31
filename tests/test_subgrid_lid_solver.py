@@ -579,6 +579,45 @@ def test_handover_in_the_call(eos, method):
         assert any(seg[1] == 'lid' for seg in sol.segments)
 
 
+@pytest.mark.skipif(not _methods()[1:], reason='CVODE not available')
+def test_subsolidus_segment_caps_the_lid_atol(eos):
+    """A rate-mode CVODE segment that starts below the solidus caps the atol of the lid states
+    like the column entries, at min(caller atol, 1e-8 / state scale); the solve completes and
+    the ledger closes. The hand-over root is held at -1 to keep the lid."""
+    from aragog.solver import entropy_solver as es
+
+    s = _solver(eos, end=1.0)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = False
+    s.parameters.energy.phase_boundary_cap = 'rate'
+    S_sol = np.asarray(eos.solidus_entropy(np.asarray(s._P_stag_flat, float)), float).ravel()
+    s.set_initial_entropy(S_sol - 50.0)
+    s._lid_root_value = lambda t, y: -1.0
+    seen = {'caller': [], 'segment': []}
+    segments, cvode = s._solve_cvode_segments, s._solve_cvode
+
+    def segments_spy(*a, **kw):
+        seen['caller'].append(np.array(kw['atol'], dtype=float, ndmin=1))
+        return segments(*a, **kw)
+
+    def cvode_spy(*a, **kw):
+        seen['segment'].append(np.array(kw['atol'], dtype=float, ndmin=1))
+        return cvode(*a, **kw)
+
+    s._solve_cvode_segments, s._solve_cvode = segments_spy, cvode_spy
+    s.solve()
+    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
+    cap = es._SUBSOLIDUS_ATOL / np.asarray(s._build_nondim_scales().state_scale, float)
+    expected = np.minimum(seen['caller'][0], cap)
+    assert np.all(expected[-2:] < seen['caller'][0][-2:])
+    assert seen['segment'] and all(
+        np.array_equal(a[-2:], expected[-2:]) for a in seen['segment']
+    )
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert s._solution.y[-2, -1] > s._lid_delta_lo
+
+
 def test_handover_leaves_exact_zero_lid_states(eos):
     """After a hand-over the lid states of the solution and of the energy trace are exact
     zeros, also when the energy offset of the nondimensional state does not map 0 back to 0,
