@@ -449,3 +449,36 @@ def test_validate_radionuclide_accepts_jax_scalars():
         validate_radionuclide('K40', *values, start_time=0.0)
     except ValueError as exc:
         pytest.fail(f'a JAX scalar was refused: {exc}')
+
+
+@pytest.mark.unit
+def test_parameters_store_the_checked_values_as_floats():
+    """Parameters keeps the settings it checked: float32 inputs whose float32 product
+    overflows are stored as floats and heat as the check computed (1e24 W/kg at t0)."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    big = dict(
+        name='X',
+        t0_years=np.float32(0.0),
+        abundance=np.float32(1e30),
+        concentration=np.float32(1e-30),
+        heat_production=np.float32(1e30),
+        half_life_years=np.float32(1e9),
+    )
+    _, (r,) = _with(p, big)
+    fields = ('heat_production', 'abundance', 'concentration', 't0_years', 'half_life_years')
+    assert all(type(getattr(r, f)) is float for f in fields)
+    assert r.get_heating(0.0) == pytest.approx(1e24, rel=1e-6)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('wrap', [float, np.asarray, np.float64], ids=['float', '0d', 'f64'])
+def test_rebuilds_keep_one_ppm_conversion(wrap):
+    """A second and a third rebuild keep the concentration and the heating of the first."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    k40 = {**K40_PPM, 'heat_production': 0.003, 'abundance': 1.17e-4, 'concentration': 310}
+    q, (r,) = _with(p, {k: v if k == 'name' else wrap(v) for k, v in k40.items()})
+    first = (r.concentration, r.get_heating(0.0))
+    replace(replace(q))
+    assert type(r.concentration) is float and r._ppm == 310.0
+    assert (r.concentration, r.get_heating(0.0)) == first
+    assert r.concentration == pytest.approx(3.1e-4, rel=1e-15)

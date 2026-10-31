@@ -216,3 +216,13 @@ def test_factory_zero_amplitude_isotope_with_a_tiny_half_life_heats_zero():
     assert np.any(off != 0.0) and np.all(np.isfinite(zero)) and np.all(np.isfinite(j_zero))
     np.testing.assert_array_equal(zero, off)
     np.testing.assert_array_equal(j_zero, j_off)
+
+
+@needs_eos
+@pytest.mark.parametrize('bad', [True, '1.0', 10**400], ids=['bools', 'str', 'int_above_float'])
+def test_factory_refuses_an_input_that_is_not_a_number(bad):
+    """The CVODE factory checks each radio input array in its own type before any RHS call."""
+    arrays = [np.array([bad])] + [np.array([v]) for v in (1.0, 1.0e-9, 0.0, 7.17e5)]
+    with pytest.raises(Exception) as err:
+        _build_factory(tuple(arrays))
+    assert err.type is ValueError and '#0: ' in str(err.value)

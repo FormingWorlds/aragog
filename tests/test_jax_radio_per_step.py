@@ -375,3 +375,31 @@ def test_radio_heating_accepts_the_smallest_normal_half_life():
     except ValueError as exc:
         pytest.fail(f'the smallest normal half-life was refused: {exc}')
     assert float(h(1.0)) == 0.0 and float(jax.grad(h)(1.0)) == 0.0
+
+
+@pytest.mark.parametrize('field', [0, 4])
+@pytest.mark.parametrize(
+    'bad',
+    [True, '1.0', 10**400, np.array([True])],
+    ids=['true', 'str', 'int_above_float', 'bools'],
+)
+def test_radio_heating_refuses_an_input_that_is_not_a_number(field, bad):
+    """make_radio_heating_fn checks each input in its own type: a bool, a string, an integer
+    above the float range and a bool array give the isotope-named ValueError."""
+    from aragog.jax.solver import make_radio_heating_fn
+
+    args = [np.ones(1), np.ones(1), np.ones(1), np.zeros(1), np.full(1, 1.0e9)]
+    args[field] = bad
+    with pytest.raises(Exception) as err:
+        make_radio_heating_fn(*args)
+    assert err.type is ValueError and '#0: ' in str(err.value)
+
+
+def test_radio_heating_takes_a_mixed_list_as_floats():
+    """A list of a bool and a float is one float64 array before any check sees it, so
+    [True, 0.5] is two isotopes with heat productions 1 and 0.5."""
+    from aragog.jax.solver import make_radio_heating_fn
+
+    one = np.ones(2)
+    h = make_radio_heating_fn([True, 0.5], one, one, np.zeros(2), np.full(2, 1.0e9))
+    assert float(h(0.0)) == 1.5
