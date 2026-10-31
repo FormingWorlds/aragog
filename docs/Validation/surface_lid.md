@@ -175,6 +175,8 @@ The step factor is the larger of the two lid thicknesses divided by the smaller 
 
 **Why it matters.** Until a mesh resolves that crust, the error of the lid for a molten start with the solid rheology is not known. Use the lid there only with this limit in mind.
 
+**Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md) rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). Its convergence with mesh refinement after the hand-over is not validated in this release.
+
 ## A crust in steady state
 
 **Why this check exists.** Under a constant heat flux from below, a crust must settle at the thickness where it conducts exactly that flux. A lid whose growth law or surface balance is wrong settles at the wrong thickness, or its profile stays curved; the test sees both.
