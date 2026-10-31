@@ -123,9 +123,17 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
         negative or not finite, or a concrete t0 that is not finite (the checks of
         aragog.parser.validate_radionuclide without a start time); traced inputs are not checked.
     """
+    radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
+    return lambda t_yr: compute_radio_heating(t_yr, radio)
+
+
+def check_radio_arrays(*arrays):
+    """Check the 5 per-isotope arrays of :func:`compute_radio_heating` and return them as JAX arrays.
+
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents.
+    """
     from aragog.parser import validate_radionuclide
 
-    arrays = (heat_prod, abundance, concentration, t0_years, half_life_years)
     # A traced input is checked with a valid stand-in, so the concrete inputs are still checked.
     concrete = [
         np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a, dtype=float))
@@ -133,8 +141,7 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     ]
     for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):
         validate_radionuclide(f'#{i}', *iso, ppm=False)
-    radio = tuple(jnp.asarray(a, dtype=jnp.float64) for a in arrays)
-    return lambda t_yr: compute_radio_heating(t_yr, radio)
+    return tuple(jnp.asarray(a, dtype=jnp.float64) for a in arrays)
 
 
 # ---------------------------------------------------------------------------
