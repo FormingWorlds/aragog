@@ -17,20 +17,12 @@ mirror the gating convention used by ``tests/test_entropy_verification.py``.
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
-)
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}',

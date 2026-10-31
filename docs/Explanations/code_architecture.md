@@ -21,7 +21,6 @@ src/aragog/
 │   ├── initial_condition.py
 │   ├── mesh.py            # MeshConfig (Adams-Williamson, mass coordinates, eos_file)
 │   ├── phases.py          # PhaseConfig (solid/liquid), MixedPhaseConfig (cp_blend, const_*)
-│   ├── radionuclides.py
 │   └── solver.py          # SolverConfig (atol, rtol, time window)
 │
 ├── eos/                   # Pressure-entropy equation of state
