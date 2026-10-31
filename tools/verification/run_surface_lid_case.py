@@ -6,7 +6,8 @@ next sample time. After each part the run folder gets ``za_part<k>.npz`` (stored
 [yr], ``y`` and ``y_end``) and one record in ``za.json`` (time, lid thickness and heat content,
 surface flux, interior temperature of the lid closure, status, mesh, jump floor, source commit,
 config hash, the md5 of every table file and the hand-over gate: ``w_active``, ``f_int_max``,
-the hand-over root and the hand-over time). Run it from the root of the aragog tree under
+the hand-over root and the hand-over time; the CVODE step count, the mean step and the range of
+``max_step`` over the rate-cap segments of the part). Run it from the root of the aragog tree under
 test. A 400-node run to 4e5 yr takes about 10 h on one core.
 
 Usage::
@@ -279,6 +280,8 @@ def main(argv=None) -> int:
         lid = s.state._lid_state or {}
         root = float(s._lid_root_value(t_got, y_end))
         t_ho = float(getattr(s, '_lid_handover_time', float('nan')))
+        nst = int(s._solution.get('cvode_nst', 0) or 0)
+        h_max = [h for _, _, h in (s._solution.get('segments') or [])]
         rows.append(
             dict(
                 part=k,
@@ -294,6 +297,11 @@ def main(argv=None) -> int:
                 f_int_max=float(np.asarray(lid['f_int_max'])) if 'f_int_max' in lid else None,
                 handover_root=root,
                 handover_time=t_ho if np.isfinite(t_ho) else None,
+                cvode_nst=nst,
+                mean_step_yr=(t_got - float(tt[0])) / nst if nst else None,
+                segments=len(h_max),
+                max_step_min_yr=min(h_max) if h_max else None,
+                max_step_max_yr=max(h_max) if h_max else None,
                 nodes=a.nodes,
                 s_init=a.s_init,
                 dh_min=float(sl.LID_DH_MIN),
@@ -311,7 +319,16 @@ def main(argv=None) -> int:
             json.dumps(
                 {
                     x: rows[-1][x]
-                    for x in ('part', 't_yr', 'status', 'delta', 'w_active', 'f_int_max')
+                    for x in (
+                        'part',
+                        't_yr',
+                        'status',
+                        'delta',
+                        'w_active',
+                        'f_int_max',
+                        'cvode_nst',
+                        'max_step_max_yr',
+                    )
                 }
             ),
             flush=True,
