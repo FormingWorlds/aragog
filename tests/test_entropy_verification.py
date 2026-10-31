@@ -922,7 +922,7 @@ class TestCvodeEnergyOutputGrid:
 
         # F_int error: about 0.5 from the 2 endpoints, 1.3e-3 (n_out=2) and 5.5e-4 (n_out=65)
         # from the sol.t points, and about 3e-6 from the internal-step trace asserted here.
-        assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
+        assert err_2pt < 1e-5 and err_dense < 1e-5, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # The output grid must not perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
