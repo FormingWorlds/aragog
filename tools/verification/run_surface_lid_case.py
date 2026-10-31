@@ -63,6 +63,16 @@ def _table_md5(eos_dir: Path) -> dict:
     }
 
 
+def _heating_array(s):
+    """Internal heating [W/kg] per staggered cell, by the rules of the NumPy state: one value
+    for every cell or one per cell. Radionuclides are refused (not passed to the JAX factory)."""
+    e, n = s.parameters.energy, s._n_stag
+    if getattr(e, 'radionuclides', False):
+        raise SystemExit('radionuclides are not passed to the JAX factory of this driver')
+    h = np.atleast_1d(np.asarray(e.tidal_array, float)) if e.tidal else np.zeros(1)
+    return np.full(n, h[0]) if h.size == 1 else (h.copy() if h.size == n else np.zeros(n))
+
+
 def _install_factory(s, eos_dir):
     """Give ``s`` the JAX CVODE right-hand side and Jacobian, with the lid, on ``eos_dir``."""
     from aragog.jax.eos import EntropyEOS_JAX
@@ -97,7 +107,7 @@ def _install_factory(s, eos_dir):
             params_jax,
             mesh_jax,
             bc,
-            np.zeros(s._n_stag),
+            _heating_array(s),
             scales,
             core_bc_mode=core_bc_mode,
             radio_isotope_params=(),
