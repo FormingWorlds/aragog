@@ -1,12 +1,15 @@
-"""The JAX right-hand side that ``tools/verification/run_surface_lid_case.py`` installs."""
+"""The JAX right-hand side and the options of ``tools/verification/run_surface_lid_case.py``."""
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from tests.conftest import entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
@@ -18,6 +21,7 @@ pytestmark = [pytest.mark.timeout(600), needs_eos]
 DRIVER = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_surface_lid_case.py'
 
 
+@functools.cache
 def _driver():
     spec = importlib.util.spec_from_file_location('run_surface_lid_case', DRIVER)
     mod = importlib.util.module_from_spec(spec)
@@ -60,3 +64,43 @@ def test_driver_jax_rhs_carries_the_internal_heating():
     d_jax = _rates(eos, H, True) - _rates(eos, None, True)
     assert np.all(d_np > 0.0)
     np.testing.assert_allclose(d_jax, d_np, rtol=1e-9, atol=0.0)
+
+
+def _options(**kw):
+    import argparse
+
+    return argparse.Namespace(**{'eta': None, 'heating': None, **kw})
+
+
+@given(st.floats(allow_nan=True, allow_infinity=True))
+@settings(max_examples=200, deadline=None)
+def test_eta_option_accepts_only_finite_positive_values(eta):
+    """--eta passes when finite and positive and stops the run otherwise."""
+    check = _driver()._check_options
+    if np.isfinite(eta) and eta > 0.0:
+        check(_options(eta=eta))
+    else:
+        with pytest.raises(SystemExit, match='--eta must be finite and positive'):
+            check(_options(eta=eta))
+
+
+@given(st.floats(allow_nan=True, allow_infinity=True))
+@settings(max_examples=200, deadline=None)
+def test_heating_option_accepts_only_finite_non_negative_values(heating):
+    """--heating passes when finite and non-negative and stops the run otherwise."""
+    check = _driver()._check_options
+    if np.isfinite(heating) and heating >= 0.0:
+        check(_options(heating=heating))
+    else:
+        with pytest.raises(SystemExit, match='--heating must be finite and non-negative'):
+            check(_options(heating=heating))
+
+
+@pytest.mark.parametrize('flag', ['--eta', '--heating'])
+def test_options_refuse_a_value_that_is_not_a_number(flag):
+    """A value that is not a number (as a TOML true) stops the parser; no value keeps the
+    default None."""
+    d = _driver()
+    with pytest.raises(SystemExit):
+        d.parse(['out', flag, 'true'])
+    assert getattr(d.parse(['out']), flag[2:]) is None
