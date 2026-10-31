@@ -227,3 +227,46 @@ def test_factory_with_radio_isotope_params_builds_callable_radio_heating(caplog)
     rc = rhs_fn(0.0, y_nd, ydot_nd)
     assert rc == 0, f'radio-heating-aware rhs_fn returned {rc}; expected 0'
     assert info['rhs_calls'] == 1
+
+
+def _build_radio_factory(radio_isotope_params):
+    """The quasi_steady factory of the test above with the given radio 5-tuple."""
+    from aragog.jax.nondim import NonDimScales
+    from aragog.jax.phase import PhaseParams
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    mesh = _make_const_property_mesh(N=8)
+    n_stag = int(mesh.P_stag.shape[0])
+    return n_stag, build_jax_rhs_and_jacobian(
+        eos_jax=entropy_eos_jax(EOS_DIR),
+        phase_params=PhaseParams(),
+        mesh_arrays=mesh,
+        boundary_params=_make_bc(),
+        heating_array=np.zeros(n_stag),
+        scales=NonDimScales(state_scale=np.full(n_stag, 3.0e3), t_ref=1.0),
+        core_bc_mode='quasi_steady',
+        radio_isotope_params=radio_isotope_params,
+    )
+
+
+@needs_eos
+@pytest.mark.parametrize('half_life', [0.0, np.nan])
+def test_factory_rejects_a_half_life_that_is_not_positive(half_life):
+    """The CVODE factory refuses a zero or NaN half-life before any RHS call."""
+    with pytest.raises(ValueError, match='half_life_years must be positive'):
+        _build_radio_factory((0.3583, 1.0, 1.0e-9, 4.55e9, half_life))
+
+
+@needs_eos
+def test_factory_zero_amplitude_isotope_with_a_tiny_half_life_heats_zero():
+    """A zero-amplitude isotope with a 1e-300 yr half-life leaves the RHS bitwise equal
+    to the RHS without radionuclides, with every numpy warning raised as an error."""
+    n_stag, (rhs_off, _, _) = _build_radio_factory(())
+    _, (rhs_zero, _, _) = _build_radio_factory((0.3583, 0.0, 1.0e-9, 4.55e9, 1.0e-300))
+    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
+    off, zero = np.zeros(n_stag), np.zeros(n_stag)
+    with np.errstate(all='raise'):
+        assert rhs_off(1.0, y_nd, off) == 0
+        assert rhs_zero(1.0, y_nd, zero) == 0
+    assert np.all(np.isfinite(zero))
+    np.testing.assert_array_equal(zero, off)
