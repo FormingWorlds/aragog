@@ -531,23 +531,30 @@ def test_jax_factory_checks_the_heating_at_the_start_time():
 @pytest.mark.unit
 @settings(max_examples=200, deadline=None)
 @given(
-    st.lists(st.sampled_from([(), (0,), (1,), (2,), (1, 1), (2, 1)]), min_size=5, max_size=5),
+    st.lists(
+        st.sampled_from([(), (0,), (1,), (2,), (3,), (1, 1), (2, 1)]), min_size=5, max_size=5
+    ),
     st.sampled_from([np.float64, np.float32, np.longdouble]),
 )
-def test_check_radio_arrays_accepts_equal_shapes_of_at_most_one_dimension(shapes, dtype):
-    """5 arrays of one shape with at most 1 dimension pass as float64 JAX arrays of that
-    shape; any other set of shapes is refused with a ValueError that names the isotopes."""
+def test_check_radio_arrays_accepts_shapes_that_broadcast_to_one_dimension(shapes, dtype):
+    """5 arrays whose shapes broadcast to at most 1 dimension pass as float64 JAX arrays of
+    their own shapes; any other set is refused with a ValueError that names the isotopes."""
     pytest.importorskip('jax')
     from aragog.jax.solver import check_radio_arrays
 
     arrays = [np.full(s, v, dtype=dtype) for s, v in zip(shapes, _RADIO_OK)]
-    valid = len(set(shapes)) == 1 and len(shapes[0]) <= 1
+    try:
+        valid = len(np.broadcast_shapes(*shapes)) <= 1
+    except ValueError:
+        valid = False
     try:
         out = check_radio_arrays(*arrays)
     except ValueError as exc:
         assert not valid and str(exc).startswith('Radionuclide'), exc
     else:
-        assert valid and all(o.shape == shapes[0] and o.dtype == np.float64 for o in out)
+        assert valid and all(
+            o.shape == s and o.dtype == np.float64 for o, s in zip(out, shapes)
+        )
 
 
 @pytest.mark.unit
