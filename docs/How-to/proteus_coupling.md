@@ -45,6 +45,12 @@ This is the production-default pairing: SUNDIALS CVODE with the JAX-derived anal
 
 ---
 
+## Solid-state convection in coupled runs
+
+Solid-state mantle rheology (`[phase_solid.rheology]`: temperature-dependent Arrhenius creep, Byerlee yielding and stagnant-lid thermal resistance) is available in standalone Aragog runs only; the PROTEUS configuration has no key that enables it, so a coupled run uses Aragog without it. See [Solid-state convection](../Explanations/solid_state_convection.md) for theory and benchmark verification.
+
+---
+
 ## Backend selection
 
 `backend = "jax"` (default) routes the RHS through `aragog.jax` and the analytic Jacobian through `jax.jacrev`. The JAX path eliminates the noise of CVODE's finite-difference Jacobian at production tolerances; it is the only path that consistently survives the rheological transition without tripping Aragog's T_core-jump retry guard.
@@ -63,14 +69,15 @@ The `diffrax` direct-JAX integration path is research-only and is not exposed th
 
 ## Core boundary condition
 
-Aragog supports four core-mantle boundary modes:
+Aragog supports five core-mantle boundary modes:
 
 | Mode | When to use | Notes |
 |---|---|---|
-| `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the Bower et al. (2018)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy across the CMB. |
+| `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the Bower et al. (2018)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy through the CMB. |
 | `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
+| `"core_module"` | Core evolution with inner-core growth. | The core evolution budget of `aragog.core` with a boundary-layer CMB flux; see [Core BC modes](../Explanations/core_bc.md). |
 
 ```toml
 [interior_energetics.aragog]
@@ -98,7 +105,7 @@ phi_step_cap = 0.05      # production default
 # phi_step_cap = 0.001   # very tight; only when oscillations show up early
 ```
 
-With `phi_step_cap = 0.0` the rootfn is not registered. The scipy fallbacks (`solver_method = "radau"` or `"bdf"`) register the equivalent capping logic as a `solve_ivp` event with `terminal=True`, so the same TOML behaves consistently across backends.
+With `phi_step_cap = 0.0` the rootfn is not registered. The scipy fallbacks (`solver_method = "radau"` or `"bdf"`) register the equivalent capping logic as a `solve_ivp` event with `terminal=True`, so the same TOML behaves consistently on all backends.
 
 See the dedicated [`phi_step_cap` how-to](phi-step-cap.md) for tuning guidance.
 
@@ -122,7 +129,7 @@ rtol = 1e-8
 atol_temperature_equivalent = 1e-8
 ```
 
-The `1e-8` temperature-equivalent default mirrors SPIDER's `atol = rtol = 1e-8` setting and eliminates the CVODE marginal-stability bifurcation that appeared at the first dt jump after equilibration with a looser `3e-7`. Tightening further has diminishing returns; loosening risks silent integration drift across the rheological transition.
+The `1e-8` temperature-equivalent default mirrors SPIDER's `atol = rtol = 1e-8` setting and eliminates the CVODE marginal-stability bifurcation that appeared at the first dt jump after equilibration with a looser `3e-7`. Tightening further has diminishing returns; loosening risks silent integration drift through the rheological transition.
 
 ---
 
@@ -285,7 +292,9 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 **Defaults**: `rtol = 1e-8` for Aragog when unset (`1e-10` for SPIDER), `atol = 1e-10` (not used by Aragog), `atol_temperature_equivalent = 1e-8` (the atol Aragog receives).
 **Recommendation**: keep production defaults.
 
-In coupled runs, loosening to `1e-7` brings back the CVODE marginal-stability bifurcation at iteration $\sim 9$ and silent drift across the rheological transition; this coupled-run observation is separate from the CVODE lock at the switch $dS/dr = 0$ (the convective mask and the $\kappa_h$ floor), for which Aragog logs one warning when `rtol` is above `1e-8`. The counts below come from a probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, fixed cap unless stated) that draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$; the probe script is not in the repository, and the runs were on macOS arm64. A run counts as locked when it has not reached 200 yr after 600 s of wall time: every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations. With `rtol` = `atol` = `1e-6`, CVODE locked in 12 of 1133 runs, in 4 of 474 on the quasi_steady core and in 2 of 286 with the rate cap, where 2 more runs finished only after 233 s and 346 s. With both at `1e-5`, all 80 runs were run to 600 s and none locked (too few runs to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations), but the median run needed about $1.6 \times 10^4$ RHS evaluations, against about $1.3 \times 10^3$ at `1e-8`. With both at `1e-8`, CVODE locked in none of 1026, 627 and 1224 runs for three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). With `atol` at `1e-8` and `rtol` at `2e-8`, `5e-8` or `1e-7`, the values of the PROTEUS retry ladder, it locked in none of the runs: 1308 to 1836 for each value and core with the fixed cap, and 620 and 636 with the rate cap at `5e-8` and `1e-7`. These counts hold for the 24-node standalone case, not for a coupled solve. On CI the AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning. With `rtol` at `1e-8`, the `CV_TOO_MUCH_WORK` retry ladder relaxes it to `2e-8`, `5e-8` and `1e-7`, above the limit; the warning is logged once per solver, so it names the first relaxed value and later rungs stay silent. Tightening below `1e-10` has diminishing returns.
+The PROTEUS retry rungs that loosen `rtol` or raise the absolute-tolerance scale cannot loosen `phase_boundary_cap = "rate"` segments that start with every cell at or below the solidus beyond `rtol` $= 10^{-9}$ and a physical atol of $10^{-8}$.
+
+In coupled runs, loosening to `1e-7` brings back the CVODE marginal-stability bifurcation at iteration $\sim 9$ and silent drift through the rheological transition; this coupled-run observation is separate from the CVODE lock at the convective switch (the convective mask and the $\kappa_h$ floor), for which Aragog logs one warning when `rtol` is above `1e-8`. The counts below were measured at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$; the probe did not cover $D > 0$, where CVODE also stalled at `1e-8` (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). They come from a probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, fixed cap unless stated) that draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$; the probe script is not in the repository, and the runs were on macOS arm64. A run counts as locked when it has not reached 200 yr after 600 s of wall time: every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations. With `rtol` = `atol` = `1e-6`, CVODE locked in 12 of 1133 runs, in 4 of 474 on the quasi_steady core and in 2 of 286 with the rate cap, where 2 more runs finished only after 233 s and 346 s. With both at `1e-5`, all 80 runs were run to 600 s and none locked (too few runs to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations), but the median run needed about $1.6 \times 10^4$ RHS evaluations, against about $1.3 \times 10^3$ at `1e-8`. With both at `1e-8`, CVODE locked in none of 1026, 627 and 1224 runs for three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). With `atol` at `1e-8` and `rtol` at `2e-8`, `5e-8` or `1e-7`, the values of the PROTEUS retry ladder, it locked in none of the runs: 1308 to 1836 for each value and core with the fixed cap, and 620 and 636 with the rate cap at `5e-8` and `1e-7`. These counts hold for the 24-node standalone case, not for a coupled solve. On CI the AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning. With `rtol` at `1e-8`, the `CV_TOO_MUCH_WORK` retry ladder relaxes it to `2e-8`, `5e-8` and `1e-7`, above the limit; the warning is logged once per solver, so it names the first relaxed value and later rungs stay silent. Tightening below `1e-10` has diminishing returns.
 
 ### 7. `interior_energetics.num_levels`
 
@@ -321,7 +330,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 - **`core_bc = "energy_balance"` without `mass_coordinates = true`** is a silent basal-cell volume mismatch. The schema does not yet enforce the pairing; keep both at production defaults.
 - **`phi_step_cap = 0.0` plus a hot wet super-Earth IC** can hit a CVODE step that overshoots the rheological transition. Switch to `0.05`.
 - **Disabling all four `trans_*` flags** is rejected by `valid_aragog`. At least one transport term must be active.
-- **`backend = "numpy"` at production tolerances** can trip Aragog's T_core-jump retry guard at the first dt jump. Switch to `"jax"` (or loosen tolerances explicitly, knowing this will silently drift across the rheological transition).
+- **`backend = "numpy"` at production tolerances** can trip Aragog's T_core-jump retry guard at the first dt jump. Switch to `"jax"` (or loosen tolerances explicitly, knowing this will silently drift through the rheological transition).
 
 For the why behind these, see the [Coupling to PROTEUS theory page](../Explanations/proteus_coupling.md).
 

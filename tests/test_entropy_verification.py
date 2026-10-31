@@ -1003,8 +1003,8 @@ class TestGreyBodyCooling:
         eventually transports entropy out of the upper interior.
 
         With an isentropic initial profile (dS/dr = 0 everywhere), the
-        MLT eddy diffusivity is zero and there is no convective flux in
-        the interior at t = 0. Convection only switches on once the
+        convective flux, proportional to dS/dr, is zero in the interior
+        at t = 0. The convective flux becomes non-zero only once the
         surface cooling builds a negative-dS/dr boundary layer, after
         which entropy is transported out of the cells just below the
         surface. Verifying that this happens at all is what

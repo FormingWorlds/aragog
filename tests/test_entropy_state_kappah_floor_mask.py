@@ -1,12 +1,13 @@
-"""Regression tests for the convective-mask gating of the kappa_h floor on
+"""Regression tests for the floor-mask gating of the kappa_h floor on
 the numpy (scipy Radau/BDF + parity-harness) solver path.
 
 The phi-modulated kappa_h floor (``kappah_floor``) must act ONLY in
-convectively-unstable cells (dS/dr < 0). A stably-stratified, just-frozen
-mushy cell at the crystallisation front must NOT receive a floored eddy
-diffusivity: the signed convective flux ``rho*T*kappa_h*(-dS/dr)`` would
-otherwise inject a spurious sign-flipped flux that pins the cell
-sub-solidus (the T_cmb-cliff / front-inversion artifact). SPIDER carries
+cells with dS/dr < D (D the convective threshold). A mushy cell with a
+stable gradient above D, such as a just-frozen cell at the crystallisation
+front, must NOT receive a floored eddy diffusivity: the signed convective
+flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a spurious
+sign-flipped flux that pins the cell sub-solidus (the T_cmb-cliff /
+front-inversion artifact). SPIDER carries
 no kappa_h floor, so floor = 0 in stratified layers is the
 SPIDER-consistent limit.
 
@@ -14,8 +15,8 @@ The numpy floor lives in the source helper
 ``aragog.solver.entropy_state.apply_kappah_floor``, which
 ``EntropyState.update`` calls with
 ``f_floor = tanh_weight(phi, phi_rheo, phi_width)`` and
-``is_convective = self._dSdr < 0``. The helper computes
-``kappah_floor * f_floor * is_convective`` and floors the raw eddy
+``floor_mask = self._dSdr < self._convective_threshold``. The helper computes
+``kappah_floor * f_floor * floor_mask`` and floors the raw eddy
 diffusivity with ``np.maximum``. The companion file
 ``test_jax_kappah_floor_mask.py`` covers the JAX twin
 (``aragog.jax.phase.compute_mlt``).
@@ -25,11 +26,11 @@ Strategy. Two complementary checks are used:
 * The ``test_numpy_floor_*_matches_jax`` and ``..._strict_stable_vs_convecting``
   checks call the REAL source helper ``apply_kappah_floor`` (via the thin
   ``_numpy_floor`` wrapper that only derives ``f_floor`` and
-  ``is_convective``), using the already-verified production JAX
+  ``floor_mask``), using the already-verified production JAX
   ``compute_mlt`` as the ground-truth floored kappa_h in a controlled
   stratified-mush state. They assert term-for-term parity at floor = 10 and
   run in every environment (no EOS data required), so a regression that drops
-  the convective mask inside ``apply_kappah_floor`` fails them. They are the
+  the floor mask inside ``apply_kappah_floor`` fails them. They are the
   discriminating gated-vs-ungated contrast on the numpy formula.
 * ``test_numpy_entropy_state_floor_gated_end_to_end`` exercises the real
   ``EntropyState.update`` numpy MLT block end-to-end when SPIDER P-S tables
@@ -61,6 +62,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(30, method='signal')]
 # ---------------------------------------------------------------------------
 
 _KAPPAH_FLOOR = 10.0
+_D = 1.0e-6  # convective threshold of the D > 0 cases [J/kg/K/m]
 _PHI_RHEO = 0.4
 _PHI_WIDTH = 0.15
 _PHI_MUSH = 0.40  # mushy cell sits at the rheological transition (phi_rheo)
@@ -72,7 +74,7 @@ _PARAMS = dict(
 )
 
 
-def _mesh(n_basic: int) -> MeshArrays:
+def _mesh(n_basic: int, ml=1.0e2, gravity: float = 9.81) -> MeshArrays:
     """Synthetic mesh with a short mixing length (100 m) so the raw
     (un-floored) MLT diffusivity sits far below ``kappah_floor``, making the
     floor's presence/absence resolvable rather than masked by a large raw
@@ -89,13 +91,13 @@ def _mesh(n_basic: int) -> MeshArrays:
         volume=jnp.ones(n_basic),
         radii_basic=r_basic,
         radii_stag=r_stag,
-        mixing_length=jnp.ones(n_basic) * 1.0e2,
-        mixing_length_sq=jnp.ones(n_basic) * 1.0e4,
-        mixing_length_cu=jnp.ones(n_basic) * 1.0e6,
+        mixing_length=jnp.ones(n_basic) * ml,
+        mixing_length_sq=jnp.ones(n_basic) * ml**2,
+        mixing_length_cu=jnp.ones(n_basic) * ml**3,
         P_stag=P_stag,
         P_basic=P_basic,
         dP_dr_basic=jnp.gradient(P_basic, r_basic),
-        gravity=jnp.full(n_basic, 9.81),
+        gravity=jnp.full(n_basic, gravity),
     )
 
 
@@ -122,17 +124,17 @@ def _numpy_floor(kh_raw: np.ndarray, phi: np.ndarray, dSdr: np.ndarray) -> np.nd
     """Apply the numpy-path kappa_h floor by calling the REAL source helper
     ``aragog.solver.entropy_state.apply_kappah_floor``.
 
-    The masked-multiply that gates the floor to convecting cells
-    (``kappah_floor * f_floor * is_convective`` then ``max(kappa_h_raw, .)``)
+    The masked-multiply that gates the floor to cells with dS/dr < D
+    (``kappah_floor * f_floor * floor_mask`` then ``max(kappa_h_raw, .)``)
     is the source function under test; only the ``f_floor`` and
-    ``is_convective`` derivations are reproduced here, from the same
-    ``tanh_weight`` symbol and the same ``dSdr < 0`` definition the source
-    uses. A regression that drops the ``is_convective`` mask inside
+    ``floor_mask`` derivations are reproduced here, from the same
+    ``tanh_weight`` symbol and the same ``dS/dr < D`` definition the source
+    uses. A regression that drops the ``floor_mask`` inside
     ``apply_kappah_floor`` therefore fails these parity checks.
     """
     f_floor = tanh_weight(phi, _PHI_RHEO, _PHI_WIDTH)
-    is_convective = dSdr < 0.0
-    return apply_kappah_floor(kh_raw, _KAPPAH_FLOOR, f_floor, is_convective)
+    floor_mask = dSdr < _D
+    return apply_kappah_floor(kh_raw, _KAPPAH_FLOOR, f_floor, floor_mask)
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +143,8 @@ def _numpy_floor(kh_raw: np.ndarray, phi: np.ndarray, dSdr: np.ndarray) -> np.nd
 
 
 def test_numpy_floor_off_in_stable_mushy_cell_matches_jax():
-    """A stably-stratified mushy cell (dS/dr >= 0, phi at phi_rheo) must NOT
-    receive the numpy kappa_h floor; the floor is gated to convecting cells.
+    """A stably-stratified mushy cell (dS/dr above D, phi at phi_rheo) must NOT
+    receive the numpy kappa_h floor; the floor is gated to cells with dS/dr < D.
 
     The production JAX ``compute_mlt`` is the verified reference: its floored
     output in this state is the ground truth the numpy floor must reproduce.
@@ -159,7 +161,7 @@ def test_numpy_floor_off_in_stable_mushy_cell_matches_jax():
     params = PhaseParams(**_PARAMS)
 
     # Convecting (dS/dr < 0) everywhere except a single stable cell at k.
-    dSdr_jax = jnp.full(n_basic, -1.0e-6).at[k].set(+1.0e-6)
+    dSdr_jax = jnp.full(n_basic, -1.0e-6).at[k].set(+1.0e-4)
     kh_jax, _ = compute_mlt(dSdr_jax, ph, mesh, params)
 
     # Numpy path: reproduce the raw (pre-floor) kappa_h from the JAX run by
@@ -238,7 +240,7 @@ def test_numpy_floor_gating_is_a_strict_stable_vs_convecting_contrast():
 
     kh_conv = _numpy_floor(kh_raw, phi_np, np.full(n_basic, -1.0e-6))
     dSdr_stable = np.full(n_basic, -1.0e-6)
-    dSdr_stable[k] = +1.0e-6
+    dSdr_stable[k] = +1.0e-4
     kh_stable = _numpy_floor(kh_raw, phi_np, dSdr_stable)
 
     kh_floor_k = _KAPPAH_FLOOR * float(
@@ -262,7 +264,7 @@ needs_eos = pytest.mark.skipif(
 )
 
 
-def _build_state(eos, *, kappah_floor: float):
+def _build_state(eos, *, kappah_floor: float, convective_threshold=_D, rheology=None):
     """Mirror of ``test_entropy_state_branches._build_state`` with the
     kappa_h floor enabled, returning the state plus the mesh."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -323,9 +325,13 @@ def _build_state(eos, *, kappah_floor: float):
     mesh.dr = dr
     mesh.N = N
 
-    phase_stag = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0, rheology=rheology
+    )
     phase_stag.set_pressure(mesh.staggered.pressure)
-    phase_basic = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0, rheology=rheology
+    )
     phase_basic.set_pressure(mesh.basic.pressure)
 
     class _Eval:
@@ -342,6 +348,11 @@ def _build_state(eos, *, kappah_floor: float):
         convection=True,
         eddy_diffusivity_thermal=1.0,
         kappah_floor=kappah_floor,
+        **(
+            {}
+            if convective_threshold is None
+            else {'convective_threshold': convective_threshold}
+        ),
     )
     return state, mesh
 
@@ -349,7 +360,7 @@ def _build_state(eos, *, kappah_floor: float):
 @needs_eos
 def test_numpy_entropy_state_floor_gated_end_to_end():
     """End-to-end numpy MLT floor: a mushy basic cell held at phi ~ phi_rheo
-    receives the kappa_h floor only when it is convecting (dS/dr < 0), and
+    receives the kappa_h floor only while dS/dr < D, and
     keeps its raw (sub-floor) eddy diffusivity when stably stratified.
 
     Exercises the real ``EntropyState.update`` numpy floor block via a
@@ -381,7 +392,7 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
 
     # Stable at cell k only: floor must switch off there, stay on elsewhere.
     dSdr_stable = np.full(n_basic, -1.0e-6)
-    dSdr_stable[k] = +1.0e-6
+    dSdr_stable[k] = +1.0e-4
     state.update(S0, time=0.0, dSdr=dSdr_stable)
     kh_stable = np.asarray(state.eddy_diffusivity).ravel().copy()
 
@@ -403,3 +414,227 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
         f'vs floor {kh_floor_k}'
     )
     assert kh_stable[k] < 0.1 * kh_conv[k]
+
+
+# Basic-node entropy gradients [J/kg/K/m] across D = 1e-6, set at nodes 5 to 12.
+_DSDR_D = [-1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 2.0e-6, 1.0e-4]
+
+
+def _update_with_gradients(values, start=5, *, phi=_PHI_MUSH, mixing=False, **state_kwargs):
+    """Run ``EntropyState.update`` on a mush at melt fraction ``phi`` with dS/dr equal to
+    ``values`` from node ``start`` and -1e-6 elsewhere."""
+    eos = entropy_eos_copy(EOS_DIR)
+    state, mesh = _build_state(eos, **state_kwargs)
+    state._mixing = mixing
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    dSdr[start : start + len(values)] = values
+    state.update(S_sol + phi * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    return state, mesh, dSdr
+
+
+def _update_across_threshold(convective_threshold: float):
+    """``_DSDR_D`` at nodes 5 to 12 of a phi_rheo mush with the floor on."""
+    return _update_with_gradients(
+        _DSDR_D, kappah_floor=_KAPPAH_FLOOR, convective_threshold=convective_threshold
+    )
+
+
+@needs_eos
+def test_numpy_zero_threshold_is_the_sign_switch():
+    """D = 0 gives the kappa_h and heat flux of the dS/dr < 0 switch, including
+    the nodes at dS/dr = 0 and +-1e-31; D = 1e-6 does not.
+
+    The reference applies the floor by hand to the run without the floor, only
+    where dS/dr < 0, so it does not depend on the EOS table set.
+    """
+    state, _, dSdr = _update_across_threshold(0.0)
+    raw, _, _ = _update_with_gradients(_DSDR_D, kappah_floor=0.0, convective_threshold=0.0)
+    kh_raw = np.asarray(raw.eddy_diffusivity).ravel()
+    phi = np.asarray(state.phase_basic.melt_fraction()).ravel()
+    floor = _KAPPAH_FLOOR * tanh_weight(phi, _PHI_RHEO, _PHI_WIDTH)
+    kh_ref = np.where(dSdr < 0.0, np.maximum(kh_raw, floor), kh_raw)
+    rho_t = (
+        np.asarray(state.phase_basic.density()).ravel()
+        * np.asarray(state.phase_basic.temperature()).ravel()
+    )
+    hf_ref = raw.heat_flux - rho_t * (kh_ref - kh_raw) * dSdr
+    assert kh_ref[7] == floor[7] > 1.0 and np.all(kh_ref[8:13] < 1.0e-12)
+    # Table-independent anchor: at dS/dr = 0 the drive is 5e-31 and the viscous branch sets kappa_h.
+    pb, n = raw.phase_basic, dSdr.size
+    g, a, t, cp, nu = (
+        (np.asarray(f()) * np.ones(n))[8]
+        for f in (pb.gravitational_acceleration, pb.thermal_expansivity, pb.temperature,
+                  pb.heat_capacity, pb.kinematic_viscosity)
+    )  # fmt: skip
+    ml = np.asarray(raw._mixing_length).ravel()[8]
+    assert dSdr[8] == 0.0 and kh_raw[8] == pytest.approx(
+        g * a * t * 5e-31 / cp * ml**4 / (18 * nu), rel=1e-12, abs=0
+    )
+    np.testing.assert_allclose(state.eddy_diffusivity[5:13], kh_ref[5:13], rtol=1e-12, atol=0)
+    np.testing.assert_allclose(state.heat_flux[5:13], hf_ref[5:13], rtol=1e-12, atol=0)
+    state_d, _, _ = _update_across_threshold(_D)
+    # The node at +5e-7 gets the floor only: no chemical diffusivity, a small downward flux.
+    assert 0.0 < state_d.eddy_diffusivity[10] <= _KAPPAH_FLOOR and state_d._kappac[10] == 0.0
+    assert state_d.heat_flux[10] < 0.0
+
+
+@needs_eos
+@pytest.mark.parametrize('phi', [0.0, _PHI_MUSH, 1.0])
+@pytest.mark.parametrize('D', [None, _D, 3.0e-6])
+def test_numpy_matches_jax_across_threshold(D, phi):
+    """The numpy and JAX thermal and chemical eddy diffusivities agree on every
+    node, from dS/dr = -1e-4 through 0 and +0.5 D to +1e-4, in a solid, a mush and
+    a liquid, at the default D (None: no argument, 0) and two D > 0, except for the
+    residual numpy drive at 0 <= dS/dr < 1e-22."""
+    state, mesh, dSdr = _update_with_gradients(
+        _DSDR_D, phi=phi, kappah_floor=_KAPPAH_FLOOR, convective_threshold=D
+    )
+    pb = state.phase_basic
+    n = dSdr.size
+
+    def col(f):
+        return jnp.asarray(np.asarray(f()).ravel())
+
+    props = PhaseProperties(
+        temperature=col(pb.temperature),
+        density=col(pb.density),
+        heat_capacity=col(pb.heat_capacity),
+        thermal_expansivity=col(pb.thermal_expansivity),
+        dTdPs=jnp.zeros(n),
+        melt_fraction=col(pb.melt_fraction),
+        viscosity=jnp.ones(n),
+        kinematic_viscosity=col(pb.kinematic_viscosity),
+        thermal_conductivity=jnp.ones(n),
+        latent_heat=jnp.ones(n),
+        capacitance=jnp.ones(n),
+    )
+    jmesh = _mesh(n, ml=jnp.asarray(mesh.basic.mixing_length), gravity=10.0)
+    params = PhaseParams(
+        kappah_floor=_KAPPAH_FLOOR,
+        phi_rheo=float(pb._phi_rheo),
+        phi_width=float(pb._phi_width),
+        eddy_diff_thermal=1.0,
+        **({} if D is None else {'convective_threshold': D}),
+    )
+    assert state._convective_threshold == params.convective_threshold == (D or 0.0)
+    kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
+    # At 0 <= dS/dr < 1e-22 the numpy drive keeps up to 5e-31 (JAX: 0): a kappa_c (and at D = 0 a
+    # kappa_h) of about 3e-29 (solid), 1.5e-18 (mush) and 1.7e-7 (liquid) m^2/s with these tables.
+    bound = {0.0: 1.0e-26, _PHI_MUSH: 1.0e-16, 1.0: 1.0e-6}[phi]
+    res = (dSdr >= 0.0) & (dSdr < 1.0e-22)
+    kh_np, kh_jax, kc_jax = state.eddy_diffusivity, np.asarray(kh_jax), np.asarray(kc_jax)
+    exact = ~res if D is None else np.ones_like(res)  # D > 0 floors the residual nodes
+    np.testing.assert_allclose(kh_np[exact], kh_jax[exact], rtol=1e-10, atol=0)
+    assert np.all(np.abs(kh_np[res] - kh_jax[res]) < bound)
+    np.testing.assert_allclose(state._kappac[~res], kc_jax[~res], rtol=1e-10, atol=0)
+    assert np.all(kc_jax[res] == 0.0) and np.all(state._kappac[res] < bound)
+
+
+@needs_eos
+def test_numpy_cmb_node_follows_the_node_above_across_0_and_D():
+    """The CMB node copies kappa_h of node 1, so its convective flux at a fixed CMB
+    gradient follows node 1 across 0 (mixing length to floor) and D (floor to 0)."""
+    D = _D
+    kh1 = []
+    for x in (-1.0e-300, 0.0, np.nextafter(D, 0.0), D):
+        state, _, dSdr = _update_with_gradients([x], start=1, kappah_floor=_KAPPAH_FLOOR)
+        kh = state.eddy_diffusivity
+        rho_t = (
+            np.asarray(state.phase_basic.density()).ravel()
+            * np.asarray(state.phase_basic.temperature()).ravel()
+        )
+        assert kh[0] == kh[1] and state.jconv[0] == pytest.approx(rho_t[0] * kh[1] * -dSdr[0])
+        kh1.append(kh[1])
+    assert kh1[0] > kh1[1] == kh1[2] > 0.0 == kh1[3]
+
+
+@needs_eos
+def test_numpy_threshold_is_strict_at_D():
+    """On the numpy path a node just below D gets the floor only and nodes at D and
+    just above get nothing; ``EntropyState`` rejects a negative D."""
+    D = _D
+    x = [np.nextafter(D, 0.0), D, np.nextafter(D, 1.0)]
+    state, _, _ = _update_with_gradients(x, kappah_floor=_KAPPAH_FLOOR)
+    assert 0.0 < state.eddy_diffusivity[5] <= _KAPPAH_FLOOR and state._kappac[5] == 0.0
+    assert state.eddy_diffusivity[6] == 0.0 and state.eddy_diffusivity[7] == 0.0
+    assert state._kappac[6] == 0.0
+    with pytest.raises(ValueError, match='convective_threshold'):
+        _build_state(
+            entropy_eos_copy(EOS_DIR), kappah_floor=_KAPPAH_FLOOR, convective_threshold=-1.0e-6
+        )
+
+
+@needs_eos
+def test_numpy_band_has_no_mixing_length_flux():
+    """Without the floor, no node with 0 <= dS/dr < D has an eddy diffusivity, a
+    convective flux or a mixing flux on the numpy path, while the mixing flux of the
+    mush just below 0 is large and downward."""
+    x = [-1.0e-300, 0.0, 1.0e-31, 5.0e-7, np.nextafter(_D, 0.0)]
+    state, _, _ = _update_with_gradients(x, 4, mixing=True, kappah_floor=0.0)
+    # 0 and +1e-31 keep the numpy drive of x ~ 0 (below 1e-18 m^2/s here); the rest is exactly 0.
+    assert np.all(state.eddy_diffusivity[5:9] < 1.0e-12) and np.all(
+        state._kappac[5:9] < 1.0e-12
+    )
+    assert np.all(state.eddy_diffusivity[7:9] == 0.0) and np.all(state.jconv[7:9] == 0.0)
+    assert state.eddy_diffusivity[3] > 1.0e3
+    jmix = np.asarray(state._jmix_heat)
+    assert jmix[4] < -1.0e7 and np.all(np.abs(jmix[5:9]) < 1.0e-6)
+
+
+@needs_eos
+@pytest.mark.parametrize('phi', [0.4, 0.95])
+def test_numpy_convective_flux_never_runs_up_a_stable_gradient(phi):
+    """Across dS/dr from -1e-4 through 0 and D to 1e-4, with the mixing flux on, the
+    convective flux is upward only where dS/dr < 0, and a downward convective flux
+    (the floor band) stays below rho*T*kappah_floor*D."""
+    D = _D
+    x = np.array([-1e-4, -1e-6, -1e-9, 0.0, 1e-9, 5e-7, np.nextafter(D, 0.0), D, 1e-4])
+    state, _, _ = _update_with_gradients(x, phi=phi, mixing=True, kappah_floor=_KAPPAH_FLOOR)
+    jconv = np.asarray(state.jconv)[5 : 5 + x.size]
+    rho_T = (state.phase_basic.density() * state.phase_basic.temperature()).ravel()
+    bound = rho_T[5 : 5 + x.size] * _KAPPAH_FLOOR * D
+    assert np.all(jconv[x < 0] > 0.0)
+    assert np.all(jconv[x >= 0] <= 0.0)
+    assert np.all(np.abs(jconv[x >= 0]) <= bound[x >= 0])
+    assert np.abs(jconv[5]) > 0.1 * bound[5]  # the band node at 5e-7 carries the floor flux
+
+
+@needs_eos
+@pytest.mark.physics_invariant
+def test_numpy_floor_with_rheology_on_is_the_zero_anchored_weight_at_a_mushy_node():
+    """With the solid rheology on, a convecting mushy node at phi ~ 0.2 whose raw eddy
+    diffusivity lies far below the floor takes kappa_h = kappah_floor * w(phi), with w the
+    tanh ramp rescaled to w(0) = 0 and w(1) = 1.
+
+    Discriminating: the plain tanh ramp gives a floor 7 % higher at this phi, and a zero
+    floor leaves the raw value, more than four orders of magnitude lower.
+    """
+    from aragog.rheology import SolidRheologyParams
+
+    eos = entropy_eos_copy(EOS_DIR)
+    state, mesh = _build_state(
+        eos, kappah_floor=_KAPPAH_FLOOR, rheology=SolidRheologyParams(enabled=True)
+    )
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    S0 = S_sol + 0.2 * (S_liq - S_sol)
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    k = 5
+    state.update(S0, time=0.0, dSdr=dSdr)
+    kh = float(np.asarray(state.eddy_diffusivity).ravel()[k])
+    phi_k = float(np.asarray(state.phase_basic.melt_fraction()).ravel()[k])
+
+    state._kappah_floor = 0.0
+    state.update(S0, time=0.0, dSdr=dSdr)
+    kh_raw = float(np.asarray(state.eddy_diffusivity).ravel()[k])
+
+    def ramp(x):
+        return 0.5 * (1.0 + np.tanh((x - _PHI_RHEO) / _PHI_WIDTH))
+
+    w_hand = (ramp(phi_k) - ramp(0.0)) / (ramp(1.0) - ramp(0.0))
+    assert phi_k == pytest.approx(0.2, abs=1.0e-3)
+    assert kh_raw < 1.0e-3 * _KAPPAH_FLOOR * w_hand
+    assert kh == pytest.approx(_KAPPAH_FLOOR * w_hand, rel=1.0e-12)
+    assert abs(kh - _KAPPAH_FLOOR * ramp(phi_k)) > 0.05 * kh

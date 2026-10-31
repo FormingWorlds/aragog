@@ -94,7 +94,7 @@ aragog run <config.toml> --eos-dir <path> [--initial-entropy <S0>] [options]
 ```
 
 Solves a configured run in full and writes a NetCDF snapshot.
-Solver status 0 (success) and 1 (stop at a step-cap event) are successful runs, any other status is a failure (`SolverOutput.failed`). If the integration fails, the command writes the state at the last successful output time (the initial state if the solver fails before the first output) and exits with status 1. A run stopped early by a per-call step cap (`energy.phi_step_cap`, `energy.temperature_step_cap` or `energy.entropy_step_cap`) exits 0, with the snapshot at the stop time.
+Solver status 0 (success) and 1 (stop at a step-cap event, or, with the floor on (`energy.eos_floor_margin` > 0), a call that the EOS floor does not let advance; see [Solver method tuning](../How-to/solver-method-tuning.md#eos-floor)) are successful runs, any other status is a failure (`SolverOutput.failed`). If the integration fails, the command writes the state at the last successful output time (the initial state if the solver fails before the first output) and exits with status 1. A run stopped early by a per-call step cap (`energy.phi_step_cap`, `energy.temperature_step_cap` or `energy.entropy_step_cap`) exits 0, with the snapshot at the stop time.
 Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): load `Parameters`, initialise the solver, set the initial-condition state vector, solve, and call `SolverOutput.to_netcdf`.
 
 `--initial-entropy` is optional when the config's `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic); the CLI then derives $S_0$ by inverting $T(P_\mathrm{surf}, S) = $ `surface_temperature` against the loaded EOS. The bundled `cfg/abe_*.{toml,cfg}` configs all set `surface_temperature`, so they run without the flag. Pass `--initial-entropy` explicitly to override the derivation.
@@ -105,7 +105,7 @@ Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): l
 |---|---|---|
 | `--eos-dir PATH` | directory | SPIDER-format P-S EOS tables. Defaults to `$FWL_DATA/spider/lookup-fs` if the env var is set. |
 | `--initial-entropy FLOAT` | J/kg/K | Initial isentropic profile. Optional when the `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic): the CLI then derives $S_0$ from `T(P_\mathrm{surf}, S) = $ `surface_temperature`. Required in all other cases. |
-| `--initial-dsdr-cmb FLOAT` | J/kg/K/m | Initial CMB entropy gradient. Used only when `core_bc = "energy_balance"`. Default 0. |
+| `--initial-dsdr-cmb FLOAT` | J/kg/K/m | Initial CMB entropy gradient. Sets the CMB flux when `core_bc` is `"energy_balance"`; `"core_module"` carries the slot without effect (its flux is the boundary-layer law); the other modes ignore it. Default 0. |
 | `--out PATH` | file | NetCDF output path. Defaults to `<config-stem>.nc` in the cwd. |
 | `--log-dir PATH` | directory | Directory for `aragog.log`. Defaults to the cwd. |
 | `--log-level {debug,info,warning,error}` | level | Console log level. Default `info`. |

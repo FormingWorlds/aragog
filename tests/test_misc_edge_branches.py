@@ -99,6 +99,22 @@ def test_nondim_scales_negative_rhs_scale_raises():
         NonDimScales(state_scale=state_scale, t_ref=1.0, rhs_scale=rhs_scale)
 
 
+def test_nondim_scales_offset_defaults_to_zero_and_checks_its_shape():
+    """The state offset is zero by default, kept when given, and refused when its shape differs
+    from the scale or a value is not finite."""
+    from aragog.jax.nondim import NonDimScales
+
+    scale = np.array([3.0e3, 1.0, 4.0e3])
+    assert np.array_equal(NonDimScales(state_scale=scale, t_ref=1.0).state_offset, np.zeros(3))
+    offset = np.array([0.0, 0.0, 6088.2])
+    assert np.array_equal(
+        NonDimScales(state_scale=scale, t_ref=1.0, state_offset=offset).state_offset, offset
+    )
+    for bad in (np.zeros(2), np.array([0.0, np.nan, 0.0])):
+        with pytest.raises(ValueError, match='state_offset'):
+            NonDimScales(state_scale=scale, t_ref=1.0, state_offset=bad)
+
+
 # ──────────────────────────────────────────────────────────────────────
 #                       parser.py
 # ──────────────────────────────────────────────────────────────────────

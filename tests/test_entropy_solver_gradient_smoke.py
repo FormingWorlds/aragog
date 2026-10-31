@@ -1,6 +1,6 @@
 """Smoke test of ``EntropySolver`` in ``core_bc='gradient'`` mode.
 
-The gradient mode is structurally distinct from the other three core_bc
+The gradient mode is structurally distinct from the other four core_bc
 modes: the state vector stores ``[dS/dr at N+1 basic nodes, S_surf]`` of
 length ``N+2`` rather than entropy at staggered nodes, and the entropy
 profile is reconstructed from the gradient state at every RHS call. The

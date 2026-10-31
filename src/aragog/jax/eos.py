@@ -22,6 +22,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from aragog.eos.table_cache import read_cached_table
+
 # Enable float64 (atmodeller does the same in its __init__.py)
 jax.config.update('jax_enable_x64', True)
 
@@ -54,6 +56,7 @@ class PhaseState(NamedTuple):
     gphi: jax.Array  # untruncated melt fraction
     smth: jax.Array  # mixed-vs-single blend factor
     latent_heat: jax.Array  # [J/kg]
+    solidus_temperature: jax.Array | None = None  # [K]
 
 
 def _tanh_weight_jax(x: jax.Array, threshold: float, width: float) -> jax.Array:
@@ -94,7 +97,7 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         S_scale = float(scales[1])
         Q_scale = float(scales[2])
 
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P_all = data[:, 0] * P_scale
     S_all = data[:, 1] * S_scale
     Q_all = data[:, 2] * Q_scale
@@ -144,7 +147,7 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         P_scale = float(scales[0])
         S_scale = float(scales[1])
 
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
@@ -473,9 +476,11 @@ class EntropyEOS_JAX(eqx.Module):
 
     def _lookup_phase_weighted(
         self,
-        prop_name: str,
+        prop_name: str | tuple[str, ...],
         P: jax.Array,
         S: jax.Array,
+        per_phase=None,
+        melt_weight=None,
     ) -> jax.Array:
         """Look up a property with phase weighting, matching numpy EntropyEOS.
 
@@ -491,9 +496,12 @@ class EntropyEOS_JAX(eqx.Module):
         Evaluating both tables at the actual (P, S) inside the mushy
         band would produce values that are not on either phase
         boundary, diverging from the numpy EntropyEOS reference.
+        With ``per_phase``, ``prop_name`` is a tuple of table names and
+        each phase's value is ``per_phase`` of those tables at that
+        phase's entropy, taken before the blend. ``melt_weight`` replaces phi as
+        the melt weight of the blend; it is 0 and 1 where phi is.
         """
         phi = self.melt_fraction(P, S)
-        solid_table, melt_table = self._get_tables(prop_name)
 
         S_sol = self.solidus_entropy(P)
         S_liq = self.liquidus_entropy(P)
@@ -502,11 +510,15 @@ class EntropyEOS_JAX(eqx.Module):
         S_for_solid = jnp.where(mushy, S_sol, S)
         S_for_melt = jnp.where(mushy, S_liq, S)
 
-        val_solid = solid_table(P, S_for_solid)
-        val_melt = melt_table(P, S_for_melt)
+        names = (prop_name,) if per_phase is None else prop_name
+        tables = [self._get_tables(name) for name in names]
+        combine = per_phase or (lambda value: value)
+        val_solid = combine(*(solid(P, S_for_solid) for solid, _ in tables))
+        val_melt = combine(*(melt(P, S_for_melt) for _, melt in tables))
 
-        result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
-            phi < 1, (1.0 - phi) * val_solid, 0.0
+        w = phi if melt_weight is None else melt_weight
+        result = jnp.where(w > 0, w * val_melt, 0.0) + jnp.where(
+            w < 1, (1.0 - w) * val_solid, 0.0
         )
         # A non-finite S (NaN or +-inf) would otherwise be masked to a
         # finite value by phi's clip and the tables' own edge-clamping;
@@ -540,6 +552,37 @@ class EntropyEOS_JAX(eqx.Module):
     def temperature(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Temperature T(P, S) [K]."""
         return self._lookup_phase_weighted('temperature', P, S)
+
+    def entropy_at_temperature(self, P: jax.Array, T: jax.Array) -> jax.Array:
+        """Entropy [J/kg/K] at scalar pressure ``P`` where ``temperature(P, S) = T``.
+
+        A fixed 60-step bisection over the tables' entropy range (its edge where ``T`` lies
+        beyond the range), plus a term that is zero in value and carries the implicit
+        derivatives ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``, which are zero
+        where ``dT/dS`` is below ``1e-12 |T|``; NaN for a NaN ``P`` or ``T``.
+        """
+        solid, melt = self._get_tables('temperature')
+        span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
+        t_fixed = jax.lax.stop_gradient(T)
+        p_fixed = jax.lax.stop_gradient(P)
+
+        def body(_, bracket):
+            lo, hi = bracket
+            mid = 0.5 * (lo + hi)
+            below = self.temperature(p_fixed, mid) < t_fixed
+            return jnp.where(below, mid, lo), jnp.where(below, hi, mid)
+
+        lo, hi = jax.lax.fori_loop(0, 60, body, (jnp.asarray(span[0]), jnp.asarray(span[1])))
+        s_root = jax.lax.stop_gradient(0.5 * (lo + hi))
+        slope = jax.lax.stop_gradient(jax.grad(self.temperature, argnums=1)(p_fixed, s_root))
+        # inside a flat band of the tables the slope is rounding, below 1e-16 |T|
+        slope = jnp.where(slope > 1e-12 * jnp.abs(t_fixed), slope, jnp.inf)
+        inside = (self.temperature(p_fixed, span[0]) < t_fixed) & (
+            t_fixed < self.temperature(p_fixed, span[1])
+        )
+        zero = (T - t_fixed) - (self.temperature(P, s_root) - self.temperature(p_fixed, s_root))
+        s = jnp.where(inside, s_root + zero / slope, s_root)
+        return jnp.where(jnp.isnan(P + T), jnp.nan, s)
 
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.
@@ -599,6 +642,26 @@ class EntropyEOS_JAX(eqx.Module):
         T_liq = self._lookup_at_phase_boundary('temperature', P, 'melt')
         T_fus = 0.5 * (T_sol + T_liq)
         return T_fus * jnp.maximum(S_liq - S_sol, 1.0)
+
+    def material_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:
+        """Thermal expansivity [1/K] of the phases, without the phase-change term.
+
+        The volume-weighted blend ``rho sum_i x_i alpha_i / rho_i`` of each phase's
+        ``rho cp |dT/dP|_S / T`` at its own entropy, with ``x_i`` the Lever-rule mass fractions
+        and ``rho`` the harmonic mixture density of ``density``.
+        """
+        phi = self.melt_fraction(P, S)
+        melt = phi / self._lookup_at_phase_boundary('density', P, 'melt')
+        volume = melt / (
+            melt + (1.0 - phi) / self._lookup_at_phase_boundary('density', P, 'solid')
+        )
+        return self._lookup_phase_weighted(
+            ('density', 'heat_capacity', 'dTdPs', 'temperature'),
+            P,
+            S,
+            per_phase=lambda rho, cp, dTdPs, T: rho * cp * jnp.abs(dTdPs) / jnp.maximum(T, 1.0),
+            melt_weight=volume,
+        )
 
     def thermal_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Thermal expansivity alpha(P, S) [1/K].
@@ -724,7 +787,7 @@ class EntropyEOS_JAX(eqx.Module):
         rho_single = _table_lookup_blend('density')
         Cp_single = _table_lookup_blend('heat_capacity')
         dTdPs_single = _table_lookup_blend('dTdPs')
-        # alpha derived from thermodynamic identity (no thermal_exp tables yet)
+        # alpha from the thermodynamic identity, as the NumPy evaluator; thermal_exp is not read
         alpha_single = dTdPs_single * rho_single * Cp_single / jnp.maximum(T_single, 1.0)
         cond_single = jnp.where(gphi > 0.5, k_liquid, k_solid)
 
@@ -763,4 +826,5 @@ class EntropyEOS_JAX(eqx.Module):
             gphi=jnp.where(finite_S, gphi, jnp.nan),
             smth=jnp.where(finite_S, smth, jnp.nan),
             latent_heat=latent_heat,
+            solidus_temperature=T_sol,
         )

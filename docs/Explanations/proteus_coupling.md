@@ -52,6 +52,8 @@ The initial entropy IC is set from `hf_row['ini_entropy']` on the first call, an
 
 It then re-loads the previous S-field, calls `solver.solve()`, and packs the achieved `dt_actual = sol.t[-1] - sol.t[0]` plus surface fluxes back into the wrapper's `Interior_t` state. The achieved `dt` may be shorter than the requested window when the SUNDIALS root function fires for `phi_step_cap`; PROTEUS's outer loop then advances `Time` by the achieved value rather than the requested one.
 
+Solid-state mantle rheology (`[phase_solid.rheology]`), with stagnant-lid growth and temperature-dependent viscosity, is available in standalone Aragog runs only; the PROTEUS configuration has no key that enables it. See [Solid-state convection](solid_state_convection.md) for stagnant-lid boundary layer physics.
+
 ### 3. Retry ladder
 
 A non-converged `solver.solve()` (status $\ne 0$, T_core jump $> 1500$ K, or NaN propagation) routes through a retry ladder that progressively perturbs the entropy gradient at the CMB (`set_initial_dSdr_cmb`) and loosens tolerances within a bounded window. After eight consecutive failures (`_ARAGOG_MAX_CONSECUTIVE_FAILS`) the run aborts. On first success the streak resets to zero and is logged for post-hoc analysis.
@@ -83,19 +85,16 @@ Aragog reads the current planet boundary state from `hf_row`, runs its time step
 | Key | Meaning |
 |---|---|
 | `T_magma` | Mantle potential temperature [K], mass-weighted from the entropy field |
-| `T_surf` | Top-of-mantle temperature [K] |
-| `T_core` | Core temperature [K], evolved via the energy-balance BC |
 | `Phi_global` | Global melt fraction [0, 1], mass-weighted |
 | `F_int` | Top-of-mantle energy flux [W m$^{-2}$] |
 | `F_radio` | Radiogenic surface-equivalent flux [W m$^{-2}$] |
 | `F_tidal` | Tidal surface-equivalent flux [W m$^{-2}$] (when `heat_tidal = true`) |
-| `dt_actual` | Achieved time step [yr], may be less than requested when `phi_step_cap` fires |
 | `E_state_cons_J` | Frozen-mass integrated mantle enthalpy [J]; pairs with `dE_predicted_cons_J` for the conservation residual |
-| `step_dE_*_J` | Per-call energy budget integrals [J]: `F_int_J`, `F_cmb_J`, `Q_radio_J`, `Q_tidal_J`, plus frozen-mass `Q_radio_cons_J`, `Q_tidal_cons_J` and `solver_residual_J` |
+| `step_dE_*_J` | Per-call energy budget integrals [J]: `F_int_J`, `F_cmb_J`, `Q_radio_J`, `Q_tidal_J`, `compression_J`, the entropy-transported heat `state_heat_J`, the giant-impact re-melt heat `impact_J` (zero unless the accretion handler sets it), plus frozen-mass `Q_radio_cons_J` and `Q_tidal_cons_J`; the entropy-equation residual is `step_solver_residual_J` |
 
 PROTEUS's coupler accumulates the per-call integrals into running cumulative columns: `dE_predicted_cons_J`, `E_residual_cons_J`, `E_residual_cons_frac` (the canonical conservation residual, ~5 % closure on multi-Myr trajectories) and `solver_residual_J` (entropy-ODE LHS-RHS, ~10⁻⁷ machine-precision noise floor). See [Energy diagnostics](energy_diagnostics.md) for the frozen-mass weighting rationale.
 
-The full set of `hf_row` keys produced by Aragog is built in `proteus.interior_energetics.aragog.AragogRunner._build_helpfile_output` (line ~1740) and emitted by `run_solver` (line ~1509).
+The full set of `hf_row` keys produced by Aragog is the dict that `proteus.interior_energetics.aragog.AragogRunner._build_helpfile_output` returns, which `run_solver` hands back and the interior wrapper copies into `hf_row` key by key: `M_mantle`, `M_core`, `T_magma`, `Phi_global`, `RF_depth`, `F_int`, `M_mantle_liquid`, `M_mantle_solid`, `Phi_global_vol`, `T_pot`, `T_cmb`, `T_cmb_node`, `E_th_mantle`, `Cp_eff`, `F_radio`, `F_tidal`, `E_state_J`, `E_state_cons_J`, `F_cmb`, `Q_radio_W`, `Q_tidal_W`, the `step_*` integrals above and `boundary_layer_thickness`, which repeats the value of the atmosphere configuration. Aragog does not write `T_surf`, which the atmosphere wrapper sets, nor `dt_actual`: `run_solver` returns the new model time, from which PROTEUS takes the achieved step. PROTEUS has no `dilatation` option for Aragog; a configuration that sets `interior_energetics.aragog.dilatation` is refused as an unknown key.
 
 ## Initial-condition contract
 
@@ -118,7 +117,7 @@ The `mesh_max_shift` cap (default 0.05 = 5%) in `interior_struct.zalmoxis` limit
 
 ## EOS tables
 
-Aragog's P-T tables for the production PALEOS coupling are written by Zalmoxis on the fly through `generate_aragog_pt_tables[_2phase]` (`zalmoxis.eos_export`, called from `proteus/interior_energetics/aragog.py`). Output goes to `<outdir>/data/aragog_pt/` as `{density, temperature, heat_capacity, adiabat_temp_grad, thermal_exp}_{melt, solid}.dat`, default resolution $200 \times 200$, P-range $[10^5\,\mathrm{Pa},\ \min(10^{13}\,\mathrm{Pa},\ 150 \cdot M_\oplus + 200\,\mathrm{GPa})]$.
+Aragog's P-T tables for the production PALEOS coupling are written by Zalmoxis on the fly through `generate_aragog_pt_tables[_2phase]` (`zalmoxis.eos_export`, called from `proteus/interior_energetics/aragog.py`). Output goes to `<outdir>/data/aragog_pt/` as `{density, temperature, heat_capacity, adiabat_temp_grad, thermal_exp}_{melt, solid}.dat`, default resolution $200 \times 200$, P-range $[10^5\,\mathrm{Pa},\ \min(10^{13}\,\mathrm{Pa},\ 150 \cdot M_\oplus + 200\,\mathrm{GPa})]$. The entropy solver does not read the `thermal_exp` files: it derives the expansivity from the other tables ([thermal expansivity of a single phase](phase_transitions.md#thermal-expansivity-of-a-single-phase)).
 
 !!! warning "Aragog tables must be strictly rectangular"
     Aragog's loader builds a `RegularGridInterpolator` over the (P, S) grid (the directory name `aragog_pt/` is a legacy label; the contents follow the SPIDER P-S convention, see [Reference: data](../Reference/data.md)). Phase-filtering the input PALEOS table (for example, masking out points inside the mushy zone before writing) breaks the rectangularity assumption: scipy then silently falls back to unstructured (linear-ND) interpolation, which is roughly two orders of magnitude slower per call. The Zalmoxis-side generators write the full rectangle for both solid and melt files; do not inject a phase mask between them and disk.
@@ -173,7 +172,7 @@ Use sparingly: the flag has a small per-step cost (XLA fast-math disabled) and m
 - [Energy equation](energy_equation.md): the entropy-form RHS that Aragog integrates.
 - [Energy diagnostics](energy_diagnostics.md): per-call energy-budget integrals (`step_dE_*_J`) and cumulative conservation residuals (`E_residual_cons_J`, `solver_residual_J`).
 - [Aragog vs SPIDER](spider_comparison.md): formulation differences and parity guarantees.
-- [Core BC modes](core_bc.md): the four core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
+- [Core BC modes](core_bc.md): the five core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
 - [PROTEUS framework documentation](https://proteus-framework.org/PROTEUS): top-level entry.
 
 The wrapper itself lives in the PROTEUS repository, not in Aragog. The single source of truth for the symbol-level API is rendered from PROTEUS source via mkdocstrings:

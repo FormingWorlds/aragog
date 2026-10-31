@@ -57,7 +57,9 @@ tidal = false
 eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
 kappah_floor = 10.0                # PROTEUS production default; 0.0 = textbook MLT
+convective_threshold = 0.0         # 0.0 = SPIDER switch; > 0: minimum drive gradient and floor band [J/kg/K/m]
 phi_step_cap = 0.0                 # 0 = disabled; 0.05 caps per-call melt-fraction change in mushy band
+eos_floor_margin = 0.0             # 0 (default) = off; > 0: J/kg/K above the entropy table minimum, 100 tested
 phase_boundary_cap = "rate"        # "rate" (default) or "fixed" (1 yr step near a phase boundary)
 bottom_up_grav_sep = true
 phase_smoothing = "tanh"           # "tanh" (default, SPIDER-parity) or "cubic_hermite"
@@ -79,6 +81,15 @@ thermal_conductivity = 4.0
 thermal_expansivity = 1.0e-5
 viscosity = 1.0e21
 
+[phase_solid.rheology]
+enabled = false
+g_homologous = 25.0
+stress_closure_mode = "lid"           # "lid" | "local"
+lid_base_mode = "rheological"         # "rheological" | "fixed"
+yield_stress_c = 50.0e6               # Pa
+yield_stress_mu = 0.6
+yield_stress_max = 500.0e6            # Pa
+
 [phase_liquid]
 density = "data/lookup/density_melt.dat"
 heat_capacity = "data/lookup/heat_capacity_melt.dat"
@@ -96,8 +107,9 @@ liquidus = "data/lookup/liquidus.dat"
 phase = "composite"
 phase_transition_width = 0.01
 grain_size = 1.0e-3
-matprop_smooth_width = 0.0
+matprop_smooth_width = 0.01
 separation_viscosity = "melt"      # "melt" or "mixture"
+separation_buoyancy = "mixture"    # "mixture" or "solid"
 cp_blend = "latent"                # "latent" or "linear"
 const_properties = false
 
@@ -128,7 +140,7 @@ Time-integration controls.
 | `start_time` | yr | Start of integration |
 | `end_time` | yr | End of integration |
 | `atol` | -- | Absolute tolerance, default $10^{-8}$ (floored at $10^{-8}$) |
-| `rtol` | -- | Relative tolerance, default $10^{-8}$, the value at which `phase_boundary_cap = "rate"` is verified. Above $10^{-8}$ a CVODE run logs one warning: a loose `rtol` can lock CVODE at the switch $dS/dr = 0$ (the convective mask and the $\kappa_h$ floor). The counts below come from a probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, fixed cap unless stated) that draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$; the probe script is not in the repository, and the runs were on macOS arm64. A run counts as locked when it has not reached 200 yr after 600 s of wall time: every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations. With `rtol` = `atol` = `1e-6`, CVODE locked in 12 of 1133 runs, in 4 of 474 on the quasi_steady core and in 2 of 286 with the rate cap, where 2 more runs finished only after 233 s and 346 s. With both at `1e-5`, all 80 runs were run to 600 s and none locked (too few runs to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations), but the median run needed about $1.6 \times 10^4$ RHS evaluations, against about $1.3 \times 10^3$ at `1e-8`. With both at `1e-8`, CVODE locked in none of 1026, 627 and 1224 runs for three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). On CI the AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion. |
+| `rtol` | -- | Relative tolerance, default $10^{-8}$, the value at which `phase_boundary_cap = "rate"` is verified. Above $10^{-8}$ a CVODE run logs one warning: a loose `rtol` can lock CVODE at the convective switch (the convective mask and the $\kappa_h$ floor). The counts below were measured at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$; the probe did not cover $D > 0$, where CVODE also stalled at `1e-8` (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). They come from a probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, fixed cap unless stated) that draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$; the probe script is not in the repository, and the runs were on macOS arm64. A run counts as locked when it has not reached 200 yr after 600 s of wall time: every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations. With `rtol` = `atol` = `1e-6`, CVODE locked in 12 of 1133 runs, in 4 of 474 on the quasi_steady core and in 2 of 286 with the rate cap, where 2 more runs finished only after 233 s and 346 s. With both at `1e-5`, all 80 runs were run to 600 s and none locked (too few runs to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations), but the median run needed about $1.6 \times 10^4$ RHS evaluations, against about $1.3 \times 10^3$ at `1e-8`. With both at `1e-8`, CVODE locked in none of 1026, 627 and 1224 runs for three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). On CI the AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion. |
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
 | `cvode_output_points` | -- | Number of points on the CVODE dense-output grid returned per macro-step (default 65, minimum 2). The per-call energy integrals take CVODE's accepted internal steps and these output points as nodes, so a coarse grid does not under-resolve them, and their cost follows the number of accepted steps, not this grid. The core-temperature change check (`tcore_change_limit`) reads only the output points. The grid feeds back into CVODE stepping, so the accepted step count and the final state shift weakly with it. Used only when `solver_method = "cvode"`. |
 | `max_steps` | -- | Maximum number of internal CVODE steps between two consecutive output times (SUNDIALS `mxstep`; default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one output interval reaches this count. With `phase_boundary_cap = "rate"` each CVODE segment applies the same per-interval limit. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
@@ -141,7 +153,7 @@ Thermal boundary conditions at the surface and CMB.
 | Key | Unit | Description |
 |-----|------|-------------|
 | `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `4` = prescribed flux, `5` = prescribed temperature |
-| `outer_boundary_value` | W/m² or K | Surface flux (modes `1`, `4`) or temperature (mode `5`) |
+| `outer_boundary_value` | W/m² or K | Surface flux (mode `4`) or temperature (mode `5`, a positive finite value inside the range the phase evaluator reaches at the surface pressure; not used in mode `1`); see [Surface boundary conditions](../Explanations/surface_bc.md) |
 | `inner_boundary_condition` | int | CMB BC mode. `1` = core cooling, `2` = prescribed flux, `3` = prescribed temperature |
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
 | `emissivity` | -- | Surface emissivity (used in mode `1`) |
@@ -150,7 +162,8 @@ Thermal boundary conditions at the surface and CMB.
 | `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
-| `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), or `bower2018` (parity-only, not recommended). |
+| `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), `bower2018` (parity-only, not recommended), or `core_module` (the core evolution module, length $N+2$ plus the shell cells with `stratification = true`, needs `inner_boundary_condition = 1`). Any other value is refused. |
+| `top_node` | str | Entropy of the top basic node. `linear` (default) extrapolates the top 2 cells; `limited` reduces that half step smoothly near an edge of the EOS entropy table, so the node rises with the top cell and, with the top cell in the table, stays in the table (`aragog.mesh.top_node_entropy`). `limited` is refused on `core_bc = "gradient"`: when the config is read, on a later assignment of either key on a `BoundaryConfig`, and when the mesh is built, which also covers a parsed parameter object changed after loading. Any other value is refused. |
 
 ### `[mesh]`
 
@@ -161,17 +174,19 @@ Spatial discretisation and pressure-density profile.
 | `outer_radius` | m | Planet (mantle top) radius |
 | `inner_radius` | m | CMB radius |
 | `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
-| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
+| `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below); with `outer_boundary_condition = 5`, `"constant"` is refused unless `mixing_length_constant_fraction = 0` |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
 | `core_density` | kg/m³ | Mean core density |
-| `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
+| `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
-| `gravitational_acceleration` | m/s² | Scalar gravity for Adams–Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
-| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
-| `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
+| `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or `initialize()` raises. Default 9.81 |
+| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams-Williamson. Default 260e9 |
+| `adams_williamson_beta` | -- | A-W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
+| `surface_cell_thickness` | m | Thickness of the outermost basic cell. `0` (default) leaves that end unset; otherwise a value of at least 2 m and below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With only one end set, the cells at the other end grow. See [Mesh refinement](mesh-refinement.md) |
+| `cmb_cell_thickness` | m | Thickness of the innermost basic cell, with the same range as `surface_cell_thickness`. Default `0` |
 
 ### `[energy]`
 
@@ -180,16 +195,18 @@ Heat-transport switches, transport parameters, and integrator selection.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `conduction` | bool | -- | Conductive flux $-k\,[(T/c_p)\partial S/\partial r + (\partial T/\partial P)_S\,\partial P/\partial r]$ |
-| `convection` | bool | -- | Convective flux $\rho T\kappa_h(-\partial S/\partial r)$ when $\partial S/\partial r < 0$ |
+| `convection` | bool | -- | Convective flux $\rho T\kappa_h(-\partial S/\partial r)$, driven when $\partial S/\partial r < 0$, with the floor up to `convective_threshold` |
 | `gravitational_separation` | bool | -- | Stokes-regime separation of melt and solid; phase-boundary smoothed |
 | `mixing` | bool | -- | Chemical mixing flux (SPIDER bracket form involving $\partial S_\mathrm{liq}/\partial P$ and $\partial S_\mathrm{sol}/\partial P$) |
 | `radionuclides` | bool | -- | Internal radiogenic heating from any `[radionuclide_*]` sections |
 | `tidal` | bool | -- | Tidal heating from `tidal_array` |
-| `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
+| `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention); with `outer_boundary_condition = 5`, a negative, NaN or infinite value is refused |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
+| `convective_threshold` | J kg⁻¹ K⁻¹ m⁻¹ | 0 | Entropy gradient $D$: the mixing-length drive acts only where $\partial S/\partial r < 0$ and uses at least $D$ there, and the `kappah_floor` applies up to $\partial S/\partial r = D$, so nodes with $0 \le \partial S/\partial r < D$ get the floor alone. Finite and $\ge 0$; the default `0.0` gives the $\partial S/\partial r < 0$ switch of SPIDER; $D = 10^{-6}$ gives one end state in 3 replayed coupled calls that end in one of 2 states under that switch, but $D > 0$ can stall CVODE at a node whose gradient stays near 0, also at `rtol` = $10^{-8}$. See [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory) |
 | `phi_step_cap` | -- | 0.0 | Per-call $\Delta\Phi_\mathrm{global}$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function fires at the step where the mass-weighted global melt fraction $\Phi_\mathrm{global}$ has changed by `cap` from its value at `solve()` entry. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
-| `phase_boundary_cap` | str | `"rate"` | Step-size cap near or inside the two-phase band. `"fixed"` uses 1 yr. `"rate"`, the default (also when unset), uses event-driven CVODE segments with `max_step` set to 0.1 of the shortest time to reach a phase boundary, clipped to `[1, 100]` yr. Inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$) or below the rate floor, the estimate uses the distance to the nearer boundary. The gradient core and the scipy integrators use 1 yr in both modes. On CVODE the segments of a `"rate"` call arm within the larger of `phase_boundary_entropy_margin` and $\delta$; the step caps, `"fixed"`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin`. At the default `rtol` $= 10^{-8}$, `"rate"` stays within $1.3 \times 10^{-4}$ K of a `"fixed"` run at $10^{-10}$ in the cases on the [energy equation](../Explanations/energy_equation.md) page; an `rtol` above $10^{-7}$ makes the rate cap log one warning. |
+| `eos_floor_margin` | J kg⁻¹ K⁻¹ | 0 | EOS floor margin $m$; the default 0 leaves the floor off, and a positive margin turns it on (100 is the tested value). With the floor off, a drain past the table minimum continues at the clamped table-edge temperature and the EOS lookup logs an out-of-range WARNING (on the 1st, 10th, 100th, ... occurrence of each lookup); it raises instead only for an EOS that a caller builds with `strict_range=True`. With the floor on, a root function (CVODE) or a terminal event (scipy) ends the call when the smaller of the top basic-node entropy, which sets the surface temperature, and the smallest cell entropy reaches the table minimum plus $m$, or plus $m/2$ when the call starts below the minimum plus $m$; the call returns a shorter step. A call that starts at or below the minimum plus $m/2$ arms a level at half its distance to the minimum and does not advance (status 1) when its entropy falls fast enough to reach that level before the call ends, and a caller that retries with a shorter span, such as the PROTEUS retry ladder, can then advance. A start at the table minimum (within $2 \times 10^{-6} m$) does not advance on any fall at any span, and a start at or below the minimum, also of the extrapolated top node alone, or so close to it that no level fits between them, does not advance at all. A call whose stop lands below the minimum through the root location error, which grows with the call time, is discarded as a refusal (see the solver tuning page). A missing key keeps the default 0; `0` or a negative value disables it (`None` too, outside TOML, which has no `None`), and a margin as large as the entropy span of the tables is refused. PROTEUS has no key for it, so PROTEUS runs have the floor off. See [Solver method tuning](solver-method-tuning.md#eos-floor) |
+| `phase_boundary_cap` | str | `"rate"` | Step-size cap near or inside the two-phase band. `"fixed"` uses 1 yr. `"rate"`, the default (also when unset), uses event-driven CVODE segments with `max_step` set to 0.1 of the shortest time to reach a phase boundary, clipped to `[1, 100]` yr. A segment that starts with the mantle at or below the solidus and no cell within $\delta$ of a boundary that heats has no 100 yr ceiling. Every segment that starts with the mantle at or below the solidus uses $\mathtt{rtol} \le 10^{-9}$ and $\mathtt{atol} \le 10^{-8}/\text{state\_scale}$. Inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$), or above the solidus and below the rate floor, the estimate uses the distance to the nearer boundary, at least $0.5\,\delta$. The gradient core and the scipy integrators use 1 yr in both modes. On CVODE the segments of a `"rate"` call arm within the larger of `phase_boundary_entropy_margin` and $\delta$; the step caps, `"fixed"`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin`. At the default `rtol` $= 10^{-8}$, `"rate"` stays within $1.3 \times 10^{-4}$ K of a `"fixed"` run at `rtol` $= 10^{-10}$ in the cases on the [energy equation](../Explanations/energy_equation.md) page; an `rtol` above $10^{-7}$ makes the rate cap log one warning. |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |
 | `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |
@@ -225,6 +242,38 @@ End-member phase properties. Float values mean a constant; string values are fil
 
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 
+### `[phase_solid.rheology]`
+
+Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid boundary layer stress closure, and mixing-length convection scaling. The optional saturating integral activation law couples `activation_energy`, `activation_volume`, and `activation_volume_decay_pressure` through $H(P) = E_a + V_0 P_\text{decay} (1 - \exp(-P / P_\text{decay}))$; activation_volume and a finite activation_volume_decay_pressure require activation_energy; with enabled = true, activation_energy must be positive. See [`docs/Explanations/solid_state_convection.md`](../Explanations/solid_state_convection.md) for theory and derivations.
+
+<!-- rheology-config-reference:start -->
+| Key | Type | Unit | Default | Range | Effect |
+|-----|------|------|---------|-------|--------|
+| `enabled` | `bool` | -- | `false` | `true` \| `false` | Enable solid-state mantle rheology and variable viscosity |
+| `g_homologous` | `float` | -- | `25.0` | \[0, inf); (0, inf) when enabled and activation_energy is unset | Homologous temperature scaling factor in activation enthalpy H(P) |
+| `t_sol_0` | `float` | K | `1400.0` | (0, inf) | Zero-pressure solidus temperature for linear solidus and enthalpy normalization |
+| `dt_sol_dp` | `float` | K/Pa | `2.4e-08` | \[0, inf) | Linear solidus Clapeyron slope when table solidus is absent |
+| `arrhenius_t_ref` | `float` | K | `1600.0` | (0, inf) | Reference temperature where mantle viscosity equals reference value at P=0 |
+| `viscosity_max_log10` | `float` | log10(Pa·s) | `40.0` | (20, 300] | Logarithmic viscosity ceiling preventing numerical overflow in cold lithosphere |
+| `water_prefactor` | `float` | -- | `1.0` | (0, inf) | Viscosity multiplier accounting for mantle hydration and volatile content |
+| `yield_stress_c` | `float` | Pa | `50000000.0` | \[0, inf) | Cohesion intercept in Byerlee brittle frictional yielding criterion |
+| `yield_stress_mu` | `float` | -- | `0.6` | \[0, inf) | Friction coefficient in Byerlee brittle frictional yielding criterion |
+| `yield_stress_max` | `float` | Pa | `500000000.0` | (0, inf) | Maximum ductile yield stress ceiling capping frictional strength at depth |
+| `stress_closure_mode` | `str` | -- | `"lid"` | `"lid"` \| `"local"` | Boundary-layer stress closure mode: "lid" for stagnant lid, "local" for local stress |
+| `interior_flux_fraction` | `float` | -- | `0.05` | \[0.05, 0.5] | Threshold on the convective flux fraction F_conv/F_tot (f_conv,min) |
+| `lid_base_mode` | `str` | -- | `"rheological"` | `"rheological"` \| `"fixed"` | Stagnant-lid base criterion: "rheological" for viscosity contrast, "fixed" for isotherm |
+| `lid_base_temperature` | `float` | K | `1400.0` | (0, inf) | Prescribed temperature at stagnant-lid base when lid_base_mode is "fixed" |
+| `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
+| `lid_mask_width_cells` | `float` | cells | `1.0` | (0, inf) | Smoothing transition width at stagnant-lid base in cell units |
+| `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
+| `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
+| `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
+| `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local" |
+| `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |
+| `activation_volume` | `float` | m³/mol | `0.0` | \[0, inf) | Zero-pressure activation volume V0 in saturating integral enthalpy law |
+| `activation_volume_decay_pressure` | `float` | Pa | `inf` | (0, inf] | Pressure decay scale P_decay for activation volume saturation; linear when inf |
+<!-- rheology-config-reference:end -->
+
 ### `[phase_mixed]`
 
 Mixed-phase (mushy) parameters and the optional constant-properties analytical mode.
@@ -239,8 +288,9 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `phase` | str | -- | Phase label |
 | `phase_transition_width` | -- | -- | Legacy smoothing width |
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
-| `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
-| `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = \lvert\Delta\rho\rvert g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
+| `matprop_smooth_width` | -- | 0.01 | Width of the blend between the two-phase and the single-phase properties at the solidus and the liquidus, in units of the melt fraction ([Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus)); when the configuration is built, a value at or below 0, at or above 1, below 10⁻³⁰⁰, NaN, a bool or a string is refused, and a value outside \[0.001, 0.05\] logs a warning |
+| `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = (\rho_s - \rho_l) g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
+| `separation_buoyancy` | str | `"mixture"` | Buoyancy reference of the separation mobility $F(\phi)$: `"mixture"` (McKenzie 1984) multiplies the Blake-Kozeny-Carman and Rumpf-Gupte terms by $(1-\phi)$, and the Stokes term keeps the plain contrast, as under `"solid"` (dilute limit); `"solid"` (Abe 1995, SPIDER) uses no factor. The Abe benchmarks and the SPIDER parity runs use `"solid"` |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
 | `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |
 | `const_rho` | kg/m³ | 4000 | Constant density when `const_properties = true` |

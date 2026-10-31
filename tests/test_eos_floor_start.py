@@ -1,0 +1,336 @@
+"""Unit tests of the EOS floor start decision, a pure function of the start state and its rate."""
+
+from __future__ import annotations
+
+import warnings
+
+import numpy as np
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
+from aragog.solver.entropy_solver import (
+    _floor_start_level,
+    _PhaseBoundarySegmentRoot,
+    _phi_cap_event_factory,
+    _PhiCapRootFunction,
+)
+
+pytestmark = pytest.mark.unit
+
+S_MIN, M, DT = 100.0, 100.0, 10.0  # table minimum, margin [J/kg/K], call span [yr]
+W = np.array([0.0, -0.5, 1.5])  # top basic node from the top two cells
+
+
+def _start(S, rate):
+    """Level and refusal for state ``S`` with per-cell rate ``rate`` [J/kg/K/yr]."""
+    return _floor_start_level(
+        W, np.asarray(S, float), lambda: np.asarray(rate, float), S_MIN, M, DT
+    )
+
+
+def _no_rate():
+    raise AssertionError('the rate must not be evaluated above S_min + m/2')
+
+
+@pytest.mark.parametrize(
+    ('offset', 'level'),
+    [(400.0, 200.0), (100.0 + 1e-3, 200.0), (100.0 + 5e-5, 150.0), (80.0, 150.0)],
+)
+def test_the_two_fixed_levels_need_no_rate(offset, level):
+    """Above S_min + m/2 + 1e-6 m the level is S_min + m or S_min + m/2, without an RHS call."""
+    S = np.full(3, S_MIN + offset)
+    assert _floor_start_level(W, S, _no_rate, S_MIN, M, DT) == (level, False)
+
+
+@pytest.mark.parametrize('offset', [40.0, 40.000001, 36.7468, 41.2025])
+def test_a_tie_between_the_top_node_and_a_cell_does_not_decide(offset):
+    """A uniform start in the band, whose top node equals the cells up to rounding, arms half its
+    distance under a warming top and a slowly cooling bottom cell, at every offset."""
+    level, refuse = _start(np.full(3, S_MIN + offset), [-1.1e-8, 0.0, 3.4e-8])
+    s0 = min(float(W @ np.full(3, S_MIN + offset)), S_MIN + offset)
+    assert not refuse and level == pytest.approx(0.5 * (s0 + S_MIN), abs=1e-9)
+
+
+def test_a_slow_outward_drain_in_the_band_advances():
+    """A top node in the band losing 5e-5 J/kg/K/yr cannot reach half its distance in the call."""
+    S = np.array([S_MIN + 60.0, S_MIN + 50.0, S_MIN + 40.0 + 2.7 / 1.5])
+    level, refuse = _start(S, [0.0, 0.0, -5e-5 / 1.5])
+    assert not refuse and level == pytest.approx(0.5 * (float(W @ S) + S_MIN))
+
+
+def test_a_fast_drain_in_the_band_is_refused():
+    """A drain that reaches half the distance within the call span is refused."""
+    assert _start(np.full(3, S_MIN + 40.0), [-10.0, -10.0, -10.0]) == (None, True)
+
+
+@pytest.mark.parametrize('offset', [-10.0, 0.0])
+@pytest.mark.parametrize('rate', [0.0, 1.0, -1.0])
+def test_a_start_at_or_below_the_table_is_refused_at_any_rate(offset, rate):
+    """A start at or below S_min is refused also when it warms."""
+    assert _start(np.full(3, S_MIN + offset), [rate] * 3) == (None, True)
+
+
+@pytest.mark.parametrize(('rate', 'refuse'), [(0.0, False), (1.0, False), (-1.0, True)])
+def test_a_start_just_above_the_table_arms_half_its_distance_unless_it_falls(rate, refuse):
+    """At S_min + 1e-6 m a warming or steady start arms half its distance; a falling one is
+    refused."""
+    level, r = _start(np.full(3, S_MIN + 1e-4), [rate] * 3)
+    assert r is refuse and (level is None if refuse else level == pytest.approx(S_MIN + 5e-5))
+
+
+def test_the_rate_of_the_lowest_component_decides():
+    """With a deep cell lower than the top node, the deep cell's rate decides; the top node's does not."""
+    S = np.array([S_MIN + 30.0, S_MIN + 49.0, S_MIN + 49.0])
+    assert _start(S, [-10.0, 0.0, 1.0]) == (None, True)
+    level, refuse = _start(S, [1.0, 0.0, -10.0])
+    assert not refuse and level == pytest.approx(0.5 * (S_MIN + 30.0 + S_MIN))
+
+
+@pytest.mark.parametrize(
+    ('S', 'rate'),
+    [([S_MIN + 40.0] * 3, [-10.0, 0.0, 1.0]), ([S_MIN + 40.0, S_MIN + 40.00005, S_MIN + 50.0], [10.0, -10.0, 10.0])],
+)  # fmt: skip
+def test_the_fastest_fall_among_tied_components_decides(S, rate):
+    """Components within 1e-6 m of the floor entropy, the top node included, are refused by the
+    fastest fall among them, even when another of them warms."""
+    assert _start(S, rate) == (None, True)
+
+
+def test_a_drain_that_lands_on_half_the_distance_is_refused():
+    """A projected entropy equal to (s0 + S_min)/2 at the call end is refused."""
+    assert _start(np.full(3, S_MIN + 40.0), [-2.0] * 3) == (None, True)
+
+
+T = np.array([0.0, 0.0, 1.0])  # top node equal to the top cell, so the boundaries are exact
+
+
+@pytest.mark.parametrize(
+    ('s0', 'expected'),
+    [
+        ((S_MIN + M) + 1e-6 * M, (S_MIN + 0.5 * M, False)),
+        (S_MIN + 1.5e-6 * M, (0.5 * (S_MIN + 1.5e-6 * M + S_MIN), False)),
+        (S_MIN + 2e-6 * M, (0.5 * (S_MIN + 2e-6 * M + S_MIN), False)),
+        (np.nextafter(S_MIN, np.inf), (None, True)),
+    ],
+)
+def test_the_level_and_table_boundaries_are_inclusive(s0, expected):
+    """A start at S_min + m + 1e-6 m arms S_min + m/2; a warming start at or below S_min + 2e-6 m
+    arms half its distance, and one ulp above S_min, where no level fits between, is refused."""
+    assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), S_MIN, M, DT) == expected
+
+
+@pytest.mark.parametrize('s0', [S_MIN + 1.5e-6 * M, S_MIN + 2e-6 * M])
+def test_a_falling_start_in_the_table_band_is_refused_at_any_span(s0):
+    """Inside S_min + 2e-6 m, including its edge, a fall is refused also over a span too short
+    to reach half the distance."""
+    assert _floor_start_level(T, np.full(3, s0), lambda: -np.ones(3), S_MIN, M, 1e-10) == (
+        None,
+        True,
+    )
+
+
+def test_one_ulp_above_the_table_is_refused_when_the_midpoint_rounds_up():
+    """With an odd last bit of S_min the midpoint of S_min and the next float rounds up to the
+    start itself, which leaves no level below it."""
+    s_min = np.nextafter(S_MIN, np.inf)
+    s0 = np.nextafter(s_min, np.inf)
+    assert 0.5 * (s0 + s_min) == s0  # precondition: the midpoint rounds up
+    assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), s_min, M, DT) == (
+        None,
+        True,
+    )
+
+
+@pytest.mark.parametrize(
+    ('S', 'rate', 'expected'),
+    [
+        ([np.nan, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
+        ([np.inf, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
+        ([S_MIN + 40.0] * 3, [np.nan] * 3, (None, True)),
+        ([S_MIN - 10.0] * 3, [np.nan] * 3, (None, True)),
+        ([S_MIN + 40.0] * 3, [-np.inf] * 3, (None, True)),
+        ([S_MIN + 40.0] * 3, [0.0, 0.0, np.inf], (S_MIN + 20.0, False)),
+    ],
+)
+def test_non_finite_states_and_rates(S, rate, expected):
+    """A non-finite start is left to the table guard; a NaN or falling infinite rate is refused,
+    an infinitely warming top cell arms half the distance."""
+    level, refuse = _start(S, rate)
+    assert refuse is expected[1] and (
+        level is None if expected[0] is None else level == pytest.approx(expected[0])
+    )
+
+
+def test_the_scipy_event_falls_back_to_the_margin():
+    """A floor-only event whose evaluation raises returns the margin, never 0, which would fire."""
+    event = _phi_cap_event_factory(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=np.ones(3), floor_level=200.0, floor_margin=M,
+    )  # fmt: skip
+    assert event(0.0, np.array([5000.0, 5000.0])) == M and event.binding_cap is None
+
+
+def test_a_top_node_below_the_table_is_refused_on_a_slow_fall_with_every_cell_inside():
+    """A top node at S_min - 58 from a steep gradient of the top two cells, every cell inside
+    the table and a slow fall of the top cell: the start counts as at the table, arms no level
+    and is refused."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
+    assert W @ S == pytest.approx(S_MIN - 58.0)
+    assert _start(S, [0.0, 0.0, -1.5e-3]) == (None, True)
+
+
+S_NODE_BELOW = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])  # top node at S_min - 58
+S_NODE_AT = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-4, S_MIN + 40.0])  # S_min + 1e-4
+
+
+@pytest.mark.parametrize('rate', [[-0.015, 0.069, 0.0034], [0.0, -4.0, -1.0]])
+def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(rate):
+    """Top node at S_min - 58 with every cell inside: refused also when the top cell warms
+    (node falling by extrapolation) or the node rises."""
+    assert W @ S_NODE_BELOW == pytest.approx(S_MIN - 58.0)
+    assert _start(S_NODE_BELOW, rate) == (None, True)
+
+
+def test_a_rising_top_node_just_above_the_table_arms_half_its_distance():
+    """Top node at S_min + 1e-4 rising over a falling top cell: half the node's distance."""
+    assert W @ S_NODE_AT == pytest.approx(S_MIN + 1e-4)
+    level, refuse = _start(S_NODE_AT, [0.0, -4.0, -1.0])
+    assert not refuse and level == pytest.approx(S_MIN + 5e-5)
+
+
+def test_inside_the_table_band_the_node_falls_by_its_own_rate():
+    """Top node at S_min + 1e-4 falling only by extrapolation under a warming top cell: inside
+    S_min + 2e-6 m the node's own rate decides, so the start is refused."""
+    assert _start(S_NODE_AT, [-0.015, 0.069, 0.0034]) == (None, True)
+
+
+def test_above_the_table_band_a_warming_top_cell_lets_the_node_advance():
+    """Top node at S_min + 1e-2 falling only by extrapolation under a warming top cell: above
+    the band the top-cell rate counts too, so the start arms half the node's distance."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-2, S_MIN + 40.0])
+    assert W @ S == pytest.approx(S_MIN + 1e-2)
+    level, refuse = _start(S, [-0.015, 0.069, 0.0034])
+    assert not refuse and level == pytest.approx(S_MIN + 5e-3)
+
+
+def test_a_start_exactly_on_the_band_edge_uses_the_node_rate():
+    """Top node exactly at S_min + 2e-6 m, falling only by extrapolation under a warming top
+    cell: the edge belongs to the band, so the node's own rate refuses the start."""
+    s_edge = S_MIN + 2.0 * 1e-6 * M
+    S = np.array([S_MIN + 2000.0, 0.0, S_MIN + 40.0])
+    S[1] = 2.0 * (1.5 * S[2] - s_edge)
+    while W @ S != s_edge:  # step the middle cell by ulps until the node sits on the edge
+        S[1] = np.nextafter(S[1], np.inf if W @ S > s_edge else -np.inf)
+    assert _start(S, [-0.015, 0.069, 0.0034]) == (None, True)
+
+
+def test_above_the_band_a_rising_node_over_a_falling_top_cell_advances():
+    """Top node at S_min + 1e-2 rising over a top cell that falls fast enough to reach half the
+    distance: above the band the larger of the two rates counts, so the start arms the level."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-2, S_MIN + 40.0])
+    level, refuse = _start(S, [0.0, -4.0, -1.0])
+    assert not refuse and level == pytest.approx(S_MIN + 5e-3)
+
+
+_DIST = st.floats(-50.0, 500.0) | st.sampled_from([0.0, 1e-12, 1e-4, 2e-4, 50.0, 100.0])
+_RATE = st.floats(-1e3, 1e3) | st.sampled_from([0.0, -0.0, np.nan, np.inf, -np.inf])
+_SPAN = st.floats(1e-9, 1e4)
+
+
+@given(
+    d=st.lists(_DIST, min_size=3, max_size=3),
+    r=st.lists(_RATE, min_size=3, max_size=3),
+    span=_SPAN,
+)
+def test_every_armed_level_lies_inside_the_table_below_the_start(d, r, span):
+    """Over cell distances from 50 below to 500 above S_min, rates up to 1e3 J/kg/K/yr with
+    zero, NaN and infinities, and spans from 1e-9 to 1e4 yr: an armed level lies strictly
+    between S_min and the floor entropy, a start at or below S_min is refused, and a refused
+    start stays refused over a longer span."""
+    S = S_MIN + np.asarray(d)
+    level, refuse = _floor_start_level(W, S, lambda: np.asarray(r), S_MIN, M, span)
+    s0 = min(float(W @ S), float(S.min()))
+    assert isinstance(refuse, bool) and (level is None or isinstance(level, float))
+    if level is not None:
+        assert not refuse and S_MIN < level < s0
+    if s0 <= S_MIN:
+        assert (level, refuse) == (None, True)
+    if refuse:
+        assert _floor_start_level(W, S, lambda: np.asarray(r), S_MIN, M, 2.0 * span)[1]
+
+
+@given(
+    r=st.lists(_RATE, min_size=3, max_size=3), bad=st.sampled_from([np.nan, np.inf, -np.inf])
+)
+def test_a_non_finite_start_is_left_to_the_table_guard(r, bad):
+    """A NaN or infinite cell entropy, with any rate, gives (None, False) and no rate call."""
+    S = np.array([S_MIN + 40.0, bad, S_MIN + 40.0])
+    assert _floor_start_level(W, S, _no_rate, S_MIN, M, DT) == (None, False)
+
+
+def test_floor_component_takes_the_lower_of_the_top_node_and_the_cells():
+    """g is the smaller of w @ S and min(S) minus the level, and it names the floor; the
+    exception sentinel stays positive with no other cap armed."""
+    w = np.array([0.0, -0.5, 1.5])
+    kw = dict(
+        eos=None, P_stag=np.zeros(3), volume=np.ones(3), n_stag=3, phi0_global=0.0, cap=0.0
+    )
+    root = _PhiCapRootFunction(
+        **kw, state_scale=np.ones(3), floor_weights=w, floor_level=200.0, floor_margin=100.0
+    )
+    g = np.zeros(1)
+    for S, expected in (
+        ([500.0, 400.0, 300.0], 250.0 - 200.0),
+        ([500.0, 300.0, 400.0], 300.0 - 200.0),
+    ):
+        root.evaluate(0.0, np.array(S), g)
+        assert g[0] == pytest.approx(expected) and root.binding_cap == 'eos_floor'
+    root.evaluate(0.0, None, g)
+    assert g[0] == 100.0 and root.binding_cap is None
+
+
+def _segment_roots(floor_weights):
+    cap = _PhiCapRootFunction(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=floor_weights, floor_level=200.0, floor_margin=100.0,
+    )  # fmt: skip
+    y0 = np.array([5000.0, 5000.0])
+    return cap, _PhaseBoundarySegmentRoot(
+        np.full(3, 6000.0), np.full(3, 4000.0), y0, 10.0, None, np.ones(2), 2, cap=cap
+    )
+
+
+def test_segment_root_names_the_floor_as_the_cap():
+    """At a floor root the segment roots report 'cap', which ends a rate-cap call; a floor-only
+    cap whose evaluate raised is scaled by its margin, without a division by zero."""
+    _, roots = _segment_roots(np.array([-0.5, 1.5]))
+    assert roots.names[0] == 'cap' and roots.fired(0.0, np.array([250.0, 200.0])) == 'cap'
+    bad, roots = _segment_roots(np.ones(3))
+    # warnings as errors: a zero scale would warn on division
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert roots.fired(0.0, np.array([5000.0, 5000.0])) in roots.names
+    assert bad.binding_cap is None
+
+
+def test_the_scipy_event_gives_the_floor_entropy_minus_its_level_and_names_the_floor():
+    """Cells S = [300, 250] with the top node 225: the floor-only event returns 225 - 200 and
+    names eos_floor as the binding cap."""
+    event = _phi_cap_event_factory(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=np.array([-0.5, 1.5]), floor_level=200.0,
+        floor_margin=M,
+    )  # fmt: skip
+    assert event(0.0, np.array([300.0, 250.0])) == pytest.approx(25.0)
+    assert event.binding_cap == 'eos_floor'
+
+
+@pytest.mark.parametrize('offset', [-10.0, 0.0])
+def test_a_start_at_or_below_the_table_is_refused_without_a_rate_call(offset):
+    """A start at or below S_min is refused before the RHS is evaluated at a state below the
+    table."""
+    assert _floor_start_level(W, np.full(3, S_MIN + offset), _no_rate, S_MIN, M, DT) == (
+        None,
+        True,
+    )

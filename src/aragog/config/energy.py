@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 
 import attrs
 import numpy as np
 import numpy.typing as npt
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+# Minimum drive gradient and kappa_h floor band [J/kg/K/m]; single-sourced
+# here for parser.py, jax/phase.py and solver/entropy_state.py.
+CONVECTIVE_THRESHOLD_DEFAULT: float = 0.0
+
+
+def check_convective_threshold(value: float) -> None:
+    """Raise ``ValueError`` unless ``value`` is a finite, non-negative scalar number."""
+    if (
+        isinstance(value, (bool, np.bool_))
+        or np.ndim(value) != 0
+        or not 0.0 <= value < float('inf')
+    ):
+        raise ValueError(f'convective_threshold must be finite and >= 0, got {value!r}')
+
+
+# Margin of the EOS floor above the entropy table minimum [J/kg/K]; 0 leaves the floor off.
+EOS_FLOOR_MARGIN_DEFAULT: float = 0.0
+
+
+def check_eos_floor_margin(value: float | None) -> None:
+    """Raise ``ValueError`` unless ``value`` is ``None`` or a real scalar with a finite float."""
+    if value is None:
+        return
+    try:
+        ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
+        ok = ok and math.isfinite(float(value))
+    except OverflowError:
+        ok = False
+    if not ok:
+        raise ValueError(f'eos_floor_margin must be None or a finite number, got {value!r}')
 
 
 @attrs.define
@@ -35,13 +68,26 @@ class EnergyConfig:
         before the floor is applied. The SPIDER convention also
         permits negative values, in which case the diffusivity is
         pinned to ``|eddy_diffusivity_thermal|``. Default 1.0
-        passes the MLT-derived value through unchanged.
+        passes the MLT-derived value through unchanged. With
+        ``outer_boundary_condition = 5`` a negative, NaN or infinite
+        value is refused.
     kappah_floor : float
         Phase-dependent eddy-diffusivity floor [m^2/s]. Clamps the
         eddy diffusivity from below by ``floor * f(phi)`` where
         ``f`` falls from 1 (liquid) to 0 (solid) across the
         rheological transition. Default 10.0 matches PROTEUS
         production; set 0.0 for textbook MLT.
+    convective_threshold : float
+        Entropy gradient D [J/kg/K/m]. The mixing-length drive acts only
+        where dS/dr < 0 and uses max(|dS/dr|, D) there, so an unstable node
+        gets at least the eddy diffusivity of a gradient D. The
+        phase-modulated kappa_h floor applies wherever dS/dr < D, so a node
+        with 0 <= dS/dr < D gets the floor alone. Default 0.0, the
+        dS/dr < 0 switch with no minimum drive. D = 1e-6 gives one end state
+        in 3 replayed coupled calls that end in one of 2 states under that
+        switch, but with D > 0 kappa_h jumps at dS/dr = 0 from the floor to
+        the mixing-length value at D (where that is above the floor), which
+        can stall CVODE at a node whose gradient stays near 0.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an
@@ -83,6 +129,31 @@ class EnergyConfig:
         Per-call per-cell ``|ΔS|`` cap [J/kg/K] in the native solver
         variable; same role as the temperature cap without an EOS lookup
         in the root function. ``None`` (the default) disables the cap.
+    eos_floor_margin : float or None
+        Margin m [J/kg/K] above the minimum entropy S_min of the EOS
+        tables. A CVODE root (scipy: a terminal event) ends the call when
+        the smaller of the top basic-node entropy, which sets the surface
+        temperature, and the smallest cell entropy reaches S_min + m, or
+        S_min + m/2 when the call starts below S_min + m; the call then
+        returns a shorter step. A call that starts at or below S_min + m/2
+        arms a level at half its distance to S_min, and does not advance
+        (status 1) when that entropy falls fast enough to reach the level
+        before the call ends; a caller that retries with a shorter span can
+        then advance closer to S_min; there the top node counts as falling
+        only when the top cell falls too. At or below S_min + 2e-6 m the call
+        does not advance on any fall, the top node at its own rate, at every span,
+        and a start at or below S_min, also of the extrapolated top node alone, or
+        with no level between it and S_min, does not advance at all. A call
+        whose stop lands below S_min through the root location error, which
+        grows with the call time, is discarded as a refusal. A call with no
+        span skips the floor. Default 0: the floor is off, so a drain past
+        S_min continues at the clamped table-edge temperature and the EOS
+        lookup logs its out-of-range WARNING (it raises only for an EOS
+        built with ``strict_range=True``). A positive margin
+        turns it on (100 is the tested value) and must stay below the
+        entropy span of the tables; ``None`` (not in TOML) or a non-positive
+        value disables it, and a bool, NaN, infinity or a value that is not
+        a ``numbers.Real`` is refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
@@ -105,13 +176,16 @@ class EnergyConfig:
         band. ``None`` (default) means ``'rate'``. ``'fixed'`` uses 1 yr.
         ``'rate'`` uses event-driven CVODE segments with ``max_step`` set to
         0.1 of the shortest time to reach a phase boundary, clipped to
-        [1, 100] yr. Inside the stiff zone
-        or below the rate floor, the estimate uses the distance to the nearer
-        boundary. The gradient core and the scipy integrators keep 1 yr, with one
-        log line per solver (INFO when the mode is the default, WARNING when
-        ``'rate'`` is set). An rtol above 1e-7 logs one rate-cap warning per solver. The
-        accuracy of ``'rate'`` against ``'fixed'`` is tabulated in the energy-equation
-        docs and computed by ``tools/verification/run_phase_boundary_cap_accuracy.py``.
+        [1, 100] yr; with every cell at or below the solidus and no cell within
+        delta of a boundary heating, the upper clip is infinite, and segments that
+        start sub-solidus use rtol <= 1e-9 and atol <= 1e-8. Inside the stiff zone,
+        or above the solidus and below the rate floor, the estimate uses the
+        distance to the nearer boundary, at least 0.5 delta. The gradient core and
+        the scipy integrators keep 1 yr, with one log line per solver (INFO when
+        the mode is the default, WARNING when ``'rate'`` is set). An rtol above
+        1e-7 logs one rate-cap warning per solver. The accuracy of ``'rate'``
+        against ``'fixed'`` is tabulated in the energy-equation docs and computed
+        by ``tools/verification/run_phase_boundary_cap_accuracy.py``.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
@@ -125,6 +199,10 @@ class EnergyConfig:
     eddy_diffusivity_chemical: float = 1.0
     eddy_diffusivity_thermal: float = 1.0
     kappah_floor: float = 10.0
+    convective_threshold: float = attrs.field(
+        default=CONVECTIVE_THRESHOLD_DEFAULT,
+        validator=lambda _inst, _attr, value: check_convective_threshold(value),
+    )
     bottom_up_grav_sep: bool = True
     phase_smoothing: str = 'tanh'
     solver_method: str = 'cvode'
@@ -132,6 +210,10 @@ class EnergyConfig:
     phi_step_cap: float | None = None
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
+    eos_floor_margin: float | None = attrs.field(
+        default=EOS_FLOOR_MARGIN_DEFAULT,
+        validator=lambda _inst, _attr, value: check_eos_floor_margin(value),
+    )
     phase_boundary_entropy_margin: float = 200.0
     phase_boundary_cap: str | None = attrs.field(
         default=None,

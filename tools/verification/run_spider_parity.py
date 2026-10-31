@@ -317,6 +317,7 @@ def run_aragog():
         viscosity_liquid=1e2,
         thermal_conductivity_solid=4.0,
         thermal_conductivity_liquid=4.0,
+        separation_buoyancy='solid',  # SPIDER has no buoyancy factor
     )
     phase_stag = EntropyPhaseEvaluator(**phase_kwargs)
     phase_stag.set_pressure(mesh.staggered.pressure)
@@ -343,6 +344,7 @@ def run_aragog():
         eddy_diffusivity_thermal=1.0,
         eddy_diffusivity_chemical=1.0,
         kappah_floor=0.0,
+        convective_threshold=0.0,
     )
 
     # Initial condition

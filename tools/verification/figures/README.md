@@ -1,6 +1,6 @@
 # Verification figures
 
-Reproducible scripts that generate the seven first-principles verification figures embedded in `docs/Explanations/verification.md`.
+Reproducible scripts that generate the seven first-principles verification figures; `docs/Validation/numerics.md` embeds five of them and `docs/Explanations/heat_transport.md` the other two.
 Each script is a self-contained verification of one numerical or physical aspect of Aragog and writes its output to `docs/figures/vv/<stem>.{pdf,png}` (tracked in git) plus a raw-data `.npz` to `output/aragog_vv_data/` (gitignored).
 
 ## Layout
@@ -16,6 +16,8 @@ Each script is a self-contained verification of one numerical or physical aspect
 | `verify_utbl_cardano.py` | The closed-form Cardano root used by the upper-thermal-boundary-layer correction recovers $T_\mathrm{surf} < T_\mathrm{int}$ across the physical range. | `fig_05_utbl_cardano` |
 
 `_style.py` is a shared style helper (color palette, panel labels, save helper). It is not invoked directly.
+
+`sketch_core_module.py` is not a verification: it draws the schematic of the `core_module` core boundary condition for `docs/Explanations/core_bc.md`, in the light and the dark theme, to `docs/figures/core_module_sketch_{light,dark}.{png,pdf}`. It needs `proteus_mpl` (`pip install 'fwl-aragog[verification]'`).
 
 ## Running
 

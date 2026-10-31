@@ -5,11 +5,11 @@ The `aragog.config` package provides the modern `attrs`-based configuration clas
 | Name | Role |
 |------|------|
 | `Config` | Top-level facade. Static constructors `from_toml(path)`, `from_dict(data)`, and `from_file(*paths)` return a legacy `Parameters` ready for `EntropySolver`. |
-| `BoundaryConfig` | Surface and core boundary settings: `outer_boundary_condition`, `inner_boundary_condition`, emissivity, `core_bc` mode (`quasi_steady` default, `energy_balance`, `gradient`, `bower2018`), UTBL toggle. |
+| `BoundaryConfig` | Surface and core boundary settings: `outer_boundary_condition`, `inner_boundary_condition`, emissivity, `core_bc` mode (`energy_balance` default, `quasi_steady`, `gradient`, `bower2018`, `core_module`), the `core_module_params` of the `core_module` mode, UTBL toggle. |
 | `EnergyConfig` | Physics toggles (conduction, convection, gravitational separation, mixing, radionuclides, tidal), eddy-diffusivity ratio, tidal-array buffer. |
 | `InitialConditionConfig` | IC type (linear, user-defined, adiabatic), surface and basal temperatures, init-file path. |
 | `MeshConfig` | Mesh geometry, EOS method (Adams-Williamson or user-defined), surface density, gravity, bulk modulus, mass-coordinate flag, surface pressure. |
-| `MixedPhaseConfig` | Mushy-zone parameters: latent heat, rheological transition, smoothing widths, solidus/liquidus paths, `cp_blend` strategy, `separation_viscosity` drag source. |
+| `MixedPhaseConfig` | Mushy-zone parameters: latent heat, rheological transition, smoothing widths, solidus/liquidus paths, `cp_blend` strategy, `separation_viscosity` drag source, `separation_buoyancy` buoyancy reference. |
 | `PhaseConfig` | Single-phase (solid or liquid) properties: density, heat capacity, conductivity, expansivity, viscosity, optional entropy lookup. Each property accepts a float or a path-string lookup. |
 | `SolverConfig` | ODE driver settings: `start_time`, `end_time`, `atol`, `rtol`, surface-T step cap. |
 

@@ -284,7 +284,8 @@ def run_aragog(tag, R_surf, R_core, g_surf, t_end_yr,
         rheological_transition_melt_fraction=0.4,
         rheological_transition_width=0.15, grain_size=1e-3,
         viscosity_solid=1e21, viscosity_liquid=1e2,
-        thermal_conductivity_solid=4.0, thermal_conductivity_liquid=4.0)
+        thermal_conductivity_solid=4.0, thermal_conductivity_liquid=4.0,
+        separation_buoyancy='solid')  # SPIDER has no buoyancy factor
     phase_stag = EntropyPhaseEvaluator(**phase_kwargs)
     phase_stag.set_pressure(mesh.staggered.pressure)
     phase_basic = EntropyPhaseEvaluator(**phase_kwargs)
@@ -302,7 +303,7 @@ def run_aragog(tag, R_surf, R_core, g_surf, t_end_yr,
         gravitational_separation=grav_sep, mixing=mixing,
         radionuclides=False, tidal=False, tidal_array=[0.0],
         eddy_diffusivity_thermal=1.0, eddy_diffusivity_chemical=1.0,
-        kappah_floor=0.0)
+        kappah_floor=0.0, convective_threshold=0.0)
 
     S0 = np.full(N, S_INIT)
     sigma = 5.670374419e-8

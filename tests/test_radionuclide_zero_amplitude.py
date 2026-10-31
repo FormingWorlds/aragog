@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from aragog.cli import cli
 from aragog.parser import Parameters, _Radionuclide
+from aragog.rheology import SolidRheologyParams
 
 from .conftest import EOS_DIR, needs_eos
 
@@ -148,6 +149,25 @@ def test_rejected_parameters_leave_the_isotopes_unscaled():
     rs[1].abundance, rs[1].concentration = 0.0, 0.0
     replace(p, radionuclides=rs)
     assert [r.concentration for r in rs] == [310.0 * 1e-6, 0.0]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('refusal', ['liquid_rheology', 'solid_ceiling'])
+def test_rheology_refusal_leaves_the_isotopes_unscaled(refusal):
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    rs = [_Radionuclide(**K40_PPM), _Radionuclide(**{**K40_PPM, 'concentration': 1.0})]
+    on = SolidRheologyParams(enabled=True)
+    if refusal == 'liquid_rheology':
+        change = {'phase_liquid': replace(p.phase_liquid, rheology=on)}
+        match = 'phase_liquid.rheology must keep default values'
+    else:
+        # The phase constructor checks the ceiling too, so raise the viscosity afterwards.
+        change = {'phase_solid': replace(p.phase_solid, rheology=on)}
+        change['phase_solid'].viscosity = 1e41
+        match = r'viscosity_max_log10 \(40.0\) must be > log10\(viscosity\) \(41.0\)'
+    with pytest.raises(ValueError, match=match):
+        replace(p, radionuclides=rs, **change)
+    assert [r.concentration for r in rs] == [310.0, 1.0]
 
 
 @pytest.mark.unit

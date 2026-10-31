@@ -3,7 +3,8 @@
 Computes the numbers in the accuracy table of ``docs/Explanations/energy_equation.md``.
 Each case integrates one solver call with the CVODE entropy solver on the
 test EOS (``ARAGOG_TEST_EOS_DIR``) and compares the cell temperatures at the
-call end against ``'fixed'`` at rtol = atol = 1e-10:
+call end against a reference: ``'fixed'`` at rtol = atol = 1e-10 with every CVODE solve at
+``max_step`` 1 yr (the solver keeps atol at 1e-8 or above):
 
 ====  ==============  ========  =====================  ========  ======  =====
 Case  core_bc         Call [yr] Start                  F [W/m2]  w       Nodes
@@ -18,13 +19,14 @@ The mushy start is the midpoint of the solidus and liquidus entropy at
 140 GPa, in every cell. F is a prescribed surface flux
 (``outer_boundary_condition = 4``); w is ``matprop_smooth_width``. The other
 parameters are those of ``_build_mushy_parameters`` in
-``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off and
-``max_steps`` 1e7. Run from the repository root::
+``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off,
+``max_steps`` 1e7 and ``convective_threshold`` 0, the setting of the table. Run from the repository root::
 
-    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [A B C D]
+    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [--width=W] [A B C D]
 
 ``--check`` exits with status 1 when ``'rate'`` at 1e-8 is more than ``RATE_BOUND_K``
-from the reference in any case.
+from the reference in any case. ``--width=W`` sets w of every case. The row also prints the
+RHS evaluations of ``'rate'`` at 1e-8.
 """
 
 from __future__ import annotations
@@ -51,21 +53,37 @@ RUNS = (('fixed', 1e-8), ('rate', 1e-8), ('rate', 1e-10))
 RATE_BOUND_K = 1.3e-4  # the bound the energy-equation docs state for 'rate' at 1e-8
 
 
-def run_case(eos, case, mode, tol):
+def _one_year_steps(s):
+    """Run every CVODE solve of ``s`` at ``max_step`` 1 yr; return the list of those solves."""
+    solve, calls = s._solve_cvode, []
+
+    def one_year(*args, **kw):
+        kw['max_step'] = 1.0 / s._build_nondim_scales().t_ref
+        calls.append(kw['max_step'])
+        return solve(*args, **kw)
+
+    s._solve_cvode = one_year
+    return calls
+
+
+def run_case(eos, case, mode, tol, one_year=False):
     """Integrate one call of ``case``; return the end temperatures [K] and the CVODE step count."""
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=case['n'], end_time=case['end'])
-    p.energy = dataclasses.replace(p.energy, phase_boundary_cap=mode, phi_step_cap=None)
+    p.energy = dataclasses.replace(
+        p.energy, phase_boundary_cap=mode, phi_step_cap=None, convective_threshold=0.0
+    )
     p.boundary_conditions = dataclasses.replace(
         p.boundary_conditions,
         outer_boundary_condition=4,
         outer_boundary_value=case['flux'],
         core_bc=case['core'],
     )
-    p.phase_mixed = dataclasses.replace(p.phase_mixed, matprop_smooth_width=case['width'])
+    p.phase_mixed.matprop_smooth_width = case['width']  # past the validator: case C is width 0
     p.solver.rtol = p.solver.atol = tol
     p.solver.max_steps = 10_000_000
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
+    calls = _one_year_steps(s) if one_year else None
     if case['start'] == 'mushy':
         s.set_initial_entropy(_pick_mushy_S(eos))
     else:
@@ -74,11 +92,13 @@ def run_case(eos, case, mode, tol):
     sol = s._solution
     if sol.status != 0:
         raise RuntimeError(f'{mode} at {tol:g}: solver status {sol.status}')
+    if calls == []:  # without CVODE the solver falls back to Radau, which has no 1 yr steps
+        raise RuntimeError(f'{mode} at {tol:g}: the 1 yr reference ran no CVODE solve')
     T = np.asarray(eos.temperature(s._P_stag_flat, np.asarray(sol.y)[: s._n_stag, -1])).ravel()
-    return T, int(sol.get('cvode_nst') or 0)
+    return T, int(sol.get('cvode_nst') or 0), int(sol.nfev)
 
 
-def main(names, check=False):
+def main(names, check=False, width=None):
     """Print one markdown table row per case; return 1 when ``check`` and a bound fails."""
     eos_dir = os.environ.get('ARAGOG_TEST_EOS_DIR')
     if not eos_dir:
@@ -88,22 +108,23 @@ def main(names, check=False):
     eos = EntropyEOS(eos_dir)
     print(
         r'| Case | Call [yr] | steps fixed / rate at 1e-8 | max \|dT\| fixed 1e-8 | rate 1e-8 '
-        '| rate 1e-10 |'
+        '| rate 1e-10 | RHS rate 1e-8 |'
     )
-    print('|---|---|---|---|---|---|')
+    print('|---|---|---|---|---|---|---|')
     failed = []
     for name in names:
-        case = CASES[name]
-        T_ref, _ = run_case(eos, case, 'fixed', 1e-10)
-        dT, nst = [], []
+        case = CASES[name] if width is None else dict(CASES[name], width=width)
+        T_ref, _, _ = run_case(eos, case, 'fixed', 1e-10, one_year=True)
+        dT, nst, nfev = [], [], []
         for mode, tol in RUNS:
-            T, n = run_case(eos, case, mode, tol)
+            T, n, f = run_case(eos, case, mode, tol)
             dT.append(float(np.abs(T - T_ref).max()))
             nst.append(n)
+            nfev.append(f)
         print(
             f'| {name} | {case["end"]:g} | {nst[0]} / {nst[1]} | '
-            + ' | '.join(f'{d:.2g} K' for d in dT)
-            + ' |',
+            + ' | '.join(f'{d:.3g} K' for d in dT)
+            + f' | {nfev[1]} |',
             flush=True,
         )
         if dT[1] > RATE_BOUND_K:
@@ -115,5 +136,10 @@ def main(names, check=False):
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a != '--check']
-    sys.exit(main(args or list(CASES), check='--check' in sys.argv[1:]))
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+    names = [a for a in sys.argv[1:] if not a.startswith('--')]
+    widths = [float(a.split('=', 1)[1]) for a in flags if a.startswith('--width=')]
+    unknown = [a for a in flags if a != '--check' and not a.startswith('--width=')]
+    if unknown or set(names) - set(CASES):
+        sys.exit(f'unknown option or case: {unknown + sorted(set(names) - set(CASES))}')
+    sys.exit(main(names or list(CASES), check='--check' in flags, width=(widths or [None])[-1]))

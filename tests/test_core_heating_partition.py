@@ -128,7 +128,7 @@ def test_jax_dsdt_conserves_energy_with_a_heating_profile(monkeypatch):
     N, rho, cp = 8, 4000.0, 1000.0
     mesh = _make_const_property_mesh(N=N)
 
-    def phase(eos, params, P, S):
+    def phase(eos, params, P, S, **_):
         T = 2000.0 * jnp.exp((S - 3000.0) / cp)
         one = jnp.ones_like(S)
         return PhaseProperties(
@@ -206,5 +206,5 @@ def test_jax_core_temperature_follows_the_cmb_flux(monkeypatch):
     r_cmb = float(mesh.radii_basic[0])
     C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
     C_core *= bc.tfac_core_avg
-    balance = -float(flux['F'][0]) * float(mesh.area[0]) / C_core
+    balance = float(-flux['F'][0] * mesh.area[0] / C_core)
     assert T / cp * dS[0] == pytest.approx(balance, rel=1e-9, abs=0.0)

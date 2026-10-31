@@ -12,7 +12,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -20,8 +20,25 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
+from aragog.config.phases import (
+    R_GAS,
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+    SolidRheologyParams,
+    _compute_arrhenius_viscosity_core,
+    _compute_effective_viscosity_core,
+    _compute_stagnant_lid_state_core,
+    _compute_yield_stress_core,
+    _viscous_mixing_length_factor_core,
+    check_viscosity_ceiling,
+    merge_rheology,
+)
 from aragog.jax.eos import EntropyEOS_JAX
+from aragog.mesh import top_node_entropy
+from aragog.utilities import positive_gravity, zero_anchored_weight
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -49,6 +66,11 @@ class PhaseProperties(NamedTuple):
     thermal_conductivity: jax.Array  # [W/m/K]
     latent_heat: jax.Array  # [J/kg]
     capacitance: jax.Array  # rho * T [kg K / m^3]
+    solidus_temperature: jax.Array | None = None  # [K]
+    eta_diff: jax.Array | None = None  # [Pa s]
+    tau_y: jax.Array | None = None  # [Pa]
+    smth: jax.Array | None = None  # [-]
+    visc_solid_weight: jax.Array | None = None  # [-]
 
 
 class FluxOutput(NamedTuple):
@@ -115,6 +137,8 @@ class PhaseParams(eqx.Module):
     eddy_diff_thermal: float
     eddy_diff_chemical: float
     kappah_floor: float
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m].
+    convective_threshold: float
 
     # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
     # tracing (1.0 = smoothing on, 0.0 = raw un-smoothed flux). Keep ON
@@ -131,11 +155,13 @@ class PhaseParams(eqx.Module):
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
-    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
-    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
-    # the fixed single-phase liquid viscosity (SPIDER's
-    # GetGravitationalHeatFlux convention).
+    # separation_viscosity_mixture: above 0.5 -> separation drag with the blended mixture
+    # viscosity; otherwise the liquid viscosity (SPIDER's GetGravitationalHeatFlux).
     separation_viscosity_mixture: float
+    # separation_buoyancy_mixture: above 0.5 -> 1 - phi on the BKC and RG mobility
+    # (McKenzie 1984); otherwise buoyancy against the solid (Abe 1995, SPIDER).
+    separation_buoyancy_mixture: float
+    rheology: SolidRheologyParams = eqx.field(static=True, default=SolidRheologyParams())
 
     def __init__(
         self,
@@ -158,6 +184,9 @@ class PhaseParams(eqx.Module):
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
+        convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT,
+        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
+        rheology: SolidRheologyParams | None = None,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -174,6 +203,8 @@ class PhaseParams(eqx.Module):
         self.eddy_diff_thermal = eddy_diff_thermal
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
+        check_convective_threshold(convective_threshold)
+        self.convective_threshold = float(convective_threshold)
         self.bottom_up_grav_sep = float(bottom_up_grav_sep)
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(
@@ -194,6 +225,80 @@ class PhaseParams(eqx.Module):
             self.separation_viscosity_mixture = 0.0
         else:
             raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
+        if separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                f'separation_buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, '
+                f'got {separation_buoyancy!r}'
+            )
+        self.separation_buoyancy_mixture = {'mixture': 1.0, 'solid': 0.0}[separation_buoyancy]
+        rheo_obj = merge_rheology(rheology, {})
+        rheo_obj.__post_init__()
+        check_viscosity_ceiling(viscosity_solid, rheo_obj)
+        if rheo_obj.enabled:
+            if not np.isfinite(viscosity_solid) or viscosity_solid <= 0.0:
+                raise ValueError('viscosity_solid must be finite and positive')
+            if not np.isfinite(phi_rheo) or not (0.0 <= float(phi_rheo) <= 1.0):
+                raise ValueError('phi_rheo must lie in [0, 1]')
+            if not np.isfinite(phi_width) or float(phi_width) <= 0.0:
+                raise ValueError('phi_width must be finite and positive')
+        self.rheology = rheo_obj
+
+    @classmethod
+    def from_parameters(cls, parameters: Any, **overrides: Any) -> 'PhaseParams':
+        """Construct ``PhaseParams`` from a ``Parameters`` object, with optional keyword overrides.
+
+        Parameters
+        ----------
+        parameters : Parameters
+            Parsed Aragog runtime parameter container holding ``phase_solid``,
+            ``phase_liquid``, ``phase_mixed``, and ``energy`` sub-containers.
+        **overrides : Any
+            Optional keyword arguments overriding individual :class:`PhaseParams`
+            constructor fields within their valid domains.
+
+        Returns
+        -------
+        PhaseParams
+            Validated static material and transport parameter bundle.
+
+        Raises
+        ------
+        TypeError, ValueError
+            If any extracted or overridden parameter violates the domain or
+            rheology ceiling checks of :class:`PhaseParams`.
+        """
+        kwargs: dict[str, Any] = {
+            'phi_rheo': float(parameters.phase_mixed.rheological_transition_melt_fraction),
+            'phi_width': float(parameters.phase_mixed.rheological_transition_width),
+            'viscosity_solid': float(parameters.phase_solid.viscosity),
+            'viscosity_liquid': float(parameters.phase_liquid.viscosity),
+            'grain_size': float(parameters.phase_mixed.grain_size),
+            'k_solid': float(parameters.phase_solid.thermal_conductivity),
+            'k_liquid': float(parameters.phase_liquid.thermal_conductivity),
+            'matprop_smooth_width': float(parameters.phase_mixed.matprop_smooth_width),
+            'conduction': bool(parameters.energy.conduction),
+            'convection': bool(parameters.energy.convection),
+            'grav_sep': bool(parameters.energy.gravitational_separation),
+            'mixing': bool(parameters.energy.mixing),
+            'eddy_diff_thermal': float(parameters.energy.eddy_diffusivity_thermal),
+            'eddy_diff_chemical': float(parameters.energy.eddy_diffusivity_chemical),
+            'kappah_floor': float(parameters.energy.kappah_floor),
+            'bottom_up_grav_sep': bool(parameters.energy.bottom_up_grav_sep),
+            'phase_smoothing': str(parameters.energy.phase_smoothing),
+            'phase_smoothing_width': (
+                float(parameters.phase_mixed.matprop_smooth_width) or 1.0e-2
+            ),
+            'separation_viscosity': str(parameters.phase_mixed.separation_viscosity),
+            'convective_threshold': float(parameters.energy.convective_threshold),
+            'separation_buoyancy': str(
+                getattr(
+                    parameters.phase_mixed, 'separation_buoyancy', SEPARATION_BUOYANCY_DEFAULT
+                )
+            ),
+            'rheology': getattr(parameters.phase_solid, 'rheology', None),
+        }
+        kwargs.update(overrides)
+        return cls(**kwargs)
 
 
 class MeshArrays(eqx.Module):
@@ -238,6 +343,11 @@ class MeshArrays(eqx.Module):
     # (AdamsWilliamsonEOS).
     gravity_stag: jax.Array  # [m/s^2]
 
+    # Top basic node: limited (mesh.top_node == 'limited'), outer-cell spacing ratio, table range
+    top_limited: bool = eqx.field(static=True)
+    top_ratio: float
+    top_bounds: jax.Array  # [J/kg/K], (S_min, S_max)
+
     def __init__(
         self,
         d_dr_matrix,
@@ -254,6 +364,11 @@ class MeshArrays(eqx.Module):
         gravity,
         dP_dr_basic=None,
         gravity_stag=None,
+        top_limited=False,
+        top_ratio=1.0,
+        top_bounds=(-jnp.inf, jnp.inf),
+        *,
+        validate_rheology: bool = False,
     ):
         """Custom init so callers that predate the dP_dr_basic field
         keep working. When ``dP_dr_basic`` is not supplied we derive it
@@ -288,9 +403,62 @@ class MeshArrays(eqx.Module):
             g_arr = jnp.asarray(gravity)
             gravity_stag = 0.5 * (g_arr[:-1] + g_arr[1:])
         self.gravity_stag = jnp.asarray(gravity_stag)
+        self.top_limited, self.top_ratio = bool(top_limited), float(top_ratio)
+        self.top_bounds = jnp.asarray(top_bounds, dtype=float)
+        if validate_rheology:
+            self.validate_for_rheology()
+
+    def validate_for_rheology(self) -> None:
+        """Validate static mesh invariants required when solid-state rheology is enabled.
+
+        Returns
+        -------
+        None
+            Returns ``None`` when all mesh invariants hold.
+
+        Raises
+        ------
+        ValueError
+            If eager ``radii_basic`` [m] has fewer than 3 nodes or is not finite,
+            strictly positive, and strictly increasing; if ``mixing_length`` [m]
+            is non-finite or negative; if ``P_basic`` or ``P_stag`` [Pa] is
+            non-finite or below ``-1.0`` Pa; or if ``gravity`` [m/s^2] is
+            non-finite or non-positive.
+        """
+        if not isinstance(self.radii_basic, jax.core.Tracer):
+            r_b = np.asarray(self.radii_basic, dtype=float).ravel()
+            if (
+                r_b.size < 3
+                or not np.all(np.isfinite(r_b))
+                or r_b[0] <= 0.0
+                or not np.all(np.diff(r_b) > 0.0)
+            ):
+                raise ValueError(
+                    'basic-node radii must be finite, positive, and strictly increasing with >= 3 nodes'
+                )
+        if not isinstance(self.mixing_length, jax.core.Tracer):
+            ml = np.asarray(self.mixing_length, dtype=float).ravel()
+            if not np.all(np.isfinite(ml)) or np.any(ml < 0.0):
+                raise ValueError('basic-node mixing_length must be finite and non-negative')
+        if not isinstance(self.P_basic, jax.core.Tracer):
+            p_b = np.asarray(self.P_basic, dtype=float).ravel()
+            if not np.all(np.isfinite(p_b)) or np.any(p_b < -1.0):
+                raise ValueError(
+                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
+                )
+        if not isinstance(self.P_stag, jax.core.Tracer):
+            p_s = np.asarray(self.P_stag, dtype=float).ravel()
+            if not np.all(np.isfinite(p_s)) or np.any(p_s < -1.0):
+                raise ValueError(
+                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
+                )
+        if not isinstance(self.gravity, jax.core.Tracer):
+            g_b = np.asarray(self.gravity, dtype=float).ravel()
+            if not np.all(np.isfinite(g_b)) or np.any(g_b <= 0.0):
+                raise ValueError('gravity at basic nodes must be finite and positive')
 
     @staticmethod
-    def from_numpy_mesh(mesh) -> 'MeshArrays':
+    def from_numpy_mesh(mesh, *, validate_rheology: bool = False) -> 'MeshArrays':
         """Build from a numpy Aragog Mesh object."""
         P_basic_arr = np.asarray(mesh.basic_pressure).ravel()
         r_basic_arr = np.asarray(mesh.basic.radii).ravel()
@@ -326,7 +494,20 @@ class MeshArrays(eqx.Module):
             # eos_gravity)`` (with scalar fallback). Aligned to the
             # staggered grid.
             gravity_stag=_build_gravity_array(mesh, r_stag=True),
+            top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
+            top_ratio=getattr(mesh, 'top_ratio', 1.0),
+            top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
+            validate_rheology=validate_rheology,
         )
+
+
+def entropy_at_basic_nodes(mesh: MeshArrays, S: jax.Array) -> jax.Array:
+    """Entropy at the basic nodes, with the limited top node of ``aragog.mesh`` when set."""
+    S_basic = mesh.quantity_matrix @ S
+    if mesh.top_limited:
+        node = top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, xp=jnp, linear=S_basic[-1])
+        return S_basic.at[-1].set(node)
+    return S_basic
 
 
 # ---------------------------------------------------------------------------
@@ -392,8 +573,10 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         # smooth, so the cubic Hermite has no overshoot risk like the
         # solidus/liquidus 1-D entropy curves (where PCHIP was
         # rejected; see eos.entropy._load_spider_phase_boundary).
+        if not np.all(np.isfinite(eos_gravity_arr)):
+            raise ValueError('gravity profile eos_gravity must be finite on every row')
         g_basic = PchipInterpolator(eos_radius_arr, eos_gravity_arr)(r_basic)
-        return jnp.asarray(g_basic)
+        return jnp.asarray(positive_gravity(g_basic, 'interpolated mesh nodes'))
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS
     # attribute first, then mesh.settings, then mesh.parameters. Both
@@ -415,8 +598,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             'an external EOS file with a gravity column) before constructing '
             'the JAX phase parameters.'
         )
-    g_scalar = abs(float(_eos_g))
-    return jnp.asarray(np.full(r_basic.size, g_scalar))
+    return jnp.asarray(positive_gravity(np.full(r_basic.size, float(_eos_g)), 'mesh nodes'))
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +622,9 @@ def spider_get_smoothing(gphi: jax.Array, smooth_width: float) -> jax.Array:
     ``smooth_width`` is the tanh transition width in gphi units (SPIDER
     ``matprop_smooth_width``, default 0.01).
     """
-    upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / smooth_width))
-    lower = 0.5 * (1.0 + jnp.tanh(gphi / smooth_width))
+    w_safe = jnp.maximum(smooth_width, 1.0e-30)
+    upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / w_safe))
+    lower = 0.5 * (1.0 + jnp.tanh(gphi / w_safe))
     return jnp.where(gphi > 0.5, upper, lower)
 
 
@@ -470,11 +653,51 @@ def phase_boundary_smoothing(
 # ---------------------------------------------------------------------------
 
 
+def blend_viscosity_with_solid_jax(
+    phi: jax.Array,
+    smth: jax.Array,
+    log10_eta_solid: jax.Array | float,
+    params: PhaseParams,
+) -> jax.Array:
+    """Blend solid and liquid dynamic viscosities across the mushy zone.
+
+    Parameters
+    ----------
+    phi : jax.Array
+        Mass melt fraction (dimensionless, in ``[0, 1]``).
+    smth : jax.Array
+        Two-phase boundary smoothing weight (dimensionless, in ``[0, 1]``).
+    log10_eta_solid : jax.Array or float
+        Base-10 logarithm of the solid-branch dynamic viscosity ``log10(eta_solid [Pa s])``,
+        finite real scalar or array.
+    params : PhaseParams
+        Static phase parameters providing ``phi_rheo``, ``phi_width``,
+        ``log10_visc_liquid``, and ``rheology.phi_visc_single``.
+
+    Returns
+    -------
+    jax.Array
+        Blended dynamic viscosity [Pa s], strictly positive in ``(0, +inf)``.
+    """
+    w = tanh_weight(phi, params.phi_rheo, params.phi_width)
+    log_visc_mixed = (1.0 - w) * log10_eta_solid + w * params.log10_visc_liquid
+    phi_thresh = params.rheology.phi_visc_single if params.rheology.enabled else 0.5
+    log_visc_single = jnp.where(
+        phi > phi_thresh,
+        params.log10_visc_liquid,
+        log10_eta_solid,
+    )
+    log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
+    return 10.0**log_visc
+
+
 def evaluate_phase(
     eos: EntropyEOS_JAX,
     params: PhaseParams,
     P: jax.Array,
     S: jax.Array,
+    *,
+    include_rheology: bool = True,
 ) -> PhaseProperties:
     """Compute all material properties at (P, S) nodes.
 
@@ -488,6 +711,10 @@ def evaluate_phase(
         Pressure [Pa], 1D.
     S : jax.Array
         Entropy [J/kg/K], 1D.
+    include_rheology : bool, default True
+        When True and ``params.rheology.enabled`` is True, evaluate
+        Arrhenius diffusion-creep viscosity and Byerlee yield stress
+        for the solid branch.
 
     Returns
     -------
@@ -507,20 +734,46 @@ def evaluate_phase(
     )
     phi = state.melt_fraction
 
-    # Viscosity: two-stage blend mirroring numpy entropy_phase.py:311-327
-    # (used downstream by MLT -> kappa_c -> Jmix, which is why both stages
-    # matter). Stage 1: tanh blend at phi_rheo (SPIDER util.c:255-259).
-    # Stage 2: combine_matprop with the cached matprop_smooth_width smth
-    # that compute_phase_state also uses for T/rho/Cp/alpha/k.
-    w = tanh_weight(phi, params.phi_rheo, params.phi_width)
-    log_visc_mixed = (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
-    log_visc_single = jnp.where(
-        phi > 0.5,
-        params.log10_visc_liquid,
-        params.log10_visc_solid,
+    eta_diff = None
+    tau_y = None
+    w_blend = tanh_weight(phi, params.phi_rheo, params.phi_width)
+    phi_thresh = params.rheology.phi_visc_single if params.rheology.enabled else 0.5
+    visc_solid_weight = state.smth * (1.0 - w_blend) + (1.0 - state.smth) * jnp.where(
+        phi > phi_thresh, 0.0, 1.0
     )
-    log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
-    viscosity = 10.0**log_visc
+    if params.rheology.enabled and include_rheology:
+        visc_solid = 10.0**params.log10_visc_solid
+        p_pos = jnp.maximum(P, 0.0)
+        eta_diff = _compute_arrhenius_viscosity_core(
+            state.temperature,
+            p_pos,
+            viscosity_solid=visc_solid,
+            g_homologous=params.rheology.g_homologous,
+            solidus_temperature=state.solidus_temperature,
+            t_sol_0=params.rheology.t_sol_0,
+            dt_sol_dp=params.rheology.dt_sol_dp,
+            arrhenius_t_ref=params.rheology.arrhenius_t_ref,
+            r_gas=R_GAS,
+            viscosity_max_log10=params.rheology.viscosity_max_log10,
+            water_prefactor=params.rheology.water_prefactor,
+            xp=jnp,
+            activation_energy=params.rheology.activation_energy,
+            activation_volume=params.rheology.activation_volume,
+            activation_volume_decay_pressure=params.rheology.activation_volume_decay_pressure,
+        )
+        tau_y = _compute_yield_stress_core(
+            p_pos,
+            yield_stress_c=params.rheology.yield_stress_c,
+            yield_stress_mu=params.rheology.yield_stress_mu,
+            yield_stress_max=params.rheology.yield_stress_max,
+            xp=jnp,
+        )
+        log10_eta_solid = jnp.log10(jnp.maximum(eta_diff, jnp.finfo(float).tiny))
+        viscosity = blend_viscosity_with_solid_jax(phi, state.smth, log10_eta_solid, params)
+    else:
+        viscosity = blend_viscosity_with_solid_jax(
+            phi, state.smth, params.log10_visc_solid, params
+        )
     kinematic_viscosity = viscosity / state.density
 
     # Capacitance for entropy equation
@@ -538,6 +791,11 @@ def evaluate_phase(
         thermal_conductivity=state.thermal_conductivity,
         latent_heat=state.latent_heat,
         capacitance=capacitance,
+        solidus_temperature=state.solidus_temperature,
+        eta_diff=eta_diff,
+        tau_y=tau_y,
+        smth=state.smth,
+        visc_solid_weight=visc_solid_weight,
     )
 
 
@@ -558,8 +816,11 @@ def relative_velocity(
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
-    multiplies delta_rho*g/eta (Abe 1995, Bower et al. 2018 section 2.1;
+    multiplies (rho_s - rho_l) g / eta (Abe 1995, Bower et al. 2018 section 2.1;
     SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+    The contrast is signed: the velocity is negative where the melt is denser.
+    ``params.separation_buoyancy_mixture`` above 0.5 puts ``1 - phi`` on the BKC and RG
+    terms (McKenzie 1984); otherwise the buoyancy is against the solid (Abe 1995).
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
@@ -569,7 +830,6 @@ def relative_velocity(
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
-    delta_rho = rho_l - rho_s
     d = params.grain_size
     eta_melt = 10.0**params.log10_visc_liquid
     eta_l = jnp.where(params.separation_viscosity_mixture > 0.5, viscosity, eta_melt)
@@ -600,13 +860,14 @@ def relative_velocity(
     # crossing), RG -> Stokes at zeta_2 = 0.771462 (exact).
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
-    F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
-    F = jnp.maximum(F, 0.0)
+    F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
+    F_matrix = (
+        jnp.where(params.separation_buoyancy_mixture > 0.5, 1.0 - porosity, 1.0) * F_matrix
+    )
+    F = jnp.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
-    # Smoothed |delta_rho|: sqrt(x^2 + eps^2) with eps tiny vs physical
-    # density contrast ~ 500 kg/m^3. Matches entropy_phase.py:464.
-    abs_drho = jnp.sqrt(delta_rho * delta_rho + 1.0e-12)
-    return abs_drho * gravity * F / jnp.maximum(eta_l, 1e-10)
+    # Signed contrast, positive outward (melt rising), as the numpy path.
+    return drho * gravity * F / jnp.maximum(eta_l, 1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -614,12 +875,35 @@ def relative_velocity(
 # ---------------------------------------------------------------------------
 
 
+def _mlt_factor_powers(q_mlt: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Return ``(q**0.25, q**0.75)`` with a finite derivative at ``q = 0``.
+
+    Parameters
+    ----------
+    q_mlt : jax.Array
+        Viscous mixing-length factor [-], ``>= 0``; it is 0 where the viscous length vanishes.
+
+    Returns
+    -------
+    tuple of jax.Array
+        ``q**0.25`` and ``q**0.75``; equal to the plain powers for ``q > 0`` and 0 at ``q = 0``,
+        where the derivative is 0 instead of the NaN of ``inf * 0``.
+    """
+    q_pos = q_mlt > 0.0
+    q_safe = jnp.where(q_pos, q_mlt, 1.0)
+    return jnp.where(q_pos, q_safe**0.25, 0.0), jnp.where(q_pos, q_safe**0.75, 0.0)
+
+
 def compute_mlt(
     dSdr: jax.Array,
     phase_basic: PhaseProperties,
     mesh: MeshArrays,
     params: PhaseParams,
-) -> tuple[jax.Array, jax.Array]:
+    theta: jax.Array | float | None = None,
+    return_aux: bool = False,
+    return_q_025: bool = False,
+    surface_floor: bool = True,
+) -> tuple[jax.Array, ...]:
     """Compute MLT eddy diffusivity from the entropy gradient.
 
     Parameters
@@ -632,69 +916,76 @@ def compute_mlt(
         Mesh geometry.
     params : PhaseParams
         Static parameters.
+    theta : jax.Array or float, optional
+        Frank-Kamenetskii contrast for viscous mixing-length rescaling.
+    return_aux : bool, default False
+        When True, also return ``(reynolds, viscous_velocity)`` as the
+        third and fourth elements of the returned tuple.
+    return_q_025 : bool, default False
+        When True together with ``return_aux``, also append ``q_mlt**0.25``
+        as the fifth element of the returned tuple.
+    surface_floor : bool
+        False under a prescribed surface temperature (outer BC 5): the kappa_h floor does
+        not act at the surface node.
 
     Returns
     -------
-    kappa_h : jax.Array
-        Thermal eddy diffusivity at basic nodes [m^2/s].
-    kappa_c : jax.Array
-        Chemical eddy diffusivity at basic nodes [m^2/s].
+    tuple of jax.Array
+        ``(kappa_h, kappa_c)`` when ``return_aux`` is False;
+        ``(kappa_h, kappa_c, reynolds, viscous_velocity)`` when True
+        (or 5-tuple with ``q_025`` when ``return_q_025`` is True).
     """
     alpha = phase_basic.thermal_expansivity
     T = phase_basic.temperature
     Cp = phase_basic.heat_capacity
     nu = phase_basic.kinematic_viscosity
 
-    # Buoyancy from entropy gradient. ``jnp.abs`` has a non-differentiable
-    # kink at zero (subgradient anywhere in [-1, +1] is mathematically
-    # valid, but JAX returns sign(0) = 0 in fwd and the backward pass
-    # through the abs and the downstream multiplications can produce
-    # NaN at exact-zero entropy gradients. Numpy uses
-    # ``_smooth_abs_neg(dSdr, eps=1e-30)`` which is the smoothed
-    # ``max(-x, 0)``; we use the differentiable
-    # ``0.5*(|x| + sqrt(x^2 + eps^2)) ~ |x|`` instead, which keeps the
-    # forward equal to ``abs(x)`` to ULP precision while delivering a
-    # finite analytic gradient everywhere.
+    # |dS/dr| as 0.5*(|x| + sqrt(x^2 + eps^2)): equal to |x| for |x| >> eps, with a
+    # finite gradient at x = 0, where the backward pass of jnp.abs can give NaN.
     eps_abs = 1.0e-30
     abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
-    effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
-    velocity_prefactor = mesh.gravity * effective_superadiabatic
+    # An unstable node is driven by at least the gradient D (convective_threshold).
+    drive = jnp.maximum(abs_dSdr_safe, params.convective_threshold)
+    effective_superadiabatic = alpha * T * drive / jnp.maximum(Cp, 1.0)
+    velocity_prefactor = jnp.abs(mesh.gravity) * effective_superadiabatic
 
-    # Convective mask: unstable when dS/dr < 0.
-    # Hard mask matching the numpy reference. Using jnp.where (not boolean
-    # indexing) for JAX traceability. Produces exactly 0 at stable nodes,
-    # avoiding spurious convection from a soft sigmoid.
+    # Hard masks matching the numpy reference: the mixing-length drive acts where
+    # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
+    floor_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
+    if not surface_floor:  # a surface held at its temperature (outer BC 5) gets no floor
+        floor_mask = floor_mask.at[-1].set(0.0)
 
-    # Viscous velocity (Re <= Re_crit)
-    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
-
-    # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
-    # the textbook NaN-safe forward, but its backward gradient at x=0 is
-    # ``0.5 * 0 / sqrt(0) = 0/0 = NaN`` (the maximum's stop-at-zero
-    # subgradient kills the divisor protection). Numpy avoids this with
-    # ``np.sqrt(x + 1e-20)`` (always-positive argument). Mirror it here:
-    # eps**2 = 1e-40 is far below any physical inviscid_velocity_sq, so
-    # the forward is bit-equivalent for non-trivial x.
     eps_sqrt = 1.0e-20
     inviscid_velocity_sq = (velocity_prefactor * mesh.mixing_length_sq / 16.0) * conv_mask
     inviscid_velocity = jnp.sqrt(inviscid_velocity_sq + eps_sqrt)
 
-    # Reynolds number
-    reynolds = viscous_velocity * mesh.mixing_length / nu
-
-    # Smooth blend between viscous and inviscid regimes. The narrow
-    # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the
-    # convecting regime; widening the blend leaks inviscid mixing
-    # into the solid regime and induces T_core bistability.
     blend_width = 0.01 * RE_CRIT
+    if params.rheology.enabled:
+        q_mlt = _viscous_mixing_length_factor_core(
+            radii=mesh.radii_basic,
+            r_in=mesh.radii_basic[0],
+            r_out=mesh.radii_basic[-1],
+            mixing_length=mesh.mixing_length,
+            bottom_slope=params.rheology.mlt_bottom_slope,
+            theta=theta,
+            s_top_inf=params.rheology.s_top_inf,
+            c_theta=params.rheology.c_theta,
+            xp=jnp,
+        )
+        q_025, q_075 = _mlt_factor_powers(q_mlt)
+    else:
+        q_025 = q_075 = jnp.ones_like(dSdr)
+    viscous_velocity = (
+        velocity_prefactor * mesh.mixing_length_cu * q_075 / (18.0 * nu)
+    ) * conv_mask
+    reynolds = viscous_velocity * mesh.mixing_length * q_025 / nu
     inviscid_weight = 0.5 * (
         1.0 + jnp.tanh((reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
     )
-
-    # Raw eddy diffusivity
     kh_raw = (
-        (1.0 - inviscid_weight) * viscous_velocity + inviscid_weight * inviscid_velocity
+        (1.0 - inviscid_weight) * (viscous_velocity * q_025)
+        + inviscid_weight * inviscid_velocity
     ) * mesh.mixing_length
 
     # Thermal eddy diffusivity (SPIDER convention: positive=scale, negative=constant)
@@ -711,24 +1002,17 @@ def compute_mlt(
         jnp.full_like(kh_raw, -params.eddy_diff_chemical),
     )
 
-    # kappa_h floor (phase-dependent, modulated by melt fraction), gated to
-    # convectively-unstable cells. Production PROTEUS runs use
-    # kappah_floor = 10 m^2/s; the phi-modulated f_floor ramps from 0 in
-    # solid layers to ~1 in mushy/liquid layers, where MLT can otherwise
-    # numerically freeze when the entropy gradient gets small. The
-    # ``conv_mask`` gate confines the floor to cells that are actually
-    # convecting (dS/dr < 0): a stably-stratified, just-frozen mushy cell at
-    # the crystallisation front must NOT receive a floored eddy diffusivity,
-    # because the signed convective flux rho*T*kappa_h*(-dS/dr) would then
-    # inject a spurious sign-flipped flux that pins the cell sub-solidus.
-    # SPIDER has no kappa_h floor, so floor = 0 in stratified layers is the
-    # SPIDER-consistent limit. The transition is anchored on the rheological
-    # critical melt fraction (``params.phi_rheo``, default 0.4) with width
-    # ``params.phi_width`` (default 0.15). See solver/entropy_state.py for
-    # the numpy twin.
+    # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only; see
+    # solver/entropy_state.py:apply_kappah_floor for why cells with
+    # dS/dr >= D keep their raw value.
     phi_basic = phase_basic.melt_fraction
-    f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
-    kh_floor = params.kappah_floor * f_floor * conv_mask
+    if params.rheology.enabled:
+        f_floor = zero_anchored_weight(
+            tanh_weight, phi_basic, params.phi_rheo, params.phi_width, jnp
+        )
+    else:
+        f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
+    kh_floor = params.kappah_floor * f_floor * floor_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
     # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior
@@ -737,12 +1021,30 @@ def compute_mlt(
     # relative to the interior value. Mirrors numpy entropy_state.py:533.
     kappa_h = kappa_h.at[0].set(kappa_h[1])
 
+    if return_aux:
+        if return_q_025:
+            return kappa_h, kappa_c, reynolds, viscous_velocity, q_025
+        return kappa_h, kappa_c, reynolds, viscous_velocity
     return kappa_h, kappa_c
 
 
 # ---------------------------------------------------------------------------
 # Full flux computation (replaces EntropyState.update flux section)
 # ---------------------------------------------------------------------------
+
+
+def _matched_surface_gradient(dSdr, half_cell, t_top_cell, phase_basic, mesh):
+    """dS/dr at the surface node from the half-cell temperature gradient (outer BC 5).
+
+    Mirrors ``EntropyState._match_surface_gradient``: ``(Cp_safe / T) (dT/dr - dT/dP|_S dP/dr)``
+    with ``dT/dr = (T_node - t_top_cell) / half_cell``. ``T_node``, the temperature at
+    ``S_surf``, stands for the surface temperature, so a stale ``outer_bc_value`` is unused.
+    """
+    t_node = phase_basic.temperature[-1]
+    cp = jnp.maximum(phase_basic.heat_capacity[-1], 100.0)
+    dtdr = (t_node - t_top_cell) / half_cell
+    dtdr_ad = phase_basic.dTdPs[-1] * mesh.dP_dr_basic[-1]
+    return dSdr.at[-1].set(cp / t_node * (dtdr - dtdr_ad))
 
 
 def compute_fluxes(
@@ -754,6 +1056,7 @@ def compute_fluxes(
     heating_rate: jax.Array,
     S_basic_cmb_override=None,
     dSdr_cmb_override=None,
+    surface_temperature=None,
 ) -> FluxOutput:
     """Compute all heat and mass fluxes from the entropy profile.
 
@@ -777,15 +1080,19 @@ def compute_fluxes(
         (radionuclide + tidal, pre-computed by caller).
     S_basic_cmb_override : float or None
         Optional override for the entropy at the CMB basic node
-        (basic-node index 0). Used by the energy_balance core BC
-        which reconstructs S_basic[0] from the state-tracked
+        (basic-node index 0). Used by the energy_balance and
+        core_module core BCs, which reconstruct S_basic[0] from the state-tracked
         dSdr_cmb via S[0] + dSdr_cmb * (r_basic[0] - r_stag[0]).
         When None, the standard quantity_matrix mapping is used.
     dSdr_cmb_override : float or None
         Optional override for the entropy gradient at the CMB
-        basic node (dSdr[0]). Used by the energy_balance core BC
-        where dSdr_cmb is a state-tracked variable. When None,
+        basic node (dSdr[0]). Used by the energy_balance and
+        core_module core BCs, where dSdr_cmb is a state-tracked variable. When None,
         the standard d_dr_matrix mapping is used.
+    surface_temperature : tuple or None
+        ``(S_surf, dr_half)`` of a prescribed surface temperature (outer BC 5): the surface
+        node takes ``S_surf`` [J/kg/K], which sets its temperature, and the gradient of
+        :func:`_matched_surface_gradient`. When None, the surface copy convention is used.
 
     Returns
     -------
@@ -793,7 +1100,7 @@ def compute_fluxes(
         Heat flux, mass flux, eddy diffusivity, heating.
     """
     # Interpolate entropy to basic nodes and compute gradient
-    S_basic = mesh.quantity_matrix @ S_stag
+    S_basic = entropy_at_basic_nodes(mesh, S_stag)
     dSdr = mesh.d_dr_matrix @ S_stag
 
     # SPIDER ic.c:450 boundary-copy convention for dSdr at the surface
@@ -817,19 +1124,34 @@ def compute_fluxes(
     if dSdr_cmb_override is not None:
         dSdr = dSdr.at[0].set(dSdr_cmb_override)
     else:
-        # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for
-        # the non-energy_balance modes (quasi_steady etc.) where there
-        # is no boundary-state override. In energy_balance mode the
-        # explicit override above wins and this branch is skipped.
+        # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for the modes without a
+        # boundary-state override; energy_balance and core_module pass one above.
         dSdr = dSdr.at[0].set(dSdr[1])
+
+    if surface_temperature is not None:
+        S_basic = S_basic.at[-1].set(surface_temperature[0])
 
     # Phase properties at basic nodes only. The SPIDER-bracket Jmix
     # is built entirely from basic-node quantities, so staggered-node
     # phase properties are not materialised here.
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+    if surface_temperature is not None:
+        t_top_cell = evaluate_phase(eos, params, mesh.P_stag[-1:], S_stag[-1:]).temperature[0]
+        dSdr = _matched_surface_gradient(
+            dSdr, surface_temperature[1], t_top_cell, phase_basic, mesh
+        )
 
     # MLT eddy diffusivity
-    kappa_h, kappa_c = compute_mlt(dSdr, phase_basic, mesh, params)
+    kappa_h, kappa_c, _, u_visc_1, q_025_1 = compute_mlt(
+        dSdr,
+        phase_basic,
+        mesh,
+        params,
+        theta=None,
+        return_aux=True,
+        return_q_025=True,
+        surface_floor=surface_temperature is None,
+    )
 
     # Basic node properties
     rho = phase_basic.density
@@ -855,10 +1177,82 @@ def compute_fluxes(
     Cp_safe = jnp.maximum(Cp, 100.0)
     superadiabatic = (T / Cp_safe) * dSdr
     dT_dr_adiabat = dTdPs_basic * mesh.dP_dr_basic
-    heat_flux = heat_flux + params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
+    jcond = params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
+    jconv = params.convection * (rho * T * kappa_h * (-dSdr))
 
-    # Convection: F_conv = rho * T * kappa_h * (-dS/dr)
-    heat_flux = heat_flux + params.convection * (rho * T * kappa_h * (-dSdr))
+    if params.rheology.enabled:
+        kappa_th_b = k / (rho * Cp_safe)
+        visc_solid = 10.0**params.log10_visc_solid
+        eta_diff_b = (
+            phase_basic.eta_diff
+            if phase_basic.eta_diff is not None
+            else jnp.full_like(T, visc_solid)
+        )
+        tau_y_b = (
+            phase_basic.tau_y if phase_basic.tau_y is not None else jnp.full_like(T, jnp.inf)
+        )
+        if params.rheology.stress_closure_mode == 'local':
+            lid_state = None
+            eta_eff_b = _compute_effective_viscosity_core(
+                eta_diff=eta_diff_b,
+                stress_closure_mode='local',
+                unyielded_velocity=u_visc_1,
+                mixing_length=q_025_1 * mesh.mixing_length,
+                tau_y=tau_y_b,
+                xp=jnp,
+            )
+        else:
+            lid_state = _compute_stagnant_lid_state_core(
+                radii=mesh.radii_basic,
+                temperature=T,
+                pressure=jnp.maximum(mesh.P_basic, 0.0),
+                convective_flux=jconv,
+                total_flux=jcond + jconv,
+                solidus_temperature=phase_basic.solidus_temperature,
+                melt_fraction=phase_basic.melt_fraction,
+                params=params.rheology,
+                viscosity_solid=visc_solid,
+                phi_rheo=params.phi_rheo,
+                phi_width=params.phi_width,
+                unyielded_velocity=u_visc_1,
+                viscosity_mixture=phase_basic.viscosity,
+                density=rho,
+                gravity=jnp.abs(mesh.gravity),
+                thermal_expansivity=phase_basic.thermal_expansivity,
+                thermal_diffusivity=kappa_th_b,
+                xp=jnp,
+            )
+            eta_eff_b = _compute_effective_viscosity_core(
+                eta_diff=eta_diff_b,
+                tau_d=lid_state['tau_d_lid'],
+                tau_y_lid=lid_state['tau_y_lid'],
+                stress_closure_mode='lid',
+                w_lid=lid_state['w_lid'],
+                eta_i=lid_state['eta_i'],
+                xp=jnp,
+            )
+        log10_eta_eff = jnp.log10(jnp.maximum(eta_eff_b, jnp.finfo(float).tiny))
+        mu_pass2 = blend_viscosity_with_solid_jax(
+            phase_basic.melt_fraction, phase_basic.smth, log10_eta_eff, params
+        )
+        phase_basic = phase_basic._replace(
+            viscosity=mu_pass2, kinematic_viscosity=mu_pass2 / rho
+        )
+        theta_pass2 = (
+            None if params.rheology.stress_closure_mode == 'local' else lid_state['theta']
+        )
+        kappa_h, kappa_c = compute_mlt(
+            dSdr,
+            phase_basic,
+            mesh,
+            params,
+            theta=theta_pass2,
+            surface_floor=surface_temperature is None,
+        )
+        jconv = params.convection * (rho * T * kappa_h * (-dSdr))
+
+    heat_flux = heat_flux + jcond
+    heat_flux = heat_flux + jconv
 
     # Mass flux for gravitational separation and mixing
     mass_flux = jnp.zeros_like(S_basic)

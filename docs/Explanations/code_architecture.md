@@ -9,6 +9,8 @@ src/aragog/
 ├── __init__.py            # Package version, logging helpers, exposes EntropySolver
 ├── cli.py                 # Click CLI: run, inspect, validate, show-config, new, list-configs, vnv
 ├── parser.py              # Parameters dataclass and TOML/INI parsing
+├── rheology.py            # Solid-state mantle rheology and Arrhenius/yielding viscosity
+├── rheology_lid.py        # Stagnant-lid boundary layer stress closure and MLT top slope
 ├── utilities.py           # Small utility functions, type aliases
 ├── cfg/                   # Bundled example configurations (.cfg, .toml)
 │
@@ -92,6 +94,7 @@ A configuration containing a `[scalings]` section (TOML) or a `'scalings'` key (
 - `EntropySolver` owns the ODE dispatch (Radau / BDF / CVODE), the nondimensionalisation layer, and the retry-ladder hooks (`set_initial_dSdr_cmb`, `_atol_sf`).
 - `EntropyState` holds the phase, density, $T$, $c_p$, $\alpha$, $k$, and flux arrays; it is updated at each RHS evaluation by `EntropyState.update(entropy, time, ...)`.
 - `EntropyPhaseEvaluator` is held by `EntropyState`; the mesh and BCs come from the `Evaluator` at construction time.
+- `aragog.rheology` and `aragog.rheology_lid` evaluate solid mantle rheology, stagnant-lid stress closures, and boundary-layer mixing-length slopes when `[phase_solid.rheology]` is enabled. See [Solid-state convection](solid_state_convection.md) for theory and closures.
 
 `EntropySolver.reset()` rebuilds the mesh and BCs from the current parameters but keeps the loaded EOS tables; this is what the PROTEUS retry ladder uses to back out and re-attempt a failed integration with relaxed tolerances.
 
@@ -108,7 +111,7 @@ These are matrix-vector products inside the RHS, not loops.
 
 ### JAX path: opt-in analytic Jacobian
 
-When `solver_method = "cvode"` and `use_jax_jacobian = true`, the PROTEUS wrapper installs a factory via `EntropySolver.set_jax_cvode_factory()`. The factory returns `(rhs_fn, jac_fn)` callbacks for CVODE built by tracing `aragog.jax.phase.compute_fluxes` with `jax.jacrev`. The numpy RHS path is otherwise untouched. The `aragog.jax` subpackage is only imported when this path is enabled; there is no passive JAX import at module load.
+When `solver_method = "cvode"` and `use_jax_jacobian = true`, the PROTEUS wrapper installs a factory via `EntropySolver.set_jax_cvode_factory()`. The factory returns `(rhs_fn, jac_fn)` callbacks for CVODE built by tracing `aragog.jax.phase.compute_fluxes` with `jax.jacrev`. The numpy RHS path is otherwise untouched. The `aragog.jax` subpackage is only imported when this path is enabled; there is no passive JAX import at module load. The `aragog.core` package is imported only when `core_bc = "core_module"`, and its stratified layer only when `stratification = true`.
 
 ## Data flow during one RHS evaluation
 

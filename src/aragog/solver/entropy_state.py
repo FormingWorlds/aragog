@@ -2,10 +2,10 @@
 
 Stores the thermodynamic state as S(r,t) and computes heat fluxes
 (conduction, convection, gravitational separation, mixing) from the
-entropy gradient dS/dr. Convective instability is determined by
-dS/dr < 0, with eddy diffusivity from Abe (1993) viscous/inviscid
-MLT. No c_p spike at phase boundaries (entropy is monotonic through
-the mushy zone).
+entropy gradient dS/dr. Convection is driven where dS/dr < 0, with eddy
+diffusivity from Abe (1993) viscous/inviscid MLT, and the kappa_h floor
+applies up to the convective threshold D. No c_p spike at phase boundaries
+(entropy is monotonic through the mushy zone).
 """
 
 from __future__ import annotations
@@ -16,8 +16,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
+from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
+from aragog.config.phases import (
+    _compute_effective_viscosity_core,
+    _compute_stagnant_lid_state_core,
+    _viscous_mixing_length_factor_core,
+)
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-from aragog.utilities import FloatOrArray
+from aragog.utilities import FloatOrArray, tanh_weight, zero_anchored_weight
 
 if TYPE_CHECKING:
     from aragog.solver.evaluator import Evaluator
@@ -51,9 +57,8 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
     """Smooth approximation of ``max(-x, 0)``.
 
     Returns ``-x`` when ``x << -eps``, ``0`` when ``x >> eps``, and
-    smoothly interpolates across the zero crossing. Folds the abs()
-    and the boolean mask ``x < 0`` used for convective-cell selection
-    into a single C^infinity expression.
+    smoothly interpolates across the zero crossing. With the ``eps = 1e-30`` of
+    the MLT drive it equals ``max(-x, 0)`` for ``|x| >> 1e-30`` (5e-31 at x = 0).
     """
     return 0.5 * (np.sqrt(x * x + eps * eps) - x)
 
@@ -62,19 +67,21 @@ def apply_kappah_floor(
     eddy_diffusivity: npt.NDArray,
     kappah_floor: float,
     f_floor: npt.NDArray,
-    is_convective: npt.NDArray,
+    floor_mask: npt.NDArray,
 ) -> npt.NDArray:
-    """Floor the eddy diffusivity in convecting cells only.
+    """Floor the eddy diffusivity in cells below the convective threshold only.
 
     Lifts the eddy diffusivity to ``kappah_floor * f_floor`` so that
     mixing-length convection does not numerically freeze where the entropy
-    gradient becomes small in mushy/liquid layers. The ``is_convective``
-    (``dS/dr < 0``) mask confines the floor to convecting cells: a
-    stably-stratified, just-frozen cell must NOT receive a floored
-    diffusivity, because the signed convective flux
-    ``rho*T*kappa_h*(-dS/dr)`` would then inject a spurious sign-flipped
-    flux that pins the cell sub-solidus. SPIDER carries no kappa_h floor,
-    so floor = 0 in stratified layers is the SPIDER-consistent limit.
+    gradient becomes small in mushy/liquid layers. The ``floor_mask``
+    (``dS/dr < D``, D the convective threshold) confines the floor to
+    those cells: a cell with a stable gradient above D, such as a
+    just-frozen cell at the crystallisation front, must NOT receive a floored
+    diffusivity, because the signed convective flux ``rho*T*kappa_h*(-dS/dr)``
+    would then inject a sign-flipped flux that pins the cell sub-solidus.
+    On ``0 <= dS/dr < D`` the floor flux is downward and at most ``rho*T*kappah_floor*D``.
+    SPIDER carries no kappa_h floor, so floor = 0 in stratified layers is the
+    SPIDER-consistent limit.
     Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
 
     Parameters
@@ -87,16 +94,16 @@ def apply_kappah_floor(
     f_floor : numpy.ndarray
         Melt-fraction ramp in [0, 1], from ``tanh_weight(phi, phi_rheo,
         phi_width)``, ~0 in solid layers and ~1 in mushy/liquid layers.
-    is_convective : numpy.ndarray
-        Boolean mask, True where ``dS/dr < 0`` (convectively unstable).
+    floor_mask : numpy.ndarray
+        Boolean mask, True where ``dS/dr < D`` (the floor applies).
 
     Returns
     -------
     numpy.ndarray
-        Eddy diffusivity floored in convecting cells only; stratified cells
-        keep their raw value.
+        Eddy diffusivity floored where ``dS/dr < D``; the other cells keep
+        their raw value.
     """
-    kh_floor = kappah_floor * f_floor * is_convective
+    kh_floor = kappah_floor * f_floor * floor_mask
     return np.maximum(eddy_diffusivity, kh_floor)
 
 
@@ -201,6 +208,7 @@ class EntropyState:
         kappah_floor: float = 0.0,
         bottom_up_grav_sep: bool = True,
         phase_smoothing: str = 'tanh',
+        convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT,
     ):
         self._evaluator = evaluator
         self.phase_staggered = phase_staggered
@@ -217,6 +225,9 @@ class EntropyState:
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
+        self._surface_temperature_bc: tuple[float, float, float] | None = None
+        check_convective_threshold(convective_threshold)
+        self._convective_threshold = float(convective_threshold)
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
         # Phase-boundary smoothing method for Jgrav and Jmix.
         # 'tanh' (default): SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).
@@ -242,6 +253,7 @@ class EntropyState:
         self._mixing_length = np.asarray(mesh.basic.mixing_length).ravel()
         self._mixing_length_sq = np.asarray(mesh.basic.mixing_length_squared).ravel()
         self._mixing_length_cu = np.asarray(mesh.basic.mixing_length_cubed).ravel()
+        self._radii_basic = np.asarray(mesh.basic.radii).ravel()
 
         # Allocate state arrays (all 1D).
         self._entropy_staggered = np.zeros(n_staggered)
@@ -252,6 +264,11 @@ class EntropyState:
         self._heat_flux = np.zeros(n_basic)
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
+        self._last_viscous_velocity = np.zeros(n_basic)
+        self._last_reynolds = np.zeros(n_basic)
+        self._eta_eff_basic = np.zeros(n_basic)
+        self._lid_state: dict | None = None
+        self._time: float = 0.0
 
         # Per-component flux decomposition at basic nodes for diagnostic
         # output. These mirror the accumulations into ``_heat_flux`` below
@@ -468,6 +485,27 @@ class EntropyState:
             setattr(self, flag_name, True)
         return np.where(below_floor, floor, Cp)
 
+    def set_surface_temperature(
+        self, entropy: float, temperature: float, half_cell: float
+    ) -> None:
+        """Prescribe the surface temperature (outer boundary condition 5).
+
+        Each update then sets the surface basic node to ``entropy`` and its gradient so that the
+        conductive face flux is ``k (T_stag[-1] - T_node) / half_cell``, with ``T_node`` the
+        temperature of the node at ``entropy``.
+
+        Parameters
+        ----------
+        entropy : float
+            Entropy where ``T(P_s, S)`` is the prescribed temperature [J/kg/K].
+        temperature : float
+            Prescribed surface temperature [K].
+        half_cell : float
+            Distance of the surface face from the top cell, ``delta_mesh[-1] / dxidr[-1] / 2``
+            [m].
+        """
+        self._surface_temperature_bc = (float(entropy), float(temperature), float(half_cell))
+
     def update(
         self,
         entropy: npt.NDArray,
@@ -485,8 +523,9 @@ class EntropyState:
         time : float
             Current time [yr].
         dSdr_cmb : float, optional
-            energy_balance mode: override the CMB boundary gradient
-            with the value from the extended state vector.
+            energy_balance and core_module modes: override the CMB
+            boundary gradient with the value from the extended state
+            vector.
         dSdr : array, optional
             Gradient-mode: provide dS/dr at all basic nodes directly,
             bypassing the FD transform. Shape (N+1,).
@@ -498,10 +537,13 @@ class EntropyState:
 
         S = np.asarray(entropy).ravel()
         self._entropy_staggered = S
+        t_arr = np.asarray(time, dtype=float)
+        self._time = float(t_arr.flat[0]) if t_arr.size > 0 else 0.0
         if entropy_basic is not None:
             self._entropy_basic = np.asarray(entropy_basic).ravel()
         else:
-            self._entropy_basic = mesh.quantity_at_basic_nodes(S).ravel()
+            basic = getattr(mesh, 'entropy_at_basic_nodes', mesh.quantity_at_basic_nodes)
+            self._entropy_basic = np.ravel(basic(S))
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:
@@ -551,9 +593,8 @@ class EntropyState:
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
-        # energy_balance mode: override the boundary entropy gradient
-        # with the state-vector value. Must happen BEFORE the
-        # phase_basic update so the bottom basic node uses the
+        # energy_balance and core_module: override the boundary entropy gradient with the
+        # state-vector value, BEFORE the phase_basic update so the bottom basic node uses the
         # boundary entropy.
         if dSdr_cmb is not None:
             r_basic = np.asarray(mesh.basic.radii).ravel()
@@ -562,11 +603,16 @@ class EntropyState:
             self._dSdr[0] = float(dSdr_cmb)
             self._entropy_basic[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
 
+        if self._surface_temperature_bc is not None:
+            self._entropy_basic[-1] = self._surface_temperature_bc[0]
+
         # Update phase evaluators with current (P, S)
         self.phase_staggered.set_entropy(S)
         self.phase_staggered.update()
         self.phase_basic.set_entropy(self._entropy_basic)
         self.phase_basic.update()
+        if self._surface_temperature_bc is not None:
+            self._match_surface_gradient()
 
         # Melt-fraction gradient for gravitational separation and mixing.
         #
@@ -587,37 +633,24 @@ class EntropyState:
         # evaluates directly from dSdr and dP/dr (see below).
 
         # ── MLT from entropy gradient ────────────────────────────────
-        # Convection is unstable when dS/dr < 0 (entropy decreasing
-        # outward). The convective driver itself uses the smoothed
-        # max(-dSdr, 0) below, which is C^infinity in dSdr, so the
-        # velocity arrays are never hard-masked at the marginal-stability
-        # boundary (a hard mask there would break CVODE's higher-order BDF
-        # predictor). `_is_convective` is the hard dS/dr < 0 gate applied
-        # only to the additive eddy-diffusivity floor (see the kappa_h
-        # floor block below), which deliberately accepts a flux-derivative
-        # kink at dS/dr = 0 in exchange for keeping the floor out of
-        # stably-stratified cells.
-        self._is_convective = self._dSdr < 0
+        # The drive below acts only where dS/dr < 0; the floor applies while dS/dr < D
+        # (convective_threshold). D = 0 gives the dS/dr < 0 switch for both.
+        self._is_convective = self._dSdr < 0.0
+        floor_mask = self._dSdr < self._convective_threshold
+        if self._surface_temperature_bc is not None:
+            floor_mask[-1] = False  # no floor at a surface held at its temperature
 
-        # Buoyancy: convert entropy gradient to effective thermal
-        # buoyancy |superadiabatic| = alpha * T * |dS/dr| / Cp.
-        # Use the smoothed max(-dSdr, 0), which replaces the
-        # `np.abs(dSdr)` + `mask[~convective] = 0` pair with a single
-        # C^infinity expression. For dSdr << 0: reduces to -dSdr
-        # (unstable profile, full convection drive). For dSdr >> 0:
-        # smoothly reduces to 0 (stable profile, no convection).
+        # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp, at least alpha*T*D/Cp
+        # on unstable nodes.
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
-        # eps=1e-30 is intentionally near-zero: at double precision this
-        # gives a hard max(-x, 0) without the kink smoothing. The original
-        # eps=1e-8 inflated |dSdr| by 15% when gradients were O(eps) at
-        # isentropic ICs, causing 7% kh error. SPIDER uses a hard if/else
-        # threshold, so the near-zero eps matches SPIDER's behavior. If
-        # CVODE stability requires smoothing, increase to ~1e-20.
-        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
+        conv_drive = np.maximum(
+            _smooth_abs_neg(self._dSdr, eps=1.0e-30),
+            self._convective_threshold * self._is_convective,
+        )
         Cp_safe_mlt = self._maybe_warn_cp_floor(
             Cp,
             floor=1.0,
@@ -628,17 +661,34 @@ class EntropyState:
             flag_name='_cp_mlt_floor_warned',
         )
         effective_superadiabatic = alpha * T * conv_drive / Cp_safe_mlt
-        velocity_prefactor = g * effective_superadiabatic
+        velocity_prefactor = np.abs(g) * effective_superadiabatic
 
         # Viscous velocity (Re <= Re_crit). No boolean masking needed:
-        # velocity_prefactor already vanishes smoothly for stable
-        # (dSdr > 0) cells via conv_drive.
+        # velocity_prefactor is 0 on stable cells via conv_drive.
         mixing_length = self._mixing_length
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
+        rheo = getattr(self.phase_basic, '_rheology', None)
+        rheo_enabled = rheo is not None and rheo.enabled
 
-        viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
+        def q_factor(theta):
+            """Viscous mixing-length factor (l_v / l)^4 [-] at the basic nodes."""
+            return np.asarray(
+                _viscous_mixing_length_factor_core(
+                    radii=self._radii_basic,
+                    r_in=float(self._radii_basic[0]),
+                    r_out=float(self._radii_basic[-1]),
+                    mixing_length=mixing_length,
+                    bottom_slope=rheo.mlt_bottom_slope,
+                    theta=theta,
+                    s_top_inf=rheo.s_top_inf,
+                    c_theta=rheo.c_theta,
+                    xp=np,
+                )
+            ).ravel()
+
+        q_mlt_1 = q_factor(None) if rheo_enabled else 1.0
 
         # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the
         # sqrt to avoid the sqrt-kink at velocity_sq = 0; the value is
@@ -646,9 +696,6 @@ class EntropyState:
         # inviscid_velocity_sq.
         inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
         inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
-
-        # Reynolds number
-        reynolds = viscous_velocity * mixing_length / nu
 
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
@@ -669,66 +716,55 @@ class EntropyState:
         # block above. Not exposed via config because the safe range is
         # narrow.
         blend_width = 0.01 * RE_CRIT
-        inviscid_weight = 0.5 * (1.0 + np.tanh((reynolds - RE_CRIT) / max(blend_width, 1e-30)))
-        # Raw eddy diffusivity (before thermal scaling and floor)
-        kh_raw = (
-            (1.0 - inviscid_weight) * viscous_velocity + inviscid_weight * inviscid_velocity
-        ) * mixing_length
 
-        # Apply eddy_diffusivity_thermal scaling (SPIDER convention:
-        # positive = scale factor, negative = fixed constant)
-        if self._eddy_diff_thermal > 0:
-            self._eddy_diffusivity = self._eddy_diff_thermal * kh_raw
-        else:
-            self._eddy_diffusivity = np.full_like(kh_raw, -self._eddy_diff_thermal)
+        def mlt(nu_, q_mlt):
+            """Viscous velocity, Reynolds number, and thermal and chemical eddy diffusivities."""
+            q_025 = q_mlt**0.25
+            u_visc = velocity_prefactor * mixing_length_cubed * q_mlt**0.75 / (18.0 * nu_)
+            re = u_visc * mixing_length * q_025 / nu_
+            w_inv = 0.5 * (1.0 + np.tanh((re - RE_CRIT) / max(blend_width, 1e-30)))
+            kh_raw = (
+                (1.0 - w_inv) * (u_visc * q_025) + w_inv * inviscid_velocity
+            ) * mixing_length
 
-        # Chemical eddy diffusivity uses raw kh (before floor and thermal scaling),
-        # matching SPIDER's matprop.c lines 318-325
-        if self._eddy_diff_chem > 0:
-            self._kappac = self._eddy_diff_chem * kh_raw
-        else:
-            self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
+            # eddy_diffusivity_thermal scaling (SPIDER convention: positive = scale
+            # factor, negative = fixed constant)
+            if self._eddy_diff_thermal > 0:
+                eddy = self._eddy_diff_thermal * kh_raw
+            else:
+                eddy = np.full_like(kh_raw, -self._eddy_diff_thermal)
 
-        # kappa_h floor (phase-dependent, modulated by melt fraction), gated
-        # to convectively-unstable cells. Production PROTEUS runs use
-        # kappah_floor = 10 m^2/s (PROTEUS schema default). The phi-modulated
-        # floor f_floor = tanh_weight(phi, phi_rheo, phi_width) ramps from 0
-        # in solid layers to ~1 in mushy/liquid layers, where MLT can
-        # otherwise numerically freeze when the entropy gradient gets small.
-        # The ``self._is_convective`` (dS/dr < 0) gate confines the floor to
-        # cells that are actually convecting: a stably-stratified, just-frozen
-        # mushy cell at the crystallisation front must NOT receive a floored
-        # eddy diffusivity, because the signed convective flux
-        # rho*T*kappa_h*(-dS/dr) would then inject a spurious sign-flipped
-        # flux that pins the cell sub-solidus. SPIDER has no kappa_h floor, so
-        # floor = 0 in stratified layers is the SPIDER-consistent limit. The
-        # transition is anchored on the rheological critical melt fraction so
-        # the floor turns on where Costa-blended viscosity drops. Mirrored in
-        # the JAX twin jax/phase.py.
-        if self._kappah_floor > 0.0:
-            phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
-            from aragog.utilities import tanh_weight
+            # Chemical eddy diffusivity uses raw kh (before floor and thermal scaling),
+            # matching SPIDER's matprop.c lines 318-325
+            if self._eddy_diff_chem > 0:
+                kappac = self._eddy_diff_chem * kh_raw
+            else:
+                kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
-            phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
-            phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
-            f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
-            self._eddy_diffusivity = apply_kappah_floor(
-                self._eddy_diffusivity,
-                self._kappah_floor,
-                f_floor,
-                self._is_convective,
-            )
+            # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only (see
+            # apply_kappah_floor for why cells with dS/dr >= D keep their raw value).
+            # Mirrored in the JAX twin jax/phase.py.
+            if self._kappah_floor > 0.0:
+                phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
+                phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
+                phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
+                if rheo_enabled:
+                    f_floor = zero_anchored_weight(tanh_weight, phi_basic, phi_rheo, phi_width)
+                else:
+                    f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
+                eddy = apply_kappah_floor(eddy, self._kappah_floor, f_floor, floor_mask)
 
-        # Mirror SPIDER energy.c:220-223: at the CMB basic node, use
-        # the eddy diffusivity from one node above rather than the
-        # boundary-extrapolated value. SPIDER does this because kappah
-        # is a nonlinear function of the entropy gradient, and the
-        # boundary extrapolation can over- or under-estimate it relative
-        # to the interior value. Borrowing from the first interior node
-        # avoids this artifact and aligns the CMB convective flux with
-        # SPIDER's treatment.
-        if len(self._eddy_diffusivity) >= 2:
-            self._eddy_diffusivity[0] = self._eddy_diffusivity[1]
+            # Mirror SPIDER energy.c:220-223: at the CMB basic node, use the eddy
+            # diffusivity from one node above (kappah is nonlinear in the entropy
+            # gradient, so the boundary extrapolation can over- or under-estimate it).
+            if len(eddy) >= 2:
+                eddy[0] = eddy[1]
+            return u_visc, re, eddy, kappac
+
+        viscous_velocity, reynolds, self._eddy_diffusivity, self._kappac = mlt(nu, q_mlt_1)
+
+        self._last_viscous_velocity = viscous_velocity
+        self._last_reynolds = reynolds
 
         # ── Compute fluxes ───────────────────────────────────────────
         rho = np.asarray(self.phase_basic.density()).ravel()
@@ -791,9 +827,77 @@ class EntropyState:
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
-            # This is the entropy flux: positive when dS/dr < 0 (unstable)
+            # Positive when dS/dr < 0, negative on stable nodes with the floor (0 <= dS/dr < D)
             self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
             self._heat_flux += self._jconv
+
+        if rheo_enabled:
+            eta_diff_b = np.asarray(self.phase_basic.eta_diff()).ravel()
+            phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
+            if rheo.stress_closure_mode == 'local':
+                self._lid_state = None
+                tau_y_b = np.asarray(self.phase_basic.tau_y()).ravel()
+                eta_eff_b = _compute_effective_viscosity_core(
+                    eta_diff=eta_diff_b,
+                    stress_closure_mode='local',
+                    unyielded_velocity=viscous_velocity,
+                    mixing_length=q_mlt_1**0.25 * mixing_length,
+                    tau_y=tau_y_b,
+                    xp=np,
+                )
+            else:
+                T_sol_b = self.phase_basic.solidus_temperature()
+                T_sol_b_arr = np.asarray(T_sol_b).ravel() if T_sol_b is not None else None
+                mu_mix_pass1 = np.asarray(self.phase_basic.viscosity()).ravel()
+                kappa_th_b = k / (rho * np.maximum(Cp, 100.0))
+                p_b_pos = np.maximum(np.asarray(self.phase_basic.pressure).ravel(), 0.0)
+                lid_state = _compute_stagnant_lid_state_core(
+                    radii=self._radii_basic,
+                    temperature=T,
+                    pressure=p_b_pos,
+                    convective_flux=self._jconv,
+                    total_flux=self._jcond + self._jconv,
+                    solidus_temperature=T_sol_b_arr,
+                    melt_fraction=phi_b_rheo,
+                    params=rheo,
+                    viscosity_solid=self.phase_basic._visc_solid,
+                    phi_rheo=self.phase_basic._phi_rheo,
+                    phi_width=self.phase_basic._phi_width,
+                    unyielded_velocity=viscous_velocity,
+                    viscosity_mixture=mu_mix_pass1,
+                    density=rho,
+                    gravity=np.abs(g),
+                    thermal_expansivity=alpha,
+                    thermal_diffusivity=kappa_th_b,
+                    xp=np,
+                )
+                self._lid_state = lid_state
+                eta_eff_b = _compute_effective_viscosity_core(
+                    eta_diff=eta_diff_b,
+                    tau_d=lid_state['tau_d_lid'],
+                    tau_y_lid=lid_state['tau_y_lid'],
+                    stress_closure_mode='lid',
+                    w_lid=lid_state['w_lid'],
+                    eta_i=lid_state['eta_i'],
+                    xp=np,
+                )
+            self._eta_eff_basic = np.asarray(eta_eff_b).ravel()
+            mu_pass2 = np.asarray(
+                self.phase_basic.blend_viscosity_with_solid(self._eta_eff_basic)
+            ).ravel()
+            self.phase_basic._viscosity_val = mu_pass2
+            self.phase_basic._rheology_viscosity_dirty = False
+            viscous_velocity, reynolds, self._eddy_diffusivity, self._kappac = mlt(
+                mu_pass2 / rho,
+                q_factor(None if rheo.stress_closure_mode == 'local' else lid_state['theta']),
+            )
+            self._last_viscous_velocity = viscous_velocity
+            self._last_reynolds = reynolds
+            if self._convection:
+                self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
+            self._heat_flux = self._jcond + self._jconv
+        else:
+            self._lid_state = None
 
         if self._grav_sep:
             phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()
@@ -1031,6 +1135,16 @@ class EntropyState:
     def rho_basic_diag(self) -> npt.NDArray:
         return self._rho_basic_diag
 
+    @property
+    def eta_eff_basic(self) -> npt.NDArray:
+        """Solid effective viscosity at basic nodes [Pa s]."""
+        return self._eta_eff_basic
+
+    @property
+    def lid_state(self) -> dict | None:
+        """Stagnant-lid diagnostic state dictionary from the last update, or ``None``."""
+        return self._lid_state
+
     def capacitance_staggered(self) -> npt.NDArray:
         """Capacitance for entropy equation: rho * T [kg K / m^3].
 
@@ -1045,6 +1159,20 @@ class EntropyState:
     def temperature_basic(self) -> npt.NDArray:
         """Temperature at basic nodes (derived from S via EOS)."""
         return self.phase_basic.temperature()
+
+    def _match_surface_gradient(self) -> None:
+        """Set dS/dr at the surface node from the half-cell temperature gradient (BC 5)."""
+        _, t_surf, half_cell = self._surface_temperature_bc
+        self._ensure_basic_phase_boundary_cache()  # fills _dP_dr_basic
+        pb = self.phase_basic
+        t_top_cell = float(np.ravel(self.phase_staggered.temperature())[-1])
+        cp = max(100.0, float(np.ravel(pb.heat_capacity())[-1]))  # the Cp_safe floor
+        t_node = float(np.ravel(pb.temperature())[-1])
+        if not abs(t_node - t_surf) <= 1e-6 * t_surf:
+            raise RuntimeError(f'surface node at {t_node} K, prescribed {t_surf} K (BC 5)')
+        dtdr = (t_node - t_top_cell) / half_cell
+        dtdr_ad = float(np.ravel(pb.dTdPs())[-1]) * float(self._dP_dr_basic[-1])
+        self._dSdr[-1] = cp / t_node * (dtdr - dtdr_ad)
 
     @property
     def top_temperature(self) -> npt.NDArray:

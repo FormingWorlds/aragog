@@ -240,6 +240,7 @@ def test_entropy_solver_get_state_returns_solver_output_with_required_fields(sha
     expected_fields = {
         'step_dE_F_int_J',
         'step_dE_F_cmb_J',
+        'step_dE_core_J',
         'step_dE_Q_radio_J',
         'step_dE_Q_tidal_J',
     }
@@ -260,6 +261,7 @@ def test_entropy_solver_solidified_run_records_finite_diagnostics(shared_eos):
     for fld in (
         'step_dE_F_int_J',
         'step_dE_F_cmb_J',
+        'step_dE_core_J',
         'step_dE_Q_radio_J',
         'step_dE_Q_tidal_J',
     ):
@@ -806,3 +808,19 @@ def test_solve_from_a_nonzero_start_writes_the_end_time(tmp_path: Path, method: 
     with nc.Dataset(f, mode='r') as ds:
         assert float(ds['time'][...]) == pytest.approx(101.0, rel=1e-12)
         assert float(ds['dt_actual'][...]) == pytest.approx(1.0, rel=1e-9)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('D', [1.0e-6, 3.0e-6])
+def test_entropy_solver_passes_convective_threshold_to_state(shared_eos, D):
+    """``energy.convective_threshold`` reaches the numpy ``EntropyState`` for two
+    values away from the 0.0 default."""
+    import dataclasses
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=10.0)
+    parameters.energy = dataclasses.replace(parameters.energy, convective_threshold=D)
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
+    solver.initialize()
+    assert solver.state._convective_threshold == D

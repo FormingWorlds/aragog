@@ -1,0 +1,700 @@
+"""Basic mesh refined towards the surface and the CMB.
+
+Module under test: ``aragog.mesh.stretching.stretched_unit_grid`` and its use in
+``Mesh`` through ``mesh.surface_cell_thickness`` and ``mesh.cmb_cell_thickness``.
+Invariants: 0 at both ends is the uniform grid; a positive value is the radial
+thickness of that end cell, in radius and in mass-coordinate mode; the grid is
+strictly increasing and keeps its end radii; the external EOS (``eos_method = 2``)
+and the JAX mesh arrays follow the refined radii.
+"""
+
+from __future__ import annotations
+
+import itertools
+from pathlib import Path
+
+import numpy as np
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from scipy.interpolate import PchipInterpolator
+
+import aragog
+import aragog.mesh as mesh_module
+from aragog.mesh import Mesh
+from aragog.mesh.pressure_eos import EOS
+from aragog.mesh.stretching import stretched_unit_grid
+from aragog.parser import Parameters
+from tests.conftest import needs_eos
+
+pytestmark = pytest.mark.unit
+
+D = 2.891e6  # Earth-like mantle depth [m]
+CFG = Path(aragog.__file__).parent / 'cfg' / 'abe_solid.toml'
+
+
+def _mesh(top=0.0, bottom=0.0, mass_coordinates=False, n=None):
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates = mass_coordinates
+    p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = top, bottom
+    if n is not None:
+        p.mesh.number_of_nodes = n
+    return Mesh(p)
+
+
+def _radii(m):
+    return np.asarray(m.basic.radii).ravel()
+
+
+@pytest.mark.parametrize('mass_coordinates', [True, False])
+def test_the_default_mesh_does_not_reach_the_refined_path(mass_coordinates, monkeypatch):
+    """With both cell thicknesses at 0 the mesh builds without the refined grid, its radii
+    check and, in radius mode, the cell-mass density, and solves every mass-coordinate radius
+    to 1 m; with a 1 km top cell it reaches the refined grid."""
+
+    def refined(*_):
+        raise RuntimeError('refined path')
+
+    xtols, solve = [], mesh_module._radius_for_mass_coordinate
+    monkeypatch.setattr(
+        mesh_module,
+        '_radius_for_mass_coordinate',
+        lambda *a, **k: xtols.append(k.get('xtol', 1.0)) or solve(*a, **k),
+    )
+    monkeypatch.setattr(Mesh, '_refined_unit_grid', refined)
+    monkeypatch.setattr(Mesh, '_check_refined_radii', refined)
+    if not mass_coordinates:
+        monkeypatch.setattr(EOS, 'set_staggered_effective_density', refined)
+    try:
+        _mesh(mass_coordinates=mass_coordinates)
+    except RuntimeError as exc:
+        pytest.fail(f'the default mesh reached the {exc}')
+    assert set(xtols) == ({1.0} if mass_coordinates else set())
+    with pytest.raises(RuntimeError, match='refined path'):
+        _mesh(top=1e3, mass_coordinates=mass_coordinates)
+
+
+def test_unit_grid_hits_both_end_cells_over_a_wide_range():
+    """End cells of 0.5 to 16 km on a 2891 km span at 20 to 800 nodes, each end on
+    or off: both targets to 1e-10, exact end points, strictly increasing; from 100
+    nodes the neighbour-cell ratio stays below 1.2."""
+    for n, f, l in itertools.product((20, 100, 400, 800), (0, 0.5, 2, 16), (0, 0.5, 2, 16)):
+        first, last = f * 1e3 / D, l * 1e3 / D
+        if max(first, last) >= 1.0 / (n - 1):
+            continue
+        s = stretched_unit_grid(n, first, last)
+        d = np.diff(s)
+        assert s[0] == 0.0 and s[-1] == 1.0 and np.all(d > 0.0)
+        if first:
+            assert d[0] == pytest.approx(first, rel=1e-10)
+        if last:
+            assert d[-1] == pytest.approx(last, rel=1e-10)
+        if n >= 100:
+            assert np.max(np.maximum(d[1:] / d[:-1], d[:-1] / d[1:])) < 1.2
+    np.testing.assert_array_equal(stretched_unit_grid(50), np.linspace(0.0, 1.0, 50))
+
+
+def test_unit_grid_rejects_cells_at_or_above_the_uniform_cell():
+    """A cell fraction below 0, at or above the uniform cell 1 / (n - 1), or NaN is refused at
+    either end."""
+    for bad in (-1e-3, 1.0 / 99, 0.5, np.nan):
+        with pytest.raises(ValueError, match='cell fraction'):
+            stretched_unit_grid(100, bad, 0.0)
+        with pytest.raises(ValueError, match='cell fraction'):
+            stretched_unit_grid(100, 1e-4, bad)
+
+
+def test_unit_grid_refuses_an_end_cell_below_the_smallest_fraction():
+    """Below 1e-7 of the span the one-sided map loses the end cell (2e-5 relative at 1e-12)
+    and two nodes merge (at 1e-16), and the two-sided map does not converge."""
+    for bad in (5e-324, 1e-16, 1e-12, 9.9e-8):
+        for first, last in ((bad, 0.0), (0.0, bad), (bad, 1e-3), (1e-3, bad)):
+            with pytest.raises(ValueError, match='cell fraction'):
+                stretched_unit_grid(100, first, last)
+
+
+@pytest.mark.physics_invariant
+@settings(max_examples=150, deadline=None)
+@given(
+    n=st.sampled_from([10, 100, 200, 400]),
+    first=st.floats(min_value=0.0, max_value=1.0),
+    last=st.floats(min_value=0.0, max_value=1.0),
+)
+def test_unit_grid_end_cells_hold_their_targets_from_the_smallest_fraction(n, first, last):
+    """Each end fraction in [1e-7, 1 / (n - 1)) or 0, on one or both ends: the grid runs
+    from 0 to 1 exactly, increases strictly and each set end cell equals its target to
+    1e-6 relative."""
+    h, lo = 1.0 / (n - 1), np.log10(1e-7)
+    first, last = (
+        0.0
+        if u < 0.2
+        else min(10 ** (lo + (u - 0.2) / 0.8 * (np.log10(h) - lo)), np.nextafter(h, 0))
+        for u in (first, last)
+    )
+    s = stretched_unit_grid(n, first, last)
+    d = np.diff(s)
+    assert (s[0], s[-1]) == (0.0, 1.0)
+    assert np.all(d > 0.0)
+    for target, cell in ((first, d[0]), (last, d[-1])):
+        if target:
+            assert cell == pytest.approx(target, rel=1e-6)
+
+
+XI = np.linspace(0.0, 1.0, 100)
+
+
+def test_unit_grid_is_the_one_sided_tanh_map():
+    """With the last cell of tanh(3 xi) / tanh(3) as target the grid is that map at every
+    node, and the mirrored target gives the mirrored map, to 1e-10."""
+    s = np.tanh(3.0 * XI) / np.tanh(3.0)
+    np.testing.assert_allclose(
+        stretched_unit_grid(100, 0.0, 1.0 - s[-2]), s, rtol=0, atol=1e-10
+    )
+    m = 1.0 - s[::-1]
+    np.testing.assert_allclose(stretched_unit_grid(100, m[1], 0.0), m, rtol=0, atol=1e-10)
+
+
+def test_unit_grid_is_the_two_sided_vinokur_map():
+    """With the end cells of Vinokur's map at delta 4 and A 0.7 as targets the grid is that
+    map at every node to 1e-9, and equal end cells give a grid symmetric about 1/2."""
+    u = 0.5 * (1.0 + np.tanh(4.0 * (XI - 0.5)) / np.tanh(2.0))
+    s = u / (0.7 + 0.3 * u)
+    np.testing.assert_allclose(
+        stretched_unit_grid(100, s[1], 1.0 - s[-2]), s, rtol=0, atol=1e-9
+    )
+    g = stretched_unit_grid(100, 1e-3, 1e-3)
+    np.testing.assert_allclose(g + g[::-1], 1.0, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize('n', [100, 200])
+@pytest.mark.parametrize('ends', [(0, 1), (1, 0), (1, 1)], ids=['last', 'first', 'both'])
+def test_unit_grid_reaches_the_uniform_grid_at_the_uniform_cell(n, ends):
+    """The largest float below the uniform cell, at one or both ends, gives the uniform
+    grid to 1e-12."""
+    f = np.nextafter(1.0 / (n - 1), 0.0)
+    try:
+        s = stretched_unit_grid(n, ends[0] * f, ends[1] * f)
+    except ValueError as exc:
+        pytest.fail(f'the uniform limit raised: {exc}')
+    np.testing.assert_allclose(s, np.linspace(0.0, 1.0, n), rtol=0, atol=1e-12)
+
+
+def test_two_sided_grid_refuses_end_cells_that_three_nodes_cannot_hold():
+    """With 3 nodes both end cells must sum to 1; for 0.2 and 0.2 the solve ends on a
+    monotone grid with both cells at 0.5, which the residual check refuses."""
+    with pytest.raises(ValueError, match='did not converge'):
+        stretched_unit_grid(3, 0.2, 0.2)
+
+
+def test_radius_mode_keeps_the_shell_radii_of_a_thick_shell():
+    """For these radii r_in + (r_out - r_in) misses r_out by 1 ulp; the refined radius-mode
+    mesh still starts and ends exactly at the shell radii."""
+    r_in, r_out = 504437.1555063366, 6871404.744724282
+    assert r_in + (r_out - r_in) != r_out
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates = False
+    p.mesh.inner_radius, p.mesh.outer_radius = r_in, r_out
+    p.mesh.surface_cell_thickness = 1e3
+    r = _radii(Mesh(p))
+    assert (r[0], r[-1]) == (r_in, r_out)
+    assert np.diff(r)[-1] == pytest.approx(1e3, rel=1e-6)
+
+
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_mesh_end_cells_have_the_radial_thickness(mass_coordinates):
+    """abe_solid (1000 km shell, 100 nodes, uniform cell 10.1 km): a 1 km top cell,
+    a 2 km CMB cell, or both, to 1 mm; the end radii stay at the shell radii. In
+    mass-coordinate mode the uniform grid has neither end cell at 1 or 2 km."""
+    base = _radii(_mesh(mass_coordinates=mass_coordinates))
+    assert np.diff(base)[-1] > 5e3 and np.diff(base)[0] > 5e3
+    for top, bottom in ((1e3, 0.0), (0.0, 2e3), (1e3, 2e3)):
+        r = _radii(_mesh(top, bottom, mass_coordinates))
+        d = np.diff(r)
+        assert (r[0], r[-1]) == (base[0], base[-1])
+        assert np.all(d > 0.0)
+        if top:
+            assert d[-1] == pytest.approx(top, abs=1e-3)
+        if bottom:
+            assert d[0] == pytest.approx(bottom, abs=1e-3)
+        # The other end moves away from the refined end: the cells there grow.
+        if not bottom:
+            assert d[0] > np.diff(base)[0]
+        if not top:
+            assert d[-1] > np.diff(base)[-1]
+
+
+def test_mesh_rejects_a_cell_thicker_than_the_uniform_cell():
+    """A top or CMB cell of 20 km, above the 10.1 km uniform cell of abe_solid, is refused with
+    the field name."""
+    p = Parameters.from_file(CFG)
+    with pytest.raises(ValueError, match='surface_cell_thickness'):
+        type(p.mesh)(**{**vars(p.mesh), 'surface_cell_thickness': 20e3})
+    with pytest.raises(ValueError, match='cmb_cell_thickness'):
+        type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': -1.0})
+
+
+def test_mass_mode_refuses_a_cmb_cell_between_its_uniform_cell_and_the_radial_bound():
+    """abe_solid in mass-coordinate mode has a uniform CMB cell of 9.33 km, below the
+    10.1 km radial cell the parser checks: 9.5 km passes the parser and the mesh refuses
+    it with both field values. In radius mode 9.5 km is the CMB cell."""
+    p = Parameters.from_file(CFG)
+    radial = (p.mesh.outer_radius - p.mesh.inner_radius) / (p.mesh.number_of_nodes - 1)
+    assert np.diff(_radii(_mesh(mass_coordinates=True)))[0] < 9.5e3 < radial
+    type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': 9.5e3})
+    with pytest.raises(
+        ValueError,
+        match='mesh.cmb_cell_thickness = 9500.0 m and '
+        'mesh.surface_cell_thickness = 0.0 m give no refined grid',
+    ):
+        _mesh(0.0, 9.5e3, mass_coordinates=True)
+    assert np.diff(_radii(_mesh(0.0, 9.5e3)))[0] == pytest.approx(9.5e3, abs=1e-3)
+
+
+@pytest.mark.physics_invariant
+def test_derivative_operator_is_exact_for_a_linear_field_on_the_refined_grid():
+    """d/dr of a staggered field linear in radius equals the slope at every basic node
+    on the refined grid (top 1 km, CMB 2 km, radius mode), both extrapolated end rows
+    included."""
+    m = _mesh(1e3, 2e3)
+    rs = np.asarray(m.staggered.radii)
+    grad = (m._d_dr_transform @ (3.0e-3 * rs)).ravel()
+    np.testing.assert_allclose(grad, 3.0e-3, rtol=1e-9)
+
+
+def test_external_eos_and_jax_arrays_follow_the_refined_radii(tmp_path):
+    """``eos_method = 2`` (a 4-column r, P, rho, g file), mass-coordinate mode, top
+    1 km: the basic pressure is the PCHIP of the file at the refined radii and the
+    JAX ``MeshArrays`` carry the same radii, pressure and gravity."""
+    pytest.importorskip('jax')
+    from aragog.jax.phase import MeshArrays
+
+    m, ef = _external_mesh(tmp_path, True)
+    r = _radii(m)
+    assert np.diff(r)[-1] == pytest.approx(1e3, abs=1e-3)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
+    tab = np.loadtxt(ef)
+    P_ref = PchipInterpolator(tab[:, 0], tab[:, 1])(r)
+    np.testing.assert_allclose(np.asarray(m.basic_pressure).ravel(), P_ref, rtol=1e-12)
+    ma = MeshArrays.from_numpy_mesh(m)
+    np.testing.assert_array_equal(np.asarray(ma.radii_basic), r)
+    np.testing.assert_array_equal(np.asarray(ma.P_basic), np.asarray(m.basic_pressure).ravel())
+    np.testing.assert_allclose(
+        np.asarray(ma.gravity), PchipInterpolator(tab[:, 0], tab[:, 3])(r), rtol=1e-12
+    )
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+@pytest.mark.parametrize(
+    ('grid', 'message'),
+    [
+        (lambda n, first, last: np.linspace(0.0, 1.0, n), 'gives an end cell of'),
+        (lambda n, first, last: np.r_[0.0, 0.5, 0.4, np.linspace(0.6, 1.0, n - 3)],
+         'not strictly increasing|Non-monotonic basic mesh'),
+    ],
+    ids=['end_cell', 'monotone'],
+)  # fmt: skip
+def test_a_refined_mesh_that_breaks_an_invariant_is_refused(
+    monkeypatch, mass_coordinates, grid, message
+):
+    """A refined grid whose end cells miss their thickness or whose radii do not
+    increase raises a ValueError in Mesh."""
+    monkeypatch.setattr('aragog.mesh.stretched_unit_grid', grid)
+    with pytest.raises(ValueError, match=message):
+        _mesh(1e3, 2e3, mass_coordinates)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_refined_radii_check_refuses_end_radii_off_the_shell(mass_coordinates):
+    """Both mesh modes set the end radii to the shell radii; the check passes them and
+    refuses the same radii shifted by 1 um, with the end cells unchanged."""
+    m = _mesh(1e3, 2e3, mass_coordinates)
+    r = _radii(m)
+    m._check_refined_radii(r)
+    with pytest.raises(ValueError, match='end radii'):
+        m._check_refined_radii(r + 1e-6)
+
+
+def _jax_args(mass_coordinates, top, bottom):
+    """abe_solid solver at its start state and the JAX ``dSdt_energy_balance`` arguments
+    with the config boundary conditions."""
+    import dataclasses
+
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.conftest import entropy_eos_copy
+    from tests.test_jax_dsdt_core_module import _build_jax_pieces
+    from tests.test_step_powers_batch import _set_initial_entropy
+
+    params = Parameters.from_file(CFG)
+    params.mesh.mass_coordinates = mass_coordinates
+    params.mesh.surface_cell_thickness, params.mesh.cmb_cell_thickness = top, bottom
+    s = EntropySolver(params, entropy_eos=entropy_eos_copy(identity_alpha=True))
+    s.initialize()
+    _set_initial_entropy(s)
+    s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
+    args = list(_build_jax_pieces(s))[:6]
+    b = params.boundary_conditions
+    args[3] = dataclasses.replace(
+        args[3],
+        outer_bc_type=int(b.outer_boundary_condition),
+        outer_bc_value=float(b.outer_boundary_value),
+        inner_bc_type=int(b.inner_boundary_condition),
+        inner_bc_value=float(b.inner_boundary_value),
+    )
+    return s, tuple(args)
+
+
+@needs_eos
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_jax_rhs_matches_numpy_on_the_refined_mesh(mass_coordinates):
+    """abe_solid with a 1 km top cell and a 2 km CMB cell: the JAX energy-balance right-hand
+    side equals the NumPy one to 1e-10 in the cells and 1e-9 in the CMB closure; on the
+    uniform mesh arrays it misses by more than 10 %, so the refined mesh reaches JAX."""
+    jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
+    from aragog.jax.solver import dSdt_energy_balance
+
+    s, args = _jax_args(mass_coordinates, 1e3, 2e3)
+    assert s._core_bc == 'energy_balance'
+    assert np.diff(np.ravel(s.evaluator.mesh.basic.radii))[-1] == pytest.approx(1e3, abs=2e-3)
+    y = np.asarray(s._S0, dtype=float)
+    f_np, n = np.ravel(s.dSdt(0.0, y)), s._n_stag
+    f_jax = np.ravel(dSdt_energy_balance(0.0, jnp.asarray(y), args))
+    scale = np.abs(f_np[:n]).max()
+    np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10, atol=1e-10 * scale)
+    assert f_jax[n] == pytest.approx(f_np[n], rel=1e-9)
+    _, uniform = _jax_args(mass_coordinates, 0.0, 0.0)
+    f_u = np.ravel(dSdt_energy_balance(0.0, jnp.asarray(y), (*args[:2], uniform[2], *args[3:])))
+    assert np.abs(f_u[:n] - f_np[:n]).max() > 0.1 * scale
+
+
+@needs_eos
+def test_the_lid_closure_reads_the_refined_top_cell(monkeypatch):
+    """abe_solid in mass mode with a 50 m top cell and the solid rheology in 'lid' mode: the
+    stagnant-lid closure gets the refined basic radii, so its top cell is 50 m, and one
+    right-hand side is finite."""
+    from aragog.rheology import SolidRheologyParams
+    from aragog.solver import entropy_state
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.conftest import entropy_eos_copy
+
+    seen, core = [], entropy_state._compute_stagnant_lid_state_core
+    monkeypatch.setattr(
+        entropy_state,
+        '_compute_stagnant_lid_state_core',
+        lambda *a, **k: seen.append(np.ravel(k['radii']).copy()) or core(*a, **k),
+    )
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates, p.mesh.surface_cell_thickness = True, 50.0
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=1.0e7,
+        yield_stress_mu=0.1,
+        yield_stress_max=1.0e8,
+    )
+    s = EntropySolver(p, entropy_eos=entropy_eos_copy())
+    s.initialize()
+    s.set_initial_entropy(2900.0)
+    rhs = np.ravel(s.dSdt(0.0, np.asarray(s._S0, dtype=float)))
+    r = _radii(s.evaluator.mesh)
+    assert seen and np.array_equal(seen[-1], r)
+    assert seen[-1][-1] - seen[-1][-2] == pytest.approx(50.0, abs=2e-3)
+    assert np.all(np.isfinite(rhs))
+
+
+def _external_mesh(tmp_path, mass_coordinates, top=1e3):
+    """Mesh of a synthetic ``eos_method = 2`` file with a ``top`` m top cell, and the file."""
+    from tests.test_entropy_solver_eos_method2_smoke import (
+        _build_parameters_eos_method_2,
+        _write_synthetic_external_mesh,
+    )
+
+    ef = tmp_path / 'mesh.dat'
+    _write_synthetic_external_mesh(ef, n=30)
+    p = _build_parameters_eos_method_2(ef, n_nodes=40)
+    p.mesh.mass_coordinates = mass_coordinates
+    p.mesh.surface_cell_thickness = top
+    return Mesh(p), ef
+
+
+def _cell_density(m):
+    """Mass over volume of each cell between the basic radii, from the mesh EOS [kg/m^3]."""
+    r = np.asarray(m.basic.radii)
+    mass = np.diff(m.eos.get_mass_within_radii(r), axis=0)
+    return np.ravel(mass / (4.0 / 3.0 * np.pi * np.diff(r**3, axis=0)))
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mass_coordinates', [False, True])
+def test_the_staggered_density_is_the_cell_mass_over_volume_on_a_refined_mesh(mass_coordinates):
+    """abe_solid with a 1 km top cell and a 2 km CMB cell, both modes: each cell's effective
+    density is its mass over its volume on the refined radii, to 1e-12."""
+    m = _mesh(1e3, 2e3, mass_coordinates)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
+
+
+@pytest.mark.physics_invariant
+def test_the_external_eos_staggered_density_follows_the_refined_radii_in_radius_mode(tmp_path):
+    """``eos_method = 2`` in radius mode with a 1 km top cell: the effective density of each
+    cell is its mass over its volume on the refined radii, to 1e-12; the uniform radius-mode
+    mesh takes the mean of the two face densities, which differs by less than 1e-4."""
+    m, _ = _external_mesh(tmp_path, False)
+    u, _ = _external_mesh(tmp_path, False, 0.0)
+    d = np.abs(np.ravel(u.staggered_effective_density) / _cell_density(u) - 1).max()
+    assert 1e-5 < d < 1e-4
+    assert np.diff(_radii(m))[-1] == pytest.approx(1e3, rel=1e-6)
+    np.testing.assert_allclose(
+        np.ravel(m.staggered_effective_density), _cell_density(m), rtol=1e-12
+    )
+
+
+@pytest.mark.parametrize('name', ['surface_cell_thickness', 'cmb_cell_thickness'])
+@pytest.mark.parametrize('value', [True, '50', 0.5])
+def test_mesh_refuses_a_cell_thickness_set_after_the_config_is_read(name, value):
+    """A value set on the parsed parameters gets the config check in Mesh: a bool is not
+    read as 1 m, a string is refused with the field name, and 0.5 m is below the floor."""
+    p = Parameters.from_file(CFG)
+    setattr(p.mesh, name, value)
+    with pytest.raises(ValueError, match=f'mesh.{name} must be 0'):
+        Mesh(p)
+
+
+@pytest.mark.parametrize(('mass_coordinates', 'refused'), [(False, True), (True, False)])
+def test_the_end_cell_tolerance_depends_on_the_mesh_mode(mass_coordinates, refused):
+    """A 1 km top cell 1.5 mm off its target is refused in radius mode (1e-6 relative,
+    1 mm) and kept in mass-coordinate mode (2 mm, the root tolerance of its solved node
+    and the margin of the other); 3 mm off is refused in both modes."""
+    m = _mesh(1e3, 0.0, mass_coordinates)
+    r = _radii(m).copy()
+    r[-2] = r[-1] - 1e3 - 1.5e-3
+    if refused:
+        with pytest.raises(ValueError, match='gives an end cell of'):
+            m._check_refined_radii(r)
+    else:
+        m._check_refined_radii(r)
+    r[-2] = r[-1] - 1e3 - 3e-3
+    with pytest.raises(ValueError, match='gives an end cell of'):
+        m._check_refined_radii(r)
+
+
+@pytest.mark.parametrize('end', ['top', 'cmb'])
+def test_mass_mode_puts_the_staggered_node_inside_a_2_m_end_cell(end):
+    """Mass-coordinate mode with a 2 m end cell, the smallest allowed: the end cell holds
+    2 m and its staggered node lies in its middle half, as in every other cell."""
+    m = _mesh(2.0, 0.0, True) if end == 'top' else _mesh(0.0, 2.0, True)
+    rb, rs = _radii(m), np.ravel(m.staggered.radii)
+    frac = (rs - rb[:-1]) / np.diff(rb)
+    cell = np.diff(rb)[-1 if end == 'top' else 0]
+    assert cell == pytest.approx(2.0, abs=2e-3)
+    assert np.all((frac > 0.25) & (frac < 0.75)), frac.min()
+    assert frac[-1 if end == 'top' else 0] == pytest.approx(0.5, abs=1e-2)
+
+
+@pytest.mark.parametrize(('top', 'bottom'), [(50.0, 0.0), (2.0, 0.0), (0.0, 2.0), (200.0, 2e3)])
+def test_the_staggered_radii_are_within_1e4_of_their_cell(top, bottom, monkeypatch):
+    """On a refined mass-coordinate mesh the staggered radii, solved to 1 m, lie within 1e-4 of
+    their cell of the radii solved to 1e-9 m."""
+    r1 = np.ravel(_mesh(top, bottom, True).staggered.radii)
+    solve = mesh_module._radius_for_mass_coordinate
+
+    def tight(*a, **k):
+        k['xtol'] = (
+            1e-9 if str(k.get('node', '')).startswith('staggered') else k.get('xtol', 1.0)
+        )
+        return solve(*a, **k)
+
+    monkeypatch.setattr(mesh_module, '_radius_for_mass_coordinate', tight)
+    m = _mesh(top, bottom, True)
+    shift = np.abs(r1 - np.ravel(m.staggered.radii)) / np.diff(_radii(m))
+    assert shift.max() < 1e-4 and shift.max() > 0
+
+
+_ENDS = [
+    (50.0, 9327.0, 100),
+    (50.0, 4638.0, 200),
+    (2.0, 0.0, 100),
+    (200.0, 2e3, 100),
+    (0.0, 0.0, 100),
+]
+
+
+def _end_samples(m, end):
+    """End node x0, the two nearest interior-difference midpoints m1, m2 and their spacings."""
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    if end == 'outer':
+        b, s = b[::-1], s[::-1]
+    return b[0], 0.5 * (s[0] + s[1]), 0.5 * (s[1] + s[2]), s[1] - s[0], s[2] - s[1]
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+@pytest.mark.parametrize('end', ['inner', 'outer'])
+def test_the_end_gradient_is_exact_for_a_quadratic(top, bottom, n, end):
+    """The end rows of the d/dr transform give dq/dr = 1 / L of q = x^2 + x, x = (r - x0) / L,
+    at the end node x0 to round-off."""
+    m = _mesh(top, bottom, False, n)
+    x0, L = _end_samples(m, end)[0], 1e5
+    x = (np.ravel(m.staggered.radii) - x0) / L
+    g = np.ravel(m.d_dr_at_basic_nodes((x**2 + x).reshape(-1, 1)))
+    assert (g[0] if end == 'inner' else g[-1]) * L == pytest.approx(1.0, rel=1e-8, abs=0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+@pytest.mark.parametrize('end', ['inner', 'outer'])
+def test_the_end_gradient_of_a_cubic_has_the_stencil_truncation_term(top, bottom, n, end):
+    """For q = ((r - x0) / L)^3 the end value is the linear extrapolation through the difference
+    midpoints m1, m2 of the differences, whose cubic error is d^2 q''' / 24 each: the exact
+    gradient 0 at x0 shifted by -q'''(x0 - m1)(x0 - m2) / 2 + ((1 + R) d1^2 - R d2^2) q''' / 24."""
+    m = _mesh(top, bottom, False, n)
+    x0, m1, m2, d1, d2 = _end_samples(m, end)
+    L = 1e5
+    s = np.ravel(m.staggered.radii)
+    g = np.ravel(m.d_dr_at_basic_nodes((((s - x0) / L) ** 3).reshape(-1, 1)))
+    q3 = 6.0 / L**3
+    R = (x0 - m1) / (m1 - m2)
+    expected = -0.5 * q3 * (x0 - m1) * (x0 - m2) + ((1 + R) * d1**2 - R * d2**2) * q3 / 24
+    got = g[0] if end == 'inner' else g[-1]
+    assert expected != 0.0
+    assert got == pytest.approx(expected, rel=1e-6, abs=0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('top', 'bottom'), [(200.0, 0.0), (0.0, 200.0), (200.0, 200.0)])
+def test_the_smallest_accepted_node_count_builds_a_mesh(top, bottom):
+    """The smallest node count the cell-thickness check accepts builds a mesh with its d/dr
+    transform, not an IndexError."""
+    from aragog.config.mesh import check_cell_thickness
+
+    p = Parameters.from_file(CFG)
+    p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = top, bottom
+    for n in range(1, 10):
+        p.mesh.number_of_nodes = n
+        try:
+            check_cell_thickness(p.mesh)
+            break
+        except ValueError:
+            continue
+    try:
+        m = Mesh(p)
+    except Exception as err:  # noqa: BLE001
+        pytest.fail(f'{n} nodes pass the check but the mesh build raises {err!r}')
+    assert m._d_dr_transform.shape == (n, n - 1)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('thickness', 'refused'), [(1.9e7, False), (2.1e7, True)])
+def test_a_2_m_cell_is_refused_on_a_mantle_thicker_than_20000_km(thickness, refused):
+    """In radius mode a 2 m top cell is MIN_CELL_FRACTION = 1e-7 of a 20,000 km mantle: a
+    19,000 km mantle builds the cell, a 21,000 km mantle gives the error of the refined grid."""
+    p = Parameters.from_file(CFG)
+    p.mesh.mass_coordinates = False
+    p.mesh.outer_radius = p.mesh.inner_radius + thickness
+    p.mesh.surface_cell_thickness = 2.0
+    if refused:
+        with pytest.raises(ValueError, match=r'give no refined grid of 100 nodes: last cell'):
+            Mesh(p)
+    else:
+        r = _radii(Mesh(p))
+        assert r[-1] - r[-2] == pytest.approx(2.0, rel=1e-6)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+def test_the_interior_gradient_of_a_quadratic_is_exact_at_the_difference_midpoints(
+    top, bottom, n
+):
+    """The interior rows give (q[i] - q[i-1]) / (s[i] - s[i-1]) at basic node i: for q = x^2 + x,
+    x = (r - c) / L, this is the exact gradient at the midpoint m of the two staggered nodes, so
+    the error at the basic node is 2 (m - b) / L^2, first order in the cell growth."""
+    m = _mesh(top, bottom, False, n)
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    c, L = b[0], 1e6
+    x = (s - c) / L
+    g = np.ravel(m.d_dr_at_basic_nodes((x**2 + x).reshape(-1, 1)))[1:-1]
+    mid = 0.5 * (s[:-1] + s[1:])
+    np.testing.assert_allclose(g * L, 2 * (mid - c) / L + 1, rtol=1e-9)
+    if top or bottom:
+        assert np.max(np.abs(mid - b[1:-1])) > 1.0
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('top', 'bottom', 'n'), _ENDS)
+def test_the_flux_divergence_has_second_order_error_on_a_refined_mesh(top, bottom, n):
+    """The flux divergence (A[i+1] F[i+1] - A[i] F[i]) / V[i] of the mesh areas and volumes, for
+    F = r^2, is the exact cell mean 3 (b1^4 - b0^4) / (b1^3 - b0^3); against the point value 4 s
+    at the cell midpoint s its error is 2 h^2 / (3 s) to leading order, h the cell width, checked
+    on the cells where it is above the round-off."""
+    m = _mesh(top, bottom, False, n)
+    b, s = _radii(m), np.ravel(m.staggered.radii)
+    A, V = np.ravel(m.basic.area), np.ravel(m.basic.volume)
+    D = np.diff(A * b**2) / V
+    np.testing.assert_allclose(D, 3 * np.diff(b**4) / np.diff(b**3), rtol=1e-9)  # eps r / h
+    h = np.diff(b)
+    np.testing.assert_allclose(s, 0.5 * (b[:-1] + b[1:]), rtol=1e-15)
+    e = 2 * h**2 / (3 * s)
+    big = e > 1e-8 * D  # cells whose error is far above the round-off of the r^4 differences
+    assert big.sum() >= n // 3
+    np.testing.assert_allclose((D - 4 * s)[big] / e[big], 1.0, rtol=1e-4)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_the_half_space_flux_holds_with_a_refined_top_cell(monkeypatch):
+    """The cooling half-space of the BC5 validation (Turcotte and Schubert 2014, eq. 4.116) with
+    the top cell refined to a quarter of the uniform cell: the surface flux stays within 1 % over
+    the window, and its error follows 0.063 (h_top / delta)^2 - sqrt(pi kappa t) / r_out to
+    5e-5 (measured 5.8e-6), below the error of the uniform mesh at the window start."""
+    import scipy.integrate
+    from scipy.sparse import diags
+
+    import tests.test_entropy_bc5_validation as T
+
+    top = 0.25 * T.D_2 / T.N_2
+    build = T._build_const_properties_parameters
+
+    def refined(**kw):
+        p = build(**kw)
+        p.mesh.surface_cell_thickness = top
+        return p
+
+    monkeypatch.setattr(T, '_build_const_properties_parameters', refined)
+    s = T._solver(T.N_2, T.R_OUT - T.D_2, T.T_S_2)
+    r = np.ravel(s.evaluator.mesh.basic.radii)
+    assert r[-1] - r[-2] == pytest.approx(top, rel=1e-6)
+    band = diags([1.0, 1.0, 1.0], [-1, 0, 1], shape=(T.N_2, T.N_2))
+    sol = scipy.integrate.solve_ivp(
+        T._rhs(s),
+        (0.0, T.T_WINDOW[-1]),
+        np.full(T.N_2, T._entropy(T.T_I_2)),
+        method='BDF',
+        t_eval=T.T_WINDOW,
+        rtol=1e-8,
+        atol=1e-8,
+        jac_sparsity=band,
+    )
+    assert sol.success, sol.message
+    flux = []
+    for t, y in zip(sol.t, sol.y.T):
+        T._rhs(s)(t, y)
+        flux.append(float(np.ravel(s.state.heat_flux)[-1]))
+    seconds = sol.t * T.Julian_year
+    exact = T.K * (T.T_I_2 - T.T_S_2) / np.sqrt(np.pi * T.KAPPA * seconds)
+    error = np.asarray(flux) / exact - 1.0
+    estimate = (
+        0.063 * top**2 / (T.KAPPA * seconds) - np.sqrt(np.pi * T.KAPPA * seconds) / T.R_OUT
+    )
+    assert np.max(np.abs(error)) < 1e-2
+    assert np.max(np.abs(error - estimate)) < 5e-5
+    assert abs(error[0]) < 0.063 * (T.D_2 / T.N_2) ** 2 / (T.KAPPA * seconds[0]) / 4

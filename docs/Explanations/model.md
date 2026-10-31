@@ -27,7 +27,7 @@ $$
 
 with $A_{i\pm 1/2} = 4\pi r_{i\pm 1/2}^2$ and $V_i = \tfrac{4}{3}\pi(r_{i+1/2}^3 - r_{i-1/2}^3)$. Entropy is held at the $N$ staggered nodes (cell centres), fluxes at the $N+1$ basic nodes (cell faces), and $\rho$, $T$ are read from the EOS at the staggered pressures.
 
-For the `quasi_steady` core BC the unknown vector is $[S_0, \ldots, S_{N-1}]$ of length $N$. The `energy_balance` mode appends the boundary entropy gradient $\partial S/\partial r |_\mathrm{cmb}$ as an additional ODE state variable (length $N+1$), and the `gradient` mode replaces the entropy block with its gradient and adds the surface entropy as a closure (length $N+2$).
+For the `quasi_steady` core BC the unknown vector is $[S_0, \ldots, S_{N-1}]$ of length $N$. The `energy_balance` mode appends the boundary entropy gradient $\partial S/\partial r |_\mathrm{cmb}$ as an additional ODE state variable (length $N+1$), the `gradient` mode replaces the entropy block with its gradient and adds the surface entropy as a closure (length $N+2$), and the `core_module` mode appends the boundary entropy gradient and the core temperature (length $N+2$, plus the shell temperatures of a stratified core).
 
 ## Coordinates and geometry
 
@@ -51,6 +51,8 @@ $$
 $$
 
 When `mass_coordinates = false`, $\xi$ is identified with $r$ and the chain rule above reduces to the identity.
+
+In both modes the mesh can be refined towards the surface and the CMB with `surface_cell_thickness` and `cmb_cell_thickness` ([Mesh refinement](mesh_refinement.md)).
 
 ## Heat fluxes
 
@@ -76,10 +78,10 @@ The pressure gradient $\partial P/\partial r$ is taken from the configured press
 Convection is parameterised as eddy diffusion of entropy:
 
 $$
-F_\mathrm{conv} = \rho T \kappa_h \max\!\left(-\frac{\partial S}{\partial r},\,0\right).
+F_\mathrm{conv} = -\rho T \kappa_h \frac{\partial S}{\partial r},
 $$
 
-The instability criterion in the entropy formulation is simply $\partial S/\partial r < 0$. The $\max$ form is implemented as a smooth approximation (rather than a hard switch) so that the BDF Jacobian remains continuous through the onset of convection.
+with the mixing-length $\kappa_h > 0$ only where $\partial S/\partial r < 0$, the instability criterion in the entropy formulation (for a positive `eddy_diffusivity_thermal`); for $D > 0$ the drive there uses at least the gradient $D$. The `kappah_floor` acts up to $\partial S/\partial r = D$ (`energy.convective_threshold`, default 0), so with $D > 0$ near-adiabatic liquid nodes keep a floor diffusivity. Both switches are hard masks (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 
 The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$, the critical value Aragog inherits via Abe (1995)[^cite-abe1995] and documented in Bower et al. (2018)[^cite-bower2018] §2.1:
 
@@ -90,16 +92,18 @@ $$
 
 with a narrow blend width $\Delta = 0.01\,Re_\mathrm{crit}$. A configurable floor `kappah_floor` sets a phase-modulated lower bound on $\kappa_h$. Mixing lengths are either the distance to the nearest boundary (`mixing_length_profile = "nearest_boundary"`) or a constant fraction of the mantle thickness.
 
+When solid mantle rheology is enabled (`[phase_solid.rheology]`), solid viscosity follows Arrhenius creep and Byerlee brittle yielding, and boundary layer closures govern stagnant-lid growth and mixing-length top slope. See [Solid-state convection](solid_state_convection.md) for the complete formulation of solid mantle dynamics.
+
 ### Gravitational separation of melt
 
 In the partially molten regime, melt and solid separate vertically by gravity. The separation mass flux is
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{\lvert\rho_m - \rho_s\rvert\,g\,F(\phi)}{\eta_m},
+v_\mathrm{rel} = \frac{(\rho_s - \rho_m)\,g\,F(\phi)}{\eta_m},
 $$
 
-where $F(\phi)$ is the melt-solid mobility (the permeability over porosity) set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
+with $g > 0$, so a denser melt sinks, and where $F(\phi)$ is the melt-solid mobility (the permeability over porosity) set by the configured `grain_size` and `separation_buoyancy`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),
@@ -142,13 +146,13 @@ The volumetric work associated with phase segregation is carried implicitly by t
 
 ### Outer (surface) boundary
 
-Three outer BC modes are implemented in the entropy solver:
+Three outer BC modes are implemented in the entropy solver. The parser also accepts mode 2, for which the NumPy path applies no surface condition (the surface face carries the flux of the gradient copied from the cell below) and the JAX path reads `outer_boundary_value` as a flux, so do not use it; mode 3 is refused.
 
 | Mode | Description |
 |------|-------------|
 | 1 | Grey-body atmosphere: $F_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ with optional UTBL correction |
 | 4 | Prescribed flux, updated per coupling step from the helpfile |
-| 5 | Prescribed temperature |
+| 5 | Prescribed temperature: the surface node takes the entropy of $T_s$, and the face flux is the half-cell conduction ([Surface boundary conditions](surface_bc.md)) |
 
 ### Inner (CMB) boundary
 
@@ -166,6 +170,7 @@ The `core_bc` selector chooses how the core energy balance is closed when `inner
 | `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula; produces SPIDER bit-parity. **Default and PROTEUS production**. |
 | `gradient` | length $N+2$ | Entropy gradient as the primary state field; $S$ is reconstructed by cumulative integration from the surface inward. |
 | `bower2018` | length $N+1$ | $T_\mathrm{core}$ as an ODE state with conduction-only $F_\mathrm{cmb}$. Available for parity testing only; not recommended. |
+| `core_module` | length $N+2$, plus the shell cells with `stratification = true` | The CMB flux is a boundary-layer law in the core-mantle temperature contrast, and the core temperature follows the core evolution budget of `aragog.core`, with inner-core growth. See [Core BC modes](core_bc.md). |
 
 ## Pressure and density profiles
 
@@ -179,7 +184,7 @@ Pressure $P(r)$ is treated as time-invariant. Two options are provided:
 ### Spatial discretisation
 
 - Staggered finite-volume mesh on $N+1$ basic nodes and $N$ staggered nodes.
-- The entropy gradient at basic nodes is the SPIDER-parity centred difference of staggered $S$ in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in `energy_balance` mode the CMB boundary value is overridden by the state-vector entry.
+- The entropy gradient at basic nodes is the SPIDER-parity centred difference of staggered $S$ in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in the `energy_balance` and `core_module` modes the CMB boundary value is overridden by the state-vector entry.
 - A configurable phase-boundary smoothing function gates the gravitational-separation and chemical-mixing fluxes outside the mushy band. The default is `phase_smoothing = "tanh"` (SPIDER-parity, two-branch tanh of width `matprop_smooth_width`); `phase_smoothing = "cubic_hermite"` is available as an alternative.
 
 ### Time integration

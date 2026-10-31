@@ -1,0 +1,411 @@
+"""Unit tests for ``aragog.core.budget.CoreEnergyBudget``.
+
+The budget's contract is energetic consistency: the effective heat capacity
+must equal the temperature derivative of the core's energy content. The
+tests verify the secular term against independent quadrature and the
+ecosystem's Earth reservoir factor, the latent term against a finite
+difference of the independently integrated latent energy, the nucleation
+sigmoid against its half-activation identity and hard-switch limit, and the
+legacy mode against the isothermal-reservoir formula it reproduces.
+"""
+
+from __future__ import annotations
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+from scipy.integrate import quad, simpson
+
+from aragog.core.budget import CoreEnergyBudget
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
+from aragog.core.profiles import GaussianCoreProfiles
+
+pytestmark = pytest.mark.unit
+
+EARTH = dict(
+    rho_cen=12500.0,
+    length_scale=7200e3,
+    r_cmb=3480e3,
+    p_cmb=136e9,
+    alpha=1.35e-5,
+    c_p=840.0,
+)
+DS_FUSION = 170.0  # J/kg/K, order of the calibrated iron value
+
+
+@pytest.fixture(scope='module')
+def prof():
+    """Earth-like Gaussian profiles shared by the file."""
+    return GaussianCoreProfiles(**EARTH)
+
+
+@pytest.fixture(scope='module')
+def exoplanet_prof():
+    """Zalmoxis exoplanet core structure spanning the 98.5 GPa triple point."""
+    from aragog.core.profiles import fit_gaussian_core_profiles
+
+    return fit_gaussian_core_profiles(
+        m_core=9.8365400909e23,
+        p_cen=184117858870.0,
+        r_cmb=2867012.4963,
+        p_cmb=54848888186.0,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+
+
+@pytest.fixture(scope='module')
+def alloy_budget(prof):
+    """Alloy-curve budget in the partial-inner-core regime (onset ~4147 K)."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    return CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0)
+
+
+@pytest.mark.physics_invariant
+def test_legacy_mode_reproduces_the_reservoir_closure(prof):
+    """Legacy capacity is exactly (4/3) pi r^3 rho c_p tfac, cooling follows
+    -Q/C, and internal sources offset the CMB loss term for term."""
+    budget = CoreEnergyBudget(
+        prof,
+        IronMeltingCurve(),
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        capacity_mode='legacy',
+        legacy_rho_core=10738.33,
+        legacy_tfac=1.147,
+    )
+    analytic = 4.0 / 3.0 * np.pi * EARTH['r_cmb'] ** 3 * 10738.33 * EARTH['c_p'] * 1.147
+    assert float(budget.secular_capacity()) == pytest.approx(analytic, rel=1e-12)
+    # Cooling algebra: -Q/C, and a source equal to the loss stalls cooling.
+    q = 10e12  # 10 TW
+    assert float(budget.dtcmb_dt(4000.0, q)) == pytest.approx(-q / analytic, rel=1e-12)
+    assert float(budget.dtcmb_dt(4000.0, q, q_sources=q)) == pytest.approx(0.0, abs=1e-30)
+    # Legacy mode carries no latent term even deep below the melting curve.
+    assert float(budget.effective_capacity(3000.0)) == pytest.approx(analytic, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_secular_capacity_matches_quadrature_and_reservoir_factor(prof, alloy_budget):
+    """The profile-mode capacity equals c_p times the independently
+    integrated mass-weighted adiabat shape, and the emergent temperature
+    factor lands on the ecosystem's Earth value 1.147 within 2%, while
+    differing from the isothermal (factor 1) closure by far more."""
+
+    def weighted_shape(r):
+        return float(prof.density(r)) * float(prof.adiabat(r, 1.0)) * 4.0 * np.pi * r**2
+
+    integral, _ = quad(weighted_shape, 0.0, prof.r_cmb)
+    assert float(alloy_budget.secular_capacity()) == pytest.approx(
+        EARTH['c_p'] * integral, rel=1e-9
+    )
+    tfac = float(alloy_budget.effective_tfac())
+    assert tfac == pytest.approx(1.147, rel=0.02)  # Bower et al. (2018) Earth value
+    assert tfac - 1.0 > 0.10  # discriminates against the isothermal closure
+
+
+@pytest.mark.physics_invariant
+def test_latent_capacity_equals_derivative_of_latent_energy(prof, alloy_budget):
+    """C_latent must equal |dE_latent/dT_cmb| with E_latent integrated
+    independently (scipy quadrature over the frozen shell) and
+    differentiated by central finite difference: the energetic-consistency
+    contract of the implicit-function boundary sensitivity."""
+    curve = alloy_budget.melting_curve
+
+    def latent_energy(t_cmb: float) -> float:
+        r_icb = float(alloy_budget.r_icb(t_cmb))
+        value, _ = quad(
+            lambda r: (
+                float(curve.t_melt(prof.pressure(r)))
+                * DS_FUSION
+                * float(prof.density(r))
+                * 4.0
+                * np.pi
+                * r**2
+            ),
+            0.0,
+            r_icb,
+            limit=200,
+        )
+        return value
+
+    dt = 1.0  # K; resolves the boundary motion well above quadrature noise
+    fd = abs(latent_energy(3900.0 + dt) - latent_energy(3900.0 - dt)) / (2 * dt)
+    assert float(alloy_budget.latent_capacity(3900.0)) == pytest.approx(fd, rel=1e-4)
+    # The latent term is comparable to (here larger than) the secular one,
+    # so the consistency check discriminates: dropping it would halve C_eff.
+    assert float(alloy_budget.latent_capacity(3900.0)) > float(alloy_budget.secular_capacity())
+
+
+@pytest.mark.physics_invariant
+def test_nucleation_onset_growth_and_freeze_out(prof, alloy_budget):
+    """The inner core is absent above onset, grows monotonically as the core
+    cools, and the latent term vanishes again once nothing liquid remains;
+    the sigmoid sits at exactly one half at the onset temperature."""
+    t_onset = float(alloy_budget.melting_curve.t_melt(prof.pressure(0.0))) / float(
+        prof.adiabat(0.0, 1.0)
+    )
+    assert t_onset == pytest.approx(4146.70, rel=1e-4)  # emergent, alloy regime
+    assert float(alloy_budget.nucleation_factor(t_onset)) == pytest.approx(0.5, abs=1e-9)
+    assert float(alloy_budget.r_icb(t_onset + 50.0)) == 0.0
+    assert float(alloy_budget.latent_capacity(t_onset + 50.0)) == 0.0
+
+    radii = [float(alloy_budget.r_icb(t)) for t in (4000.0, 3900.0, 3800.0, 3700.0)]
+    assert all(np.diff(radii) > 0.0)  # grows as the core cools
+    assert 0.0 < radii[0] < prof.r_cmb
+
+    # Freeze-out: at 3300 K even the CMB is subcooled; boundary pinned at
+    # r_cmb and the latent release is strictly zero.
+    assert float(alloy_budget.r_icb(3300.0)) == pytest.approx(prof.r_cmb, rel=1e-9)
+    assert float(alloy_budget.latent_capacity(3300.0)) == 0.0
+
+    # Hard-switch limit: a tiny width turns the sigmoid into a step.
+    sharp = CoreEnergyBudget(
+        prof, alloy_budget.melting_curve, ds_fusion=DS_FUSION, icn_width=1e-3
+    )
+    assert float(sharp.nucleation_factor(t_onset - 1.0)) == pytest.approx(1.0, abs=1e-12)
+    assert float(sharp.nucleation_factor(t_onset + 1.0)) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_error_contract_and_jit(prof, alloy_budget):
+    """Invalid constructor inputs raise eagerly with the offending name;
+    the assembled cooling rate is jit-safe and matches eager evaluation."""
+    curve = IronMeltingCurve()
+    with pytest.raises(ValueError, match='ds_fusion'):
+        CoreEnergyBudget(prof, curve, ds_fusion=0.0, icn_width=10.0)
+    with pytest.raises(ValueError, match='icn_width'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=-1.0)
+    with pytest.raises(ValueError, match='capacity_mode'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=1.0, capacity_mode='x')
+    with pytest.raises(ValueError, match='legacy'):
+        CoreEnergyBudget(
+            prof, curve, ds_fusion=DS_FUSION, icn_width=1.0, capacity_mode='legacy'
+        )
+
+    eager = float(alloy_budget.dtcmb_dt(3900.0, 10e12, q_sources=2e12))
+    jitted = float(jax.jit(alloy_budget.dtcmb_dt)(3900.0, 10e12, 2e12))
+    assert jitted == pytest.approx(eager, rel=1e-12)
+    # Cooling with a net loss, and the sign flips with a dominant source.
+    assert eager < 0.0
+    assert float(alloy_budget.dtcmb_dt(3900.0, 1e12, q_sources=5e12)) > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_r_icb_gradient_carries_the_implicit_sensitivity(prof, alloy_budget):
+    """jax.grad through r_icb must equal the finite-difference boundary
+    motion (a comparison-driven bisection alone would return exactly zero),
+    and the effective-capacity gradient must match its finite difference,
+    so the solver's analytic-Jacobian path sees the true derivatives."""
+    import jax
+
+    t = 3900.0
+    grad_r = float(jax.grad(alloy_budget.r_icb)(t))
+    h = 0.5
+    fd_r = (float(alloy_budget.r_icb(t + h)) - float(alloy_budget.r_icb(t - h))) / (2 * h)
+    assert grad_r == pytest.approx(fd_r, rel=1e-4)
+    assert abs(grad_r) > 1.0  # thousands of m/K: a zero gradient cannot pass
+
+    grad_c = float(jax.grad(alloy_budget.effective_capacity)(t))
+    fd_c = (
+        float(alloy_budget.effective_capacity(t + h))
+        - float(alloy_budget.effective_capacity(t - h))
+    ) / (2 * h)
+    assert grad_c == pytest.approx(fd_c, rel=5e-3)
+
+
+@pytest.mark.physics_invariant
+def test_gravitational_capacity_scales_linearly_in_alpha_c(prof):
+    """C_grav must scale linearly with the compositional expansivity at
+    fixed light-element fraction; a formulation that only sees the product
+    through a rescaled c_light would hide a misuse of either factor."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    lo = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.5, c_light=0.05
+    )
+    hi = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=1.5, c_light=0.05
+    )
+    g_lo = float(lo.gravitational_capacity(3900.0))
+    g_hi = float(hi.gravitational_capacity(3900.0))
+    assert g_lo > 0.0
+    assert g_hi / g_lo == pytest.approx(3.0, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_freeze_out_capacity_jump(prof):
+    """Effective capacity drops discontinuously at full core freeze-out.
+
+    When the CMB reaches the melting curve, inner-core growth completes
+    and latent heat release ceases abruptly. For the quadratic melting
+    curve, effective capacity drops by a factor of 3.14 on the EARTH profile
+    (length scale 7200 km, CMB radius 3480 km, ds_fusion 170 J/kg/K). For the iron
+    alloy curve, effective capacity drops by 50.5% (from 3.72e27 J/K to 1.84e27 J/K).
+    """
+    quad_curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    b_quad = CoreEnergyBudget(prof, quad_curve, ds_fusion=DS_FUSION, icn_width=10.0)
+    t_f_quad = float(b_quad.t_freeze)
+    sec_quad = float(b_quad.secular_capacity())
+    c_above_quad = float(b_quad.effective_capacity(t_f_quad + 1e-4))
+    c_below_quad = float(b_quad.effective_capacity(t_f_quad - 1e-4))
+    assert c_below_quad == pytest.approx(sec_quad, rel=1e-12)
+    assert c_above_quad / c_below_quad == pytest.approx(3.1428, rel=1e-3)
+
+    iron_curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    b_iron = CoreEnergyBudget(prof, iron_curve, ds_fusion=DS_FUSION, icn_width=10.0)
+    t_f_iron = float(b_iron.t_freeze)
+    sec_iron = float(b_iron.secular_capacity())
+    c_above_iron = float(b_iron.effective_capacity(t_f_iron + 1e-4))
+    c_below_iron = float(b_iron.effective_capacity(t_f_iron - 1e-4))
+    assert c_below_iron == pytest.approx(sec_iron, rel=1e-12)
+    assert (c_below_iron - c_above_iron) / c_above_iron == pytest.approx(-0.5046, rel=1e-3)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('profile_fixture', ['prof', 'exoplanet_prof'])
+def test_latent_and_gravitational_energy_conservation(profile_fixture, request):
+    """Integrals of latent and gravitational capacities over the core freezing
+    must equal the exact geometric latent heat and spatial gravitational energy
+    to relative error < 1e-6."""
+    core_profile = request.getfixturevalue(profile_fixture)
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        core_profile,
+        curve,
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        alpha_c=1.0,
+        c_light=0.046,
+        latent_heat=750e3,
+    )
+    t_onset = float(budget.t_onset)
+    t_freeze = float(budget.t_freeze)
+    gl_nodes, gl_weights = np.polynomial.legendre.leggauss(1024)
+    t_nodes = 0.5 * (t_onset - t_freeze) * gl_nodes + 0.5 * (t_onset + t_freeze)
+    t_weights = 0.5 * (t_onset - t_freeze) * gl_weights
+
+    lat_vmap = jax.jit(jax.vmap(budget.latent_capacity))
+    grav_vmap = jax.jit(jax.vmap(budget.gravitational_capacity))
+
+    lat_vals = np.asarray(lat_vmap(jnp.asarray(t_nodes)), dtype=float)
+    grav_vals = np.asarray(grav_vmap(jnp.asarray(t_nodes)), dtype=float)
+
+    int_lat = float(np.sum(t_weights * lat_vals))
+    int_grav = float(np.sum(t_weights * grav_vals))
+
+    # Analytical targets
+    m_core, _ = quad(
+        lambda s: float(core_profile.density(s)) * 4.0 * np.pi * s**2,
+        0.0,
+        core_profile.r_cmb,
+    )
+    target_lat = budget.latent_heat * m_core
+
+    def grav_density(r):
+        if r <= 0.0 or r >= core_profile.r_cmb:
+            return 0.0
+        rho_psi, _ = quad(
+            lambda s: (
+                float(core_profile.density(s))
+                * float(core_profile.potential(s))
+                * 4.0
+                * np.pi
+                * s**2
+            ),
+            r,
+            core_profile.r_cmb,
+        )
+        mass_oc, _ = quad(
+            lambda s: float(core_profile.density(s)) * 4.0 * np.pi * s**2, r, core_profile.r_cmb
+        )
+        if mass_oc <= 0.0:
+            return 0.0
+        potential_moment = rho_psi - mass_oc * float(core_profile.potential(r))
+        enrichment = 4.0 * np.pi * r**2 * float(core_profile.density(r)) * budget.c_light
+        return potential_moment * budget.alpha_c * (enrichment / mass_oc)
+
+    target_grav, _ = quad(grav_density, 0.0, core_profile.r_cmb)
+
+    assert abs(int_lat - target_lat) / target_lat < 1e-6
+    assert abs(int_grav - target_grav) / target_grav < 1e-6
+
+
+def test_budget_input_validation(prof):
+    """Constructor validates that latent_heat is positive and expansivities non-negative."""
+    curve = IronMeltingCurve()
+    with pytest.raises(ValueError, match='latent_heat must be positive'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, latent_heat=-500.0)
+    with pytest.raises(ValueError, match='alpha_c and c_light must be non-negative'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=-0.5)
+    with pytest.raises(ValueError, match='alpha_c and c_light must be non-negative'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, c_light=-0.05)
+
+
+@pytest.mark.physics_invariant
+def test_heat_content_is_the_capacity_integral_below_onset(prof):
+    """Between nucleation onset and freeze-out, away from both, the content difference
+    equals the integral of C_eff to 1e-6 (Simpson on 101 nodes); above onset the content
+    is the secular term alone, and a stratified budget refuses."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t1, t2 = budget.t_onset - 40.0, budget.t_onset - 90.0
+    assert t2 > budget.t_freeze
+    nodes = np.linspace(t2, t1, 101)
+    c = np.asarray(jax.jit(jax.vmap(budget.effective_capacity))(nodes))
+    reference = -simpson(c, x=nodes)
+    got = budget.heat_content(t2) - budget.heat_content(t1)
+    assert got == pytest.approx(reference, rel=1e-6)
+    secular = (t1 - t2) * float(budget.secular_capacity())
+    assert abs(got + secular) > 1.0e-2 * secular
+    t_hot = budget.t_onset + 10.0
+    assert budget.heat_content(t_hot) == pytest.approx(
+        t_hot * float(budget.secular_capacity()), rel=1e-15
+    )
+    stratified = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, stratification=True, k_core=40.0
+    )
+    with pytest.raises(ValueError, match='stratified'):
+        stratified.heat_content(t1)
+
+
+@pytest.mark.slow
+@pytest.mark.physics_invariant
+def test_heat_content_difference_is_the_capacity_integral(prof):
+    """``heat_content(T2) - heat_content(T1)`` equals the integral of C_eff, checked
+    against a dense trapezoid across nucleation onset (square-root cusp of the latent term)
+    and full freeze-out (latent jump), with the gravitational term on. One quadrature
+    panel across the freeze-out jump misses the reference by about 2e-3."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = budget.t_onset, budget.t_freeze
+    assert t_fr < t_on
+    c_eff = jax.jit(jax.vmap(budget.effective_capacity))
+    for t1, t2 in (
+        (t_on + 200.0, t_on + 50.0),
+        (t_on + 50.0, t_on - 100.0),
+        (t_on - 100.0, t_fr - 30.0),
+    ):
+        nodes = np.linspace(t2, t1, 20001)
+        nodes = np.unique(np.concatenate([nodes, [x for x in (t_on, t_fr) if t2 < x < t1]]))
+        reference = -np.trapezoid(np.asarray(c_eff(nodes)), nodes)
+        got = budget.heat_content(t2) - budget.heat_content(t1)
+        assert got == pytest.approx(reference, rel=2e-5)
+    # Above onset the content is secular only; legacy mode is the reservoir constant times T.
+    assert budget.heat_content(t_on + 10.0) == pytest.approx(
+        (t_on + 10.0) * float(budget.secular_capacity()), rel=1e-14
+    )
+    legacy = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        capacity_mode='legacy',
+        legacy_rho_core=11000.0,
+        legacy_tfac=1.1,
+    )
+    assert legacy.heat_content(4000.0) == pytest.approx(
+        4000.0 * float(legacy.secular_capacity())
+    )

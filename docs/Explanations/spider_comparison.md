@@ -23,6 +23,7 @@ This page summarises the points of agreement and divergence and gives guidance o
 | Mass-coordinate option | `MASS_COORDINATES` flag (`mesh.c`) | `mass_coordinates = true` |
 | Output format | JSON timesteps via cJSON (`monitor.c`) | NetCDF via xarray (PROTEUS-side writer in `proteus/interior_energetics/aragog.py`) |
 | Restart from checkpoint | `IC_INTERIOR = 2`, `restart.json` | `EntropySolver.set_initial_entropy`, NetCDF reload via the wrapper |
+| Solid mantle rheology | Constant solid end-member viscosity | Arrhenius creep, Byerlee yielding, stagnant lid (`[phase_solid.rheology]`) |
 
 ## Numerical differences that matter
 
@@ -52,7 +53,7 @@ See [Phi step cap](../How-to/phi-step-cap.md) for tuning guidance.
 
 ## Where the two codes should agree
 
-In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference.
+In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, `convective_threshold = 0`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference.
 Specifically:
 
 - The bit-parity helper-formula tests in `tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs` reproduce the SPIDER `bc.c:76-131` evaluation to machine precision on hand-computed inputs.
@@ -65,6 +66,11 @@ Integration-level parity between the two codes is the criterion that the product
 
 ## Where they intentionally diverge
 
+### Convective threshold
+
+SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, and Aragog can drive an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default 0), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. Apart from the floor, the two codes therefore differ at nodes with $-D < \partial S/\partial r < 0$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
+The default `convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
+
 ### Default thermodynamic tables
 
 SPIDER ships with the Wolf & Bower (2018) RTpress liquid EOS as the default mantle EOS.
@@ -75,7 +81,7 @@ Aragog can still consume Wolf & Bower (2018) tables via `phase_solid` / `phase_l
 ### Atmosphere chemistry and escape
 
 SPIDER's `atmosphere.c` carries its own model for grey-body radiation, Zahnle steam atmosphere, Jeans escape, Zahnle XUV escape, and volatile speciation between melt, solid, and gas phases.
-Aragog deliberately does none of this; it implements only the surface boundary modes 1, 4, and 5 (grey-body with optional UTBL correction, prescribed flux, prescribed temperature).
+Aragog deliberately does none of this; it implements only the surface boundary modes 1, 4, and 5 (grey-body with optional UTBL correction, prescribed flux, prescribed temperature; see [Surface boundary conditions](surface_bc.md)).
 In a PROTEUS run the atmospheric climate is owned by JANUS or AGNI, and the volatile speciation / outgassing is owned by Atmodeller or CALLIOPE; in standalone use Aragog is run with mode 4 (prescribed flux) or mode 5 (prescribed temperature) as the upper BC.
 This is a separation-of-concerns choice, not a missing feature: it lets Aragog be paired with whichever climate and outgassing modules PROTEUS configures.
 
@@ -88,6 +94,10 @@ Aragog's JAX path enables an analytic Jacobian for production runs without givin
 
 SPIDER writes one JSON file per output time via cJSON (`monitor.c`); Aragog writes a single NetCDF per call via the PROTEUS-side wrapper (`proteus.interior_energetics.aragog.write_netcdf`).
 The downstream PROTEUS plotting and analysis tooling consumes NetCDF.
+
+### Solid mantle rheology and stagnant lids
+
+SPIDER models mantle viscosity using a constant solid end-member viscosity. Aragog provides an optional solid-state convection module (`[phase_solid.rheology]`) with Arrhenius temperature-dependent creep, Byerlee brittle yielding, stagnant-lid boundary layer stress closures, and viscosity-contrast mixing-length slope scaling. See [Solid-state convection](solid_state_convection.md) for the formulation and benchmark verification.
 
 For the configuration details that map between the two codes, see [Configuration](../How-to/configuration.md) and [Standalone vs PROTEUS-integrated](../How-to/usage-paths.md).
 

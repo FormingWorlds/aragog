@@ -8,6 +8,54 @@ import attrs
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
+CORE_BC_MODES = ('quasi_steady', 'energy_balance', 'gradient', 'bower2018', 'core_module')
+TOP_NODE_MODES = ('linear', 'limited')
+
+
+def check_top_node(top_node, core_bc: str | None = None) -> None:
+    """Refuse a ``top_node`` that is not one of ``TOP_NODE_MODES``, and ``'limited'`` on the
+    ``'gradient'`` core, whose basic entropies come from its own state.
+
+    Raises
+    ------
+    ValueError
+        Naming the value and the modes.
+    """
+    if not isinstance(top_node, str) or top_node not in TOP_NODE_MODES:
+        raise ValueError(f'unknown top_node {top_node!r}; the modes are {TOP_NODE_MODES}')
+    if top_node == 'limited' and core_bc == 'gradient':
+        raise ValueError("top_node = 'limited' is not available on core_bc = 'gradient'")
+
+
+def _check_top_node_pair(instance, attribute, value) -> None:
+    """Check ``top_node`` against ``core_bc`` at construction and on assignment of either."""
+    if attribute.name == 'top_node':
+        check_top_node(value, instance.core_bc)
+    else:
+        check_top_node(instance.top_node, value)
+
+
+def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
+    """Refuse an unknown ``core_bc``, and for ``'core_module'`` an inner boundary condition
+    other than core cooling (1) or ``core_module_params`` the core module refuses.
+
+    Raises
+    ------
+    ValueError
+        Naming the unknown mode, the inner boundary condition, or the refused parameter.
+    """
+    if core_bc not in CORE_BC_MODES:
+        raise ValueError(f'unknown core_bc {core_bc!r}; the modes are {CORE_BC_MODES}')
+    if core_bc == 'core_module':
+        if inner_boundary_condition != 1:
+            raise ValueError(
+                "core_bc = 'core_module' needs inner_boundary_condition = 1, got "
+                f'{inner_boundary_condition}'
+            )
+        from aragog.core.module import split_core_module_params
+
+        split_core_module_params(core_module_params)
+
 
 @attrs.define
 class BoundaryConfig:
@@ -35,6 +83,29 @@ class BoundaryConfig:
         Enable upper thermal boundary layer parameterization.
     param_utbl_const : float
         UTBL constant.
+    core_bc : str
+        Core boundary formulation for ``inner_boundary_condition = 1``:
+        'quasi_steady' (alpha-factor heat-flux partition between the bottom
+        cell and the core by heat-capacity ratio; state length N; stable but
+        underestimates the CMB heat loss against a SPIDER-parity reference),
+        'energy_balance' (default, the PROTEUS production path: SPIDER-parity
+        BC with the CMB entropy gradient as an extra state, integrated by
+        SPIDER's ``bc.c:76-131`` formula
+        d/dt(dSdr_cmb) = (2/dr) ((-F_cmb area_cmb) fac_cmb - dSdt_s[0]),
+        fac_cmb = cp_cmb / (cp_core T_cmb tfac M_core); state length N+1),
+        'gradient' (entropy gradient as the primary state, S rebuilt by
+        integration from the surface; state length N+2),
+        'bower2018' (T_core as a state with F_cmb from conduction across the
+        bottom half cell, orders of magnitude below the true heat loss;
+        parity testing only) or 'core_module' (the aragog.core evolution
+        budget with dSdr_cmb and T_core as states; state length N+2).
+        Standalone callers that want the alpha-factor behaviour set
+        'quasi_steady' explicitly.
+    top_node : str
+        Entropy of the top basic node: 'linear' (default) extrapolates the top 2 cells; 'limited'
+        reduces that half step smoothly near a table edge, so the node rises with the top cell
+        and stays in the table (``aragog.mesh.top_node_entropy``; not on the 'gradient' core,
+        checked also on assignment).
     """
 
     outer_boundary_condition: int
@@ -47,36 +118,12 @@ class BoundaryConfig:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core boundary condition mode. Selects the formulation used
-    # when ``inner_boundary_condition = 1`` (core cooling).
-    #
-    #   'quasi_steady' = alpha-factor heat-flux partition between
-    #     the bottom mantle cell and the core, weighted by heat
-    #     capacity ratio. State vector length N (entropy only).
-    #     Default; produces stable cooling but underestimates the
-    #     true CMB heat loss relative to a SPIDER-parity reference.
-    #
-    #   'energy_balance' = SPIDER-parity core BC. The entropy
-    #     gradient at the CMB basic node is added as an extra state
-    #     variable (mirror of SPIDER's ``dSdxi[ind_cmb]``) and its
-    #     time derivative is integrated via SPIDER's ``bc.c:76-131``
-    #     formula:
-    #         d/dt(dSdr_cmb) = (2/dr) * ((-F_cmb*area_cmb)*fac_cmb
-    #                                    - dSdt_s[0])
-    #     where ``fac_cmb = cp_cmb / (cp_core*T_cmb*tfac*M_core)``.
-    #     State vector length N+1.
-    #
-    #   'gradient' = entropy gradient as the primary state field;
-    #     S is reconstructed by cumulative integration from the
-    #     surface. State vector length N+2.
-    #
-    #   'bower2018' = T_core as an ODE state variable with F_cmb
-    #     from conduction across the bottom half-cell. The
-    #     conduction-only flux underestimates true core heat loss
-    #     by orders of magnitude; this mode is retained for parity
-    #     testing only and is not recommended for production.
-    #
-    # Default 'energy_balance' matches the PROTEUS production path.
-    # Standalone callers that want the legacy alpha-factor behaviour
-    # must set core_bc='quasi_steady' explicitly.
-    core_bc: str = 'energy_balance'
+    # Core boundary mode for inner_boundary_condition = 1 (see the class docstring).
+    core_bc: str = attrs.field(default='energy_balance', validator=_check_top_node_pair)
+    # Flat parameter dict for core_bc='core_module'; keys documented in
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
+    core_module_params: dict | None = None
+    top_node: str = attrs.field(default='linear', validator=_check_top_node_pair)
+
+    def __attrs_post_init__(self) -> None:
+        check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)

@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 import logging
+import numbers
 
 import attrs
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+
+# Smallest end cell [m], a margin of 2 over the 1 m inset of the mass-mode node bracket; at
+# 2 m the CMB half cell meets the 1 m floor of the bower2018 core flux.
+MIN_CELL_THICKNESS = 2.0
+
+
+def check_cell_thickness(mesh) -> None:
+    """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
+    ``mesh`` are each 0 or a real number in [``MIN_CELL_THICKNESS``, uniform cell) m.
+
+    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a set cell
+    needs at least 4 nodes, as the end rows of the d/dr transform do. A bool (a TOML ``true``)
+    is refused, not read as 1 m.
+    """
+    need = 4
+    for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
+        value = getattr(mesh, name)
+        real = isinstance(value, numbers.Real) and not isinstance(value, bool)
+        if real and value == 0:
+            continue
+        if mesh.number_of_nodes < need:
+            raise ValueError(
+                f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
+            )
+        uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
+        if not (real and MIN_CELL_THICKNESS <= value < uniform):
+            raise ValueError(
+                f'mesh.{name} must be 0 (off) or in [{MIN_CELL_THICKNESS:g}, {uniform:.6g}) m, '
+                f'the uniform radial cell; got {value!r}'
+            )
 
 
 @attrs.define
@@ -24,7 +56,8 @@ class MeshConfig:
     number_of_nodes : int
         Number of basic mesh nodes.
     mixing_length_profile : str
-        'constant' or 'nearest_boundary'.
+        'constant' or 'nearest_boundary'. With ``outer_boundary_condition = 5``, 'constant'
+        is refused unless ``mixing_length_constant_fraction = 0``.
     mixing_length_constant_fraction : float
         Fraction of the mantle thickness to use as the mixing length
         when ``mixing_length_profile = 'constant'``. Default 0.25.
@@ -53,6 +86,13 @@ class MeshConfig:
         SPIDER's mesh. Default True matches the PROTEUS production path.
     eos_file : str
         Path to user-defined EOS file.
+    surface_cell_thickness, cmb_cell_thickness : float
+        Radial thickness [m] of the outermost and innermost basic cell. 0 (default) leaves
+        that end unset; with only the other end set, its cells grow. A set value lies in
+        [2 m, uniform radial cell) and refines towards that boundary with a tanh stretching
+        (both ends: the two-sided Vinokur form). In mass-coordinate mode the stretching acts
+        on the mass coordinate and the end cells still have the given radial thickness; there a
+        value at or above the uniform end cell of that mode is refused when the mesh is built.
     """
 
     outer_radius: float
@@ -69,3 +109,8 @@ class MeshConfig:
     mass_coordinates: bool = True
     eos_file: str = ''
     mixing_length_constant_fraction: float = 0.25
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __attrs_post_init__(self):
+        check_cell_thickness(self)

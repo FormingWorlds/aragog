@@ -21,6 +21,7 @@ nav:
       - Solver tuning:
           - Solver method tuning: How-to/solver-method-tuning.md
           - Melt-fraction step cap: How-to/phi-step-cap.md
+          - Mesh refinement: How-to/mesh-refinement.md
           - UTBL parameterisation: How-to/utbl-parameterisation.md
       - Outputs & testing:
           - Inspecting NetCDF output: How-to/netcdf.md
@@ -32,6 +33,10 @@ nav:
   - Tutorials:
       - First run: Tutorials/firstrun.md
       - Building a test: Tutorials/build_test.md
+      - Fixed surface temperature: Tutorials/surface_temperature.md
+      - Properties at the solidus: Tutorials/phase_blend.md
+      - Refining the mesh: Tutorials/mesh_refinement.md
+      - Solid-state convection: Tutorials/solid_state_convection.md
 
   - Explanations:
       - Overview:
@@ -44,18 +49,28 @@ nav:
           - Energy equation: Explanations/energy_equation.md
           - Heat transport: Explanations/heat_transport.md
           - Mixing-length theory: Explanations/mixing_length.md
+          - Solid-state convection: Explanations/solid_state_convection.md
           - Two-phase flow: Explanations/two_phase_flow.md
           - Phase transitions: Explanations/phase_transitions.md
           - Pressure EOS: Explanations/pressure_eos.md
           - Core BC modes: Explanations/core_bc.md
+          - Surface boundary conditions: Explanations/surface_bc.md
       - Numerics:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
           - Melt-fraction step cap: Explanations/phi_step_cap_rationale.md
-      - Diagnostics & verification:
+          - Mesh refinement: Explanations/mesh_refinement.md
+      - Diagnostics:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
-          - First-principles verification: Explanations/verification.md
+
+  - Validation:
+      - Overview: Validation/index.md
+      - Core: Validation/core.md
+      - Surface boundary: Validation/surface.md
+      - Phase transitions: Validation/phase_transitions.md
+      - Numerics: Validation/numerics.md
+      - Mesh refinement: Validation/mesh_refinement.md
 
   - Reference:
       - API reference:
@@ -66,6 +81,9 @@ nav:
           - Mesh: Reference/api/aragog.mesh.md
           - Output: Reference/api/aragog.output.md
           - JAX backend: Reference/api/aragog.jax.md
+          - Core evolution: Reference/api/aragog.core.md
+          - Rheology: Reference/api/aragog.rheology.md
+          - Stagnant-lid rheology: Reference/api/aragog.rheology_lid.md
       - CLI: Reference/cli.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md

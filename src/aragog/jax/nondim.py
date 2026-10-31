@@ -1,6 +1,6 @@
 """Nondimensional scaling spec shared by the numpy and JAX RHS paths.
 
-Single source of truth for the (state_scale, rhs_scale, t_ref) triplet
+Single source of truth for the (state_scale, rhs_scale, t_ref) triplet and the state offset
 that scales physical-units state into the BDF integrator's O(1) work
 space. Built once by the EntropySolver, consumed by both the
 scipy/CVODE wrapper (entropy_solver.py) and the JAX CVODE factory
@@ -46,11 +46,17 @@ class NonDimScales:
         Optional precomputed RHS scale ``dydt_nd = dydt_phys * rhs_scale``.
         If None, derived as ``t_ref / state_scale`` automatically. When
         provided, must satisfy the contract or ``__post_init__`` raises.
+    state_offset : ndarray, shape (n,) or None, default None
+        Physical offset per state component, ``y_phys = y_nd * state_scale +
+        state_offset``, so that a component is integrated as its change from the
+        offset; None means zero. The core_module mode offsets its temperatures by
+        their values at the start of the call.
     """
 
     state_scale: npt.NDArray
     t_ref: float
     rhs_scale: npt.NDArray = field(default=None)
+    state_offset: npt.NDArray = field(default=None)
 
     def __post_init__(self):
         # Coerce to float64 ndarray for downstream JAX/scipy
@@ -58,6 +64,16 @@ class NonDimScales:
         # the dataclass is frozen.
         ss = np.asarray(self.state_scale, dtype=float)
         object.__setattr__(self, 'state_scale', ss)
+        off = (
+            np.zeros_like(ss)
+            if self.state_offset is None
+            else np.asarray(self.state_offset, float)
+        )
+        if off.shape != ss.shape or not np.all(np.isfinite(off)):
+            raise ValueError(
+                f'state_offset must be finite with shape {ss.shape}; got {off.shape}'
+            )
+        object.__setattr__(self, 'state_offset', off)
 
         if not (np.isfinite(self.t_ref) and float(self.t_ref) > 0.0):
             raise ValueError(f't_ref must be finite and strictly positive; got {self.t_ref!r}')

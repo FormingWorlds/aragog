@@ -5,8 +5,8 @@ solver runs, but several public methods and edge-case branches sit
 in the coverage shadow:
 
 * ``_update_const`` scalar-input flatten branch (lines 166, 176).
-* ``_update_eos`` alpha-from-dTdPs fallback (lines 254-258, 297) —
-  fires when the EOS directory has no thermal_exp tables.
+* ``_update_eos`` alpha from the identity, with and without the
+  thermal_exp tables loaded.
 * ``_update_eos`` scalar-input flatten (lines 313, 322).
 * ``_update_eos`` NaN detection error path (lines 353-363) — fires
   when entropy leaves the EOS table domain.
@@ -168,71 +168,42 @@ def test_eos_update_with_scalar_input_flattens_arrays():
     assert ev.temperature().ndim == 1
 
 
-@needs_eos
-def test_eos_update_alpha_fallback_when_thermal_exp_tables_missing(monkeypatch):
-    """Lines 297: when the EOS has no thermal_exp tables,
-    ``_update_eos`` must derive alpha from
-    ``alpha = rho * Cp * |dTdPs| / T`` for the single-phase branch.
-    Discriminator: removing the thermal_exp_solid / thermal_exp_melt
-    keys via monkeypatch forces the fallback; the resulting alpha
-    must be finite and positive.
-    """
+def _alpha_with_and_without_thermal_exp(cp_blend, S_of):
+    """Evaluator alpha at 50 GPa and the entropies ``S_of(S_sol, S_liq)``, with the
+    thermal_exp tables loaded and with them dropped."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = entropy_eos_copy(EOS_DIR)
-    # Drop the thermal_exp tables so the fallback fires.
-    tables_no_alpha = {k: v for k, v in eos._tables.items() if not k.startswith('thermal_exp_')}
-    monkeypatch.setattr(eos, '_tables', tables_no_alpha)
-
-    ev = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
-    P = np.array([5.0e10])
-    S_sol = float(eos.solidus_entropy(P).item())
-    S_liq = float(eos.liquidus_entropy(P).item())
-    # One node in mushy band, one in pure solid: covers both branches.
-    P_arr = np.array([5.0e10, 5.0e10])
-    S_arr = np.array([0.5 * (S_sol + S_liq), S_sol - 500.0])
-    ev.set_pressure(P_arr)
-    ev.entropy = S_arr
-    ev.update()
-    alpha = ev.thermal_expansivity()
-    assert np.all(np.isfinite(alpha))
-    assert np.all(alpha >= 0.0), f'fallback alpha returned negative values: {alpha}'
+    out = []
+    for keep in (True, False):
+        eos = entropy_eos_copy(EOS_DIR, identity_alpha=not keep)
+        assert ('thermal_exp_solid' in eos._tables) is keep
+        S_sol = float(eos.solidus_entropy(np.array([5.0e10])).item())
+        S_liq = float(eos.liquidus_entropy(np.array([5.0e10])).item())
+        S = np.asarray(S_of(S_sol, S_liq), dtype=float)
+        ev = EntropyPhaseEvaluator(eos, gravitational_acceleration=10.0, cp_blend=cp_blend)
+        ev.set_pressure(np.full_like(S, 5.0e10))
+        ev.entropy = S
+        ev.update()
+        out.append(np.asarray(ev.thermal_expansivity()).copy())
+    return out
 
 
 @needs_eos
-def test_eos_update_alpha_fallback_under_linear_cp_blend(monkeypatch):
-    """Lines 254-258: with ``cp_blend='linear'`` AND no thermal_exp
-    tables, the mixed-band alpha must come from the dTdPs * rho * Cp / T
-    derivation.
-
-    Discriminator: cp_blend='linear' switches the Cp branch, which
-    is also where the linear-blend alpha fallback lives. A
-    regression that lost either the cp_blend dispatch or the
-    fallback would surface as a NaN or as the result silently
-    coming from the cp_blend='latent' path.
+@pytest.mark.parametrize(
+    ('cp_blend', 'S_of'),
+    [
+        ('latent', lambda s, l: [0.5 * (s + l), s - 500.0]),
+        ('linear', lambda s, l: [0.4 * s + 0.6 * l]),
+    ],
+)
+def test_eos_update_alpha_does_not_depend_on_the_thermal_exp_tables(cp_blend, S_of):
+    """``_update_eos`` takes the single-phase alpha and, under ``cp_blend='linear'``, the
+    boundary alphas of the mixed band from the identity ``rho * Cp * dTdPs / T``, so dropping
+    the thermal_exp tables changes no value at a mushy and a solid node.
     """
-    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-
-    eos = entropy_eos_copy(EOS_DIR)
-    # Drop the thermal_exp tables to force the dTdPs-based fallback.
-    tables_no_alpha = {k: v for k, v in eos._tables.items() if not k.startswith('thermal_exp_')}
-    monkeypatch.setattr(eos, '_tables', tables_no_alpha)
-
-    ev = EntropyPhaseEvaluator(
-        entropy_eos=eos,
-        gravitational_acceleration=10.0,
-        cp_blend='linear',
-    )
-    P = np.array([5.0e10])
-    S_sol = float(eos.solidus_entropy(P).item())
-    S_liq = float(eos.liquidus_entropy(P).item())
-    # Strictly mushy node (gphi between 0 and 1).
-    ev.set_pressure(P)
-    ev.entropy = np.array([0.4 * S_sol + 0.6 * S_liq])
-    ev.update()
-    alpha = ev.thermal_expansivity()
-    assert np.all(np.isfinite(alpha))
-    assert float(alpha.item()) > 0.0
+    loaded, dropped = _alpha_with_and_without_thermal_exp(cp_blend, S_of)
+    assert np.all(np.isfinite(loaded)) and np.all(loaded > 0.0)
+    np.testing.assert_array_equal(loaded, dropped)
 
 
 @needs_eos

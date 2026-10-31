@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
-import copy
-import functools
 import importlib.resources
+import logging
 import os
 import warnings
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
+from functools import partial
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from aragog import CFG_DATA
+from aragog import logger as _PACKAGE_LOGGER
 from aragog.eos.entropy import EntropyEOS
+from tools.verification import _ssc_helpers
+from tools.verification._ssc_helpers import _parsed
+
+__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax', 'package_logger_isolation']
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -33,43 +39,65 @@ needs_eos = pytest.mark.skipif(
 )
 
 
-@functools.cache
-def _parse(eos_class: type, eos_dir: str):
-    try:
-        return eos_class(eos_dir), None, None
-    except Exception as exc:
-        return None, exc, exc.__traceback__
-
-
-def _parsed(eos_class: type, eos_dir: str):
-    """Return the cached parse of ``eos_dir``; a failed parse re-raises without a retry."""
-    eos, exc, traceback = _parse(eos_class, eos_dir)
-    if exc is not None:
-        raise exc.with_traceback(traceback)
-    return eos
-
-
-def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) -> EntropyEOS:
-    """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
-
-    The tables are parsed once per process and each call returns a deep copy,
-    which starts in the state of a fresh build; only the read-only solidus and
-    liquidus interpolation functions are shared. Tests of the constructor
-    itself build ``EntropyEOS`` directly.
-    """
-    eos = copy.deepcopy(_parsed(EntropyEOS, str(eos_dir)))
-    eos.strict_range = strict_range
-    return eos
+def entropy_eos_copy(
+    eos_dir: Path | str = EOS_DIR, strict_range: bool = False, identity_alpha: bool = False
+) -> EntropyEOS:
+    """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``."""
+    return _ssc_helpers.entropy_eos_copy(
+        eos_dir, strict_range, identity_alpha, eos_class=EntropyEOS
+    )
 
 
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
-    """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process.
+    """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
+    return _ssc_helpers.entropy_eos_jax(eos_dir)
 
-    The instance is a frozen equinox module of JAX arrays, so callers share it.
-    """
-    from aragog.jax.eos import EntropyEOS_JAX
 
-    return _parsed(EntropyEOS_JAX, str(eos_dir))
+def make_mesh(N: int = 10, scale_p: float = 1.0):
+    """Build a canonical MeshArrays test fixture."""
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays
+
+    r_inner = 3.480e6
+    r_outer = 6.371e6
+    r_stag = np.linspace(r_inner, r_outer, N)
+    dr = np.diff(r_stag)
+    r_basic = np.zeros(N + 1)
+    r_basic[0] = r_inner
+    r_basic[-1] = r_outer
+    r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+    area = 4.0 * np.pi * r_basic**2
+    volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
+    ml = np.maximum(np.minimum(r_basic - r_inner, r_outer - r_basic), 1.0)
+    d_dr = np.zeros((N + 1, N))
+    for i in range(1, N):
+        d_dr[i, i - 1] = -1.0 / dr[i - 1]
+        d_dr[i, i] = 1.0 / dr[i - 1]
+    d_dr[0, :] = d_dr[1, :]
+    d_dr[-1, :] = d_dr[-2, :]
+    q_mat = np.zeros((N + 1, N))
+    q_mat[0, 0] = 1.0
+    q_mat[-1, -1] = 1.0
+    for i in range(1, N):
+        q_mat[i, i - 1] = 0.5
+        q_mat[i, i] = 0.5
+    p_stag = np.linspace(135e9, 1e5, N) * scale_p
+    p_basic = q_mat @ p_stag
+    return MeshArrays(
+        d_dr_matrix=jnp.asarray(d_dr),
+        quantity_matrix=jnp.asarray(q_mat),
+        area=jnp.asarray(area),
+        volume=jnp.asarray(volume),
+        radii_basic=jnp.asarray(r_basic),
+        radii_stag=jnp.asarray(r_stag),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.asarray(p_stag),
+        P_basic=jnp.asarray(p_basic),
+        gravity=jnp.full(N + 1, 10.0),
+    )
 
 
 def pytest_collection_finish(session):
@@ -86,6 +114,52 @@ def pytest_collection_finish(session):
                 helper(EOS_DIR)
             except Exception as exc:
                 warnings.warn(f'EOS table warm-up failed: {exc!r}', stacklevel=1)
+
+
+@contextmanager
+def package_logger_isolation():
+    """Restore the level, handlers and flags of the package logger on exit.
+
+    Each handler attached in the block and not attached before it is closed, also one that the code
+    in the block detached again. Child loggers, filters and ``logging.disable`` are not covered.
+    """
+    lg = _PACKAGE_LOGGER
+    level, propagate, disabled = lg.level, lg.propagate, lg.disabled
+    handlers = list(lg.handlers)
+    outer_recorder = vars(lg).get('addHandler')
+    forward = outer_recorder or partial(logging.Logger.addHandler, lg)
+    added = []
+
+    def record(handler):
+        added.append(handler)
+        forward(handler)
+
+    lg.addHandler = record
+    try:
+        yield
+    finally:
+        if outer_recorder is None:
+            del lg.addHandler
+        else:
+            lg.addHandler = outer_recorder
+        for handler in dict.fromkeys(added + lg.handlers):
+            if handler not in handlers:
+                handler.close()
+        lg.handlers = handlers
+        lg.propagate = propagate
+        lg.disabled = disabled
+        lg.setLevel(level)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_package_logger():
+    """Restore the package logger after each test, see ``package_logger_isolation``.
+
+    ``aragog run`` sets the logger to DEBUG with a console and a file handler for the rest of the
+    process; under DEBUG the mesh formats whole arrays in its debug lines on every state update.
+    """
+    with package_logger_isolation():
+        yield
 
 
 class Helper:

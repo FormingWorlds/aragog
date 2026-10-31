@@ -1,0 +1,232 @@
+"""Unit tests for ``aragog.core.entropy.CoreEntropyBudget``.
+
+The entropy balance carries the dynamo criterion, so its contract is the
+same energetic consistency as the budget's: every capacity term is pinned
+against the independent Leeds ``thermal_history`` routines evaluated on
+identical state (constants below), the conduction sink against its exact
+closed form and independent quadrature, the CHR09 efficiency factors
+against the printed Nature values, and the field scaling against sign,
+monotonicity, and the Earth order of magnitude.
+"""
+
+from __future__ import annotations
+
+import jax
+import numpy as np
+import pytest
+from scipy.integrate import quad
+
+from aragog.core.budget import CoreEnergyBudget
+from aragog.core.entropy import CoreEntropyBudget
+from aragog.core.melting import QuadraticMeltingCurve
+from aragog.core.profiles import GaussianCoreProfiles
+
+pytestmark = pytest.mark.unit
+
+T_C = 4180.0
+SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=139e9, c_p=840.0, length_scale=7272e3)
+
+# thermal_history (energy.*) values on the Nimmo model-2 state (labrosse pressure, T_cmb
+# 4180 K, r_icb 1209.4 km on an 8000-point grid with the ICB as a node); aragog agrees to 1e-6.
+TH_ES = 5.571710e22  # J/K^2
+TH_EL = 1.009221e23  # J/K^2
+TH_EG = 2.503614e23  # J/K^2
+TH_EK = 4.509720e08  # W/K
+TH_ER = 5.518709e07  # W/K at Q_R = Qr(h0=1e-12 W/kg)
+TH_ER_QRADIO = 1.9268512e12  # Q_R = M_core * 1e-12 W/kg the TH_ER row used
+
+
+@pytest.fixture(scope='module')
+def ent():
+    """Model-2 entropy budget on the cross-validated energy budget."""
+    prof = GaussianCoreProfiles(
+        **SHARED, alpha=1.25e-5, pressure_mode='labrosse', adiabat_mode='small_radius'
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    return CoreEntropyBudget(budget, k_core=130.0)
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+def test_entropy_capacities_match_thermal_history(ent):
+    """All five entropy terms agree with the independent Leeds
+    implementation on identical state (see constants above), and each is
+    positive as the second law requires of a cooling, heated core."""
+    assert float(ent.secular_entropy_capacity(T_C)) == pytest.approx(TH_ES, rel=1e-4)
+    assert float(ent.latent_entropy_capacity(T_C)) == pytest.approx(TH_EL, rel=1e-5)
+    assert float(ent.gravitational_entropy_capacity(T_C)) == pytest.approx(TH_EG, rel=1e-5)
+    assert float(ent.conduction_sink()) == pytest.approx(TH_EK, rel=1e-6)
+    assert float(ent.radiogenic_entropy(T_C, TH_ER_QRADIO)) == pytest.approx(TH_ER, rel=1e-4)
+    for value in (
+        ent.secular_entropy_capacity(T_C),
+        ent.latent_entropy_capacity(T_C),
+        ent.gravitational_entropy_capacity(T_C),
+        ent.conduction_sink(),
+        ent.radiogenic_entropy(T_C, 1e12),
+    ):
+        assert float(value) > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_conduction_sink_closed_form_and_quadrature(ent):
+    """Ek equals both its closed form 16 pi k r^5 / (5 D^4) and an
+    independent quadrature of 4 pi k (dTa/dr / Ta)^2 r^2; the adiabat's
+    gradient-to-temperature ratio is exactly 2r/D^2, so the sink must not
+    depend on T_cmb."""
+    p = ent.budget.profiles
+    closed = 16.0 * np.pi * 130.0 * p.r_cmb**5 / (5.0 * p.d_scale**4)
+    assert float(ent.conduction_sink()) == pytest.approx(closed, rel=1e-12)
+    numeric, _ = quad(
+        lambda r: 4.0 * np.pi * 130.0 * (2.0 * r / p.d_scale**2) ** 2 * r**2, 0.0, p.r_cmb
+    )
+    assert float(ent.conduction_sink()) == pytest.approx(numeric, rel=1e-9)
+
+
+@pytest.mark.physics_invariant
+def test_exact_adiabat_sink_and_heat_flow_follow_the_exact_gravity(ent):
+    """With the exact adiabat, Ek is 4 pi k int (alpha g / c_p)^2 r^2 dr with the erf gravity and
+    Qk is 4 pi r_cmb^2 k alpha g T / c_p at the CMB; both fall below the small-radius values,
+    since gravity is sub-linear in r."""
+    small = ent.budget.profiles
+    kw = {
+        k: getattr(small, k)
+        for k in ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb', 'alpha', 'c_p')
+    }
+    p = GaussianCoreProfiles(**kw, pressure_mode='labrosse', adiabat_mode='exact')
+    exact = CoreEntropyBudget(
+        CoreEnergyBudget(p, ent.budget.melting_curve, ds_fusion=170.0, icn_width=10.0),
+        k_core=130.0,
+    )
+    numeric, _ = quad(
+        lambda r: 4.0 * np.pi * 130.0 * (p.alpha * float(p.gravity(r)) / p.c_p) ** 2 * r**2,
+        0.0,
+        p.r_cmb,
+    )
+    assert float(exact.conduction_sink()) == pytest.approx(numeric, rel=1e-9)
+    g_cmb = float(p.gravity(p.r_cmb))
+    qk = 4.0 * np.pi * p.r_cmb**2 * 130.0 * p.alpha * g_cmb * 4000.0 / p.c_p
+    assert float(exact.adiabatic_heat_flow(4000.0)) == pytest.approx(qk, rel=1e-12)
+    assert float(exact.conduction_sink()) < float(ent.conduction_sink())
+    assert float(exact.adiabatic_heat_flow(4000.0)) < float(ent.adiabatic_heat_flow(4000.0))
+
+
+@pytest.mark.reference_pinned
+def test_chr09_efficiency_factors_reproduce_printed_values(ent):
+    """The CHR09 Earth-core formula 0.88 (0.45) alpha g R / c_p gives the
+    printed 0.52 (0.27) with their stated inputs (alpha = 1.35e-5 1/K,
+    g = 10.7 m/s2); with the profile's own expansivity (1.25e-5 1/K) and
+    CMB gravity (10.6 m/s2) the factors shift to 0.484/0.247."""
+    printed_inputs = 1.35e-5 * 10.7 * 3.48e6 / 840.0
+    assert 0.88 * printed_inputs == pytest.approx(0.5266, rel=1e-3)
+    assert 0.45 * printed_inputs == pytest.approx(0.2693, rel=1e-3)
+    assert float(ent.chr09_efficiency_factor()) == pytest.approx(0.4839, rel=1e-3)
+    zero_outer = CoreEntropyBudget(ent.budget, k_core=130.0, flux_geometry='zero_outer')
+    assert float(zero_outer.chr09_efficiency_factor()) == pytest.approx(0.2475, rel=1e-3)
+
+
+@pytest.mark.physics_invariant
+def test_field_scaling_bounds_and_earth_magnitude(ent):
+    """The field estimate is zero for subadiabatic heat flow, grows
+    monotonically with the superadiabatic excess as its 1/3 power, and
+    lands at the milliTesla order for Earth-like flow."""
+    qk = float(ent.adiabatic_heat_flow(T_C))
+    assert qk / 1e12 == pytest.approx(14.97, rel=1e-3)
+    assert float(ent.b_rms_core(T_C, 0.5 * qk)) == 0.0
+    b17 = float(ent.b_rms_core(T_C, 17e12))
+    assert b17 * 1e3 == pytest.approx(1.104, rel=1e-2)  # mT, Earth order
+    # 2/3-power law in the energy density: (2x excess) -> 2^(1/3) in B.
+    b_double = float(ent.b_rms_core(T_C, qk + 2.0 * (17e12 - qk)))
+    assert b_double / b17 == pytest.approx(2.0 ** (1.0 / 3.0), rel=1e-6)
+    assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=0.5)) == pytest.approx(
+        0.5 * b17, rel=1e-12
+    )
+    # Dipolarity boundary values: full dipole equals the rms field, zero
+    # dipolarity extinguishes the dipole while the rms field stands.
+    assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=1.0)) == pytest.approx(b17, rel=1e-12)
+    assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=0.0)) == 0.0
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+def test_dynamo_threshold_and_margin(ent):
+    """The heat flow where the entropy margin vanishes sits at 5.144 TW,
+    consistent with (below) Nimmo's statement that model-2 flows under
+    6.5 TW cannot drive a dynamo (ch. 9.08, p. 209); the margin rises monotonically with heat
+    flow, and radiogenic heating at FIXED flow lowers it (Nimmo 2015,
+    ch. 9.08, Eq. 11 discussion: constant heat flow plus more radioactivity means
+    less entropy for the dynamo, because the cooling rate drops)."""
+    from scipy.optimize import brentq
+
+    threshold = brentq(lambda q: float(ent.entropy_margin(T_C, q)), 1e12, 40e12)
+    assert threshold / 1e12 == pytest.approx(5.144, rel=1e-3)
+    assert threshold / 1e12 < 6.5
+    margins = [float(ent.entropy_margin(T_C, q)) for q in (6e12, 10e12, 17e12)]
+    assert margins[0] < margins[1] < margins[2]
+    assert float(ent.entropy_margin(T_C, 17e12)) / 1e6 == pytest.approx(1039.4, rel=1e-3)
+    with_k = float(ent.entropy_margin(T_C, 17e12, q_radio=1e12))
+    assert with_k < margins[2]
+    # The loss is bounded by the cooling-term substitution alone; the
+    # direct ER gain makes the actual drop strictly smaller.
+    capacity = (
+        float(ent.secular_entropy_capacity(T_C))
+        + float(ent.latent_entropy_capacity(T_C))
+        + float(ent.gravitational_entropy_capacity(T_C))
+    )
+    substitution = 1e12 * capacity / float(ent.budget.effective_capacity(T_C))
+    assert margins[2] - with_k < substitution
+
+
+def test_error_contract_and_jit(ent):
+    """Constructor validation names the offending parameter; the margin and
+    field evaluate identically under jit."""
+    with pytest.raises(ValueError, match='k_core'):
+        CoreEntropyBudget(ent.budget, k_core=0.0)
+    with pytest.raises(ValueError, match='f_ohm'):
+        CoreEntropyBudget(ent.budget, k_core=130.0, f_ohm=1.5)
+    with pytest.raises(ValueError, match='flux_geometry'):
+        CoreEntropyBudget(ent.budget, k_core=130.0, flux_geometry='spherical_cow')
+
+    eager = float(ent.entropy_margin(T_C, 17e12, 1e12))
+    jitted = float(jax.jit(ent.entropy_margin)(T_C, 17e12, 1e12))
+    assert jitted == pytest.approx(eager, rel=1e-12)
+    assert float(jax.jit(ent.b_rms_core)(T_C, 17e12)) == pytest.approx(
+        float(ent.b_rms_core(T_C, 17e12)), rel=1e-12
+    )
+
+
+def test_b_rms_core_scales_with_f_ohm(ent):
+    """Core rms magnetic field scales with sqrt(f_ohm)."""
+    ent_quarter = CoreEntropyBudget(ent.budget, k_core=130.0, f_ohm=0.25)
+    b_full = float(ent.b_rms_core(T_C, 17e12))
+    b_quarter = float(ent_quarter.b_rms_core(T_C, 17e12))
+    assert b_full > 0.0
+    assert b_quarter == pytest.approx(0.5 * b_full, rel=1e-12)
+
+
+def test_quad_0_upper_matches_analytic_integral(ent):
+    """_quad_0_upper is a 48-point Gauss-Legendre rule on [0, r_cmb]: it integrates the
+    Legendre polynomial P_94 to zero, which a 47-point rule misses by 0.18 and a 32-point
+    rule by 1.5e-3 (in units of r_cmb / 2)."""
+    from numpy.polynomial import legendre
+
+    r_cmb = float(ent.budget.profiles.r_cmb)
+    p94 = np.zeros(95)
+    p94[94] = 1.0
+    result = float(
+        ent.budget._quad_0_upper(r_cmb, lambda r: legendre.legval(2.0 * r / r_cmb - 1.0, p94))
+    )
+    assert abs(result) < 1e-12 * r_cmb
+    upper = 0.4 * r_cmb
+    shifted = ent.budget._quad_0_upper(
+        upper, lambda r: 1.0 + legendre.legval(2.0 * r / upper - 1.0, p94)
+    )
+    assert float(shifted) == pytest.approx(upper, rel=1e-12)

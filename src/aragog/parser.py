@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Self
 
@@ -22,7 +23,28 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.boundary import check_core_bc, check_top_node
+from aragog.config.energy import (
+    CONVECTIVE_THRESHOLD_DEFAULT,
+    EOS_FLOOR_MARGIN_DEFAULT,
+    check_convective_threshold,
+    check_eos_floor_margin,
+)
+from aragog.config.mesh import check_cell_thickness
+from aragog.config.phases import (
+    MATPROP_SMOOTH_WIDTH_DEFAULT,
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+    check_matprop_smooth_width,
+)
+from aragog.rheology import (
+    SolidRheologyParams,
+    check_viscosity_ceiling,
+    delegate_rheology,
+    merge_rheology,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -81,18 +103,14 @@ class _BoundaryConditionsParameters:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode selector, threaded from config/boundary.py.
-    # Valid values: 'quasi_steady' (alpha-factor flux partition,
-    #               state vector length N),
-    #               'energy_balance' (SPIDER-parity dSdr_cmb evolution,
-    #               state vector length N+1),
-    #               'gradient' (entropy gradient as primary state,
-    #               length N+2),
-    #               'bower2018' (unrecommended; T_core as ODE state,
-    #               retained for parity testing only).
-    # See aragog/config/boundary.py docstring for details.
-    # Default 'energy_balance' matches the PROTEUS production path.
+    # Core BC mode, threaded from config/boundary.py (modes and state lengths in the
+    # BoundaryConfig docstring); 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
+    # Flat parameter dict for core_bc='core_module'; keys documented in
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
+    core_module_params: dict | None = None
+    # Top basic-node entropy, 'linear' or 'limited' (see the BoundaryConfig docstring).
+    top_node: str = 'linear'
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -118,6 +136,8 @@ class _BoundaryConditionsParameters:
             self.param_utbl_const = 0.0
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
+        check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_top_node(self.top_node, self.core_bc)
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.
@@ -176,6 +196,9 @@ class _EnergyParameters:
     # rheological transition. Default 10.0 matches the PROTEUS
     # production value; set to 0.0 for textbook MLT.
     kappah_floor: float = 10.0
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m]; 0.0 gives
+    # the dS/dr < 0 switch. See EnergyConfig.convective_threshold.
+    convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
     # flux. Only allows melt/solid separation across an interface when the
@@ -222,6 +245,7 @@ class _EnergyParameters:
     # disables each.
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
+    eos_floor_margin: float | None = EOS_FLOOR_MARGIN_DEFAULT
     # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
     # Tightens max_step to resolve stiff RHS across the solidus/liquidus; a 'rate' call on
     # CVODE also arms its segments within the stiff zone when that is wider.
@@ -233,10 +257,12 @@ class _EnergyParameters:
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 
     def __post_init__(self):
+        check_convective_threshold(self.convective_threshold)
         if self.phase_boundary_cap not in (None, 'fixed', 'rate'):
             raise ValueError(
                 f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
             )
+        check_eos_floor_margin(self.eos_floor_margin)
 
 
 @dataclass
@@ -277,6 +303,13 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
+    # Thickness [m] of the outermost and innermost basic cell, at least 2 m; 0 leaves that end
+    # unset, and it grows when only the other end is set. See aragog.mesh.stretching.
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __post_init__(self):
+        check_cell_thickness(self)
 
 
 @dataclass
@@ -291,12 +324,14 @@ class _PhaseMixedParameters:
     phase: str
     phase_transition_width: float
     grain_size: float
-    matprop_smooth_width: float = 0.0
+    matprop_smooth_width: float = MATPROP_SMOOTH_WIDTH_DEFAULT
     # Separation-drag viscosity source: "melt" (SPIDER-parity single-
     # phase liquid viscosity, default) or "mixture" (the rheological-
     # transition-blended bulk viscosity). Consumed by
     # EntropyPhaseEvaluator.relative_velocity via getattr fall-back.
     separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT
+    # Buoyancy of the separation velocity: "mixture" (default) or "solid".
+    separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT
     # Mushy-zone Cp blending mode: "latent" (SPIDER parity, default) or
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend
@@ -313,13 +348,34 @@ class _PhaseMixedParameters:
     const_S_ref: float = 3000.0
 
     def __post_init__(self):
+        check_matprop_smooth_width(self.matprop_smooth_width)
         if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
             raise ValueError(
                 'separation_viscosity must be one of '
                 f'{SEPARATION_VISCOSITY_MODES}, got {self.separation_viscosity!r}'
             )
+        if self.separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                'separation_buoyancy must be one of '
+                f'{SEPARATION_BUOYANCY_MODES}, got {self.separation_buoyancy!r}'
+            )
 
 
+_RHEOLOGY_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in fields(SolidRheologyParams))
+
+
+def _reject_flat_rheology(section_name: str, keys: Any, source: str = '') -> None:
+    """Raise ``ValueError`` when a phase section holds a rheology key outside its subtable."""
+    flat_rheo = [k for k in keys if k in _RHEOLOGY_FIELD_NAMES]
+    if flat_rheo:
+        raise ValueError(
+            f'Configuration error in [{section_name}]{source}: '
+            f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+            f'not flat in [{section_name}]'
+        )
+
+
+@delegate_rheology
 @dataclass
 class _PhaseParameters:
     """Stores settings in a phase section in the configuration data.
@@ -336,6 +392,34 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    rheology: SolidRheologyParams = field(default_factory=SolidRheologyParams)
+
+    def __init__(
+        self,
+        density: float | str,
+        heat_capacity: float | str,
+        melt_fraction: float,
+        thermal_conductivity: float | str,
+        thermal_expansivity: float | str,
+        viscosity: float | str,
+        entropy: float | str = '',
+        rheology: SolidRheologyParams | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        for key in kwargs:
+            if key not in _RHEOLOGY_FIELD_NAMES:
+                raise TypeError(
+                    f'_PhaseParameters.__init__() got an unexpected keyword argument {key!r}'
+                )
+        self.density = density
+        self.heat_capacity = heat_capacity
+        self.melt_fraction = melt_fraction
+        self.thermal_conductivity = thermal_conductivity
+        self.thermal_expansivity = thermal_expansivity
+        self.viscosity = viscosity
+        self.entropy = entropy
+        self.rheology = merge_rheology(rheology, kwargs)
+        check_viscosity_ceiling(viscosity, self.rheology)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
@@ -583,6 +667,13 @@ class Parameters:
                     start_time=self.solver.start_time,
                     ppm=not r._is_mass_fraction(),
                 )
+        if self.phase_liquid.rheology != SolidRheologyParams():
+            raise ValueError(
+                'Solid-state rheology is only supported on phase_solid; '
+                'phase_liquid.rheology must keep default values (enabled=False).'
+            )
+        check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
+        check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
         for r in self.radionuclides:
             if not r._is_mass_fraction():
                 r._ppm = r.concentration
@@ -653,11 +744,23 @@ class Parameters:
                     f'Configuration error: missing required section [{section_name}] '
                     f'in {path.name}'
                 )
+            if dataclass_ is _PhaseParameters:
+                _reject_flat_rheology(section_name, section, f' of {path.name}')
             try:
                 init_dict[section_name] = dataclass_(**section)
-            except TypeError as exc:
+            except (TypeError, ValueError) as exc:
+                is_rheo_err = (
+                    dataclass_ is _PhaseParameters
+                    and 'rheology' in section
+                    and '_PhaseParameters.__init__()' not in str(exc)
+                )
+                err_sec = (
+                    f'{section_name}.rheology] of [{section_name}'
+                    if is_rheo_err
+                    else section_name
+                )
                 raise ValueError(
-                    f'Configuration error in [{section_name}] of {path.name}: {exc}'
+                    f'Configuration error in [{err_sec}] of {path.name}: {exc}'
                 ) from exc
 
         radionuclides: list[_Radionuclide] = []
@@ -694,9 +797,36 @@ class Parameters:
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
+            if dataclass_ is _PhaseParameters and parser.has_section(section_name):
+                _reject_flat_rheology(
+                    section_name,
+                    (k for k, _ in parser.items(section_name)),
+                    f' of {Path(filenames[0]).name}',
+                )
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )
+            rheology_section = f'{section_name}.rheology'
+            if dataclass_ is _PhaseParameters and parser.has_section(rheology_section):
+                if parser.has_option(rheology_section, 'enabled'):
+                    raw_enabled = parser.get(rheology_section, 'enabled').strip().lower()
+                    if raw_enabled not in ('true', 'false'):
+                        raise ValueError(
+                            f'Configuration error in [{rheology_section}]: enabled must be '
+                            f"a bool ('true' or 'false'), got "
+                            f'{parser.get(rheology_section, "enabled")!r}'
+                        )
+                try:
+                    init_dict[section_name].rheology = parser.parse_section(
+                        using_dataclass=SolidRheologyParams,
+                        section_name=rheology_section,
+                        extra='error',
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f'Configuration error in [{rheology_section}] of [{section_name}] '
+                        f'of {Path(filenames[0]).name}: {exc}'
+                    ) from exc
         radionuclides: list[_Radionuclide] = []
         for radionuclide_section in cls.radionuclide_sections(parser):
             radionuclide = parser.parse_section(

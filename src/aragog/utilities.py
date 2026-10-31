@@ -85,6 +85,62 @@ def tanh_weight(value: FloatOrArray, threshold: float, width: float) -> npt.NDAr
     return weight
 
 
+def zero_anchored_weight(
+    weight_fn: Any, value: FloatOrArray, threshold: float, width: float, xp: Any = np
+) -> Any:
+    """Rescale ``weight_fn`` to 0 at ``value = 0`` and 1 at ``value = 1``, clipped to [0, 1].
+
+    Parameters
+    ----------
+    weight_fn : Callable[[Any, float, float], Any]
+        Base transition weight callable accepting ``(value, threshold, width)``.
+    value : FloatOrArray
+        Dimensionless phase coordinate (such as melt fraction in ``[0, 1]``).
+    threshold : float
+        Transition centre (dimensionless, typically in ``[0, 1]``).
+    width : float
+        Transition width (dimensionless, strictly positive in ``(0, +inf)``).
+    xp : module, default numpy
+        Array backend (``numpy`` or ``jax.numpy``).
+
+    Returns
+    -------
+    FloatOrArray
+        Zero-anchored transition weight (dimensionless, in ``[0, 1]``) satisfying
+        ``w(0) = 0`` and ``w(1) = 1``.
+    """
+    w0 = weight_fn(0.0, threshold, width)
+    w1 = weight_fn(1.0, threshold, width)
+    scaled = (weight_fn(value, threshold, width) - w0) / xp.maximum(w1 - w0, 1.0e-30)
+    return xp.clip(scaled, 0.0, 1.0)
+
+
+def positive_gravity(gravity: Any, where: str) -> npt.NDArray:
+    """Returns gravity as an array after checking it is finite and positive on every node.
+
+    The separation velocity takes gravity as a positive magnitude, so its sign
+    sets the direction of melt-solid separation.
+
+    Args:
+        gravity: Gravity at the mesh nodes [m/s^2]
+        where: Mesh and source named in the error message
+
+    Returns:
+        gravity as a float array
+
+    Raises:
+        ValueError: if any value is not finite or not positive
+    """
+    g = np.asarray(gravity, dtype=float)
+    bad = np.flatnonzero(~(np.isfinite(g) & (g > 0.0)))
+    if bad.size:
+        raise ValueError(
+            f'gravity on the {where} must be finite and positive; node {bad[0]} has '
+            f'{float(g.ravel()[bad[0]])!r} ({bad.size} such nodes)'
+        )
+    return g
+
+
 def combine_properties(weight: Any, property1: Any, property2: Any) -> Any:
     """Linear weighting of two quantities.
 
