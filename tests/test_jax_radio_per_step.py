@@ -145,18 +145,10 @@ def test_radio_heating_rejects_a_half_life_that_is_not_positive(half_life, heat_
 
 
 def test_radio_heating_short_half_life_decays_correctly():
-    """Sub-year half-lives must follow physical decay, not be clamped.
+    """Sub-year half-lives follow physical decay and are not clamped.
 
-    Pre-fix, the floor was 1.0 yr, which silently flattened the decay
-    of any isotope with hl < 1 yr (none in production, but a latent
-    correctness bug). The current floor of 1e-10 yr only guards the
-    literal-zero divide while letting any physical isotope decay.
-
-    Discriminating test: with hl = 0.5 yr (chosen well below the old
-    1.0 yr floor) and t0 = 0, evaluate at t = 1.0 yr (= 2 half-lives).
-    Correct result is H(t0)/4. Old (buggy) clamp would give
-    H(t0)*exp(-LOG_TWO * 1.0 / 1.0) = H(t0)/2, which we explicitly
-    reject below.
+    With hl = 0.5 yr and t0 = 0, the heating at t = 1.0 yr (2 half-lives) is H(t0)/4;
+    a clamp of the half-life to 1 yr would give H(t0)/2, which the test rejects.
     """
     from aragog.jax.solver import make_radio_heating_fn
 
@@ -335,7 +327,10 @@ def test_radio_heating_under_jit_checks_the_concrete_inputs(traced, bad_field, b
     broken[bad_field] = np.array([bad])
     with pytest.raises(ValueError, match='#0: '):
         jax.jit(lambda x: build(x, broken))(good[traced])
-    value = float(jax.jit(lambda x: build(x, good))(good[traced]))
+    try:
+        value = float(jax.jit(lambda x: build(x, good))(good[traced]))
+    except ValueError as exc:
+        pytest.fail(f'a valid set with a traced input was refused: {exc}')
     assert value == pytest.approx(2.0 ** (-1.0e-9), rel=1e-12)
 
 
@@ -362,3 +357,29 @@ def test_jax_heating_matches_the_numpy_decay_law():
     )
     np.testing.assert_allclose(jax_vals, np_vals, rtol=1e-14, atol=0.0)
     assert np_vals[0] > 2.0 * np_vals[-1] > 0.0
+
+
+_RADIO_GOOD = (0.3583, 1.0, 1.0e-9, 0.0, 7.17e5)
+
+
+@pytest.mark.parametrize(
+    ('field', 'bad', 'message'),
+    [
+        (0, -1.0, 'must not be negative'),
+        (1, np.nan, 'must be finite'),
+        (2, np.inf, 'must be finite'),
+        (3, -np.inf, 'must be finite'),
+        (4, -1.0, 'half_life_years must be positive'),
+        (4, 1.0e-310, 'half_life_years must be positive'),
+    ],
+)
+def test_check_radio_arrays_refuses_each_input_at_its_isotope(field, bad, message):
+    """check_radio_arrays refuses a bad value of every input and names its isotope (#1)."""
+    from aragog.jax.solver import check_radio_arrays
+
+    arrays = [np.array([v, v]) for v in _RADIO_GOOD]
+    arrays[field][1] = bad
+    with pytest.raises(ValueError, match=f'#1: .*{message}'):
+        check_radio_arrays(*arrays)
+    out = check_radio_arrays(*(np.array([v, v]) for v in _RADIO_GOOD))
+    assert [a.dtype for a in out] == [jnp.float64] * 5

@@ -51,11 +51,15 @@ def test_zero_amplitude_isotope_heats_zero_where_exp_overflows(half_life):
     and no division for a zero or NaN half-life (errstate raises on any of them)."""
     r = _Radionuclide(**AL26_ZERO)
     with np.errstate(all='raise'):
-        assert r.get_heating(0.0) == 0.0
-        np.testing.assert_array_equal(r.get_heating(np.array([0.0, 1e3])), [0.0, 0.0])
-        assert (
-            _Radionuclide(**{**AL26_ZERO, 'half_life_years': half_life}).get_heating(0.0) == 0.0
-        )
+        try:
+            values = (
+                r.get_heating(0.0),
+                *r.get_heating(np.array([0.0, 1e3])),
+                _Radionuclide(**{**AL26_ZERO, 'half_life_years': half_life}).get_heating(0.0),
+            )
+        except FloatingPointError as exc:
+            pytest.fail(f'the zero amplitude evaluated its exponent: {exc}')
+    assert values == (0.0, 0.0, 0.0, 0.0)
 
 
 @pytest.mark.unit
@@ -199,7 +203,10 @@ def test_finiteness_is_checked_on_the_mass_fraction():
         heat_production=1.0,
         half_life_years=1e6,
     )
-    q, (r,) = _with(p, big)
+    try:
+        q, (r,) = _with(p, big)
+    except ValueError as exc:
+        pytest.fail(f'the finiteness check used the ppm value: {exc}')
     assert r.concentration == pytest.approx(1e-2) and np.isfinite(
         r.get_heating(q.solver.start_time)
     )
@@ -333,3 +340,23 @@ def test_toml_and_dict_sections_cannot_set_the_ppm_record(tmp_path):
         Config.from_dict(tomllib.loads(bad), config_dir=BUNDLED_LOOKUP.parent)
     good = Config.from_dict(tomllib.loads(text), config_dir=BUNDLED_LOOKUP.parent)
     assert next(r for r in good.radionuclides if r.name == 'K40')._ppm == 310.0
+
+
+@pytest.mark.unit
+def test_a_rebuild_checks_a_converted_isotope_as_a_mass_fraction():
+    """A rebuild of Parameters checks an isotope already converted as a mass fraction:
+    its heating overflows at the earlier start time, scaled once more by 1e-6 it would not."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    t0 = np.log(1e300) / np.log(2) * 1e6  # exp(arg) = 1e300 at t = 0
+    hot = dict(
+        name='X',
+        t0_years=t0,
+        abundance=1.0,
+        concentration=1e6,
+        heat_production=1e10,
+        half_life_years=1e6,
+    )
+    q, (r,) = _with(replace(p, solver=replace(p.solver, start_time=t0)), hot)
+    assert r.concentration == 1.0  # mass fraction; heating 1e10 * 1e300 overflows at t = 0
+    with pytest.raises(ValueError, match='X: heating is not finite at the start time 0'):
+        replace(q, solver=replace(q.solver, start_time=0.0))
