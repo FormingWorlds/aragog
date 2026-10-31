@@ -2465,7 +2465,9 @@ class EntropySolver:
         self._lid_y = None
         if not self._lid_on:
             return
-        if self.entropy_eos is None:
+        if self.entropy_eos is None or getattr(
+            self.parameters.phase_mixed, 'const_properties', False
+        ):
             raise ValueError('subgrid_lid needs the entropy EOS tables (no const_properties)')
         r = self._r_basic_flat
         n_cells = int(bc.lid_handover_cells)
