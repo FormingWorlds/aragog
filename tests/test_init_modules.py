@@ -100,7 +100,7 @@ def test_mass_coordinate_mesh_rejects_duplicate_node_radii(monkeypatch):
     """
     monkeypatch.setattr(
         'aragog.mesh._radius_for_mass_coordinate',
-        lambda xi_of_r, xi_target, r_lo, r_hi, node=None: r_lo,
+        lambda xi_of_r, xi_target, r_lo, r_hi, node=None, xtol=1.0: r_lo,
     )
     with pytest.raises(ValueError, match='Non-monotonic basic mesh'):
         Mesh(SimpleNamespace(mesh=_settings(mass_coordinates=True)))

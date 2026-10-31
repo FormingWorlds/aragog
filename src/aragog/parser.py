@@ -30,6 +30,7 @@ from aragog.config.energy import (
     check_convective_threshold,
     check_eos_floor_margin,
 )
+from aragog.config.mesh import check_cell_thickness
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
     SEPARATION_BUOYANCY_DEFAULT,
@@ -302,6 +303,13 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
+    # Thickness [m] of the outermost and innermost basic cell, at least 2 m; 0 leaves that end
+    # unset, and it grows when only the other end is set. See aragog.mesh.stretching.
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __post_init__(self):
+        check_cell_thickness(self)
 
 
 @dataclass
