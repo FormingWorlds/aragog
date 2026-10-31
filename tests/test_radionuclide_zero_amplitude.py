@@ -465,8 +465,7 @@ def test_parameters_store_the_checked_values_as_floats():
         half_life_years=np.float32(1e9),
     )
     _, (r,) = _with(p, big)
-    fields = ('heat_production', 'abundance', 'concentration', 't0_years', 'half_life_years')
-    assert all(type(getattr(r, f)) is float for f in fields)
+    assert all(type(getattr(r, f)) is float for f in big if f != 'name')
     assert r.get_heating(0.0) == pytest.approx(1e24, rel=1e-6)
 
 
@@ -482,3 +481,16 @@ def test_rebuilds_keep_one_ppm_conversion(wrap):
     assert type(r.concentration) is float and r._ppm == 310.0
     assert (r.concentration, r.get_heating(0.0)) == first
     assert r.concentration == pytest.approx(3.1e-4, rel=1e-15)
+
+
+@pytest.mark.unit
+def test_parameters_keep_unchecked_isotopes_as_given():
+    """With radionuclides off nothing is checked, so the isotope keeps its input types;
+    the concentration is still converted from ppm once."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    off = replace(p, energy=replace(p.energy, radionuclides=False))
+    f32 = {k: v if k == 'name' else np.float32(v) for k, v in K40_PPM.items()}
+    q, (r,) = _with(off, f32)
+    assert type(r.heat_production) is np.float32 and type(r.concentration) is np.float32
+    replace(q)
+    assert float(r.concentration) == pytest.approx(310e-6, rel=1e-6)
