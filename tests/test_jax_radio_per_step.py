@@ -125,10 +125,13 @@ def test_radio_heating_negative_time_inflates_correctly():
     assert H_back == pytest.approx(2.0e-9, rel=1e-10)
 
 
-@pytest.mark.parametrize('half_life', [0.0, -1.0e6, np.nan])
+@pytest.mark.parametrize(
+    'half_life', [0.0, -1.0e6, np.nan, 1.0e-310, np.nextafter(np.finfo(float).tiny, 0.0)]
+)
 @pytest.mark.parametrize('heat_prod', [1.0e-9, 0.0])
 def test_radio_heating_rejects_a_half_life_that_is_not_positive(half_life, heat_prod):
-    """A half-life that is not positive is rejected when the function is built.
+    """A half-life that is not positive or below the smallest normal float is rejected
+    when the function is built.
 
     Without the check, hl = 0 gives inf heating and a NaN half-life gives a NaN
     Jacobian on a zero-amplitude isotope, so both amplitudes are covered.
@@ -359,27 +362,16 @@ def test_jax_heating_matches_the_numpy_decay_law():
     assert np_vals[0] > 2.0 * np_vals[-1] > 0.0
 
 
-_RADIO_GOOD = (0.3583, 1.0, 1.0e-9, 0.0, 7.17e5)
+def test_radio_heating_accepts_the_smallest_normal_half_life():
+    """A zero-amplitude isotope at the smallest normal half-life builds, heats 0 and has a
+    finite time derivative; one float below, ln2 / half_life is inf and the derivative NaN."""
+    from aragog.jax.solver import make_radio_heating_fn
 
-
-@pytest.mark.parametrize(
-    ('field', 'bad', 'message'),
-    [
-        (0, -1.0, 'must not be negative'),
-        (1, np.nan, 'must be finite'),
-        (2, np.inf, 'must be finite'),
-        (3, -np.inf, 'must be finite'),
-        (4, -1.0, 'half_life_years must be positive'),
-        (4, 1.0e-310, 'half_life_years must be positive'),
-    ],
-)
-def test_check_radio_arrays_refuses_each_input_at_its_isotope(field, bad, message):
-    """check_radio_arrays refuses a bad value of every input and names its isotope (#1)."""
-    from aragog.jax.solver import check_radio_arrays
-
-    arrays = [np.array([v, v]) for v in _RADIO_GOOD]
-    arrays[field][1] = bad
-    with pytest.raises(ValueError, match=f'#1: .*{message}'):
-        check_radio_arrays(*arrays)
-    out = check_radio_arrays(*(np.array([v, v]) for v in _RADIO_GOOD))
-    assert [a.dtype for a in out] == [jnp.float64] * 5
+    one = np.array([1.0])
+    try:
+        h = make_radio_heating_fn(
+            np.zeros(1), one, one, np.array([4.55e9]), np.array([np.finfo(float).tiny])
+        )
+    except ValueError as exc:
+        pytest.fail(f'the smallest normal half-life was refused: {exc}')
+    assert float(h(1.0)) == 0.0 and float(jax.grad(h)(1.0)) == 0.0

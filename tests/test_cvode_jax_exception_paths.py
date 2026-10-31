@@ -180,15 +180,18 @@ def test_factory_jacfn_returns_one_on_buffer_shape_mismatch(caplog):
 @needs_eos
 def test_factory_with_radio_isotope_params_builds_callable_radio_heating():
     """The radio 5-tuple (heat_prod, abundance, concentration, t0_years, half_life_years)
-    adds a finite heating to the RHS: the RHS with an Al26-like isotope at t0 = 0 is finite
-    and differs from the RHS without radionuclides."""
+    adds a finite heating to the RHS: with an Al26-like isotope at t0 = 0 it is finite, above
+    the RHS without radionuclides, and the added term doubles with the concentration."""
     rhs_off, _, _, n_stag = _build_factory()
     rhs_fn, _, info, _ = _build_factory((0.3583, 1.0, 1.0e-9, 0.0, 7.17e5))
+    rhs_2c, _, _, _ = _build_factory((0.3583, 1.0, 2.0e-9, 0.0, 7.17e5))
     y_nd = np.full(n_stag, 3050.0 / 3.0e3)
-    off, ydot_nd = np.zeros(n_stag), np.zeros(n_stag)
+    off, ydot_nd, ydot_2c = np.zeros(n_stag), np.zeros(n_stag), np.zeros(n_stag)
     assert rhs_off(0.0, y_nd, off) == 0 and rhs_fn(0.0, y_nd, ydot_nd) == 0
-    assert info['rhs_calls'] == 1
+    assert rhs_2c(0.0, y_nd, ydot_2c) == 0 and info['rhs_calls'] == 1
     assert np.all(np.isfinite(ydot_nd)) and np.all(ydot_nd > off)
+    # The heating term is linear in the concentration.
+    np.testing.assert_allclose(ydot_2c - off, 2.0 * (ydot_nd - off), rtol=1e-12)
 
 
 @needs_eos
