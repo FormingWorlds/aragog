@@ -109,11 +109,12 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
 
     Parameters
     ----------
-    heat_prod, abundance, concentration : array_like, shape (n_iso,)
+    heat_prod, abundance, concentration : array_like, shape (n_iso,), (1,) or ()
         Per-isotope power production scales [W/kg per (mass-fraction)],
         natural abundance [-], and concentration [mass fraction].
-    t0_years, half_life_years : array_like, shape (n_iso,)
-        Per-isotope reference time [yr] and half life [yr].
+    t0_years, half_life_years : array_like, shape (n_iso,), (1,) or ()
+        Per-isotope reference time [yr] and half life [yr]. The 5 inputs broadcast to
+        shape (n_iso,); an input given once holds for every isotope.
 
     Returns
     -------
@@ -126,8 +127,10 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
         For a concrete input that is not a number in its own type (a bool, a string, an
         integer above the float range, an array of another dtype), a half-life that is not a
         positive normal float, a negative or non-finite amplitude factor, or a non-finite t0
-        (aragog.parser.validate_radionuclide without a start time). Traced inputs are not
-        checked; a mixed list such as [True, 0.5] is one float64 array and passes.
+        (aragog.parser.validate_radionuclide without a start time); for shapes that do not
+        broadcast to 1 dimension, an empty input next to a non-empty one, a ragged list or a
+        list of traced values. A traced array is not checked; a mixed list such as
+        [True, 0.5] is one float64 array and passes.
     """
     radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
     return lambda t_yr: compute_radio_heating(t_yr, radio)
@@ -136,9 +139,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
 def check_radio_arrays(*arrays, start_time=None):
     """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
 
-    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents, also for shapes that do
-    not broadcast to at most 1 dimension, a ragged list or a list of traced values, and,
-    with ``start_time`` [yr], a heating that is not finite at that time.
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents, and, with ``start_time``
+    [yr] and concrete inputs only, for an isotope whose heating is not finite at that time.
     """
     from aragog.parser import validate_radionuclide
 
@@ -154,12 +156,17 @@ def check_radio_arrays(*arrays, start_time=None):
         raise ValueError(
             f'Radionuclide arrays: no 5 arrays of numbers that broadcast ({exc})'
         ) from exc
-    if full[0].ndim > 1:
+    if full[0].ndim > 1 or (full[0].size == 0 and any(c.size for c in concrete)):
         raise ValueError(
-            f'Radionuclide arrays: shapes {[c.shape for c in concrete]} give 2-D isotopes'
+            f'Radionuclide arrays: shapes {[c.shape for c in concrete]} must broadcast to 1 '
+            'dimension, and to no isotope only if all are empty'
         )
+    # A stand-in has no time dependence to check, so a traced set skips the start time.
+    traced = any(isinstance(a, jax.core.Tracer) for a in arrays)
     for i, iso in enumerate(zip(*full)):
-        validate_radionuclide(f'#{i}', *iso, ppm=False, start_time=start_time)
+        validate_radionuclide(
+            f'#{i}', *iso, ppm=False, start_time=None if traced else start_time
+        )
     return tuple(
         jnp.asarray(a if isinstance(a, jax.core.Tracer) else c.astype(np.float64), jnp.float64)
         for a, c in zip(arrays, concrete)

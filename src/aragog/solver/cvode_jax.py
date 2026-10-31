@@ -260,8 +260,10 @@ def build_jax_rhs_and_jacobian(
         the solver's ``_core_module_ra_crit_cmb``; required for
         core_module and checked with ``aragog.core.check_ra_crit``.
     start_time : float, optional
-        Time [yr] at which the radiogenic heating of ``radio_isotope_params`` must be
-        finite (``aragog.parser.validate_radionuclide``); not checked if None.
+        Time [yr] at which the radiogenic heating of each isotope of ``radio_isotope_params``
+        must be finite (``aragog.parser.validate_radionuclide``); not checked if None, the
+        value ``EntropySolver.solve`` gives the factory, so only a caller that passes it is
+        checked.
 
     Returns
     -------
@@ -291,16 +293,6 @@ def build_jax_rhs_and_jacobian(
         ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
         that ``aragog.jax.solver.check_radio_arrays`` refuses.
     """
-    try:
-        import jax.numpy as jnp
-
-        import aragog.jax.solver
-    except ImportError as exc:
-        raise RuntimeError(
-            'Option Z (JAX RHS + Jacobian) requires JAX and the '
-            f'aragog.jax module. Original error: {exc}'
-        ) from exc
-
     if core_bc_mode == 'core_module' and core_module_budget is None:
         raise ValueError(
             "core_bc_mode='core_module' requires core_module_budget "
@@ -318,6 +310,16 @@ def build_jax_rhs_and_jacobian(
             f"for the NumPy RHS; with it true, 'bower2018' and 'gradient' use the "
             f'NumPy RHS after a warning.'
         )
+
+    try:
+        import jax.numpy as jnp
+
+        import aragog.jax.solver
+    except ImportError as exc:
+        raise RuntimeError(
+            'Option Z (JAX RHS + Jacobian) requires JAX and the '
+            f'aragog.jax module. Original error: {exc}'
+        ) from exc
 
     aragog.jax.solver.check_surface_temperature(
         eos_jax, phase_params, mesh_arrays, boundary_params
@@ -362,7 +364,10 @@ def build_jax_rhs_and_jacobian(
                 '(heat_prod, abundance, concentration, t0_years, '
                 f'half_life_years); got length {len(radio_isotope_params)}'
             )
-        shapes = [np.shape(a) for a in radio_isotope_params]
+        try:
+            shapes = [np.shape(a) for a in radio_isotope_params]
+        except ValueError as exc:
+            raise ValueError(f'Radionuclide arrays: no 5 arrays of numbers ({exc})') from exc
         if len(set(shapes)) > 1:
             raise ValueError(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'

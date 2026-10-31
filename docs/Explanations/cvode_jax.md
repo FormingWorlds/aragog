@@ -27,13 +27,23 @@ from aragog import EntropySolver
 from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
 solver = EntropySolver.from_file(config_path)
-solver.set_jax_cvode_factory(build_jax_rhs_and_jacobian)
 solver.initialize()
 solver.set_initial_entropy(...)
+
+
+def factory(scales, core_bc_mode):
+    rhs, jac, _info = build_jax_rhs_and_jacobian(
+        eos_jax, phase_params, mesh_arrays, boundary_params, heating, scales,
+        core_bc_mode=core_bc_mode,
+    )
+    return rhs, jac
+
+
+solver.set_jax_cvode_factory(factory)
 result = solver.solve()
 ```
 
-The factory takes the bound mesh, EOS, phase parameters, boundary conditions, and heating function and returns a tuple `(rhs, jac)` of JAX-traced callables. CVODE calls `rhs(t, y)` for the RHS evaluation and `jac(t, y)` for the Jacobian. Both callables are JIT-compiled on first call; subsequent calls hit the compiled binary directly.
+`eos_jax`, `phase_params`, `mesh_arrays` and `boundary_params` are the JAX pytrees of the EOS tables, the phase parameters, the mesh and the boundary conditions (`EntropyEOS_JAX`, `PhaseParams`, `MeshArrays`, `BoundaryParams`), and `heating` is the internal heating per cell [W/kg]; the PROTEUS wrapper rebuilds the mesh and boundary pytrees from the live solver on every call. `solve()` calls `factory(scales, core_bc_mode)` and hands the pair `(rhs, jac)` to CVODE; `build_jax_rhs_and_jacobian` also returns a dict of diagnostics. CVODE calls `rhs(t, y, ydot)` and `jac(t, y, fy, J)` in the scikits.odes signatures, on nondimensional time and state. Both callables are JIT-compiled on first call; subsequent calls hit the compiled binary directly.
 
 When `use_jax_jacobian = true` but no factory is registered (e.g. standalone Aragog tests), the solver silently falls back to CVODE's default finite-difference Jacobian. This is intentional: it means the standalone test suite does not depend on JAX being installed. A registered factory that raises `UnsupportedCoreBCError` (`core_bc` `bower2018` or `gradient`, which have no JAX right-hand side) gives the same fallback after a warning; any other factory error stops the solve.
 

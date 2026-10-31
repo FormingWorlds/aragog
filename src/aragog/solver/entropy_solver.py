@@ -1585,7 +1585,10 @@ class EntropySolver:
             ``rhs_fn`` may optionally carry a ``step_powers(t_nodes, Y_nodes, aux)``
             attribute for batched per-call energy power evaluation.
             May be None to disable the Option Z path even if the flag
-            is on.
+            is on. A factory that raises
+            ``aragog.solver.cvode_jax.UnsupportedCoreBCError`` (bower2018,
+            gradient) gives the NumPy RHS after a warning; any other
+            exception it raises propagates out of ``solve()``.
         phase_params : PhaseParams, optional
             When supplied, validates immediately that ``phase_params.rheology``
             matches ``self.parameters.phase_solid.rheology``.
