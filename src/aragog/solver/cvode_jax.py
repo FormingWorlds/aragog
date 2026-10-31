@@ -362,10 +362,15 @@ def build_jax_rhs_and_jacobian(
                 '(heat_prod, abundance, concentration, t0_years, '
                 f'half_life_years); got length {len(radio_isotope_params)}'
             )
-        checked = aragog.jax.solver.check_radio_arrays(
-            *radio_isotope_params, start_time=start_time
-        )
-        radio_arrays = checked if checked[0].size > 0 else ()
+        shapes = [np.shape(a) for a in radio_isotope_params]
+        if len(set(shapes)) > 1:
+            raise ValueError(
+                f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
+            )
+        if np.size(radio_isotope_params[0]) > 0:
+            radio_arrays = aragog.jax.solver.check_radio_arrays(
+                *radio_isotope_params, start_time=start_time
+            )
     use_radio = bool(radio_arrays)
 
     data = (

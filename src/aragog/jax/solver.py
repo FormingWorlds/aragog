@@ -136,8 +136,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
 def check_radio_arrays(*arrays, start_time=None):
     """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
 
-    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents, also for arrays of
-    unequal shapes, more than 1 dimension, a ragged list or a list of traced values, and,
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents, also for shapes that do
+    not broadcast to at most 1 dimension, a ragged list or a list of traced values, and,
     with ``start_time`` [yr], a heating that is not finite at that time.
     """
     from aragog.parser import validate_radionuclide
@@ -149,16 +149,16 @@ def check_radio_arrays(*arrays, start_time=None):
             np.ones(a.shape) if isinstance(a, jax.core.Tracer) else np.asarray(a)
             for a in arrays
         ]
+        full = np.broadcast_arrays(*map(np.atleast_1d, concrete))
     except (ValueError, TypeError) as exc:
         raise ValueError(
-            f'Radionuclide arrays: pass JAX or NumPy arrays or flat lists of numbers ({exc})'
+            f'Radionuclide arrays: no 5 arrays of numbers that broadcast ({exc})'
         ) from exc
-    shapes = [c.shape for c in concrete]
-    if len(set(shapes)) > 1 or concrete[0].ndim > 1:
+    if full[0].ndim > 1:
         raise ValueError(
-            f'Radionuclide arrays: the 5 arrays need one shape of at most 1 dimension, got {shapes}'
+            f'Radionuclide arrays: shapes {[c.shape for c in concrete]} give 2-D isotopes'
         )
-    for i, iso in enumerate(zip(*map(np.atleast_1d, concrete))):
+    for i, iso in enumerate(zip(*full)):
         validate_radionuclide(f'#{i}', *iso, ppm=False, start_time=start_time)
     return tuple(
         jnp.asarray(a if isinstance(a, jax.core.Tracer) else c.astype(np.float64), jnp.float64)
