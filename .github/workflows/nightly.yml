@@ -80,13 +80,13 @@ jobs:
           echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
 
       - name: Print the CPU model
-        run: lscpu | grep 'Model name'
+        run: lscpu | grep 'Model name' || true
 
       - name: Write the EOS table cache without coverage
         run: |
-          # under coverage the parse of the tables is about 45 times slower, once in each xdist worker
+          # under coverage the parse of the tables is much slower, and every test process repeats it
           python -c 'import os; from aragog.eos.entropy import EntropyEOS; from aragog.jax.eos import EntropyEOS_JAX; d = os.environ["ARAGOG_TEST_EOS_DIR"]; EntropyEOS(d); EntropyEOS_JAX(d)'
-          ls "$ARAGOG_TEST_EOS_DIR"/*.cache.npz
+          D="$ARAGOG_TEST_EOS_DIR"; test "$(ls "$D"/*.cache.npz | wc -l)" -eq "$(ls "$D"/*.dat | wc -l)"
 
       - name: Run unit + smoke + slow tests with coverage
         if: matrix.part == 'main'

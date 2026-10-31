@@ -907,8 +907,7 @@ class TestCvodeEnergyOutputGrid:
 
     def test_dense_output_recovers_flux_integral(self):
         """F_int over the internal steps matches a high-resolution scipy reference
-        with 2 or 65 output points alike, and ``dt_actual`` is unchanged. The 20-node mesh
-        keeps the steep grey-body decay."""
+        with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
         ref = self._build_greybody_solver('bdf', n_nodes=20)
         ref.solve()
         f_ref = ref._compute_step_energy_integrals()['F_int']
@@ -925,7 +924,7 @@ class TestCvodeEnergyOutputGrid:
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
-        # An output-point integral misses the in-call decay at 2 points (~0.66 error).
+        # A trapezoid over the 2 end points misses half of the in-call decay, over the output points 1e-3.
         assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # The output grid must not perturb the integration window.
