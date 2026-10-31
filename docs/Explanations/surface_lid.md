@@ -62,7 +62,7 @@ When the crust is resolved by the mesh, the lid hands over to the mesh: the solv
 
 **Why.** The lid replaces a crust the mesh cannot resolve, so it is right only where its answer has been compared with a mesh that does resolve that crust.
 
-**What.** The [Validation page](../Validation/surface_lid.md) compares the lid with fine meshes for three starts: a solid shell below the solidus, a shell in the mush that freezes from its surface, and a molten shell without the solid rheology, where the lid hands over at the solidus. A molten start with the solid rheology on, with either closure, is not validated: on a 1000-node mesh its crust is one node thick at 100 years, so no converged reference exists yet.
+**What.** The [Validation page](../Validation/surface_lid.md) compares the lid with fine meshes for three starts: a solid shell below the solidus, a shell in the mush that freezes from its surface, and a molten shell without the solid rheology, where the lid hands over at the solidus. A molten start with the solid rheology on, with either closure, is not validated: on a 1000-node mesh its crust is one node thick at 100 years, so no converged reference exists yet. Where the lid base sits at the melt temperature, a hot shell with the solid rheology and the `'lid'` closure gives a crust that converges with the mesh up to 3 × 10⁵ years; later its thickness depends on the mesh and on the floor (see [mesh and floor](../Validation/surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)).
 
 **Why it matters.** Use the lid for a molten start with the solid rheology only with this limit in mind; its heat loss there has no measured error.
 

@@ -139,11 +139,33 @@ PLACEHOLDER-PLOT: surface_lid_c3_molten_resolved_mesh (light and dark), written 
 
 ## The lid base at the melt temperature: mesh and floor
 
-**Why this section exists.** Below the rheological transition the lid base is capped at the melt temperature. At the cap the Stefan jump is 0 and the growth rate runs at the floor of 10³ J/kg (see [the Explanation](../Explanations/surface_lid.md#the-base-at-the-melt-temperature)), so the late crust depends on the floor and on the mesh.
+**Why this check exists.** Below the rheological transition the lid base is capped at the melt temperature. At the cap the Stefan jump is 0 and the lid grows at the floor of 10³ J/kg (see [the Explanation](../Explanations/surface_lid.md#the-base-at-the-melt-temperature)), so the late crust depends on the floor and on the mesh. This check measures by how much.
 
-**What we know.** TBD-step5: the R1 column with the solid rheology and the 'lid' closure on 100, 200 and 400 nodes to 4 × 10⁵ years, the lid thickness and surface flux at 10⁵, 2 × 10⁵, 3 × 10⁵ and 4 × 10⁵ years, and the 100-node run with the floor at 10², 10³ and 10⁴ J/kg.
+**What it tests.** A mantle shell 1000 km thick (radius 5371 to 6371 km) starts hot, at a uniform entropy of 9466 J/kg/K, on the extended PALEOS table. The solid rheology is on with the `'lid'` closure, and the surface radiates as a black body to 273 K. The lid starts 0.5 m thick. The run goes to 4 × 10⁵ years on 100, 200 and 400 nodes with the floor at 10³ J/kg, and on 100 nodes with the floor at 10² and 10⁴ J/kg. A second 100-node run starts from an entropy changed by one part in 10¹²; it sets the round-off scale of the comparison.
 
-**Why it matters.** Late in such a run the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
+**What we know.** Up to 3 × 10⁵ years the lid thickness converges with the mesh: going from 200 to 400 nodes changes it by a factor of 1.024, against 1.341 from 100 to 200 nodes. At 4 × 10⁵ years it depends on the mesh. Going from 200 to 400 nodes changes it by a factor of 1.448, and the order is not monotone: the lid is 366.6 m thick on 100 nodes, 244.0 m on 200 nodes and 353.4 m on 400 nodes. The interior temperature of the `'lid'` closure at that time is 1587.2 K on 100 nodes, 1864.9 K on 200 nodes and 1879.3 K on 400 nodes.
+
+The floor changes the lid most at late times. Up to 3 × 10⁵ years the runs with the floor at 10² and 10⁴ J/kg agree with the run at 10³ J/kg to 3.2 × 10⁻² (the largest difference, at 10⁴ years). At 4 × 10⁵ years the floor of 10⁴ J/kg gives a lid of 1779.8 m, 4.854 times the lid at 10³ J/kg; the floor of 10² J/kg gives 361.8 m, a factor of 0.987. The two runs from starts one part in 10¹² apart agree to 3.1 × 10⁻⁴.
+
+| step | 3 × 10⁵ years | 4 × 10⁵ years |
+|---|---|---|
+| 100 to 200 nodes | 1.341 | 1.502 |
+| 200 to 400 nodes | 1.024 | 1.448 |
+
+The step factor is the larger of the two lid thicknesses divided by the smaller one.
+
+**Why it matters.** Up to 3 × 10⁵ years a run of this kind gives a crust thickness that does not depend on the mesh or the floor. Later the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
+
+![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor.svg#only-light){ width="80%" }
+![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The horizontal axis is time in thousands of years, the vertical axis the lid thickness on a log scale. The runs were sampled at 0.1, 1, 3, 10, 30, 100, 200, 300 and 400 thousand years; the lines join the samples. The dotted lines mark 300 and 400 thousand years. Panel (a) shows the three meshes with the floor at 10³ J/kg, panel (b) the three floors on 100 nodes. In panel (b) the lines of 10² and 10³ J/kg lie on top of each other at all times.
+
+??? info "Test details"
+    - Reference: the lid thickness of the six runs at the nine sample times in `tests/reference/surface_lid_base_cap.npz`, collected by `tools/verification/run_surface_lid_case.py --collect` from one run per case of the same script.
+    - Tolerance: the round-off pair within 10⁻³ (measured 3.1 × 10⁻⁴); at 3 × 10⁵ years the step from 200 to 400 nodes below 1.2 and the step from 100 to 200 nodes above it; at 4 × 10⁵ years both steps above 1.4 and the 200-node lid the thinnest; the floor runs within 4 × 10⁻² of the 10³ J/kg run up to 3 × 10⁵ years (measured 3.2 × 10⁻²); at 4 × 10⁵ years the lid with the floor of 10⁴ J/kg more than 2 times thicker (measured 4.854).
+    - Test id: `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor`
+    - Command: `pytest tests/test_surface_lid_base_cap.py` (add `--validation-plots` to write the plot pair)
 
 ## Where the lid is not validated
 
