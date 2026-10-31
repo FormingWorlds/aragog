@@ -924,7 +924,7 @@ class TestCvodeEnergyOutputGrid:
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
-        # A trapezoid over the 2 end points misses half of the in-call decay, over the output points 1e-3.
+        # The output points alone (sol.t) give an error of 1.3e-3 at n_out=2 and 5.5e-4 at 65.
         assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # The output grid must not perturb the integration window.
