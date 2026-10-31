@@ -83,11 +83,15 @@ def compute_radio_heating(t_yr, radio_arrays):
     -------
     Array
         Radiogenic heating scalar [W/kg].
+
+    Notes
+    -----
+    No input is checked here: the arrays must pass :func:`check_radio_arrays`, which the two
+    builders call on concrete inputs, and the caller keeps the heating finite at the times it
+    evaluates (``aragog.parser.Parameters`` checks it at the start time).
     """
     hp, ab, cn, t0, hl = radio_arrays
     amp = hp * ab * cn
-    # Exponential decay per isotope, weighted across isotopes; the half-lives are positive
-    # (aragog.parser.validate_radionuclide).
     arg = LOG_TWO * (t0 - t_yr) / hl
     # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
     per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
@@ -119,18 +123,20 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     Raises
     ------
     ValueError
-        For a concrete half-life that is not positive, a concrete amplitude factor that is
-        negative or not finite, or a concrete t0 that is not finite (the checks of
-        aragog.parser.validate_radionuclide without a start time); traced inputs are not checked.
+        For a concrete half-life that is not a positive normal float, a concrete amplitude
+        factor that is negative or not finite, or a concrete t0 that is not finite (the checks
+        of aragog.parser.validate_radionuclide without a start time); traced inputs are not
+        checked.
     """
     radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
     return lambda t_yr: compute_radio_heating(t_yr, radio)
 
 
 def check_radio_arrays(*arrays):
-    """Check the 5 per-isotope arrays of :func:`compute_radio_heating` and return them as JAX arrays.
+    """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
 
-    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents.
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents. Without a time, the
+    finiteness of the heating is not checked.
     """
     from aragog.parser import validate_radionuclide
 
