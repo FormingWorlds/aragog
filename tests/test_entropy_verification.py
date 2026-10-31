@@ -896,7 +896,7 @@ class TestCvodeEnergyOutputGrid:
         s.set_initial_entropy(S_liq * 1.01)
         return s
 
-    def test_dense_output_recovers_flux_integral(self):
+    def test_dense_output_recovers_flux_integral(self, caplog):
         """F_int over the internal steps matches a high-resolution scipy reference
         with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
         ref = self._build_greybody_solver('bdf')
@@ -907,7 +907,10 @@ class TestCvodeEnergyOutputGrid:
 
         s2 = self._build_greybody_solver('cvode', n_out=2)
         s2.solve()
-        d2 = s2._compute_step_energy_integrals()
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+            d2 = s2._compute_step_energy_integrals()
+        assert f'({s2._solution.energy_trace[0].size} nodes)' in caplog.text, 'every trace node'
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
         trace, sol2 = s2._solution.energy_trace, s2._solution
         sol2.energy_trace = (sol2.t[[0, -1]], sol2.y[:, [0, -1]])
@@ -921,7 +924,8 @@ class TestCvodeEnergyOutputGrid:
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
         # F_int error: about 0.5 from the 2 endpoints, 1.3e-3 (n_out=2) and 5.5e-4 (n_out=65)
-        # from the sol.t points, and about 3e-6 from the internal-step trace asserted here.
+        # from the sol.t points, and about 3e-6 from the internal-step trace asserted here. A lost
+        # last interval (3.3e-4 to 1.5e-3 of the span, by CPU) adds 1.2e-5 to 5.8e-5.
         assert err_2pt < 1e-5 and err_dense < 1e-5, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # No CMB flux and no sources: F_int closes the heat content change, 4e-6 at 512 points.
