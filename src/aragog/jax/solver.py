@@ -135,8 +135,7 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
 def check_radio_arrays(*arrays):
     """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
 
-    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents. Without a time, the
-    finiteness of the heating is not checked.
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents.
     """
     from aragog.parser import validate_radionuclide
 

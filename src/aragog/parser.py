@@ -463,10 +463,11 @@ def validate_radionuclide(
         ppm: Whether ``concentration`` is in ppm.
 
     Raises:
-        ValueError: for a half-life below the smallest normal float (about 2.2e-308 yr, so
-            ``1 / half_life`` is finite) or not a number, a heat production, abundance or
-            concentration that is negative, a heat production, abundance, concentration or
-            t0_years that is not finite, or a heating that is not finite at ``start_time``.
+        ValueError: for a half-life below the smallest normal float (about 2.2e-308 yr, which
+            keeps the time derivative of a zero-amplitude isotope finite) or not a number, a
+            heat production, abundance or concentration that is negative, a heat production,
+            abundance, concentration or t0_years that is not finite, or a heating that is not
+            finite at ``start_time``.
     """
     if not half_life_years >= np.finfo(float).tiny:
         raise ValueError(
