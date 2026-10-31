@@ -207,10 +207,9 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode):
     type the solver answers with the NumPy RHS."""
     from aragog.solver.cvode_jax import UnsupportedCoreBCError
 
-    n = 4
-    state_scale = np.full(n, 3.0e3)
+    state_scale = np.full(4, 3.0e3)
     with pytest.raises(ValueError, match='is not supported') as exc_info:
-        _build_factory(state_scale, 1.0 / state_scale, 1.0, np.zeros(n), mode)
+        _build_factory(state_scale, 1.0 / state_scale, 1.0, np.zeros(4), mode)
     assert (exc_info.type is UnsupportedCoreBCError) == (mode != 'unknown')
     err = str(exc_info.value)
     assert mode in err and 'use_jax_jacobian' in err and 'energy_balance' in err

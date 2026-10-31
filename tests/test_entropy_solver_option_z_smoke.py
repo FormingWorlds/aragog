@@ -248,13 +248,13 @@ def test_only_an_unsupported_core_bc_falls_back_to_the_fd_jacobian(unsupported, 
     other factory error stops the solve."""
     import logging
 
-    from aragog.solver import cvode_jax
+    from aragog.solver.cvode_jax import UnsupportedCoreBCError
     from aragog.solver.entropy_solver import EntropySolver
 
     solver = EntropySolver(_build_parameters(), entropy_eos=entropy_eos_copy(EOS_DIR))
     solver.initialize()
     solver.set_initial_entropy(3050.0)
-    err = cvode_jax.UnsupportedCoreBCError if unsupported else ValueError
+    err = UnsupportedCoreBCError if unsupported else ValueError
 
     def factory(scales, core_bc_mode):
         raise err('factory refused')
