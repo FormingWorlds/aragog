@@ -239,3 +239,31 @@ def test_solve_with_option_z_factory_registered_completes():
         f'final entropy range [{float(final_y.min())}, {float(final_y.max())}] '
         'is outside the plausible mantle window'
     )
+
+
+@needs_cvode
+@pytest.mark.parametrize('unsupported', [True, False])
+def test_only_an_unsupported_core_bc_falls_back_to_the_fd_jacobian(unsupported, caplog):
+    """An UnsupportedCoreBCError from the factory gives the NumPy RHS with a warning; any
+    other factory error stops the solve."""
+    import logging
+
+    from aragog.solver import cvode_jax
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = EntropySolver(_build_parameters(), entropy_eos=entropy_eos_copy(EOS_DIR))
+    solver.initialize()
+    solver.set_initial_entropy(3050.0)
+    err = cvode_jax.UnsupportedCoreBCError if unsupported else ValueError
+
+    def factory(scales, core_bc_mode):
+        raise err('factory refused')
+
+    solver.set_jax_cvode_factory(factory)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        if not unsupported:
+            with pytest.raises(ValueError, match='factory refused'):
+                solver.solve()
+            return
+        solver.solve()
+    assert solver._solution.status == 0 and 'factory refused' in caplog.text

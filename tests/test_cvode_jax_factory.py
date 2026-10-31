@@ -201,36 +201,19 @@ def test_nondim_scales_immutable():
 
 @pytest.mark.unit
 @pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'unknown'])
-def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
-    """A4: every unsupported mode (bower2018, gradient, a typo) must raise with a message
-    that names the supported alternatives, AND log a warning so the
-    entropy_solver catch-all fallback explains the FD-Jacobian downgrade.
-
-    Previously the error said only "must be 'quasi_steady' or
-    'energy_balance', got ..." without explaining the user-facing
-    workaround (set use_jax_jacobian=false).
-    """
-    import logging
+def test_unsupported_core_bc_mode_raises_with_clear_message(mode):
+    """A mode with no JAX RHS raises a ValueError that names the mode, the supported modes
+    and use_jax_jacobian; only bower2018 and gradient raise UnsupportedCoreBCError, the
+    type the solver answers with the NumPy RHS."""
+    from aragog.solver.cvode_jax import UnsupportedCoreBCError
 
     n = 4
     state_scale = np.full(n, 3.0e3)
-    rhs_scale = 1.0 / state_scale
-    heating = np.zeros(n)
-    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.cvode_jax'):
-        with pytest.raises(ValueError, match='is not supported') as exc_info:
-            _build_factory(state_scale, rhs_scale, 1.0, heating, mode)
-    # The raised message (not just the log) must name the offending
-    # mode and the use_jax_jacobian remediation, so the guidance holds
-    # for every unsupported mode rather than a hardcoded pair.
+    with pytest.raises(ValueError, match='is not supported') as exc_info:
+        _build_factory(state_scale, 1.0 / state_scale, 1.0, np.zeros(n), mode)
+    assert (exc_info.type is UnsupportedCoreBCError) == (mode != 'unknown')
     err = str(exc_info.value)
-    assert mode in err
-    assert 'use_jax_jacobian' in err
-    # Warning text must mention both the offending mode and the
-    # supported workaround so downstream operators don't have to
-    # bisect their own logs.
-    msgs = ' '.join(rec.message for rec in caplog.records)
-    assert mode in msgs
-    assert 'quasi_steady' in msgs and 'energy_balance' in msgs
+    assert mode in err and 'use_jax_jacobian' in err and 'energy_balance' in err
 
 
 @pytest.mark.unit
