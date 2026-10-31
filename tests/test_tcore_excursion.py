@@ -12,29 +12,16 @@ non-finite guard has to fire on the raw entropy, not on the EOS output.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from aragog.solver.entropy_solver import EntropySolver
-from tests.conftest import entropy_eos_copy
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
 pytestmark = pytest.mark.unit
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),

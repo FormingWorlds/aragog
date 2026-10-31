@@ -17,13 +17,11 @@ output buffers the wrong shape so the trailing ``ydot[:] = ...`` /
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_jax
 
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
@@ -34,17 +32,6 @@ jax.config.update('jax_enable_x64', True)
 pytestmark = pytest.mark.unit
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
@@ -112,8 +99,8 @@ def _make_bc():
     )
 
 
-def _build_factory():
-    """Build a factory at quasi_steady mode against a real EOS."""
+def _build_factory(radio_isotope_params=()):
+    """Build a factory at quasi_steady mode against a real EOS, with the given radio 5-tuple."""
     if not EOS_DIR.exists():
         pytest.skip(f'EOS unavailable at {EOS_DIR}')
 
@@ -137,6 +124,7 @@ def _build_factory():
         heating_array=heating,
         scales=scales,
         core_bc_mode='quasi_steady',
+        radio_isotope_params=radio_isotope_params,
     )
     return rhs_fn, jac_fn, info, n_stag
 
@@ -190,53 +178,51 @@ def test_factory_jacfn_returns_one_on_buffer_shape_mismatch(caplog):
 
 
 @needs_eos
-def test_factory_with_radio_isotope_params_builds_callable_radio_heating(caplog):
-    """Lines 179 of cvode_jax.py: the ``radio_isotope_params`` 5-tuple
-    branch builds a JAX-traceable ``H_radio(t_yr)`` callable via
-    ``make_radio_heating_fn``.
-
-    Discriminator: a regression that lost the 5-tuple unpacking
-    would raise during construction. Verifies the factory builds
-    AND the resulting RHS callback executes once without errors,
-    which means the radio-heating call inside the JAX trace did
-    not fail.
-    """
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
-
-    eos_jax = entropy_eos_jax(EOS_DIR)
-    params = PhaseParams()
-    mesh = _make_const_property_mesh(N=8)
-    bc = _make_bc()
-    n_stag = int(mesh.P_stag.shape[0])
-    state_scale = np.full(n_stag, 3.0e3)
-    scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
-    heating = np.zeros(n_stag)
-
-    # 5-tuple in the factory's expected order:
-    # (heat_prod, abundance, concentration, t0_years, half_life_years).
-    # Values approximate Al26 at the Solar System epoch.
-    rhs_fn, _jac_fn, info = build_jax_rhs_and_jacobian(
-        eos_jax=eos_jax,
-        phase_params=params,
-        mesh_arrays=mesh,
-        boundary_params=bc,
-        heating_array=heating,
-        scales=scales,
-        core_bc_mode='quasi_steady',
-        radio_isotope_params=(
-            0.3583,  # heat_prod
-            1.0,  # abundance
-            1.0e-9,  # concentration
-            4.55e9,  # t0_years
-            7.17e5,  # half_life_years
-        ),
-    )
-    # First call must succeed: the radio_heating function fires
-    # inside the JAX trace at this t.
+def test_factory_with_radio_isotope_params_builds_callable_radio_heating():
+    """The radio 5-tuple (heat_prod, abundance, concentration, t0_years, half_life_years)
+    adds a finite heating to the RHS: with an Al26-like isotope at t0 = 0 it is finite, above
+    the RHS without radionuclides, and the added term doubles with the concentration."""
+    rhs_off, _, _, n_stag = _build_factory()
+    rhs_fn, _, info, _ = _build_factory((0.3583, 1.0, 1.0e-9, 0.0, 7.17e5))
+    rhs_2c, _, _, _ = _build_factory((0.3583, 1.0, 2.0e-9, 0.0, 7.17e5))
     y_nd = np.full(n_stag, 3050.0 / 3.0e3)
-    ydot_nd = np.zeros(n_stag)
-    rc = rhs_fn(0.0, y_nd, ydot_nd)
-    assert rc == 0, f'radio-heating-aware rhs_fn returned {rc}; expected 0'
-    assert info['rhs_calls'] == 1
+    off, ydot_nd, ydot_2c = np.zeros(n_stag), np.zeros(n_stag), np.zeros(n_stag)
+    assert rhs_off(0.0, y_nd, off) == 0 and rhs_fn(0.0, y_nd, ydot_nd) == 0
+    assert rhs_2c(0.0, y_nd, ydot_2c) == 0 and info['rhs_calls'] == 1
+    assert np.all(np.isfinite(ydot_nd)) and np.all(ydot_nd > off)
+    # The heating term is linear in the concentration.
+    np.testing.assert_allclose(ydot_2c - off, 2.0 * (ydot_nd - off), rtol=1e-12)
+
+
+@needs_eos
+@pytest.mark.parametrize('half_life', [0.0, np.nan, 1.0e-310])
+def test_factory_rejects_a_half_life_that_is_not_positive(half_life):
+    """The CVODE factory refuses a zero, NaN or subnormal half-life before any RHS call."""
+    with pytest.raises(ValueError, match='half_life_years must be positive'):
+        _build_factory((0.3583, 1.0, 1.0e-9, 4.55e9, half_life))
+
+
+@needs_eos
+def test_factory_zero_amplitude_isotope_with_a_tiny_half_life_heats_zero():
+    """A zero-amplitude isotope with a 1e-300 yr half-life leaves the RHS and the Jacobian
+    bitwise equal to those without radionuclides."""
+    rhs_off, jac_off, _, n_stag = _build_factory()
+    rhs_zero, jac_zero, _, _ = _build_factory((0.3583, 0.0, 1.0e-9, 4.55e9, 1.0e-300))
+    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
+    off, zero = np.zeros(n_stag), np.zeros(n_stag)
+    j_off, j_zero = np.zeros((n_stag, n_stag)), np.zeros((n_stag, n_stag))
+    assert rhs_off(1.0, y_nd, off) == 0 and rhs_zero(1.0, y_nd, zero) == 0
+    assert jac_off(1.0, y_nd, off, j_off) == 0 and jac_zero(1.0, y_nd, zero, j_zero) == 0
+    assert np.any(off != 0.0) and np.all(np.isfinite(zero)) and np.all(np.isfinite(j_zero))
+    np.testing.assert_array_equal(zero, off)
+    np.testing.assert_array_equal(j_zero, j_off)
+
+
+@needs_eos
+@pytest.mark.parametrize('bad', [True, '1.0', 10**400], ids=['bools', 'str', 'int_above_float'])
+def test_factory_refuses_an_input_that_is_not_a_number(bad):
+    """The CVODE factory checks each radio input array in its own type before any RHS call."""
+    arrays = [np.array([bad])] + [np.array([v]) for v in (1.0, 1.0e-9, 0.0, 7.17e5)]
+    with pytest.raises(Exception) as err:
+        _build_factory(tuple(arrays))
+    assert err.type is ValueError and '#0: ' in str(err.value)
