@@ -5,13 +5,15 @@ Each part is a fresh solver started from the end state of the previous part and 
 next sample time. After each part the run folder gets ``za_part<k>.npz`` (stored rows ``t``
 [yr], ``y`` and ``y_end``) and one record in ``za.json`` (time, lid thickness and heat content,
 surface flux, interior temperature of the lid closure, status, mesh, jump floor, source commit,
-config hash and the md5 of every table file). Run it from the root of the aragog tree under
+config hash, the md5 of every table file and the hand-over gate: ``w_active``, ``f_int_max``,
+the hand-over root and the hand-over time). Run it from the root of the aragog tree under
 test. A 400-node run to 4e5 yr takes about 10 h on one core.
 
 Usage::
 
     python tools/verification/run_surface_lid_case.py <outdir> --eos-dir DIR [--eos-md5 MD5]
         [--samples 1e2,1e3,...] [--nodes 100] [--s-init S] [--dh-min J_PER_KG] [--resume]
+        [--eta PA_S] [--heating W_PER_KG]
     python tools/verification/run_surface_lid_case.py --collect OUT.npz NAME=DIR [NAME=DIR ...]
 
 ``--collect`` writes the time and, per run NAME, ``<NAME>_delta`` [m], ``<NAME>_F_top`` [W/m^2]
@@ -52,8 +54,19 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument('--s-init', type=float, default=9466.0, help='start entropy [J/kg/K]')
     ap.add_argument('--dh-min', type=float, help='jump floor LID_DH_MIN [J/kg]; default: code')
     ap.add_argument('--resume', action='store_true', help='continue after the last part')
+    ap.add_argument('--eta', type=float, help='solid viscosity [Pa s]; default 1e21')
+    ap.add_argument('--heating', type=float, help='internal heating [W/kg]; default none')
     ap.add_argument('--collect', nargs='+', metavar=('OUT.npz', 'NAME=DIR'))
     return ap.parse_args(argv)
+
+
+def _check_options(a: argparse.Namespace) -> None:
+    """Refuse a ``--eta`` that is not finite and positive and a ``--heating`` that is not finite
+    and non-negative."""
+    if a.eta is not None and not (np.isfinite(a.eta) and a.eta > 0.0):
+        raise SystemExit(f'--eta must be finite and positive, got {a.eta}')
+    if a.heating is not None and not (np.isfinite(a.heating) and a.heating >= 0.0):
+        raise SystemExit(f'--heating must be finite and non-negative, got {a.heating}')
 
 
 def _table_md5(eos_dir: Path) -> dict:
@@ -166,6 +179,7 @@ def main(argv=None) -> int:
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
+    _check_options(a)
     tree = Path.cwd()
     if not Path(aragog.__file__).resolve().is_relative_to(tree.resolve()):
         raise SystemExit(f'aragog imported from {aragog.__file__}, not from {tree}')
@@ -193,7 +207,17 @@ def main(argv=None) -> int:
         (
             text
             + json.dumps(
-                dict(RHEOLOGY, nodes=a.nodes, s_init=repr(a.s_init), dh_min=sl.LID_DH_MIN)
+                dict(
+                    RHEOLOGY,
+                    nodes=a.nodes,
+                    s_init=repr(a.s_init),
+                    dh_min=sl.LID_DH_MIN,
+                    **{
+                        k: repr(v)
+                        for k, v in (('eta', a.eta), ('heating', a.heating))
+                        if v is not None
+                    },
+                )
             )
         ).encode()
     ).hexdigest()[:16]
@@ -218,7 +242,12 @@ def main(argv=None) -> int:
     for k, t_end in enumerate(samples[len(rows) :], start=len(rows)):
         c = Config.from_file(str(cfg))
         c.solver.end_time, c.solver.max_steps = t_end, 800_000
-        c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, 1.0e21
+        c.energy.kappah_floor, c.phase_solid.viscosity = (
+            10.0,
+            1.0e21 if a.eta is None else a.eta,
+        )
+        if a.heating:
+            c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
         c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
         c.boundary_conditions.emissivity = 1.0
         c.mesh.number_of_nodes = a.nodes
@@ -248,6 +277,8 @@ def main(argv=None) -> int:
         t_got, y_end = float(tt[-1]), yy[:, -1].copy()
         s.dSdt(t_got, y_end)
         lid = s.state._lid_state or {}
+        root = float(s._lid_root_value(t_got, y_end))
+        t_ho = float(getattr(s, '_lid_handover_time', float('nan')))
         rows.append(
             dict(
                 part=k,
@@ -259,6 +290,10 @@ def main(argv=None) -> int:
                 E=float(y_end[-1]),
                 F_top=float(np.ravel(s.state._heat_flux)[-1]),
                 T_i=float(np.asarray(lid['T_i'])) if 'T_i' in lid else None,
+                w_active=float(np.asarray(lid['w_active'])) if 'w_active' in lid else None,
+                f_int_max=float(np.asarray(lid['f_int_max'])) if 'f_int_max' in lid else None,
+                handover_root=root,
+                handover_time=t_ho if np.isfinite(t_ho) else None,
                 nodes=a.nodes,
                 s_init=a.s_init,
                 dh_min=float(sl.LID_DH_MIN),
@@ -273,7 +308,12 @@ def main(argv=None) -> int:
         np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end)
         out_json.write_text('[\n' + ',\n'.join(json.dumps(r) for r in rows) + '\n]\n')
         print(
-            json.dumps({x: rows[-1][x] for x in ('part', 't_yr', 'status', 'delta')}),
+            json.dumps(
+                {
+                    x: rows[-1][x]
+                    for x in ('part', 't_yr', 'status', 'delta', 'w_active', 'f_int_max')
+                }
+            ),
             flush=True,
         )
         if not rows[-1]['reached'] or rows[-1]['status'] < 0:
