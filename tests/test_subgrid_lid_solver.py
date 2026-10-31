@@ -245,6 +245,27 @@ def test_delta_on_must_fit_the_top_cell(eos):
     _solver(eos, lid_delta_on=0.99 * sl.LID_CAP_FRAC * h_top)
 
 
+@pytest.mark.parametrize('attach_eos', [True, False])
+def test_lid_is_refused_with_constant_properties(eos, attach_eos):
+    """The lid reads the entropy EOS, so a constant-property column is refused at setup, also
+    when an EOS is attached; the same column without the lid sets up."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def build(lid):
+        p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+        p.boundary_conditions.subgrid_lid = lid
+        p.boundary_conditions.normalize()
+        p.phase_mixed.const_properties = True
+        p.phase_mixed.const_T_ref, p.phase_mixed.const_S_ref = 1600.0, 3000.0
+        s = EntropySolver(p, entropy_eos=eos if attach_eos else None)
+        s.initialize()
+        return s
+
+    with pytest.raises(ValueError, match='no const_properties'):
+        build(True)
+    assert not build(False)._lid_on
+
+
 def test_handover_cells_must_fit_the_mesh(eos):
     """A hand-over face must leave one cell below it: on 9 cells, 8 top cells pass and 9 are
     refused at setup with the cell count it needs."""
