@@ -909,6 +909,11 @@ class TestCvodeEnergyOutputGrid:
         s2.solve()
         d2 = s2._compute_step_energy_integrals()
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
+        trace, sol2 = s2._solution.energy_trace, s2._solution
+        sol2.energy_trace = (sol2.t[[0, -1]], sol2.y[:, [0, -1]])
+        err_end = abs(s2._compute_step_energy_integrals()['F_int'] / f_ref - 1.0)
+        sol2.energy_trace = trace
+        assert err_end > 0.1, ('the 2 endpoints must miss the steep decay', err_end)
 
         sN = self._build_greybody_solver('cvode', n_out=65, n_nodes=20)
         sN.solve()
