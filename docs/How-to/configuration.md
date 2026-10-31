@@ -210,7 +210,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |
 | `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |
-| `use_jax_jacobian` | bool | true | When `solver_method = "cvode"`, install a JAX-traced analytic Jacobian instead of the finite-difference Jacobian. Requires JAX and the PROTEUS-side factory registration; falls back to FD Jacobian otherwise. A registered factory falls back only for `core_bc` `bower2018` or `gradient`; any other factory error stops the solve. |
+| `use_jax_jacobian` | bool | true | When `solver_method = "cvode"`, install a JAX-traced analytic Jacobian instead of the finite-difference Jacobian. Requires JAX and a registered factory (PROTEUS registers it); without a factory the solver uses the FD Jacobian. A registered factory falls back to the FD Jacobian only for `core_bc` `bower2018` or `gradient`; any other factory error, also a missing JAX, stops the solve. |
 | `tidal_array` | array[float] | `[0.0]` | Per-staggered-node tidal heating in W/kg. Length must be `1` (broadcast scalar) or `number_of_nodes - 1` |
 
 ### `[initial_condition]`

@@ -240,8 +240,8 @@ def build_jax_rhs_and_jacobian(
         with dSdr_cmb and T_core; requires ``core_module_budget``).
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
-        t0_years, half_life_years)`` of 1D arrays, one entry per
-        radionuclide. When non-empty, the JAX RHS evaluates the
+        t0_years, half_life_years)`` of 1D arrays of one shape, one entry per
+        radionuclide (``make_radio_heating_fn`` also broadcasts an input given once). When non-empty, the JAX RHS evaluates the
         radiogenic source at the live integrator time ``t_phys`` so
         the heating reflects in-step decay. Empty default disables
         radio heating.
@@ -282,7 +282,7 @@ def build_jax_rhs_and_jacobian(
     Raises
     ------
     RuntimeError
-        Without JAX or the ``aragog.jax`` module.
+        Without JAX or the ``aragog.jax`` module, for a supported ``core_bc_mode``.
     TypeError
         For ``scales`` that is not a ``NonDimScales``.
     UnsupportedCoreBCError
@@ -366,16 +366,16 @@ def build_jax_rhs_and_jacobian(
             )
         try:
             shapes = [np.shape(a) for a in radio_isotope_params]
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise ValueError(f'Radionuclide arrays: no 5 arrays of numbers ({exc})') from exc
         if len(set(shapes)) > 1:
             raise ValueError(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
             )
-        if np.size(radio_isotope_params[0]) > 0:
-            radio_arrays = aragog.jax.solver.check_radio_arrays(
-                *radio_isotope_params, start_time=start_time
-            )
+        checked = aragog.jax.solver.check_radio_arrays(
+            *radio_isotope_params, start_time=start_time
+        )
+        radio_arrays = checked if checked[0].size > 0 else ()
     use_radio = bool(radio_arrays)
 
     data = (

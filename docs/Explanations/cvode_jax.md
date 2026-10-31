@@ -35,6 +35,10 @@ def factory(scales, core_bc_mode):
     rhs, jac, _info = build_jax_rhs_and_jacobian(
         eos_jax, phase_params, mesh_arrays, boundary_params, heating, scales,
         core_bc_mode=core_bc_mode,
+        radio_isotope_params=radio,
+        core_module_budget=getattr(solver, '_core_module_budget', None),
+        core_module_q_radio=float(getattr(solver, '_core_module_q_radio', 0.0)),
+        core_module_ra_crit_cmb=getattr(solver, '_core_module_ra_crit_cmb', None),
     )
     return rhs, jac
 
@@ -43,7 +47,7 @@ solver.set_jax_cvode_factory(factory)
 result = solver.solve()
 ```
 
-`eos_jax`, `phase_params`, `mesh_arrays` and `boundary_params` are the JAX pytrees of the EOS tables, the phase parameters, the mesh and the boundary conditions (`EntropyEOS_JAX`, `PhaseParams`, `MeshArrays`, `BoundaryParams`), and `heating` is the internal heating per cell [W/kg]; the PROTEUS wrapper rebuilds the mesh and boundary pytrees from the live solver on every call. `solve()` calls `factory(scales, core_bc_mode)` and hands the pair `(rhs, jac)` to CVODE; `build_jax_rhs_and_jacobian` also returns a dict of diagnostics. CVODE calls `rhs(t, y, ydot)` and `jac(t, y, fy, J)` in the scikits.odes signatures, on nondimensional time and state. Both callables are JIT-compiled on first call; subsequent calls hit the compiled binary directly.
+`eos_jax`, `phase_params`, `mesh_arrays` and `boundary_params` are the JAX pytrees of the EOS tables, the phase parameters, the mesh and the boundary conditions (`EntropyEOS_JAX`, `PhaseParams`, `MeshArrays`, `BoundaryParams`), `heating` is the internal heating per cell that does not change with time [W/kg] (tidal), and `radio` is the 5-tuple `(heat_prod, abundance, concentration, t0_years, half_life_years)` of the isotopes, or `()`, so that the trace evaluates the radiogenic heating at the integrator time; the 3 `core_module` arguments are needed only for `core_bc = "core_module"`. The PROTEUS wrapper rebuilds the mesh and boundary pytrees from the live solver on every call. `solve()` calls `factory(scales, core_bc_mode)` and hands the pair `(rhs, jac)` to CVODE; `build_jax_rhs_and_jacobian` also returns a dict of diagnostics. CVODE calls `rhs(t, y, ydot)` and `jac(t, y, fy, J)` in the scikits.odes signatures, on nondimensional time and state. Both callables are JIT-compiled on first call; subsequent calls hit the compiled binary directly.
 
 When `use_jax_jacobian = true` but no factory is registered (e.g. standalone Aragog tests), the solver silently falls back to CVODE's default finite-difference Jacobian. This is intentional: it means the standalone test suite does not depend on JAX being installed. A registered factory that raises `UnsupportedCoreBCError` (`core_bc` `bower2018` or `gradient`, which have no JAX right-hand side) gives the same fallback after a warning; any other factory error stops the solve.
 

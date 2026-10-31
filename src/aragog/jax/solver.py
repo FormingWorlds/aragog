@@ -156,17 +156,18 @@ def check_radio_arrays(*arrays, start_time=None):
         raise ValueError(
             f'Radionuclide arrays: no 5 arrays of numbers that broadcast ({exc})'
         ) from exc
-    if full[0].ndim > 1 or (full[0].size == 0 and any(c.size for c in concrete)):
+    shapes = [c.shape for c in concrete]
+    if full[0].ndim > 1:
         raise ValueError(
-            f'Radionuclide arrays: shapes {[c.shape for c in concrete]} must broadcast to 1 '
-            'dimension, and to no isotope only if all are empty'
+            f'Radionuclide arrays: shapes {shapes} broadcast to more than 1 dimension'
         )
+    if full[0].size == 0 and any(c.size for c in concrete):
+        raise ValueError(f'Radionuclide arrays: shapes {shapes} leave no isotope to check')
     # A stand-in has no time dependence to check, so a traced set skips the start time.
-    traced = any(isinstance(a, jax.core.Tracer) for a in arrays)
+    if any(isinstance(a, jax.core.Tracer) for a in arrays):
+        start_time = None
     for i, iso in enumerate(zip(*full)):
-        validate_radionuclide(
-            f'#{i}', *iso, ppm=False, start_time=None if traced else start_time
-        )
+        validate_radionuclide(f'#{i}', *iso, ppm=False, start_time=start_time)
     return tuple(
         jnp.asarray(a if isinstance(a, jax.core.Tracer) else c.astype(np.float64), jnp.float64)
         for a, c in zip(arrays, concrete)
