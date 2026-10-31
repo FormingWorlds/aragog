@@ -124,11 +124,10 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     ------
     ValueError
         For a concrete input that is not a number in its own type (a bool, a string, an
-        integer above the float range, an array of another dtype), a concrete half-life that
-        is not a positive normal float, a concrete amplitude factor that is negative or not
-        finite, or a concrete t0 that is not finite (the checks of
-        aragog.parser.validate_radionuclide without a start time); traced inputs are not
-        checked. A mixed list such as [True, 0.5] is one float64 array and passes.
+        integer above the float range, an array of another dtype), a half-life that is not a
+        positive normal float, a negative or non-finite amplitude factor, or a non-finite t0
+        (aragog.parser.validate_radionuclide without a start time). Traced inputs are not
+        checked; a mixed list such as [True, 0.5] is one float64 array and passes.
     """
     radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
     return lambda t_yr: compute_radio_heating(t_yr, radio)

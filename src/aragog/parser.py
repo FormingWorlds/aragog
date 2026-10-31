@@ -452,7 +452,7 @@ def validate_radionuclide(
     half_life_years: float,
     start_time: float | None = None,
     ppm: bool = True,
-) -> None:
+) -> tuple[float, float, float, float, float]:
     """Reject radionuclide inputs the decay law cannot evaluate.
 
     Args:
@@ -461,6 +461,9 @@ def validate_radionuclide(
             settings; ``concentration`` in ppm if ``ppm``, otherwise a mass fraction.
         start_time: Time [yr] at which the heating must be finite; not checked if None.
         ppm: Whether ``concentration`` is in ppm.
+
+    Returns:
+        The 5 settings as the floats the checks used, in the order of the arguments.
 
     Raises:
         ValueError: for an input that does not convert to a float (an integer above the
@@ -508,8 +511,9 @@ def validate_radionuclide(
             f'abundance ({abundance}) and concentration '
             f'({concentration}{unit}) must not be negative'
         )
+    checked = (heat_production, abundance, concentration, t0_years, half_life_years)
     if start_time is None:
-        return
+        return checked
     amplitude = heat_production * abundance * (concentration * _PPM if ppm else concentration)
     with np.errstate(over='ignore'):
         heating = radionuclide_heating(start_time, amplitude, t0_years, half_life_years)
@@ -519,6 +523,7 @@ def validate_radionuclide(
             f'{start_time} yr (t0_years = {t0_years}, half_life_years = '
             f'{half_life_years}); check the amplitude and t0_years'
         )
+    return checked
 
 
 def _check_parsed_radionuclides(radionuclides: list[_Radionuclide]) -> list[_Radionuclide]:
@@ -679,17 +684,20 @@ class Parameters:
 
         # Validate every isotope before converting any, so a rejected call leaves the
         # caller's objects unchanged; an isotope already converted is not scaled again.
+        checked = []
         if self.energy.radionuclides:
             for r in self.radionuclides:
-                validate_radionuclide(
-                    r.name,
-                    r.heat_production,
-                    r.abundance,
-                    r.concentration,
-                    r.t0_years,
-                    r.half_life_years,
-                    start_time=self.solver.start_time,
-                    ppm=not r._is_mass_fraction(),
+                checked.append(
+                    validate_radionuclide(
+                        r.name,
+                        r.heat_production,
+                        r.abundance,
+                        r.concentration,
+                        r.t0_years,
+                        r.half_life_years,
+                        start_time=self.solver.start_time,
+                        ppm=not r._is_mass_fraction(),
+                    )
                 )
         if self.phase_liquid.rheology != SolidRheologyParams():
             raise ValueError(
@@ -698,17 +706,11 @@ class Parameters:
             )
         check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
         check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
-        fields = (
-            'heat_production',
-            'abundance',
-            'concentration',
-            't0_years',
-            'half_life_years',
-        )
+        fields = 'heat_production abundance concentration t0_years half_life_years'.split()
+        for r, values in zip(self.radionuclides, checked):  # empty with radionuclides off
+            for f, v in zip(fields, values):
+                setattr(r, f, v)  # the floats the check used
         for r in self.radionuclides:
-            if self.energy.radionuclides:  # checked above: store the floats the check used
-                for f in fields:
-                    setattr(r, f, float(getattr(r, f)))
             if not r._is_mass_fraction():
                 r._ppm = r.concentration
                 # A new object: in place, an array would also scale the _ppm record it shares.
