@@ -514,6 +514,7 @@ def test_jax_factory_checks_the_heating_at_the_start_time():
 
     iso = tuple(np.array([v]) for v in (1e-4, 1.0, 1e-6, 4.55e9, 1e3))
     check_radio_arrays(*iso)
+    check_radio_arrays(*iso, start_time=4.55e9)
     scales = NonDimScales(state_scale=np.full(4, 3e3), t_ref=1.0)
     with pytest.raises(ValueError, match='not finite at the start time 0.0 yr'):
         build_jax_rhs_and_jacobian(
@@ -544,7 +545,8 @@ def test_check_radio_arrays_accepts_shapes_that_broadcast_to_one_dimension(shape
 
     arrays = [np.full(s, v, dtype=dtype) for s, v in zip(shapes, _RADIO_OK)]
     try:
-        valid = len(np.broadcast_shapes(*shapes)) <= 1
+        full = np.broadcast_shapes(*shapes)
+        valid = len(full) <= 1 and (0 not in full or all(0 in s for s in shapes))
     except ValueError:
         valid = False
     try:
@@ -555,6 +557,8 @@ def test_check_radio_arrays_accepts_shapes_that_broadcast_to_one_dimension(shape
         assert valid and all(
             o.shape == s and o.dtype == np.float64 for o, s in zip(out, shapes)
         )
+        for o, a in zip(out, arrays):
+            np.testing.assert_array_equal(o, a.astype(np.float64))
 
 
 @pytest.mark.unit
@@ -568,3 +572,46 @@ def test_check_radio_arrays_names_a_ragged_or_traced_list():
         check_radio_arrays([[1e-4, 1e-4], [1e-4]], *rest)
     with pytest.raises(ValueError, match='^Radionuclide arrays'):
         jax.jit(lambda x: check_radio_arrays([x], *rest)[0])(1e-4)
+
+
+@pytest.mark.unit
+def test_check_radio_arrays_refuses_an_empty_array_next_to_isotopes():
+    """An empty array broadcast with size-1 inputs leaves no isotope to check, so a
+    negative half-life next to it is refused by the shape check."""
+    pytest.importorskip('jax')
+    from aragog.jax.solver import check_radio_arrays
+
+    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+        check_radio_arrays(np.array([]), [1.0], [1e-6], [0.0], [-5.0])
+
+
+@pytest.mark.unit
+def test_check_radio_arrays_skips_the_start_time_for_a_traced_input():
+    """A traced input has no value, so the start-time heating is not checked with its
+    stand-in; the concrete inputs still are."""
+    jax = pytest.importorskip('jax')
+    from aragog.jax.solver import check_radio_arrays
+
+    def build(half_life):
+        return check_radio_arrays([1e-4], [1.0], [1e-6], [4.55e9], half_life, start_time=0.0)[4]
+
+    assert float(jax.jit(build)(jax.numpy.array([1e9]))[0]) == 1e9
+    with pytest.raises(ValueError, match='#0: half_life_years'):
+        jax.jit(lambda t0: check_radio_arrays([1e-4], [1.0], [1e-6], t0, [-1.0])[3])(
+            jax.numpy.array([0.0])
+        )
+
+
+@pytest.mark.unit
+def test_jax_factory_names_a_ragged_radio_list():
+    """A ragged radio list reaches the factory's refusal as the radionuclide error."""
+    pytest.importorskip('jax')
+    from aragog.jax.nondim import NonDimScales
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    iso = ([[1e-4, 1e-4], [1e-4]], [1.0], [1e-6], [0.0], [1e9])
+    scales = NonDimScales(state_scale=np.full(4, 3e3), t_ref=1.0)
+    with pytest.raises(ValueError, match='^Radionuclide arrays'):
+        build_jax_rhs_and_jacobian(
+            None, None, None, None, np.zeros(4), scales, radio_isotope_params=iso
+        )

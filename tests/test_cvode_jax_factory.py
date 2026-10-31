@@ -217,6 +217,20 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('mode', ['bower2018', 'gradient'])
+def test_unsupported_core_bc_mode_falls_back_without_jax(mode, monkeypatch):
+    """Without JAX, bower2018 and gradient still raise UnsupportedCoreBCError, the type the
+    solver answers with the NumPy RHS, not the missing-JAX RuntimeError."""
+    import sys
+
+    from aragog.solver.cvode_jax import UnsupportedCoreBCError, build_jax_rhs_and_jacobian
+
+    monkeypatch.setitem(sys.modules, 'jax.numpy', None)
+    with pytest.raises(UnsupportedCoreBCError):
+        build_jax_rhs_and_jacobian(None, None, None, None, np.zeros(4), None, core_bc_mode=mode)
+
+
+@pytest.mark.unit
 def test_radio_isotope_params_wrong_length_raises():
     """``radio_isotope_params`` must be a 5-tuple
     (heat_prod, abundance, concentration, t0_years, half_life_years).
