@@ -9,9 +9,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 from click.testing import CliRunner
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from aragog.cli import cli
-from aragog.parser import Parameters, _Radionuclide
+from aragog.parser import Parameters, _Radionuclide, validate_radionuclide
 from aragog.rheology import SolidRheologyParams
 
 from .conftest import EOS_DIR, needs_eos
@@ -360,3 +362,38 @@ def test_a_rebuild_checks_a_converted_isotope_as_a_mass_fraction():
     assert r.concentration == 1.0  # mass fraction; heating 1e10 * 1e300 overflows at t = 0
     with pytest.raises(ValueError, match='X: heating is not finite at the start time 0'):
         replace(q, solver=replace(q.solver, start_time=0.0))
+
+
+_ANY_FLOAT = st.floats(allow_nan=True, allow_infinity=True) | st.sampled_from(
+    [0.0, -0.0, np.finfo(float).tiny, np.nextafter(np.finfo(float).tiny, 0.0), 5e-324]
+)
+
+
+@pytest.mark.unit
+@settings(max_examples=300, deadline=None)
+@given(st.tuples(*[_ANY_FLOAT] * 5))
+def test_validate_radionuclide_accepts_exactly_the_valid_domain(values):
+    """Without a start time, an isotope passes exactly when the half-life is a normal
+    positive float (or inf), the other 4 inputs are finite and none of the 3 factors is
+    negative; every refusal is a ValueError that names the isotope."""
+    hp, ab, cn, t0, hl = values
+    valid = (
+        hl >= np.finfo(float).tiny and np.all(np.isfinite(values[:4])) and min(hp, ab, cn) >= 0
+    )
+    try:
+        validate_radionuclide('X', hp, ab, cn, t0, hl, ppm=False)
+    except ValueError as exc:
+        assert not valid and str(exc).startswith('Radionuclide X: ')
+    else:
+        assert valid
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('field', range(5))
+@pytest.mark.parametrize('bad', [True, False, '1.0', None])
+def test_validate_radionuclide_refuses_a_value_that_is_not_a_number(field, bad):
+    """A TOML true or a string where a number belongs is refused, not read as 1 or compared."""
+    values = [1.0, 1.0, 1.0, 0.0, 1.0e9]
+    values[field] = bad
+    with pytest.raises(ValueError, match='Radionuclide X: .*must be numbers'):
+        validate_radionuclide('X', *values, ppm=False)
