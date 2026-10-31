@@ -35,7 +35,7 @@ result = solver.solve()
 
 The factory takes the bound mesh, EOS, phase parameters, boundary conditions, and heating function and returns a tuple `(rhs, jac)` of JAX-traced callables. CVODE calls `rhs(t, y)` for the RHS evaluation and `jac(t, y)` for the Jacobian. Both callables are JIT-compiled on first call; subsequent calls hit the compiled binary directly.
 
-When `use_jax_jacobian = true` but no factory is registered (e.g. standalone Aragog tests), the solver silently falls back to CVODE's default finite-difference Jacobian. This is intentional: it means the standalone test suite does not depend on JAX being installed.
+When `use_jax_jacobian = true` but no factory is registered (e.g. standalone Aragog tests), the solver silently falls back to CVODE's default finite-difference Jacobian. This is intentional: it means the standalone test suite does not depend on JAX being installed. A registered factory that raises `UnsupportedCoreBCError` (`core_bc` `bower2018` or `gradient`, which have no JAX right-hand side) gives the same fallback after a warning; any other factory error stops the solve.
 
 ## When to opt out
 

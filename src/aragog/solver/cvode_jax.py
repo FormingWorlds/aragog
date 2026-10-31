@@ -24,8 +24,8 @@ Supported ``core_bc_mode`` values:
   is ``jax.solver.dSdt_core_module``, closed by the core evolution
   budget passed as ``core_module_budget``.
 
-Unsupported (factory raises ``ValueError`` and the calling solver
-falls back to numpy RHS + FD Jacobian after logging a warning):
+Unsupported (factory raises ``UnsupportedCoreBCError`` and the calling
+solver falls back to numpy RHS + FD Jacobian after logging a warning):
 - ``bower2018``: extended state with absolute T_core. No JAX
   closure for the core thermal balance has been implemented.
 - ``gradient``: extended state with both boundary entropies. No
@@ -53,6 +53,10 @@ C: int = 512
 
 # Module-level counters for JIT tracing events.
 _TRACE_COUNTERS = {'rhs': 0, 'jac': 0, 'powers': 0}
+
+
+class UnsupportedCoreBCError(ValueError):
+    """A ``core_bc_mode`` (bower2018, gradient) with no JAX RHS; the solver uses the NumPy RHS."""
 
 
 @dataclass
@@ -205,6 +209,7 @@ def build_jax_rhs_and_jacobian(
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
     core_module_ra_crit_cmb: float | None = None,
+    start_time: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -254,6 +259,9 @@ def build_jax_rhs_and_jacobian(
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; required for
         core_module and checked with ``aragog.core.check_ra_crit``.
+    start_time : float, optional
+        Time [yr] at which the radiogenic heating of ``radio_isotope_params`` must be
+        finite (``aragog.parser.validate_radionuclide``); not checked if None.
 
     Returns
     -------
@@ -275,8 +283,10 @@ def build_jax_rhs_and_jacobian(
         Without JAX or the ``aragog.jax`` module.
     TypeError
         For ``scales`` that is not a ``NonDimScales``.
+    UnsupportedCoreBCError
+        For ``core_bc_mode`` 'bower2018' or 'gradient'.
     ValueError
-        For a missing ``core_module_budget``, an unsupported ``core_bc_mode``, inputs of the
+        For a missing ``core_module_budget``, another unsupported ``core_bc_mode``, inputs of the
         wrong size or shape, a type 5 setup that
         ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
         that ``aragog.jax.solver.check_radio_arrays`` refuses.
@@ -298,20 +308,15 @@ def build_jax_rhs_and_jacobian(
             'got None.'
         )
     if core_bc_mode not in ('quasi_steady', 'energy_balance', 'core_module'):
-        logger.warning(
-            'JAX CVODE factory: core_bc_mode=%r is not implemented '
-            'in the JAX RHS; only quasi_steady, energy_balance, and '
-            'core_module are supported. Falling back to numpy RHS + '
-            'FD Jacobian.',
-            core_bc_mode,
+        err = (
+            UnsupportedCoreBCError if core_bc_mode in ('bower2018', 'gradient') else ValueError
         )
-        raise ValueError(
+        raise err(
             f'core_bc_mode={core_bc_mode!r} is not supported by the '
             f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance', 'core_module'. To use any other mode "
-            f'(including {core_bc_mode!r}), set ``use_jax_jacobian = '
-            f'false`` in the config, or leave it true to get the '
-            f'automatic FD-Jacobian fallback.'
+            f"'energy_balance', 'core_module'. Set ``use_jax_jacobian = false`` "
+            f"for the NumPy RHS; with it true, 'bower2018' and 'gradient' use the "
+            f'NumPy RHS after a warning.'
         )
 
     aragog.jax.solver.check_surface_temperature(
@@ -357,13 +362,10 @@ def build_jax_rhs_and_jacobian(
                 '(heat_prod, abundance, concentration, t0_years, '
                 f'half_life_years); got length {len(radio_isotope_params)}'
             )
-        shapes = [np.shape(a) for a in radio_isotope_params]
-        if len(set(shapes)) > 1:
-            raise ValueError(
-                f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
-            )
-        if np.size(radio_isotope_params[0]) > 0:
-            radio_arrays = aragog.jax.solver.check_radio_arrays(*radio_isotope_params)
+        checked = aragog.jax.solver.check_radio_arrays(
+            *radio_isotope_params, start_time=start_time
+        )
+        radio_arrays = checked if checked[0].size > 0 else ()
     use_radio = bool(radio_arrays)
 
     data = (

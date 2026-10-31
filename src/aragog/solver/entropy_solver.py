@@ -48,6 +48,7 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
+from aragog.solver.cvode_jax import UnsupportedCoreBCError
 from aragog.solver.entropy_state import EntropyState
 from aragog.utilities import positive_gravity
 
@@ -4668,7 +4669,7 @@ class EntropySolver:
                         'EntropySolver: option Z active '
                         '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
                     )
-                except Exception as exc:  # pragma: no cover - fallback path
+                except UnsupportedCoreBCError as exc:
                     logger.warning(
                         'EntropySolver: JAX CVODE factory failed (%s); '
                         'falling back to numpy RHS + FD Jacobian',

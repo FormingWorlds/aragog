@@ -133,21 +133,37 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     return lambda t_yr: compute_radio_heating(t_yr, radio)
 
 
-def check_radio_arrays(*arrays):
+def check_radio_arrays(*arrays, start_time=None):
     """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
 
-    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents.
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents, also for arrays of
+    unequal shapes, more than 1 dimension, a ragged list or a list of traced values, and,
+    with ``start_time`` [yr], a heating that is not finite at that time.
     """
     from aragog.parser import validate_radionuclide
 
     # A traced input is checked with a valid stand-in, so the concrete inputs are still checked;
     # each keeps its own dtype, so a bool, a string or an object array reaches the type check.
-    concrete = [
-        np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a)) for a in arrays
-    ]
-    for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):
-        validate_radionuclide(f'#{i}', *iso, ppm=False)
-    return tuple(jnp.asarray(a, dtype=jnp.float64) for a in arrays)
+    try:
+        concrete = [
+            np.ones(a.shape) if isinstance(a, jax.core.Tracer) else np.asarray(a)
+            for a in arrays
+        ]
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f'Radionuclide arrays: pass JAX or NumPy arrays or flat lists of numbers ({exc})'
+        ) from exc
+    shapes = [c.shape for c in concrete]
+    if len(set(shapes)) > 1 or concrete[0].ndim > 1:
+        raise ValueError(
+            f'Radionuclide arrays: the 5 arrays need one shape of at most 1 dimension, got {shapes}'
+        )
+    for i, iso in enumerate(zip(*map(np.atleast_1d, concrete))):
+        validate_radionuclide(f'#{i}', *iso, ppm=False, start_time=start_time)
+    return tuple(
+        jnp.asarray(a if isinstance(a, jax.core.Tracer) else c.astype(np.float64), jnp.float64)
+        for a, c in zip(arrays, concrete)
+    )
 
 
 # ---------------------------------------------------------------------------
