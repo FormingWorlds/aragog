@@ -227,7 +227,10 @@ def test_checks_run_only_with_radionuclides_on(tmp_path, on):
         with pytest.raises(ValueError, match='half_life_years must be positive'):
             Parameters.from_file(str(cfg))
     else:
-        Parameters.from_file(str(cfg))
+        try:
+            Parameters.from_file(str(cfg))
+        except ValueError as exc:
+            pytest.fail(f'an isotope was checked with radionuclides off: {exc}')
 
 
 @pytest.mark.unit
@@ -484,13 +487,14 @@ def test_rebuilds_keep_one_ppm_conversion(wrap):
 
 
 @pytest.mark.unit
-def test_parameters_keep_unchecked_isotopes_as_given():
+@pytest.mark.parametrize('wrap', [np.float32, np.asarray], ids=['float32', '0d'])
+def test_parameters_keep_unchecked_isotopes_as_given(wrap):
     """With radionuclides off nothing is checked, so the isotope keeps its input types;
-    the concentration is still converted from ppm once."""
+    the concentration is still converted from ppm once, also as a 0-d array."""
     p = Parameters.from_file(str(BUNDLED_LOOKUP))
     off = replace(p, energy=replace(p.energy, radionuclides=False))
-    f32 = {k: v if k == 'name' else np.float32(v) for k, v in K40_PPM.items()}
-    q, (r,) = _with(off, f32)
-    assert type(r.heat_production) is np.float32 and type(r.concentration) is np.float32
+    given = {k: v if k == 'name' else wrap(v) for k, v in K40_PPM.items()}
+    q, (r,) = _with(off, given)
+    assert type(r.heat_production) is type(wrap(1.0))
     replace(q)
     assert float(r.concentration) == pytest.approx(310e-6, rel=1e-6)
