@@ -698,7 +698,17 @@ class Parameters:
             )
         check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
         check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
+        fields = (
+            'heat_production',
+            'abundance',
+            'concentration',
+            't0_years',
+            'half_life_years',
+        )
         for r in self.radionuclides:
+            if self.energy.radionuclides:  # checked above: store the floats the check used
+                for f in fields:
+                    setattr(r, f, float(getattr(r, f)))
             if not r._is_mass_fraction():
                 r._ppm = r.concentration
                 # A new object: in place, an array would also scale the _ppm record it shares.

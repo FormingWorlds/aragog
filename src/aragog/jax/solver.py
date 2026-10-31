@@ -123,10 +123,12 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     Raises
     ------
     ValueError
-        For a concrete half-life that is not a positive normal float, a concrete amplitude
-        factor that is negative or not finite, or a concrete t0 that is not finite (the checks
-        of aragog.parser.validate_radionuclide without a start time); traced inputs are not
-        checked.
+        For a concrete input that is not a number in its own type (a bool, a string, an
+        integer above the float range, an array of another dtype), a concrete half-life that
+        is not a positive normal float, a concrete amplitude factor that is negative or not
+        finite, or a concrete t0 that is not finite (the checks of
+        aragog.parser.validate_radionuclide without a start time); traced inputs are not
+        checked. A mixed list such as [True, 0.5] is one float64 array and passes.
     """
     radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
     return lambda t_yr: compute_radio_heating(t_yr, radio)
@@ -139,10 +141,10 @@ def check_radio_arrays(*arrays):
     """
     from aragog.parser import validate_radionuclide
 
-    # A traced input is checked with a valid stand-in, so the concrete inputs are still checked.
+    # A traced input is checked with a valid stand-in, so the concrete inputs are still checked;
+    # each keeps its own dtype, so a bool, a string or an object array reaches the type check.
     concrete = [
-        np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a, dtype=float))
-        for a in arrays
+        np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a)) for a in arrays
     ]
     for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):
         validate_radionuclide(f'#{i}', *iso, ppm=False)
