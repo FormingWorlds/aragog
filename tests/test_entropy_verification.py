@@ -924,6 +924,8 @@ class TestCvodeEnergyOutputGrid:
         # from the sol.t points, and about 3e-6 from the internal-step trace asserted here.
         assert err_2pt < 1e-5 and err_dense < 1e-5, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
+        # Insulating CMB: the surface flux alone closes the heat content change (gap 9e-5).
+        assert d2['F_int'] == pytest.approx(d2['state_heat'], rel=3e-4)
         # The output grid must not perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
