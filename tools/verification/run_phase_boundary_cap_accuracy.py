@@ -3,7 +3,8 @@
 Computes the numbers in the accuracy table of ``docs/Explanations/energy_equation.md``.
 Each case integrates one solver call with the CVODE entropy solver on the
 test EOS (``ARAGOG_TEST_EOS_DIR``) and compares the cell temperatures at the
-call end against ``'fixed'`` at rtol = atol = 1e-10:
+call end against a reference: ``'fixed'`` at rtol = atol = 1e-10 with every CVODE solve at
+``max_step`` 1 yr (the solver keeps atol at 1e-8 or above):
 
 ====  ==============  ========  =====================  ========  ======  =====
 Case  core_bc         Call [yr] Start                  F [W/m2]  w       Nodes
@@ -52,7 +53,20 @@ RUNS = (('fixed', 1e-8), ('rate', 1e-8), ('rate', 1e-10))
 RATE_BOUND_K = 1.3e-4  # the bound the energy-equation docs state for 'rate' at 1e-8
 
 
-def run_case(eos, case, mode, tol):
+def _one_year_steps(s):
+    """Run every CVODE solve of ``s`` at ``max_step`` 1 yr; return the list of those solves."""
+    solve, calls = s._solve_cvode, []
+
+    def one_year(*args, **kw):
+        kw['max_step'] = 1.0 / s._build_nondim_scales().t_ref
+        calls.append(kw['max_step'])
+        return solve(*args, **kw)
+
+    s._solve_cvode = one_year
+    return calls
+
+
+def run_case(eos, case, mode, tol, one_year=False):
     """Integrate one call of ``case``; return the end temperatures [K] and the CVODE step count."""
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=case['n'], end_time=case['end'])
     p.energy = dataclasses.replace(
@@ -69,6 +83,7 @@ def run_case(eos, case, mode, tol):
     p.solver.max_steps = 10_000_000
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
+    calls = _one_year_steps(s) if one_year else None
     if case['start'] == 'mushy':
         s.set_initial_entropy(_pick_mushy_S(eos))
     else:
@@ -77,6 +92,8 @@ def run_case(eos, case, mode, tol):
     sol = s._solution
     if sol.status != 0:
         raise RuntimeError(f'{mode} at {tol:g}: solver status {sol.status}')
+    if calls == []:  # without CVODE the solver falls back to Radau, which has no 1 yr steps
+        raise RuntimeError(f'{mode} at {tol:g}: the 1 yr reference ran no CVODE solve')
     T = np.asarray(eos.temperature(s._P_stag_flat, np.asarray(sol.y)[: s._n_stag, -1])).ravel()
     return T, int(sol.get('cvode_nst') or 0), int(sol.nfev)
 
@@ -97,7 +114,7 @@ def main(names, check=False, width=None):
     failed = []
     for name in names:
         case = CASES[name] if width is None else dict(CASES[name], width=width)
-        T_ref, _, _ = run_case(eos, case, 'fixed', 1e-10)
+        T_ref, _, _ = run_case(eos, case, 'fixed', 1e-10, one_year=True)
         dT, nst, nfev = [], [], []
         for mode, tol in RUNS:
             T, n, f = run_case(eos, case, mode, tol)

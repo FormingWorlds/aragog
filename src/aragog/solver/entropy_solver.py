@@ -366,6 +366,19 @@ _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 # solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
+# Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
+_SUBSOLIDUS_RTOL = 1.0e-9
+_SUBSOLIDUS_ATOL = 1.0e-8
+
+
+def _subsolidus(S: npt.NDArray, S_sol: npt.NDArray) -> bool:
+    """Whether every entry of ``S`` is at or below its solidus entropy ``S_sol``."""
+    return bool(np.all(S <= S_sol))
+
+
+def _boundary_distance(S: npt.NDArray, S_liq: npt.NDArray, S_sol: npt.NDArray) -> npt.NDArray:
+    """Distance [J/(kg K)] of each entry of ``S`` to its nearer phase boundary."""
+    return np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
 
 
 def _segment_arming_margin(
@@ -380,6 +393,34 @@ def _segment_arming_margin(
     if cap_mode == 'rate' and core_bc != 'gradient' and use_cvode:
         return max(margin, delta)
     return margin
+
+
+def _rate_phase_boundary_times(
+    S: npt.NDArray,
+    dSdt: npt.NDArray,
+    S_liq: npt.NDArray,
+    S_sol: npt.NDArray,
+    mass: npt.NDArray,
+    delta: float,
+    rate_floor: bool = True,
+) -> npt.NDArray | None:
+    """Time [yr] of each entry to its step-setting boundary (see ``_rate_phase_boundary_max_step``).
+
+    Returns an array with a non-finite entry where no boundary counts, or None when ``S``,
+    ``dSdt``, the boundaries or the floor are not finite.
+    """
+    dist = _boundary_distance(S, S_liq, S_sol)
+    rate = np.abs(dSdt)
+    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
+    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
+        return None
+    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
+    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
+    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
+    d_near = np.maximum(dist, _PhaseBoundarySegmentRoot.alpha * delta)
+    d = np.where((dist < delta) | ((rate < floor) & (S > S_sol)), d_near, ahead)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return d / np.maximum(rate, floor)
 
 
 def _rate_phase_boundary_max_step(
@@ -397,48 +438,53 @@ def _rate_phase_boundary_max_step(
 
     Every cell with a boundary ahead counts: its time to the next boundary in
     the direction it moves is ``|S - S_b| / |dS/dt|``. A cell inside the stiff
-    zone (within ``delta`` of either boundary) or slower than the mass-weighted
-    mean ``|dS/dt|`` rate floor uses the distance to the nearer boundary on
-    either side. The floor covers an isentropic start, where interior cells
-    have almost no rate until the thermal boundary layers form.
+    zone (within ``delta`` of either boundary) or a super-solidus cell
+    (``S > S_sol``) slower than the mass-weighted mean ``|dS/dt|`` rate floor
+    uses the distance to the nearer boundary floored at
+    ``_PhaseBoundarySegmentRoot.alpha * delta`` (``0.5 * delta``), matching the
+    minimum segment progress distance of ``_PhaseBoundarySegmentRoot``. The
+    rate floor covers an isentropic molten or mushy start, where interior cells
+    have almost no rate until the thermal boundary layers form. Once every
+    entry is at or below the solidus (``np.all(S <= S_sol)``) and no entry
+    within ``delta`` of a boundary heats, the upper bound relaxes from
+    ``bounds[1]`` to ``np.inf``. An entry heats when ``dSdt > 0``, with no
+    threshold: ``dSdt == 0`` does not count as heating.
 
     Parameters
     ----------
     S, dSdt : npt.NDArray
-        Entropy [J/kg/K] and its rate [J/kg/K/yr].
+        Entropy [J/(kg K)] and its time derivative [J/(kg K yr)].
     S_liq, S_sol : npt.NDArray
-        Liquidus and solidus entropy at each entry's pressure [J/kg/K].
+        Liquidus and solidus entropy at each entry's pressure [J/(kg K)], ``S_sol <= S_liq``.
     mass : npt.NDArray
         Weight of each entry in the rate floor [kg]; zero excludes an entry.
     delta : float
-        Half-width of the stiff zone around each boundary [J/kg/K].
-    fraction : float
-        Fraction of the shortest time to a boundary used as ``max_step``.
-    bounds : tuple of float
-        Lower and upper clip [yr].
-    rate_floor : bool
-        Apply the mass-weighted rate floor.
+        Half-width of the stiff zone around each boundary [J/(kg K)], at least
+        ``_RATE_CAP_MIN_DELTA``.
+    fraction : float, default 0.1
+        Fraction of the shortest time to a boundary used as ``max_step``, in ``(0, 1]``.
+    bounds : tuple[float, float], default (1.0, 100.0)
+        Lower and molten/mushy upper clip [yr], ``0 < bounds[0] <= bounds[1]``.
+    rate_floor : bool, default True
+        Whether to apply the mass-weighted mean ``|dS/dt|`` rate floor.
 
     Returns
     -------
     float
-        ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
-        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the
-        boundaries or the floor are not finite.
+        Maximum CVODE step size ``max_step`` [yr] in ``[bounds[0], hi]``, where
+        ``hi = np.inf`` when the upper bound relaxes (see above) and ``bounds[1]``
+        otherwise: ``fraction * min(t_c)`` clipped to ``[bounds[0], hi]`` when
+        at least one entry has a finite ``t_c``; ``hi`` when no entry has a
+        finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the boundaries, or
+        the floor are not finite.
     """
-    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
-    rate = np.abs(dSdt)
-    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
-    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
+    t_c = _rate_phase_boundary_times(S, dSdt, S_liq, S_sol, mass, delta, rate_floor)
+    if t_c is None:
         return bounds[0]
-    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
-    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
-    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
-    d = np.where((dist < delta) | (rate < floor), dist, ahead)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        t_c = d / np.maximum(rate, floor)
     t_c = t_c[np.isfinite(t_c)]
-    return float(np.clip(fraction * t_c.min(), *bounds)) if t_c.size else bounds[1]
+    heating = np.any((_boundary_distance(S, S_liq, S_sol) < delta) & (dSdt > 0.0))
+    hi = np.inf if _subsolidus(S, S_sol) and not heating else bounds[1]
+    return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
 
 
 class _PhaseBoundarySegmentRoot(_CV_RootFunction):
@@ -482,7 +528,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         self.scale = np.asarray(state_scale, dtype=float).ravel()[:n_stag]
         self.n_stag = n_stag
         self.S0 = self._entropy(y0)
-        self.d0 = self._dist(self.S0)
+        self.d0 = _boundary_distance(self.S0, self.S_liq, self.S_sol)
         self.inside = bool(np.any(self.d0 < delta)) if inside is None else inside
         self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
         self.moving = np.isfinite(self.d0)
@@ -499,9 +545,6 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         S = np.asarray(y, dtype=float)[: self.n_stag] * self.scale
         return np.append(S, S[0])
 
-    def _dist(self, S):
-        return np.minimum(np.abs(S - self.S_liq), np.abs(S - self.S_sol))
-
     def components(self, t, y):
         """Root component values at nondimensional ``(t, y)``, in ``names`` order."""
         g = []
@@ -510,7 +553,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
             self.step_cap.evaluate(t, y, gc)
             g.append(float(gc[0]))
         S = self._entropy(y)
-        d = self._dist(S)
+        d = _boundary_distance(S, self.S_liq, self.S_sol)
         g.append(float(d.min()) - (2.0 if self.inside else 1.0) * self.delta)
         if 'entry' in self.names:
             g.append(float(d[self.watch].min()) - self.delta)
@@ -1131,6 +1174,7 @@ class SolverOutput:
     step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
+    time: float  # absolute time of the returned state [yr], the last output time reached
     status: int  # 0 success, 1 stop at a step-cap event, any other value failure
 
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
@@ -1205,9 +1249,8 @@ class SolverOutput:
             Destination NetCDF4 file. Overwrites if the file exists.
         time : float, optional
             Simulation time at which this snapshot was taken [yr].
-            Stored as the scalar ``time`` variable; defaults to the
-            integrated step duration ``dt_actual`` if not supplied
-            (the standalone solver does not carry an absolute clock).
+            Stored as the scalar ``time`` variable; defaults to
+            ``SolverOutput.time``, the time of the stored state.
         description : str, optional
             Free-form description string written to the dataset's
             ``description`` global attribute.
@@ -1270,9 +1313,8 @@ class SolverOutput:
                 v.long_name = long_name
                 v[:] = arr
 
-            # Time stamp: prefer caller-supplied absolute time, else
-            # fall back to the per-call duration.
-            t_value = float(time) if time is not None else float(self.dt_actual)
+            # Time stamp: the caller's time if given, else the time of the state.
+            t_value = float(time) if time is not None else float(self.time)
             _scalar('time', t_value, 'yr', 'Simulation time of snapshot')
 
             # ── Scalar diagnostics ──────────────────────────────────
@@ -4733,7 +4775,15 @@ class EntropySolver:
 
         Each segment is a new CVODE solve from the previous segment's end. A segment ends at
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
-        ends the call. The segments' trajectories and energy traces are joined.
+        ends the call. The segments' trajectories and energy traces are joined. Segments
+        starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
+        ``rtol`` at most ``_SUBSOLIDUS_RTOL`` and a physical ``atol`` at most
+        ``_SUBSOLIDUS_ATOL`` in the unit of each state entry (J/(kg K) for entropy, K for a
+        temperature). The limits also hold after a retry loosens ``solver.rtol`` or raises
+        ``_atol_sf``; tighter caller tolerances are kept. With them the sub-solidus controller
+        case V3-R4 of ``docs/Validation/numerics.md`` stays inside 1.3e-4 K without the
+        100 yr ``max_step`` ceiling. Other segments keep the caller's ``rtol`` and ``atol``,
+        and so does the segment after ``max_segments``, which has no segment root.
 
         Parameters
         ----------
@@ -4775,6 +4825,7 @@ class EntropySolver:
         trigger = 'start'
         res = None
         keep_first = False
+        atol_cap = None  # nondimensional atol limit, built once per call on first use
         for k in range(max_segments + 1):
             tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
             if tspan.size < 2:
@@ -4786,6 +4837,17 @@ class EntropySolver:
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
             h = h_min if last else h_at(t, y)
+            seg_kw = cvode_kw
+            if isinstance(roots, _PhaseBoundarySegmentRoot) and _subsolidus(
+                roots.S0, roots.S_sol
+            ):
+                if atol_cap is None:
+                    atol_cap = _SUBSOLIDUS_ATOL / self._build_nondim_scales().state_scale
+                seg_kw = {
+                    **cvode_kw,
+                    'rtol': min(cvode_kw['rtol'], _SUBSOLIDUS_RTOL),
+                    'atol': np.minimum(cvode_kw['atol'], atol_cap),
+                }
             log.append((t * t_ref, trigger, h * t_ref))
             logger.debug(
                 'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',
@@ -4808,7 +4870,7 @@ class EntropySolver:
                 phi_cap_rootfn=cap if last else roots,
                 tspan=tspan,
                 keep_points_before_root=True,
-                **cvode_kw,
+                **seg_kw,
             )
             ts.append(np.asarray(res.t, dtype=float)[1:])
             ys.append(np.asarray(res.y, dtype=float)[:, 1:])
@@ -4883,8 +4945,8 @@ class EntropySolver:
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
-        # Phase-aware atol: tight during crystallization, relaxed
-        # only when fully solid.
+        # Phase-aware atol: tight during crystallization, relaxed by 10 when fully solid
+        # (sub-solidus rate-cap segments clamp it again, see _solve_cvode_segments).
         try:
             n_stag = self._n_stag
             if self._core_bc == 'gradient':
@@ -6137,7 +6199,7 @@ class EntropySolver:
             Destination NetCDF4 file (overwrites if it exists).
         time : float, optional
             Simulation time at which this snapshot was taken [yr].
-            Defaults to ``SolverOutput.dt_actual`` if omitted.
+            Defaults to ``SolverOutput.time`` if omitted.
         description : str, optional
             Free-form description string written as the dataset's
             ``description`` global attribute.
@@ -6592,6 +6654,7 @@ class EntropySolver:
             step_dE_compression_J=float(getattr(self, '_last_compression_J', 0.0)),
             step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
+            time=float(sol.t[-1]),
             status=sol.status,
             cvode_flag=int(getattr(sol, 'cvode_flag', 0)),
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),

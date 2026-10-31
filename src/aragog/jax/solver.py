@@ -83,12 +83,16 @@ def compute_radio_heating(t_yr, radio_arrays):
     -------
     Array
         Radiogenic heating scalar [W/kg].
+
+    Notes
+    -----
+    No input is checked here: the arrays must pass :func:`check_radio_arrays`, which the two
+    builders call on concrete inputs, and the caller keeps the heating finite at the times it
+    evaluates (``aragog.parser.Parameters`` checks it at the start time).
     """
     hp, ab, cn, t0, hl = radio_arrays
     amp = hp * ab * cn
-    # Exponential decay per isotope, weighted across isotopes.
-    # The 1e-10 yr floor guards against zero denominators.
-    arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
+    arg = LOG_TWO * (t0 - t_yr) / hl
     # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
     per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
     return jnp.sum(per_iso)
@@ -98,8 +102,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
 
     Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
-    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))`` from
-    aragog/parser.py:_Radionuclide.get_heating, vectorised across
+    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))``, the JAX form of
+    aragog.parser.radionuclide_heating, vectorised across
     isotopes. The returned scalar is broadcast across the staggered
     grid by the caller (radio is uniform per cell).
 
@@ -115,12 +119,35 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     -------
     callable
         Function of t_yr returning radiogenic heating [W/kg].
+
+    Raises
+    ------
+    ValueError
+        For a concrete input that is not a number in its own type (a bool, a string, an
+        integer above the float range, an array of another dtype), a half-life that is not a
+        positive normal float, a negative or non-finite amplitude factor, or a non-finite t0
+        (aragog.parser.validate_radionuclide without a start time). Traced inputs are not
+        checked; a mixed list such as [True, 0.5] is one float64 array and passes.
     """
-    radio = tuple(
-        jnp.asarray(a, dtype=jnp.float64)
-        for a in (heat_prod, abundance, concentration, t0_years, half_life_years)
-    )
+    radio = check_radio_arrays(heat_prod, abundance, concentration, t0_years, half_life_years)
     return lambda t_yr: compute_radio_heating(t_yr, radio)
+
+
+def check_radio_arrays(*arrays):
+    """Check the 5 per-isotope arrays of compute_radio_heating; return them as JAX arrays.
+
+    Raises ``ValueError`` as :func:`make_radio_heating_fn` documents.
+    """
+    from aragog.parser import validate_radionuclide
+
+    # A traced input is checked with a valid stand-in, so the concrete inputs are still checked;
+    # each keeps its own dtype, so a bool, a string or an object array reaches the type check.
+    concrete = [
+        np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a)) for a in arrays
+    ]
+    for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):
+        validate_radionuclide(f'#{i}', *iso, ppm=False)
+    return tuple(jnp.asarray(a, dtype=jnp.float64) for a in arrays)
 
 
 # ---------------------------------------------------------------------------

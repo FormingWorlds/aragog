@@ -12,12 +12,14 @@ import numpy.typing as npt
 from scipy.optimize import brentq
 
 from aragog.config.boundary import check_top_node
+from aragog.config.mesh import check_cell_thickness
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
     AdamsWilliamsonEOS,
     UserDefinedEOS,
 )
+from aragog.mesh.stretching import stretched_unit_grid
 from aragog.parser import Parameters, _MeshParameters
 
 __all__ = [
@@ -88,12 +90,19 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
     return float(M_core / (4.0 / 3.0 * np.pi * R_cmb**3))
 
 
+# brentq tolerance [m] of a mass-coordinate radius: the default, and the basic nodes of a
+# refined mesh, whose end cells must hold their set thickness.
+RADIUS_XTOL = 1.0
+REFINED_XTOL = 1e-3
+
+
 def _radius_for_mass_coordinate(
     xi_of_r: Callable[[float], float],
     xi_target: float,
     r_lo: float,
     r_hi: float,
     node: int | str | None = None,
+    xtol: float = RADIUS_XTOL,
 ) -> float:
     """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
 
@@ -117,6 +126,8 @@ def _radius_for_mass_coordinate(
         Bracket endpoints [m], ``r_lo < r_hi``.
     node : int or str, optional
         Node index or label, used only in the clamp warning message.
+    xtol : float, optional
+        Absolute radius tolerance of the root [m].
 
     Returns
     -------
@@ -135,7 +146,7 @@ def _radius_for_mass_coordinate(
     if f_hi == 0.0:
         return r_hi
     if f_lo * f_hi < 0.0:
-        return float(brentq(_f, r_lo, r_hi, xtol=1.0, rtol=1e-12))
+        return float(brentq(_f, r_lo, r_hi, xtol=xtol, rtol=1e-12))
 
     clamped = r_lo if f_lo > 0.0 else r_hi
     logger.warning(
@@ -236,6 +247,7 @@ class Mesh:
 
         # STEP 1: Set up the basic mesh
         self.settings: _MeshParameters = parameters.mesh
+        check_cell_thickness(self.settings)
         # Start with uniform spatial spacing to initialize EOS/density
         initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
@@ -282,6 +294,14 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
+            if self._refined:
+                span = r_surf - r_core
+                c, t = self.settings.cmb_cell_thickness, self.settings.surface_cell_thickness
+                first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
+                last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
+                grid = self._refined_unit_grid(first, last)
+                basic_mass_coordinates = (r_core + span * grid).reshape(-1, 1)
+
             basic_coordinates = np.empty_like(basic_mass_coordinates)
             basic_coordinates[0, 0] = r_core  # CMB: exact
             basic_coordinates[-1, 0] = r_surf  # surface: exact
@@ -292,7 +312,12 @@ class Mesh:
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
                 basic_coordinates[j, 0] = _radius_for_mass_coordinate(
-                    _xi_of_r, xi_target, r_lo, r_hi, node=j
+                    _xi_of_r,
+                    xi_target,
+                    r_lo,
+                    r_hi,
+                    node=j,
+                    xtol=REFINED_XTOL if self._refined else RADIUS_XTOL,
                 )
             # Zero-width cells divide by zero in the gradient operators, so two
             # nodes clamped to the same endpoint must fail here.
@@ -306,8 +331,18 @@ class Mesh:
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
         else:
+            if self._refined:
+                r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+                initial_spatial = r_in + (r_out - r_in) * self._refined_unit_grid(
+                    self.settings.cmb_cell_thickness / (r_out - r_in),
+                    self.settings.surface_cell_thickness / (r_out - r_in),
+                ).reshape(-1, 1)
+                initial_spatial[[0, -1], 0] = r_in, r_out
             basic_coordinates = initial_spatial
             basic_mass_coordinates = initial_spatial
+
+        if self._refined:
+            self._check_refined_radii(basic_coordinates[:, 0])
 
         self.basic: FixedMesh = FixedMesh(
             self.settings,
@@ -326,8 +361,9 @@ class Mesh:
         staggered_mass_coordinates: npt.NDArray = (
             self.basic.mass_radii[:-1] + 0.5 * self.basic.delta_mesh
         )
-        if parameters.mesh.mass_coordinates:
+        if parameters.mesh.mass_coordinates or self._refined:
             self.eos.set_staggered_effective_density(self.basic.radii)
+        if parameters.mesh.mass_coordinates:
             rb = self.basic.radii[:, 0]
             staggered_coordinates = np.array(
                 [
@@ -424,6 +460,42 @@ class Mesh:
 
         return dxidr
 
+    @property
+    def _refined(self) -> bool:
+        return bool(self.settings.surface_cell_thickness or self.settings.cmb_cell_thickness)
+
+    def _check_refined_radii(self, r) -> None:
+        """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
+        start and end at the shell radii exactly, and each set end cell has its thickness to
+        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger."""
+        r_inner, r_outer = self.settings.inner_radius, self.settings.outer_radius
+        # brentq places a solved node to REFINED_XTOL; an end cell holds twice that.
+        atol = 2 * REFINED_XTOL if self.settings.mass_coordinates else 0.0
+        d = np.diff(r)
+        bad = [] if np.all(d > 0.0) else ['the radii are not strictly increasing']
+        if (r[0], r[-1]) != (r_inner, r_outer):
+            bad.append(
+                f'the end radii {r[0]!r}, {r[-1]!r} m are not {r_inner!r}, {r_outer!r} m'
+            )
+        for name, cell in (('cmb_cell_thickness', d[0]), ('surface_cell_thickness', d[-1])):
+            target = getattr(self.settings, name)
+            if target and not abs(cell - target) <= max(atol, 1e-6 * target):
+                bad.append(f'mesh.{name} = {target} m gives an end cell of {cell} m')
+        if bad:
+            raise ValueError('refined mesh: ' + '; '.join(bad))
+
+    def _refined_unit_grid(self, first: float, last: float) -> npt.NDArray:
+        """Stretched unit grid for ``mesh.cmb_cell_thickness`` and
+        ``mesh.surface_cell_thickness``, as fractions of the coordinate span."""
+        try:
+            return stretched_unit_grid(self.settings.number_of_nodes, first, last)
+        except ValueError as exc:
+            raise ValueError(
+                f'mesh.cmb_cell_thickness = {self.settings.cmb_cell_thickness} m and '
+                f'mesh.surface_cell_thickness = {self.settings.surface_cell_thickness} m '
+                f'give no refined grid of {self.settings.number_of_nodes} nodes: {exc}'
+            ) from exc
+
     def get_constant_spacing(self) -> npt.NDArray:
         """Constant radius spacing across the mantle
 
@@ -442,6 +514,9 @@ class Mesh:
     def _get_d_dr_transform_matrix(self) -> npt.NDArray:
         """Transform matrix for determining d/dr of a staggered quantity on the basic mesh.
 
+        An end row extrapolates linearly the two nearest interior differences, each sampled at
+        the midpoint of its two staggered nodes, so it is exact for a quadratic quantity.
+
         Returns:
             The transform matrix
         """
@@ -451,20 +526,16 @@ class Mesh:
         transform[1:-1, :-1] += np.diagflat(-1 / self.staggered.delta_mesh)  # k=0 diagonal
         transform[1:-1:, 1:] += np.diagflat(1 / self.staggered.delta_mesh)  # k=1 diagonal
 
-        # End rows extrapolate the gradient from the two nearest interior basic nodes. They set
-        # the initial end values of dS/dr in gradient mode; the flux computations replace the
-        # end values with the adjacent interior gradient or a boundary state variable.
-
-        # Extrapolation of gradient at inner radius
-        inner_delta_ratio = self.basic.delta_mesh[1].item() / self.basic.delta_mesh[0].item()
+        # End rows set the initial end values of dS/dr in gradient mode; the flux computations
+        # replace them with the adjacent interior gradient or a boundary state variable. The
+        # ratio is (end node to first midpoint) over (first to second midpoint).
+        db = np.ravel(self.basic.delta_mesh)
+        inner_delta_ratio = (3 * db[0] + db[1]) / (db[0] + 2 * db[1] + db[2])
         transform[0, 0] = -(inner_delta_ratio + 1) / self.staggered.delta_mesh[0].item()
         transform[0, 1] = (inner_delta_ratio + 1) / self.staggered.delta_mesh[0].item()
         transform[0, 1] += inner_delta_ratio / self.staggered.delta_mesh[1].item()
         transform[0, 2] = -inner_delta_ratio / self.staggered.delta_mesh[1].item()
-        # Extrapolation of gradient at outer radius
-        outer_delta_ratio: float = (
-            self.basic.delta_mesh[-2].item() / self.basic.delta_mesh[-1].item()
-        )
+        outer_delta_ratio = (3 * db[-1] + db[-2]) / (db[-1] + 2 * db[-2] + db[-3])
         transform[-1, -1] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
         transform[-1, -2] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
         transform[-1, -2] -= outer_delta_ratio / self.staggered.delta_mesh[-2].item()

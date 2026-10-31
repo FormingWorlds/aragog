@@ -122,7 +122,7 @@ def _reference_make_radio_heating_fn(
     amp = hp * ab * cn
 
     def _h(t_yr):
-        arg = _LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
+        arg = _LOG_TWO * (t0 - t_yr) / hl
         per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
         return jnp.sum(per_iso)
 

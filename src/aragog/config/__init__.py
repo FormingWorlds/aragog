@@ -21,7 +21,6 @@ from aragog.config.energy import EnergyConfig
 from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
-from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
 from aragog.rheology import SolidRheologyParams
 
@@ -36,7 +35,6 @@ __all__ = [
     'MeshConfig',
     'MixedPhaseConfig',
     'PhaseConfig',
-    'RadionuclideConfig',
     'SolidRheologyParams',
     'SolverConfig',
 ]
@@ -113,6 +111,7 @@ class Config:
         from aragog.parser import (
             Parameters,
             _BoundaryConditionsParameters,
+            _check_parsed_radionuclides,
             _EnergyParameters,
             _InitialConditionParameters,
             _MeshParameters,
@@ -162,6 +161,7 @@ class Config:
         for key, val in data.items():
             if key.startswith('radionuclide_'):
                 radionuclides.append(_Radionuclide(**val))
+        _check_parsed_radionuclides(radionuclides)
 
         if config_dir is not None:
             _resolve_data_paths(config_dir, mesh, initial_condition)

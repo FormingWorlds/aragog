@@ -21,6 +21,7 @@ nav:
       - Solver tuning:
           - Solver method tuning: How-to/solver-method-tuning.md
           - Melt-fraction step cap: How-to/phi-step-cap.md
+          - Mesh refinement: How-to/mesh-refinement.md
           - UTBL parameterisation: How-to/utbl-parameterisation.md
       - Outputs & testing:
           - Inspecting NetCDF output: How-to/netcdf.md
@@ -34,6 +35,7 @@ nav:
       - Building a test: Tutorials/build_test.md
       - Fixed surface temperature: Tutorials/surface_temperature.md
       - Properties at the solidus: Tutorials/phase_blend.md
+      - Refining the mesh: Tutorials/mesh_refinement.md
       - Solid-state convection: Tutorials/solid_state_convection.md
       - A crust on the magma ocean: Tutorials/surface_lid.md
 
@@ -59,6 +61,7 @@ nav:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
           - Melt-fraction step cap: Explanations/phi_step_cap_rationale.md
+          - Mesh refinement: Explanations/mesh_refinement.md
       - Diagnostics:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
@@ -70,6 +73,7 @@ nav:
       - Surface lid: Validation/surface_lid.md
       - Phase transitions: Validation/phase_transitions.md
       - Numerics: Validation/numerics.md
+      - Mesh refinement: Validation/mesh_refinement.md
 
   - Reference:
       - API reference:

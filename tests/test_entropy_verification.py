@@ -13,22 +13,13 @@ Test hierarchy:
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
-from tests.conftest import entropy_eos_copy
-
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
-)
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -786,7 +777,7 @@ class TestCvodeEnergyOutputGrid:
 
     @staticmethod
     def _build_greybody_solver(
-        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None
+        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None, n_nodes=60
     ):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
         steeply within the call, the regime that breaks a 2-point integral."""
@@ -844,7 +835,7 @@ class TestCvodeEnergyOutputGrid:
         mesh = MESHP(
             outer_radius=6.371e6,
             inner_radius=3.480e6,
-            number_of_nodes=60,
+            number_of_nodes=n_nodes,
             mixing_length_profile='constant',
             core_density=10500.0,
             eos_method=1,
@@ -908,23 +899,29 @@ class TestCvodeEnergyOutputGrid:
     def test_dense_output_recovers_flux_integral(self):
         """F_int over the internal steps matches a high-resolution scipy reference
         with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
-        ref = self._build_greybody_solver('bdf')
+        ref = self._build_greybody_solver('bdf', n_nodes=20)
         ref.solve()
         f_ref = ref._compute_step_energy_integrals()['F_int']
         assert ref._solution.t.size > 200, 'scipy reference grid must be dense'
         assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
 
-        s2 = self._build_greybody_solver('cvode', n_out=2)
+        s2 = self._build_greybody_solver('cvode', n_out=2, n_nodes=20)
         s2.solve()
         d2 = s2._compute_step_energy_integrals()
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
+        trace, sol2 = s2._solution.energy_trace, s2._solution
+        sol2.energy_trace = (sol2.t[[0, -1]], sol2.y[:, [0, -1]])
+        err_end = abs(s2._compute_step_energy_integrals()['F_int'] / f_ref - 1.0)
+        sol2.energy_trace = trace
+        assert err_end > 0.1, ('the 2 endpoints must miss the steep decay', err_end)
 
-        sN = self._build_greybody_solver('cvode', n_out=65)
+        sN = self._build_greybody_solver('cvode', n_out=65, n_nodes=20)
         sN.solve()
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
-        # An output-point integral misses the in-call decay at 2 points (~0.66 error).
+        # F_int error: about 0.5 from the 2 endpoints, 1.3e-3 (n_out=2) and 5.5e-4 (n_out=65)
+        # from the sol.t points, and about 3e-6 from the internal-step trace asserted here.
         assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # The output grid must not perturb the integration window.

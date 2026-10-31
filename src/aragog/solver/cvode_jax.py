@@ -286,8 +286,9 @@ def build_jax_rhs_and_jacobian(
         For ``scales`` that is not a ``NonDimScales``.
     ValueError
         For a missing ``core_module_budget``, an unsupported ``core_bc_mode``, inputs of the
-        wrong size or shape, and a type 5 setup that
-        ``aragog.jax.solver.check_surface_temperature`` refuses.
+        wrong size or shape, a type 5 setup that
+        ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
+        that ``aragog.jax.solver.check_radio_arrays`` refuses.
     """
     try:
         import jax.numpy as jnp
@@ -389,9 +390,7 @@ def build_jax_rhs_and_jacobian(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
             )
         if np.size(radio_isotope_params[0]) > 0:
-            radio_arrays = tuple(
-                jnp.asarray(a, dtype=jnp.float64) for a in radio_isotope_params
-            )
+            radio_arrays = aragog.jax.solver.check_radio_arrays(*radio_isotope_params)
     use_radio = bool(radio_arrays)
 
     data = (

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import tomllib  # noqa: F401
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Self
 
@@ -30,6 +30,7 @@ from aragog.config.energy import (
     check_convective_threshold,
     check_eos_floor_margin,
 )
+from aragog.config.mesh import check_cell_thickness
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
     SEPARATION_BUOYANCY_DEFAULT,
@@ -318,6 +319,13 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
+    # Thickness [m] of the outermost and innermost basic cell, at least 2 m; 0 leaves that end
+    # unset, and it grows when only the other end is set. See aragog.mesh.stretching.
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __post_init__(self):
+        check_cell_thickness(self)
 
 
 @dataclass
@@ -433,9 +441,126 @@ class _PhaseParameters:
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
 
 
+def radionuclide_heating(
+    time: npt.NDArray | float,
+    amplitude: float,
+    t0_years: float,
+    half_life_years: float,
+) -> npt.NDArray | float:
+    """Decay-law heating ``amplitude * exp(log(2) * (t0 - t) / half_life)`` [W/kg].
+
+    The numpy form of the law; ``aragog.jax.solver.make_radio_heating_fn`` is the JAX
+    form. A zero amplitude gives 0 without evaluating the exponent, so a zero or NaN
+    half-life of an unused isotope neither warns nor overflows.
+    """
+    if amplitude == 0.0:
+        return np.zeros_like(time, dtype=float) if np.ndim(time) else 0.0
+    arg: npt.NDArray | float = np.log(2) * (t0_years - time) / half_life_years
+    return amplitude * np.exp(arg)
+
+
+def validate_radionuclide(
+    name: str,
+    heat_production: float,
+    abundance: float,
+    concentration: float,
+    t0_years: float,
+    half_life_years: float,
+    start_time: float | None = None,
+    ppm: bool = True,
+) -> tuple[float, float, float, float, float]:
+    """Reject radionuclide inputs the decay law cannot evaluate.
+
+    Args:
+        name: Isotope label used in the error messages.
+        heat_production, abundance, concentration, t0_years, half_life_years: Isotope
+            settings; ``concentration`` in ppm if ``ppm``, otherwise a mass fraction.
+        start_time: Time [yr] at which the heating must be finite; not checked if None.
+        ppm: Whether ``concentration`` is in ppm.
+
+    Returns:
+        The 5 settings as the floats the checks used, in the order of the arguments.
+
+    Raises:
+        ValueError: for an input that does not convert to a float (an integer above the
+            float range, a complex), that is a bool, a string or None, or that is an array or
+            NumPy scalar of a type other than integer or float (0-d arrays and JAX scalars of
+            those types pass), a half-life below the smallest normal float (about 2.2e-308 yr,
+            which keeps the time derivative of a zero-amplitude isotope finite) or not a
+            number, a heat production, abundance or concentration that is negative, a heat
+            production, abundance, concentration or t0_years that is not finite, or a heating
+            that is not finite at ``start_time``.
+    """
+    values = (heat_production, abundance, concentration, t0_years, half_life_years)
+    try:
+        # A bool, a string or a non-numeric array would pass float(); refuse those first.
+        if any(
+            v is None
+            or isinstance(v, (bool, str, bytes))
+            or getattr(getattr(v, 'dtype', None), 'kind', 'f') not in 'iuf'
+            for v in values
+        ):
+            raise TypeError
+        heat_production, abundance, concentration, t0_years, half_life_years = map(
+            float, values
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f'Radionuclide {name}: heat_production, abundance, concentration, t0_years and '
+            f'half_life_years must be numbers, got {values}'
+        ) from exc
+    if not half_life_years >= np.finfo(float).tiny:
+        raise ValueError(
+            f'Radionuclide {name}: half_life_years must be positive and at least '
+            f'{np.finfo(float).tiny:.3g} yr, got {half_life_years}'
+        )
+    if not np.all(np.isfinite([heat_production, abundance, concentration, t0_years])):
+        raise ValueError(
+            f'Radionuclide {name}: heat_production ({heat_production}), abundance ({abundance}), '
+            f'concentration ({concentration}) and t0_years ({t0_years}) must be finite'
+        )
+    unit = ' ppm' if ppm else ''
+    # On the input value: ppm scaling can round a tiny negative value to -0.0.
+    if min(heat_production, abundance, concentration) < 0.0:
+        raise ValueError(
+            f'Radionuclide {name}: heat_production ({heat_production}), '
+            f'abundance ({abundance}) and concentration '
+            f'({concentration}{unit}) must not be negative'
+        )
+    checked = (heat_production, abundance, concentration, t0_years, half_life_years)
+    if start_time is None:
+        return checked
+    amplitude = heat_production * abundance * (concentration * _PPM if ppm else concentration)
+    with np.errstate(over='ignore'):
+        heating = radionuclide_heating(start_time, amplitude, t0_years, half_life_years)
+    if not np.isfinite(heating):
+        raise ValueError(
+            f'Radionuclide {name}: heating is not finite at the start time '
+            f'{start_time} yr (t0_years = {t0_years}, half_life_years = '
+            f'{half_life_years}); check the amplitude and t0_years'
+        )
+    return checked
+
+
+def _check_parsed_radionuclides(radionuclides: list[_Radionuclide]) -> list[_Radionuclide]:
+    """Reject a configuration section that sets ``_ppm``, which only the ppm conversion sets."""
+    for r in radionuclides:
+        if r._ppm is not None:
+            raise ValueError(f'Radionuclide {r.name}: _ppm is not a configuration key')
+    return radionuclides
+
+
 @dataclass
 class _Radionuclide:
-    """Stores the settings in a radionuclide section in the configuration data."""
+    """Stores the settings in a radionuclide section in the configuration data.
+
+    ``concentration`` is read in ppm and becomes a mass fraction in
+    ``Parameters.__post_init__``. ``_ppm`` keeps the ppm value it came from and is copied by
+    ``dataclasses.replace``, so a concentration still equal to ``_ppm * 1e-6`` is not scaled
+    again, and any other value (a new ppm value, by replace or by assignment) is converted.
+    Write a new concentration in ppm: an edited mass fraction is read as ppm, and a ppm value
+    equal to the old ``_ppm * 1e-6`` is read as converted.
+    """
 
     name: str
     t0_years: float
@@ -443,6 +568,11 @@ class _Radionuclide:
     concentration: float
     heat_production: float
     half_life_years: float
+    _ppm: float | None = field(default=None, repr=False, compare=False)
+
+    def _is_mass_fraction(self) -> bool:
+        """Whether ``concentration`` is converted: it equals ``_ppm * 1e-6`` [mass fraction]."""
+        return self._ppm is not None and self.concentration == self._ppm * _PPM
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
         """Radiogenic heating
@@ -455,10 +585,8 @@ class _Radionuclide:
                 otherwise a numpy row array where each entry in the row is associated
                 with a single time in the time array.
         """
-        arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
         amplitude = self.heat_production * self.abundance * self.concentration
-        # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
-        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
+        return radionuclide_heating(time, amplitude, self.t0_years, self.half_life_years)
 
 
 @dataclass
@@ -570,32 +698,23 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
-        # the caller's objects unchanged.
-        scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
+        # Validate every isotope before converting any, so a rejected call leaves the
+        # caller's objects unchanged; an isotope already converted is not scaled again.
+        checked = []
         if self.energy.radionuclides:
-            t_start = self.solver.start_time
-            for r, r_ppm in zip(scaled, self.radionuclides):
-                if not r.half_life_years > 0.0:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: half_life_years must be positive, '
-                        f'got {r.half_life_years}'
+            for r in self.radionuclides:
+                checked.append(
+                    validate_radionuclide(
+                        r.name,
+                        r.heat_production,
+                        r.abundance,
+                        r.concentration,
+                        r.t0_years,
+                        r.half_life_years,
+                        start_time=self.solver.start_time,
+                        ppm=not r._is_mass_fraction(),
                     )
-                # On the ppm input: scaling can round a tiny negative value to -0.0.
-                if min(r_ppm.heat_production, r_ppm.abundance, r_ppm.concentration) < 0.0:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: heat_production ({r_ppm.heat_production}), '
-                        f'abundance ({r_ppm.abundance}) and concentration '
-                        f'({r_ppm.concentration} ppm) must not be negative'
-                    )
-                with np.errstate(over='ignore'):
-                    finite = np.isfinite(r.get_heating(t_start))
-                if not finite:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: heating is not finite at the start time '
-                        f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
-                        f'{r.half_life_years}); check the amplitude and t0_years'
-                    )
+                )
         if self.phase_liquid.rheology != SolidRheologyParams():
             raise ValueError(
                 'Solid-state rheology is only supported on phase_solid; '
@@ -603,9 +722,15 @@ class Parameters:
             )
         check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
         check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
-
-        for r, r_scaled in zip(self.radionuclides, scaled):
-            r.concentration = r_scaled.concentration
+        fields = 'heat_production abundance concentration t0_years half_life_years'.split()
+        for r, values in zip(self.radionuclides, checked):  # empty with radionuclides off
+            for f, v in zip(fields, values):
+                setattr(r, f, v)  # the floats the check used
+        for r in self.radionuclides:
+            if not r._is_mass_fraction():
+                r._ppm = r.concentration
+                # A new object: in place, an array would also scale the _ppm record it shares.
+                r.concentration = r.concentration * _PPM
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
@@ -705,7 +830,7 @@ class Parameters:
                         f'Configuration error in [{section_name}] of {path.name}: {exc}'
                     ) from exc
 
-        init_dict['radionuclides'] = radionuclides
+        init_dict['radionuclides'] = _check_parsed_radionuclides(radionuclides)
         _resolve_data_paths(
             path.resolve().parent, init_dict['mesh'], init_dict['initial_condition']
         )
@@ -761,7 +886,7 @@ class Parameters:
                 using_dataclass=_Radionuclide, section_name=radionuclide_section
             )
             radionuclides.append(radionuclide)
-        init_dict['radionuclides'] = radionuclides
+        init_dict['radionuclides'] = _check_parsed_radionuclides(radionuclides)
         _resolve_data_paths(
             Path(filenames[0]).resolve().parent,
             init_dict['mesh'],

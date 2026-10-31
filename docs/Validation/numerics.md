@@ -51,9 +51,9 @@ Drive `EntropySolver` through short integrations and check the resulting profile
 
 The conservation tests are the strongest class of verification because they hold under any valid run, not just specific test scenarios:
 
-- **Energy conservation.** $E_\mathrm{th}$ change over a closed integration matches the time-integrated surface flux to within solver tolerance.
+- **Energy conservation.** $E_\mathrm{th}$ change over a closed integration matches the time-integrated surface flux within solver tolerance.
 - **Mass conservation.** Mantle mass remains constant through phase changes.
-- **Grey-body cooling.** Surface flux follows $\varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ within tolerance once the radiative regime is established.
+- **Grey-body cooling.** Surface flux follows $\varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ inside tolerance once the radiative regime is established.
 
 ![Mass-coordinate Jacobian sanity](../figures/vv/fig_07_mass_coord_jacobian.png)
 
@@ -61,7 +61,7 @@ The conservation tests are the strongest class of verification because they hold
 
 ![Radioactive decay](../figures/vv/fig_06_radio_decay.png)
 
-**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ for the bundled isotope cocktail (Ruedas 2017): present-day specific powers ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) decayed back to Solar System formation. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to within solver tolerance.
+**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ for the bundled isotope cocktail (Ruedas 2017): present-day specific powers ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) decayed back to Solar System formation. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to solver tolerance.
 
 ### JAX path tests (`tests/test_jax_entropy.py`)
 
@@ -207,3 +207,216 @@ The suite asserts the following physical invariants on every solver-driven test 
 4. **Entropy gradient continuity.** $\partial S/\partial r$ and the resulting fluxes are $C^0$ through the solidus and liquidus crossings (the smoothing functions enforce this).
 5. **Energy conservation.** Within the integrator tolerance, $\Delta E_\mathrm{th}$ matches the time-integrated boundary fluxes plus internal heating sources.
 6. **Mass conservation.** Total mantle mass is preserved under gravitational separation and chemical mixing (the segregation flux is divergence-free in mass).
+
+## Phase-boundary rate controller verification
+
+### What this section checks
+
+This section verifies the event-driven phase-boundary rate controller (`phase_boundary_cap = "rate"`).
+The controller regulates time steps in the CVODE solver near phase boundaries (solidus and liquidus) and during solid mantle cooling.
+We verify that rate segmentation maintains temperature accuracy to $1.3 \times 10^{-4}\text{ K}$ against a high-resolution reference ($1\text{ yr}$ steps at rtol $10^{-10}$).
+Tolerances in this section are given as the relative tolerance rtol.
+The solver keeps the absolute tolerance atol at $10^{-8}$ or above, in the unit of each state entry.
+It multiplies atol by 10 when the mean melt fraction at the start of a call is at most 0.01.
+A case states where it sets atol another way.
+We also report the round-off envelope of the controller cases and verify non-stalling behavior during mantle solidification; 2 coupled PROTEUS cases compare runs with and without the rules of the controller.
+The cases below evaluate accuracy, stiff-zone boundary landing, post-solidification stepping, and coupled behavior.
+
+### Accuracy of event-driven rate segmentation at phase boundaries
+
+**Why this check exists.**
+Near phase boundaries, latent heat release causes sharp changes in effective heat capacity.
+If time steps are too large near a phase boundary, the numerical integrator incurs large local truncation errors or step rejections.
+
+**What it tests.**
+Four test cases (Cases A, B, C, D) cover two core boundary conditions and 16 to 24 nodes.
+Cases A, C and D start in the mushy zone; Case B starts $230\text{ J/(kg K)}$ above the liquidus.
+Cases A, B and D use the smoothing width $w = 0.01$, Case C uses $w = 0$.
+The test compares the temperature profile $T(r)$ from `phase_boundary_cap = "rate"` at rtol $10^{-8}$ against a high-resolution reference (`phase_boundary_cap = "fixed"` at rtol $10^{-10}$, with a $1\text{ yr}$ ceiling on `max_step` in every CVODE solve).
+
+**How we know the right answer.**
+A $1\text{ yr}$ ceiling on `max_step` at rtol $10^{-10}$ resolves the phase boundaries.
+The `rate` run at rtol $10^{-10}$ ends within $2.1 \times 10^{-6}\text{ K}$ of this reference in every case. In Cases A and C the end temperatures are equal.
+
+**Why it matters.**
+Accurate temperatures near phase boundaries set the timing and depth of magma ocean crystallization in planetary evolution models.
+
+??? info "Test details"
+    - Reference: $1\text{ yr}$ ceiling on `max_step` at rtol $10^{-10}$
+    - Tolerance: $\max_i |T_{\text{rate}, 10^{-8}, i} - T_{\text{fixed}, 10^{-10}, i}| \le 1.3 \times 10^{-4}\text{ K}$ (observed: Case A $6.91 \times 10^{-6}\text{ K}$, Case B $2.92 \times 10^{-5}\text{ K}$, Case C $1.04 \times 10^{-5}\text{ K}$, Case D $2.83 \times 10^{-5}\text{ K}$)
+    - Test id: V1 (rate segmentation accuracy): the command below; no pytest case runs it
+    - Command: `ARAGOG_TEST_EOS_DIR=... python tools/verification/run_phase_boundary_cap_accuracy.py --check`
+
+### Stiff-zone boundary landing under slow cooling
+
+**Why this check exists.**
+When a cell cools slowly near the boundary, its cooling rate $|\dot{S}|$ can approach zero while the distance to the boundary remains small.
+Without a floor on the effective progress distance, the step cap could collapse to the $1\text{ yr}$ minimum step bound, causing many tiny steps.
+
+**What it tests.**
+A 12-node column on the CI test table cools for $15\,000\text{ yr}$ under a prescribed surface flux $F = 20\text{ W/m}^2$, with `matprop_smooth_width` $= 0$, so that the stiff-zone half-width is $\delta = 10\text{ J/(kg K)}$.
+Cells 4 and 5 start $11$ and $12.5\text{ J/(kg K)}$ above the solidus, just outside the stiff zone; the other cells start $15\text{ J/(kg K)}$ below it, off the edge of the stiff zone.
+This case checks the step controller only; it is not a model of a planet.
+The flux is chosen for the entropy range of the CI test table.
+The stiff-zone landing rule ($d_{\text{eff}} = \max(d_{\text{near}}, 0.5\,\delta)$) sets the step while these cells land on the solidus.
+The tool counts the slow-landing segments: segments whose step is set by a cell closer than $0.5\,\delta$ to a boundary, with its rate (floored at the mass-weighted mean rate) below $0.05\,\delta$ per year.
+
+**How we know the right answer.**
+The reference solve uses $1\text{ yr}$ steps at rtol $10^{-10}$ with a physical atol of at most $10^{-10}$ (set through `solver._atol_sf`).
+The error is the largest temperature difference to the reference at the end.
+Five starts with relative round-off perturbations of $10^{-12}$ give the round-off envelope $\Delta_{\text{pert}}$, the largest difference to the unperturbed run.
+The error and $\Delta_{\text{pert}}$ are separate numbers: the error must stay below the bound.
+
+**Why it matters.**
+Slow cooling near the solidus occurs in long runs.
+Without the distance floor, a cell that starts a segment almost on its solidus limits the step to $1\text{ yr}$; the [known limit near $96\text{ Myr}$](#full-solidification-without-solver-stalling) shows one such interval in a long run.
+
+??? info "Test details"
+    - Reference: $1\text{ yr}$ steps at rtol $10^{-10}$ and physical atol at most $10^{-10}$; 5 round-off starts
+    - Tolerance: $\|T_{\text{rate}}^{(0)} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $1.16 \times 10^{-5}\text{ K}$, envelope $\Delta_{\text{pert}} = 4.4 \times 10^{-9}\text{ K}$; 224 steps in 11 segments, 4 of them slow landings; the reference takes 15002 steps). With `--check` the case also fails above 250 steps: without the distance floor it takes 272
+    - Test id: V3-R3 (slow landing at the solidus): the command below; `tests/test_step_cap_validation_runs.py::test_v3_rate_run_counts_its_segments_inside_the_step_ceiling[v3_r3]` runs the rate run at $m = 0$
+    - Command: `ARAGOG_TEST_EOS_DIR=... python tools/verification/run_step_cap_validation.py --case v3_r3 --check`
+
+### Sub-solidus upper-bound relaxation and tolerance tightening
+
+**Why this check exists.**
+Once the entire mantle cools below the solidus, no phase boundary lies ahead in the cooling direction.
+Imposing a $100\text{ yr}$ step ceiling on sub-solidus cooling slows down computation.
+Removing the $100\text{ yr}$ ceiling without tightening tolerances could degrade solution accuracy.
+
+**What it tests.**
+A 12-node column on the CI test table cools for $200\,000\text{ yr}$ under a prescribed surface flux $F = 200\text{ W/m}^2$, with `matprop_smooth_width` $= 0$.
+Every cell starts at the solidus entropy of the top cell plus $5\text{ J/(kg K)}$: the top cell starts above its solidus, the deeper cells start $306$ to $485\text{ J/(kg K)}$ below theirs.
+This case checks the step controller only; it is not a model of a planet.
+The flux is chosen so that every cell stays inside the entropy range of the CI test table.
+A segment that starts with all cells at or below the solidus, and no cell within $\delta$ of a boundary that heats, has no upper step bound.
+Every segment that starts with all cells at or below the solidus uses the tighter tolerances $\mathtt{rtol} \le 10^{-9}$ and $\mathtt{atol} \le 10^{-8}/\text{scale}$.
+
+**How we know the right answer.**
+The reference and the round-off starts are those of the case above.
+The run must stay within $1.3 \times 10^{-4}\text{ K}$ of the reference.
+
+**Why it matters.**
+Solid-state cooling after the magma ocean covers billions of years.
+The relaxed step bound lets such runs finish in reasonable time; this case checks that the error stays inside the tolerance below.
+The physical case for this regime is the [full solidification check](#full-solidification-without-solver-stalling): a 100-node mantle on the PALEOS low-temperature table.
+
+**Not checked.**
+A stiff-zone cell that cools at a segment start and heats inside a relaxed segment.
+
+??? info "Test details"
+    - Reference: $1\text{ yr}$ steps at rtol $10^{-10}$ and physical atol at most $10^{-10}$; 5 round-off starts
+    - Tolerance: $\|T_{\text{rate}}^{(0)} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $7.54 \times 10^{-5}\text{ K}$ in 1031 steps and 12 segments, 11 of them sub-solidus; the reference takes 200001 steps; envelope $\Delta_{\text{pert}} = 1.07 \times 10^{-6}\text{ K}$, where 2 of the 5 starts take one sub-solidus segment less and 1028 steps). With `--check` the case also fails above 1500 steps or without a segment with an infinite step bound: without the distance floor it takes 2669 steps, with the $100\text{ yr}$ ceiling kept 2081 steps and no infinite bound
+    - Test id: V3-R4 (sub-solidus relaxation): the command below; `tests/test_step_cap_validation_runs.py::test_v3_rate_run_counts_its_segments_inside_the_step_ceiling[v3_r4]` runs the rate run at $m = 0$
+    - Command: `ARAGOG_TEST_EOS_DIR=... python tools/verification/run_step_cap_validation.py --case v3_r4 --check`
+
+### Full solidification without solver stalling
+
+**Why this check exists.**
+A 100-node run must stay cheap through the slow final stages of solidification.
+With stagnant-lid rheology (`rheo_on`), deep cells stay close to the phase boundary for hundreds of millions of years.
+If the controller ties the step to their small distance from the boundary, the step size collapses.
+Without rheology (`rheo_off`), the mantle is fully solid after about $0.1\text{ Myr}$.
+A $100\text{ yr}$ step ceiling would then need about $10^6$ steps to reach $107.575\text{ Myr}$.
+The code without the rules near and below the solidus stops after $10^5$ steps in one output interval (`solver.max_steps`).
+Those 2 runs store their time once every 1000 right-hand-side evaluations, and each stops after its last stored time.
+The check uses these last stored times as stall points: $83.684\text{ Myr}$ with rheology and $107.575\text{ Myr}$ without it.
+
+**What it tests.**
+A 100-node mantle on the PALEOS low-temperature equation of state tables cools from $S_0 = 3165.90\text{ J/(kg K)}$ under a grey-body surface ($T_{\text{eq}} = 273\text{ K}$), once with stagnant-lid rheology (`rheo_on`, until full solidification, $\phi_{\max} = 0$) and once without it (`rheo_off`, to $120\text{ Myr}$).
+
+**How we know the right answer.**
+Each run must pass its stall point and reach $\phi_{\max} = 0$ with status 0.
+Its entropy must stay inside the table.
+
+**Why it matters.**
+Long planetary evolution runs require robust integration from magma ocean through complete mantle solidification into solid-state convection.
+
+**Known limit.**
+The `rheo_on` run stops at full solidification; the `rheo_off` run stops at $120\text{ Myr}$.
+Neither run integrates to $10^9\text{ yr}$.
+The `rheo_on` run installs the JAX CVODE factory, as coupled PROTEUS runs do.
+
+**Known limit: accuracy near $96\text{ Myr}$.**
+In the `rheo_on` run, the second cell from the top sits about $10^{-10}\text{ J/(kg K)}$ below its solidus near $96\text{ Myr}$ while it still cools.
+Without the rules near and below the solidus, this small distance limits the step to $1\text{ yr}$.
+The stiff-zone landing rule floors the distance at $0.5\,\delta$, so the step can grow to $100\text{ yr}$.
+From $96.08$ to $96.54\text{ Myr}$ the run takes $4598$ steps instead of $459\,767$.
+At rtol $= 10^{-9}$, the temperature at the end of this interval then differs by up to $8.4 \times 10^{-4}\text{ K}$ from the run without these rules (at rtol $10^{-9}$ and $10^{-10}$ that run gives the same state bitwise). The two runs end $9.3\text{ yr}$ apart; the comparison moves one end state to the time of the other with its own $\mathrm{d}S/\mathrm{d}t$ (first- and second-order steps agree; without the shift the difference is $6.1 \times 10^{-4}\text{ K}$).
+At rtol $= 10^{-10}$ to $10^{-12}$ (atol stays at $10^{-7}$ by the convention above), the result changes by less than $5.5 \times 10^{-7}\text{ K}$ and stays within $4.3 \times 10^{-6}\text{ K}$ of the run without these rules.
+The difference at $10^{-9}$ is thus an integration error of the larger steps.
+From $96$ to $99\text{ Myr}$, the run stays $2.2$ to $2.8 \times 10^{-3}\text{ K}$ from the mean of 5 runs at rtol $= 10^{-10}$.
+This is up to 2.9 times the spread of those 5 runs.
+The offset is already $2.8 \times 10^{-3}\text{ K}$ at $96.08\text{ Myr}$, before the interval above.
+At $100.9$ and $103.5\text{ Myr}$ the offset is inside the spread again.
+
+??? info "Test details"
+    - Reference: Stall points at the last stored times, $83.684\text{ Myr}$ (`rheo_on`) and $107.575\text{ Myr}$ (`rheo_off`)
+    - Tolerance: Each run passes its stall point and reaches $\phi_{\max} = 0$ with status 0; the entropy stays inside the table
+    - Test id: V4 (full solidification): the commands below; `tests/test_step_cap_validation_runs.py::test_v4_rheo_on_runs_with_the_jax_factory` runs $10\text{ yr}$ of the `rheo_on` path on the CI test table
+    - Command: `python tools/verification/run_step_cap_validation.py --case v4_rheo_off --eos-dir <PALEOS low-T table directory> --check`; the same with `--case v4_rheo_on`
+
+### Coupled planetary evolution under super-solidus conditions
+
+**Why this check exists.**
+Coupling Aragog to the PROTEUS framework exchanges heat fluxes and boundary temperatures with the atmosphere model (JANUS).
+The rules of the controller act only in a call that arms the rate cap: a call that starts within the arming margin of the liquidus or the solidus, or in the mushy band.
+A coupled run that stays far above the liquidus must therefore give the same state with and without the rules.
+
+**What it tests.**
+PROTEUS couples Aragog and JANUS for 5 iterations from $T_{\text{surf}} = 4000\text{ K}$ (the PROTEUS default of `planet.tsurf_init`).
+The run stays above the solidus ($\Phi_{\text{global}} = 1$ at the end).
+
+**How we know the right answer.**
+The end state is bitwise equal to that of the same run without the rules of the controller near and below the solidus.
+This holds for the 9 tracked helpfile columns and for the staggered temperature and entropy profiles.
+
+**Why it matters.**
+This case checks that a coupled run above the liquidus gives the same state with and without the rules.
+
+**Not checked.**
+How many calls of this run arm the rate cap (not measured).
+A coupled run that cools through the liquidus, where the stiff-zone landing rule acts above the solidus (see the effect on the second accuracy case in [the energy equation](../Explanations/energy_equation.md)).
+
+??? info "Test details"
+    - Reference: The same coupled run with the Aragog commit without the rules of the controller near and below the solidus
+    - Tolerance: Bitwise equality of `Time`, `T_magma`, `T_surf`, `F_int`, `F_atm`, `Phi_global`, `M_mantle_liquid`, `M_mantle_solid`, `R_int` and the staggered profiles
+    - Test id: V5 (coupled run above the solidus): the commands below; `tests/test_compare_v5_runs.py` tests the comparison
+    - Config: `tools/verification/data/v5_aragog_janus.toml`; its header records the PROTEUS commit of the case and the Aragog commit of the second run
+    - Command: `proteus start --offline -c tools/verification/data/v5_aragog_janus.toml` with this Aragog, then again with the Aragog commit of the config header, each run with its own output folder (set `params.out.path` in a copy of the config); then `python tools/verification/compare_v5_runs.py --case v5 RUN MAIN`. The script checks both versions against the config header and writes them to its result file
+
+### Coupled planetary evolution crossing the solidus into the solid regime
+
+**Why this check exists.**
+When a coupled PROTEUS planet cools below the critical melt fraction into the solid regime, every cell of the interior ends up at or below its solidus.
+The coupled run must cross the solidus and execute solid-state steps smoothly.
+
+**What it tests.**
+PROTEUS couples Aragog and CALLIOPE from the mushy zone ($T_{\text{surf}} = 1750\text{ K}$).
+The run stops at the 3rd coupling step with a global melt fraction of zero.
+
+**How we know the right answer.**
+A strict reference integrates every CVODE call of the run with a $1\text{ yr}$ ceiling on `max_step` at rtol $10^{-10}$ and a physical atol of $10^{-10}$, so its step size and tolerances do not depend on the step controller (its segment roots still split each call).
+The check compares the error of the run against that reference with the error of the same run on the Aragog code without the rules of the controller near and below the solidus.
+It uses 11 columns: the 9 tracked helpfile columns and the staggered temperature and entropy profiles.
+A column passes when the error of the run is not larger than that of the run without the rules, plus a round-off floor.
+The floor is the largest change of a column when either run starts from $S_0 (1 \pm 10^{-12})$.
+
+**Why it matters.**
+This case measures the cost of the rules at the solidus in a coupled run: on 4 of the 11 columns the error of the run is larger than without the rules (see the known limit), and the comparison tool exits with status 1.
+
+**Known limit.**
+The run passes on 7 columns and fails on 4: `T_magma`, `T_surf`, `F_int` and `F_atm`.
+Its `T_magma` error is $1.01 \times 10^{-3}\text{ K}$, against $7.5 \times 10^{-4}\text{ K}$ without the rules; the gap of $2.6 \times 10^{-4}\text{ K}$ is 7.8 times the round-off floor of $3.3 \times 10^{-5}\text{ K}$.
+The fluxes show the same ratio: `F_int` $4.14 \times 10^{-2}$ against $3.07 \times 10^{-2}\text{ W/m}^2$.
+For the staggered profiles the error of the run is smaller: $2.6 \times 10^{-3}\text{ K}$ against $3.3 \times 10^{-3}\text{ K}$ in temperature.
+The run takes 5856 CVODE steps, the run without the rules 5336.
+At rtol $10^{-11}$ the reference moves by $3.4 \times 10^{-5}\text{ K}$ in `T_magma`, and the 4 columns still fail.
+Which rule causes the gap in this run is not measured; near $96\text{ Myr}$ in the [full solidification check](#full-solidification-without-solver-stalling), a gap of this kind comes from larger steps next to a cell close to its solidus.
+
+??? info "Test details"
+    - Reference: $1\text{ yr}$ ceiling on `max_step` at rtol $10^{-10}$ and physical atol $10^{-10}$ in every CVODE call; the same coupled run with the Aragog commit without the rules of the controller near and below the solidus; 4 round-off runs for the floor
+    - Tolerance: On each of the 11 columns, the error against the reference is not larger than that of the run without those rules plus the round-off floor (observed: 7 columns pass; `T_magma`, `T_surf`, `F_int` and `F_atm` fail, see the known limit)
+    - Test id: V5b (coupled run through the solidus): the commands below; `tests/test_compare_v5_runs.py` tests the comparison and `tests/test_step_cap_validation_tool.py` the driver
+    - Config: `tools/verification/data/v5b_aragog_calliope.toml`; its header records the PROTEUS commit of the case and the Aragog commit of the second run
+    - Command: `python tools/verification/run_v5b_proteus.py --output-dir RUN` with this Aragog, `--reference --output-dir REF` for the reference, `--s0-eps=1e-12 --output-dir RUN_P` and `--s0-eps=-1e-12 --output-dir RUN_M` for the floor; the same runs `MAIN`, `MAIN_P` and `MAIN_M` with the Aragog commit of the config header; then `python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF --floor RUN_P RUN_M MAIN_P MAIN_M`
