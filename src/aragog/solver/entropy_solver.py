@@ -4796,7 +4796,8 @@ class EntropySolver:
         ``_atol_sf``; tighter caller tolerances are kept. With them the sub-solidus controller
         case V3-R4 of ``docs/Validation/numerics.md`` stays inside 1.3e-4 K without the
         100 yr ``max_step`` ceiling. Other segments keep the caller's ``rtol`` and ``atol``,
-        and so does the segment after ``max_segments``, which has no segment root.
+        and so does the segment after ``max_segments``, which has no segment root; a lid merge
+        in that segment runs one more such segment to the call end.
 
         Parameters
         ----------
@@ -4839,14 +4840,14 @@ class EntropySolver:
         res = None
         keep_first = False
         atol_cap = None  # nondimensional atol limit, built once per call on first use
-        for k in range(max_segments + 1):
+        for k in range(max_segments + 2):  # one segment more after a merge in the last
             tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
             if tspan.size < 2:
                 if res is not None:  # a root at the call end: complete
                     res.cvode_flag, res.cvode_flag_name = 0, _cvode_flag_name(0)
                     break
                 tspan = np.array([t, end_time])  # a call shorter than the grid tolerance
-            last = k == max_segments
+            last = k >= max_segments
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
             h = h_min if last else h_at(t, y)
@@ -4897,13 +4898,15 @@ class EntropySolver:
             nfev += int(res.nfev)
             nst += int(res.get('cvode_nst', 0))
             nfe += int(res.get('cvode_nfe', 0))
-            if res.status != 0 or res.cvode_flag != 2 or last:
+            if res.status != 0 or res.cvode_flag != 2:
                 break
             t, y = float(res.t[-1]), np.asarray(res.y[:, -1], dtype=float)
             if res.get('lid_handover') and lid_merge is not None:
                 y, trigger, keep_first = lid_merge(t, y), 'lid', True
                 res.lid_handover = False
                 continue
+            if last:
+                break
             trigger = roots.fired(t, y)
             if trigger == 'cap':
                 break
