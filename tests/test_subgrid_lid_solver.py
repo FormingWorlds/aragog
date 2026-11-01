@@ -1054,6 +1054,24 @@ def test_base_flux_takes_the_boundary_layer_flux_only_with_convection(eos, conve
         assert s._lid_last.F_b == floor
 
 
+def test_lid_reads_the_convection_flag_of_the_setup(eos):
+    """The lid takes ``energy.convection`` once at setup, as the mesh state does: a change
+    after ``initialize`` reaches neither the NumPy lid base flux nor the JAX lid parameters."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    p.energy.convection = False
+    s._dSdt_single(0.0, s._S0.copy())
+    assert s._lid_last.F_b > max(float(s.state._heat_flux[-2]), 0.0) + 1.0
+    pytest.importorskip('jax')
+    assert s.jax_lid_params().convection == 1.0
+
+
 @pytest.mark.parametrize('case', ['convective', 'face', 'zero'])
 def test_base_flux_is_the_largest_of_convection_face_and_zero(eos, monkeypatch, case):
     """F_b is the largest of the convective base flux, the mesh flux into the top cell and 0."""
