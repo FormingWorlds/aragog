@@ -25,8 +25,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
     - Reference: Turcotte and Schubert (2014), section 4.18, eqs. 4.136 and 4.141 (pp. 197-198).
     - Tolerance: relative 10⁻² at each test time (measured: 2.5 × 10⁻¹²); the test also checks 10⁻⁸. The lid that starts at 1 m is within 10⁻² after 7.6, 1.4 and 0.47 years at St = 0.1, 1 and 3.381.
     - Discrimination: the straight-line growth law $\delta = \sqrt{2\, \mathrm{St}\, \kappa t}$ misses the reference by 1.6, 14 and 37 %.
-    - Test id: `tests/test_surface_lid_validation.py::test_v1_crust_growth_follows_neumann`
-    - Command: `pytest tests/test_surface_lid_validation.py -k v1` (add `--validation-plots` to write the plot pair)
+    - Test id: `tests/test_surface_lid_neumann.py::test_v1_crust_growth_follows_neumann`
+    - Command: `pytest tests/test_surface_lid_neumann.py` (add `--validation-plots` to write the plot pair)
 
 ## A cooling solid without latent heat
 
