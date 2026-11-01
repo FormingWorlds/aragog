@@ -44,6 +44,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from aragog.config.boundary import CORE_BC_MODES
+
 logger = logging.getLogger('fwl.' + __name__)
 
 _CACHE_MAXSIZE = 8
@@ -51,12 +53,15 @@ _CACHE_MAXSIZE = 8
 # Fixed chunk length for batched per-call energy power evaluation.
 C: int = 512
 
+# The core_bc modes with a JAX RHS, each with its count of state entries after the entropies.
+_JAX_N_EXTRA = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}
+
 # Module-level counters for JIT tracing events.
 _TRACE_COUNTERS = {'rhs': 0, 'jac': 0, 'powers': 0}
 
 
 class UnsupportedCoreBCError(ValueError):
-    """A ``core_bc_mode`` (bower2018, gradient) with no JAX RHS; the solver uses the NumPy RHS."""
+    """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
 @dataclass
@@ -241,7 +246,7 @@ def build_jax_rhs_and_jacobian(
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
         t0_years, half_life_years)`` of 1D arrays of one shape, one entry per
-        radionuclide (``make_radio_heating_fn`` also broadcasts an input given once). When non-empty, the JAX RHS evaluates the
+        radionuclide. When non-empty, the JAX RHS evaluates the
         radiogenic source at the live integrator time ``t_phys`` so
         the heating reflects in-step decay. Empty default disables
         radio heating.
@@ -261,9 +266,9 @@ def build_jax_rhs_and_jacobian(
         core_module and checked with ``aragog.core.check_ra_crit``.
     start_time : float, optional
         Time [yr] at which the radiogenic heating of each isotope of ``radio_isotope_params``
-        must be finite (``aragog.parser.validate_radionuclide``); not checked if None, the
-        value ``EntropySolver.solve`` gives the factory, so only a caller that passes it is
-        checked.
+        must be finite (``aragog.parser.validate_radionuclide``); None skips the check.
+        ``EntropySolver.solve`` passes no start time to the factory, and no caller in
+        aragog or PROTEUS passes one.
 
     Returns
     -------
@@ -286,10 +291,11 @@ def build_jax_rhs_and_jacobian(
     TypeError
         For ``scales`` that is not a ``NonDimScales``.
     UnsupportedCoreBCError
-        For ``core_bc_mode`` 'bower2018' or 'gradient'.
+        For a ``core_bc_mode`` of ``aragog.config.boundary.CORE_BC_MODES`` with no JAX RHS
+        ('bower2018', 'gradient').
     ValueError
-        For a missing ``core_module_budget``, another unsupported ``core_bc_mode``, inputs of the
-        wrong size or shape, a type 5 setup that
+        For a missing ``core_module_budget``, a ``core_bc_mode`` outside ``CORE_BC_MODES``,
+        inputs of the wrong size or shape, a type 5 setup that
         ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
         that ``aragog.jax.solver.check_radio_arrays`` refuses.
     """
@@ -299,16 +305,13 @@ def build_jax_rhs_and_jacobian(
             '(the CoreEnergyBudget the solver built from its config); '
             'got None.'
         )
-    if core_bc_mode not in ('quasi_steady', 'energy_balance', 'core_module'):
-        err = (
-            UnsupportedCoreBCError if core_bc_mode in ('bower2018', 'gradient') else ValueError
-        )
+    if core_bc_mode not in _JAX_N_EXTRA:
+        err = UnsupportedCoreBCError if core_bc_mode in CORE_BC_MODES else ValueError
         raise err(
-            f'core_bc_mode={core_bc_mode!r} is not supported by the '
-            f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance', 'core_module'. Set ``use_jax_jacobian = false`` "
-            f"for the NumPy RHS; with it true, 'bower2018' and 'gradient' use the "
-            f'NumPy RHS after a warning.'
+            f'core_bc_mode={core_bc_mode!r} is not supported by the JAX CVODE factory. '
+            f'Supported modes: {tuple(_JAX_N_EXTRA)}. Set ``use_jax_jacobian = false`` for '
+            'the NumPy RHS; with it true, the other config modes use the NumPy RHS after a '
+            'warning.'
         )
 
     try:
@@ -338,7 +341,7 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    n_extra = _JAX_N_EXTRA[core_bc_mode]
     shell = (
         getattr(core_module_budget, 'shell', None) if core_bc_mode == 'core_module' else None
     )
