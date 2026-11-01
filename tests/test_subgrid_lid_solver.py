@@ -266,6 +266,33 @@ def test_lid_is_refused_with_constant_properties(eos, attach_eos):
     assert not build(False)._lid_on
 
 
+@pytest.mark.parametrize(
+    ('kw', 'match'),
+    [
+        ({'outer_bc': 4}, 'grey-body outer boundary'),
+        ({'outer_bc': 5}, 'grey-body outer boundary'),
+        ({'core_bc': 'gradient'}, "core_bc = 'gradient'"),
+    ],
+    ids=['flux', 'surface_temperature', 'gradient'],
+)
+def test_lid_set_after_parsing_is_refused_on_an_unsupported_boundary(eos, kw, match):
+    """The solver setup refuses the lid on a boundary it does not support also when the lid is
+    switched on after the parameters were parsed; the same setup without the lid sets up."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def build(lid):
+        args = {'core_bc': 'quasi_steady', 'outer_bc': 1, 'inner_bc': 2, 'n_nodes': 10}
+        p = _build(**{**args, **kw}, end_time=1.0)
+        p.boundary_conditions.subgrid_lid = lid
+        s = EntropySolver(p, entropy_eos=eos)
+        s.initialize()
+        return s
+
+    with pytest.raises(ValueError, match=match):
+        build(True)
+    assert not build(False)._lid_on
+
+
 def test_handover_cells_must_fit_the_mesh(eos):
     """A hand-over face must leave one cell below it: on 9 cells, 8 top cells pass and 9 are
     refused at setup with the cell count it needs."""
