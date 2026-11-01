@@ -2992,9 +2992,9 @@ class EntropySolver:
     def set_initial_lid(self, delta: float | None, E_lid: float | None = None) -> None:
         """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
 
-        Must be called before ``set_initial_entropy``, which uses it once. ``None`` clears it:
-        the lid then starts from the previous solution, or as the phantom lid (``lid_delta_lo``,
-        linear profile).
+        Must be called before ``set_initial_entropy``; every start uses it until the next
+        ``solve``, which consumes it. ``None`` clears it: the lid then starts from the previous
+        solution, or as the phantom lid (``lid_delta_lo``, linear profile).
         ``(0, 0)`` is a lid handed over to the mesh, which does not grow again.
         """
         if delta is None:
@@ -3011,7 +3011,7 @@ class EntropySolver:
 
     def _initial_lid(self, S_top: float) -> npt.NDArray:
         """Lid start: the set values, else the previous solution's, else the phantom lid."""
-        init, self._lid_init = getattr(self, '_lid_init', None), None
+        init = getattr(self, '_lid_init', None)
         if init is not None:
             return np.array(init)
         prev = getattr(self, '_solution', None)
@@ -4948,6 +4948,7 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
+        self._lid_init = None  # a set initial lid holds until this solve
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()
         start_time = self.parameters.solver.start_time
