@@ -2994,8 +2994,9 @@ class EntropySolver:
     def set_initial_lid(self, delta: float | None, E_lid: float | None = None) -> None:
         """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
 
-        Must be called before ``set_initial_entropy``. ``None`` clears it: the lid then starts
-        from the previous solution, or as the phantom lid (``lid_delta_lo``, linear profile).
+        Must be called before ``set_initial_entropy``, which uses it once. ``None`` clears it:
+        the lid then starts from the previous solution, or as the phantom lid (``lid_delta_lo``,
+        linear profile).
         ``(0, 0)`` is a lid handed over to the mesh, which does not grow again.
         """
         if delta is None:
@@ -3012,7 +3013,7 @@ class EntropySolver:
 
     def _initial_lid(self, S_top: float) -> npt.NDArray:
         """Lid start: the set values, else the previous solution's, else the phantom lid."""
-        init = getattr(self, '_lid_init', None)
+        init, self._lid_init = getattr(self, '_lid_init', None), None
         if init is not None:
             return np.array(init)
         prev = getattr(self, '_solution', None)
