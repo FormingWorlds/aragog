@@ -118,7 +118,7 @@ def test_constant_property_lid_base_is_the_lower_of_the_isotherm_and_the_fluid(w
     s.state.phase_staggered._phi_width = width
     S_f = 3000.0
     T_f = float(_T(S_f))
-    s.state.lid_state = {'T_lid_iso': np.asarray(T_rh)}
+    s.state._lid_state = {'T_lid_iso': np.asarray(T_rh)}
     base = s._lid_base_state(T_f, 0.0, S_f)
     assert base['T_b'] == pytest.approx(min(T_rh, T_f), rel=1e-13)
     assert base['rho'] == RHO
