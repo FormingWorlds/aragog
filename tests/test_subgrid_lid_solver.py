@@ -104,8 +104,8 @@ def test_lid_starts_as_the_phantom_lid(eos):
     s._dSdt_single(0.0, s._S0)
     ev = s._lid_last
     T_s = sl.linear_lid_surface(0.5, ev.T_b, s._lid_k, 1.0, 255.0)
-    assert ev.T_m == pytest.approx(0.5 * (ev.T_b + T_s), rel=1e-9)
-    assert T_s < ev.T_m < ev.T_b
+    assert ev.surf.T_m == pytest.approx(0.5 * (ev.T_b + T_s), rel=1e-9)
+    assert T_s < ev.surf.T_m < ev.T_b
 
 
 def test_set_initial_lid_and_hot_start(eos):
@@ -158,7 +158,7 @@ def test_ledger_per_call_closes(eos, heating, frac, dT, S_top, S_bot):
     y[: s._n_stag] = np.linspace(S_bot, S_top, s._n_stag)
     s._dSdt_single(0.0, y)
     ev = s._lid_last
-    T_m = float(np.clip(ev.T_m + dT, 300.0, ev.T_b - 1.0))
+    T_m = float(np.clip(ev.surf.T_m + dT, 300.0, ev.T_b - 1.0))
     y[-2:] = (delta, delta * float(s._lid_hv.H(T_m)))
     pw = s._step_powers(0.0, y)
     scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(s._lid_last.rates.dE), 1.0)
@@ -851,23 +851,15 @@ def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
     merge, seen = s._lid_merge, []
     s._lid_merge = lambda y: (seen.append(float(y[s._n_stag - 1])), merge(y))[1]
     s.solve()
-    t_x = s.get_state().lid_handover_time
-    assert 0.0 < t_x < 1.0
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0
+    assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
     assert seen[0] == pytest.approx(s._lid_S_sol, rel=1e-7)
     assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
     warm = _top_at(eos, 2.0)
     warm.solve()
     assert np.isnan(warm.get_state().lid_handover_time)
     assert warm._solution.y[-2, -1] > 0.0
-
-
-def test_handed_over_lid_reports_zero_thickness_and_energy(eos):
-    """After a hand-over the output reports the lid states the solver holds, 0 and 0."""
-    s = _top_at(eos, 0.2)
-    s.solve()
-    st = s.get_state()
-    assert 0.0 < st.lid_handover_time < 1.0
-    assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
 
 
 def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos, caplog):

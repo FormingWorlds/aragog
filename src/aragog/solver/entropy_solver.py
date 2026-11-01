@@ -154,7 +154,6 @@ class _LidEval:
     rates: '_lid.LidRates'
     surf: '_lid.LidSurface'
     F_b: float
-    T_m: float
     m_lid: float
     S_f: float
     S_b: float
@@ -3428,7 +3427,6 @@ class EntropySolver:
             rates=rates,
             surf=surf,
             F_b=F_b,
-            T_m=surf.T_m,
             m_lid=delta * self._lid_hv.profile_density(surf.s, surf.T_s, base['T_b']),
             H_b=H_b,
             H_f=H_f,
@@ -6435,7 +6433,7 @@ class EntropySolver:
             lid_out = dict(
                 lid_delta=ev.delta,
                 lid_E=ev.E,
-                lid_T_mean=ev.T_m,
+                lid_T_mean=ev.surf.T_m,
                 lid_T_surface=ev.surf.T_s,
                 lid_T_base=ev.T_b,
                 lid_weight=ev.rates.w,
