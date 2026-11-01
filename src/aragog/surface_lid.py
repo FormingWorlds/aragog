@@ -139,6 +139,30 @@ def profile_nodes(s: float) -> tuple[npt.NDArray, npt.NDArray]:
 
 
 @dataclass(frozen=True)
+class ConstantProperties:
+    """The entropy-EOS calls of the lid for a constant-property column
+    (``phase_mixed.const_properties``): ``T = T_ref exp((S - S_ref) / cp)`` [K] with constant
+    density [kg/m^3] and heat capacity [J/kg/K], and no melt. The pressure is not used."""
+
+    T_ref: float
+    S_ref: float
+    rho: float
+    cp: float
+
+    def temperature(self, P, S) -> npt.NDArray:
+        return self.T_ref * np.exp((np.asarray(S, dtype=float) - self.S_ref) / self.cp)
+
+    def entropy_at_temperature(self, P, T) -> npt.NDArray:
+        return self.S_ref + self.cp * np.log(np.asarray(T, dtype=float) / self.T_ref)
+
+    def density(self, P, S) -> npt.NDArray:
+        return np.full(np.shape(S), self.rho)
+
+    def melt_fraction(self, P, S) -> npt.NDArray:
+        return np.zeros(np.shape(S))
+
+
+@dataclass(frozen=True)
 class LidEnthalpy:
     """Heat content per volume ``H(T)`` [J/m^3] and density ``rho(T)`` [kg/m^3] of the lid
     material at the top-cell pressure, both vectorised in ``T`` [K]."""

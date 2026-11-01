@@ -260,7 +260,7 @@ def test_delta_on_must_fit_the_top_cell(eos):
 
 @pytest.mark.parametrize('attach_eos', [True, False])
 def test_lid_is_refused_with_constant_properties(eos, attach_eos):
-    """The lid reads the entropy EOS, so a constant-property column is refused at setup, also
+    """A constant-property column without the solid rheology is refused at setup by name, also
     when an EOS is attached; the same column without the lid sets up."""
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -274,7 +274,7 @@ def test_lid_is_refused_with_constant_properties(eos, attach_eos):
         s.initialize()
         return s
 
-    with pytest.raises(ValueError, match='no const_properties'):
+    with pytest.raises(ValueError, match='constant-property lid needs'):
         build(True)
     assert not build(False)._lid_on
 
