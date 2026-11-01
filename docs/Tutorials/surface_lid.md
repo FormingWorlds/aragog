@@ -15,7 +15,7 @@ In this tutorial you switch on the sub-grid surface lid, run a short cooling ste
 
 ## 1. Write the configuration
 
-The mantle is 10 cells thick, from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid needs the grey-body surface, `outer_boundary_condition = 1`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
+The mantle has 9 cells (10 nodes), from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid needs the grey-body surface, `outer_boundary_condition = 1`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
 
 ```python
 import os
@@ -93,7 +93,7 @@ Path('surface_lid.toml').write_text(config)
 
 ## 2. Run with and without the lid
 
-Each cell starts at the entropy 3050 J/kg/K. At the pressure of the top cell this is in the mush, just above the solidus. The function `run` builds a solver from the file, sets the end time and the lid switch, and runs one call.
+Each cell starts at the entropy 3050 J/kg/K. At the pressure of the top cell, 7.8 GPa, this is in the mush, with a melt fraction of 0.36. The top cell of this coarse mesh is 380 km thick, and the lid takes its base temperature at the pressure of the top-cell centre: the solidus there is 2149 K, against 1439 K at the surface. The run shows how the lid works; for a real planet use a mesh with a thin top cell (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)). The function `run` builds a solver from the file, sets the end time and the lid switch, and runs one call.
 
 ```python
 from aragog.solver import EntropySolver

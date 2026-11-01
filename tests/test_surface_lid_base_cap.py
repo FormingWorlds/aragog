@@ -1,6 +1,7 @@
 """The lid base at the melt temperature: the R1 column with the solid rheology and the 'lid'
 closure, on 100, 200 and 400 nodes and on 100 nodes with the jump floor at 1e2, 1e3 and
-1e4 J/kg, from the runs that ``tools/verification/run_surface_lid_case.py --collect`` stored.
+1e4 J/kg, from the runs that ``tools/verification/run_surface_lid_case.py --collect`` stored; the
+npz field ``commit`` names the code that wrote them. The test does not run the cases again.
 """
 
 from __future__ import annotations
@@ -29,11 +30,9 @@ def _step(a, b):
     return np.maximum(r, 1.0 / r)
 
 
-@pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_lid_base_cap_on_the_mesh_and_the_floor(validation_plot):
-    """Up to 3e5 yr the lid thickness converges with the mesh: the step from 200 to 400 nodes
-    changes it by less than STEP_3E5 and the step from 100 to 200 nodes by more. At 4e5 yr
+    """At 3e5 yr the step from 200 to 400 nodes changes the lid thickness by less than STEP_3E5
+    and the step from 100 to 200 nodes by more. At 4e5 yr
     both steps exceed STEP_4E5 and the 200-node lid is the thinnest, so the order is not
     monotone. Up to 3e5 yr the floor runs agree within FLOOR_TOL; at 4e5 yr the floor of
     1e4 J/kg gives a thicker lid by more than a factor 2."""

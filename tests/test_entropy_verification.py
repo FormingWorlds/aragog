@@ -777,7 +777,7 @@ class TestCvodeEnergyOutputGrid:
 
     @staticmethod
     def _build_greybody_solver(
-        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None, n_nodes=60
+        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None, n_nodes=20
     ):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
         steeply within the call, the regime that breaks a 2-point integral."""
@@ -896,18 +896,29 @@ class TestCvodeEnergyOutputGrid:
         s.set_initial_entropy(S_liq * 1.01)
         return s
 
-    def test_dense_output_recovers_flux_integral(self):
+    def test_dense_output_recovers_flux_integral(self, caplog):
         """F_int over the internal steps matches a high-resolution scipy reference
         with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
-        ref = self._build_greybody_solver('bdf', n_nodes=20)
+        ref = self._build_greybody_solver('bdf')
         ref.solve()
         f_ref = ref._compute_step_energy_integrals()['F_int']
         assert ref._solution.t.size > 200, 'scipy reference grid must be dense'
         assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
 
-        s2 = self._build_greybody_solver('cvode', n_out=2, n_nodes=20)
+        def ends_at_the_call_end(sol):
+            # A lost last trace node fails here on any CPU; a trace short of the CVODE
+            # steps by more than max(10, nst // 100) nodes warns
+            # (test_a_trace_short_of_the_steps_warns checks a 2-node trace).
+            t_tr, y_tr = sol.energy_trace
+            return t_tr[-1] == sol.t[-1] and np.array_equal(y_tr[:, -1], sol.y[:, -1])
+
+        s2 = self._build_greybody_solver('cvode', n_out=2)
         s2.solve()
-        d2 = s2._compute_step_energy_integrals()
+        assert ends_at_the_call_end(s2._solution)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+            d2 = s2._compute_step_energy_integrals()
+        assert f'({s2._solution.energy_trace[0].size} nodes)' in caplog.text, 'every trace node'
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
         trace, sol2 = s2._solution.energy_trace, s2._solution
         sol2.energy_trace = (sol2.t[[0, -1]], sol2.y[:, [0, -1]])
@@ -915,15 +926,23 @@ class TestCvodeEnergyOutputGrid:
         sol2.energy_trace = trace
         assert err_end > 0.1, ('the 2 endpoints must miss the steep decay', err_end)
 
-        sN = self._build_greybody_solver('cvode', n_out=65, n_nodes=20)
+        sN = self._build_greybody_solver('cvode', n_out=65)
         sN.solve()
+        assert ends_at_the_call_end(sN._solution)
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
         # F_int error: about 0.5 from the 2 endpoints, 1.3e-3 (n_out=2) and 5.5e-4 (n_out=65)
         # from the sol.t points, and about 3e-6 from the internal-step trace asserted here.
-        assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
+        assert err_2pt < 1e-5 and err_dense < 1e-5, (err_2pt, err_dense)
         assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
+        for s, d in ((s2, d2), (sN, dN)):
+            # No CMB flux and no sources: F_int closes the heat change, 4e-6 at 512 points.
+            S0, Sf = (s._stag_entropy(s._solution.y[:, i]) for i in (0, -1))
+            assert d['F_cmb'] == d['Q_radio'] == d['Q_tidal'] == 0.0
+            assert d['F_int'] == pytest.approx(
+                s._step_heat_content(S0, Sf, n_quad=512), rel=2e-5
+            )
         # The output grid must not perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])

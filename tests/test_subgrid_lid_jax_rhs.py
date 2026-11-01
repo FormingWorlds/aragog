@@ -99,7 +99,7 @@ def test_lid_top_matches_the_numpy_lid(case):
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
 
 
-def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True):
+def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, convection=True):
     from aragog.solver.entropy_solver import EntropySolver
     from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
     from tests.test_subgrid_lid_solver import _heat
@@ -111,6 +111,7 @@ def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True):
     if core_bc == 'core_module':
         p.boundary_conditions.core_module_params = CORE_MODULE_PARAMS
     p.boundary_conditions.normalize()
+    p.energy.convection = convection
     if rheology is not None:
         p.phase_solid.rheology = _lid_cases()[rheology]
     # core_module: the expansivity of the JAX RHS, as tests/test_jax_dsdt_core_module.py
@@ -204,7 +205,17 @@ def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
     """The JAX factory right-hand side with the lid equals the NumPy one on active and
     handed-over lids: the top cell and the 2 lid rates to relative 1e-12, the other slots to
     1e-12 of the largest mantle rate. The call counter proves the JAX path ran."""
-    s = _lid_solver(core_bc, rheology, heating)
+    _assert_rhs_parity(_lid_solver(core_bc, rheology, heating))
+
+
+def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
+    """With ``energy.convection`` off neither right-hand side gives the lid base the
+    boundary-layer flux: the lid rates agree to relative 1e-12. The top-cell rate is then the
+    small difference of two fluxes of about 1.6e-3 W/m^2 and agrees to 1e-8 (measured 1.1e-9)."""
+    _assert_rhs_parity(_lid_solver(convection=False), rtol_top=1e-8)
+
+
+def _assert_rhs_parity(s, rtol_top=1e-12):
     rhs_fn, _, info = _factory_rhs(s, s.jax_lid_params())
     assert info['lid'] and rhs_fn.lid
     f, n = _physical(rhs_fn, s._build_nondim_scales()), 0
@@ -214,10 +225,44 @@ def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
         n += 1
         assert got.size == y.size
         lid = np.isin(np.arange(y.size), [s._n_stag - 1, y.size - 2, y.size - 1])
-        np.testing.assert_allclose(got[lid], want[lid], rtol=1e-12, atol=1e-300)
+        np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-12, atol=1e-300)
+        top = s._n_stag - 1
+        np.testing.assert_allclose(got[top], want[top], rtol=rtol_top, atol=1e-300)
         rest, atol = ~lid, 1e-12 * np.abs(want[: s._n_stag]).max()
         np.testing.assert_allclose(got[rest], want[rest], rtol=1e-12, atol=atol)
     assert info['rhs_calls'] == n
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('cap', ['fixed', 'rate'])
+def test_lid_hands_over_inside_a_call_on_the_jax_factory(cap):
+    """Without the solid rheology a top cell 0.2 J/kg/K above its solidus cools through it
+    inside a 1-yr CVODE call on the JAX factory, with no root replaced: the lid hands over and
+    ends at exactly 0, and the step ledger closes to 1e-10 of the surface power."""
+    from aragog.solver import entropy_solver as es
+
+    if not es._CVODE_AVAILABLE:
+        pytest.skip('scikits.odes is not installed')
+    s = _lid_solver()
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = True
+    s.parameters.energy.phase_boundary_cap = cap
+    S = s._S0[: s._n_stag].copy()
+    S[-1] = s._lid_S_sol + 0.2
+    s.set_initial_entropy(S)
+    info = {}
+
+    def factory(scales, mode):
+        rhs_fn, jac_fn, info['info'] = _factory_rhs(s, s.jax_lid_params())
+        return rhs_fn, jac_fn
+
+    s.set_jax_cvode_factory(factory)
+    s.solve()
+    assert s._solution.status == 0 and info['info']['rhs_calls'] > 0
+    assert 0.0 < s.get_state().lid_handover_time < 1.0
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
 
 
 @pytest.mark.parametrize(

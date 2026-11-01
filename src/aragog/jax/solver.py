@@ -504,11 +504,10 @@ def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out)
         bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
     )
     on = y_lid[0] != 0.0
-    zero = jnp.zeros_like(F_top)
     heat_flux = heat_flux.at[-1].set(jnp.where(on, F_top, F_grid))
     top_energy_flux = jnp.where(on, F_fluid, F_grid) * mesh.area[-1]
     V = jnp.where(on, V_fluid, mesh.volume[-1])
-    terms = tuple(jnp.where(on, v, zero) for v in (ddelta, dE, H_f, m_lid))
+    terms = tuple(jnp.where(on, v, 0.0) for v in (ddelta, dE, H_f, m_lid))
     return heat_flux, top_energy_flux, V, (V, *terms)
 
 

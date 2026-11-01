@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -102,21 +104,32 @@ def test_lid_starts_as_the_phantom_lid(eos):
     s._dSdt_single(0.0, s._S0)
     ev = s._lid_last
     T_s = sl.linear_lid_surface(0.5, ev.T_b, s._lid_k, 1.0, 255.0)
-    assert ev.T_m == pytest.approx(0.5 * (ev.T_b + T_s), rel=1e-9)
-    assert T_s < ev.T_m < ev.T_b
+    assert ev.surf.T_m == pytest.approx(0.5 * (ev.T_b + T_s), rel=1e-9)
+    assert T_s < ev.surf.T_m < ev.T_b
 
 
 def test_set_initial_lid_and_hot_start(eos):
-    """A set lid is used as given; without it a second solve starts from the first's end."""
+    """A set lid holds for every start until the next solve, also across a reset, as a resume
+    with a structure update starts twice; that solve consumes it, so the start of the solve
+    after it takes the lid at the end of the first. None clears a set lid before it is used."""
     s = _solver(eos)
     s.set_initial_lid(2.0, -1.0e9)
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
-    s.set_initial_lid(None)
+    s.reset()
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
     s.solve()
     end = s._solution.y[-2:, -1].copy()
+    assert not np.array_equal(end, [2.0, -1.0e9])
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], end)
+    s.solve()
+    np.testing.assert_array_equal(s._solution.y[-2:, 0], end)
+    s.set_initial_lid(3.0, -2.0e9)
+    s.set_initial_lid(None)
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], s._solution.y[-2:, -1])
     with pytest.raises(ValueError, match='finite delta > 0'):
         s.set_initial_lid(-1.0, 0.0)
     with pytest.raises(ValueError, match='finite delta > 0'):
@@ -145,7 +158,7 @@ def test_ledger_per_call_closes(eos, heating, frac, dT, S_top, S_bot):
     y[: s._n_stag] = np.linspace(S_bot, S_top, s._n_stag)
     s._dSdt_single(0.0, y)
     ev = s._lid_last
-    T_m = float(np.clip(ev.T_m + dT, 300.0, ev.T_b - 1.0))
+    T_m = float(np.clip(ev.surf.T_m + dT, 300.0, ev.T_b - 1.0))
     y[-2:] = (delta, delta * float(s._lid_hv.H(T_m)))
     pw = s._step_powers(0.0, y)
     scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(s._lid_last.rates.dE), 1.0)
@@ -262,6 +275,33 @@ def test_lid_is_refused_with_constant_properties(eos, attach_eos):
         return s
 
     with pytest.raises(ValueError, match='no const_properties'):
+        build(True)
+    assert not build(False)._lid_on
+
+
+@pytest.mark.parametrize(
+    ('kw', 'match'),
+    [
+        ({'outer_bc': 4}, 'grey-body outer boundary'),
+        ({'outer_bc': 5}, 'grey-body outer boundary'),
+        ({'core_bc': 'gradient'}, "core_bc = 'gradient'"),
+    ],
+    ids=['flux', 'surface_temperature', 'gradient'],
+)
+def test_lid_set_after_parsing_is_refused_on_an_unsupported_boundary(eos, kw, match):
+    """The solver setup refuses the lid on a boundary it does not support also when the lid is
+    switched on after the parameters were parsed; the same setup without the lid sets up."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def build(lid):
+        args = {'core_bc': 'quasi_steady', 'outer_bc': 1, 'inner_bc': 2, 'n_nodes': 10}
+        p = _build(**{**args, **kw}, end_time=1.0)
+        p.boundary_conditions.subgrid_lid = lid
+        s = EntropySolver(p, entropy_eos=eos)
+        s.initialize()
+        return s
+
+    with pytest.raises(ValueError, match=match):
         build(True)
     assert not build(False)._lid_on
 
@@ -601,6 +641,8 @@ def test_handover_in_the_call(eos, method):
 
 
 @pytest.mark.skipif(not _methods()[1:], reason='CVODE not available')
+# about 110 s alone on CI, over 300 s with coverage and 4 xdist workers
+@pytest.mark.timeout(900)
 def test_subsolidus_segment_caps_the_lid_atol(eos):
     """A rate-mode CVODE segment that starts below the solidus caps the atol of the lid states
     like the column entries, at min(caller atol, 1e-8 / state scale); the solve completes and
@@ -811,14 +853,34 @@ def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
     merge, seen = s._lid_merge, []
     s._lid_merge = lambda y: (seen.append(float(y[s._n_stag - 1])), merge(y))[1]
     s.solve()
-    t_x = s.get_state().lid_handover_time
-    assert 0.0 < t_x < 1.0
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0
+    assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
     assert seen[0] == pytest.approx(s._lid_S_sol, rel=1e-7)
     assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
     warm = _top_at(eos, 2.0)
     warm.solve()
     assert np.isnan(warm.get_state().lid_handover_time)
     assert warm._solution.y[-2, -1] > 0.0
+
+
+def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos, caplog):
+    """A lid root in the segment after the segment ceiling still merges the lid and the call
+    runs to its end time, as with the default ceiling; the ceiling is reported once and the
+    step ledger closes to 1e-10 of the surface power."""
+    s = _top_at(eos, 0.2)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = False
+    s.parameters.energy.phase_boundary_cap = 'rate'
+    s._solve_cvode_segments = functools.partial(s._solve_cvode_segments, max_segments=0)
+    with caplog.at_level('WARNING'):
+        s.solve()
+    assert s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
+    assert 0.0 < s.get_state().lid_handover_time < 1.0
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    assert sum('segments in one call' in r.getMessage() for r in caplog.records) == 1
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
 
 
 @pytest.mark.physics_invariant
@@ -967,6 +1029,46 @@ def test_lid_base_temperature_floor(eos, monkeypatch):
         float(eos.entropy_at_temperature(s._lid_P, 1.0)), rel=1e-12
     )
     assert np.isfinite(base['T_b'])
+
+
+@pytest.mark.parametrize('convection', [True, False])
+def test_base_flux_takes_the_boundary_layer_flux_only_with_convection(eos, convection):
+    """With ``energy.convection`` off the mesh carries no convective flux, so the lid base gets
+    only the mesh flux into the top cell, or 0; with it on, the boundary-layer flux of the same
+    state is the larger one and sets F_b."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.energy.convection = convection
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    s._dSdt_single(0.0, s._S0.copy())
+    floor = max(float(s.state._heat_flux[-2]), 0.0)
+    if convection:
+        assert s._lid_last.F_b > floor + 1.0
+    else:
+        assert s._lid_last.F_b == floor
+
+
+def test_lid_reads_the_convection_flag_of_the_setup(eos):
+    """The lid takes ``energy.convection`` once at setup, as the mesh state does: a change
+    after ``initialize`` reaches neither the NumPy lid base flux nor the JAX lid parameters."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    p.energy.convection = False
+    s._dSdt_single(0.0, s._S0.copy())
+    assert s._lid_last.F_b > max(float(s.state._heat_flux[-2]), 0.0) + 1.0
+    pytest.importorskip('jax')
+    assert s.jax_lid_params().convection == 1.0
 
 
 @pytest.mark.parametrize('case', ['convective', 'face', 'zero'])

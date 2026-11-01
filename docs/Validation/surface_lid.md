@@ -25,8 +25,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
     - Reference: Turcotte and Schubert (2014), section 4.18, eqs. 4.136 and 4.141 (pp. 197-198).
     - Tolerance: relative 10⁻² at each test time (measured: 2.5 × 10⁻¹²); the test also checks 10⁻⁸. The lid that starts at 1 m is within 10⁻² after 7.6, 1.4 and 0.47 years at St = 0.1, 1 and 3.381.
     - Discrimination: the straight-line growth law $\delta = \sqrt{2\, \mathrm{St}\, \kappa t}$ misses the reference by 1.6, 14 and 37 %.
-    - Test id: `tests/test_surface_lid_validation.py::test_v1_crust_growth_follows_neumann`
-    - Command: `pytest tests/test_surface_lid_validation.py -k v1` (add `--validation-plots` to write the plot pair)
+    - Test id: `tests/test_surface_lid_neumann.py::test_v1_crust_growth_follows_neumann`
+    - Command: `pytest tests/test_surface_lid_neumann.py` (add `--validation-plots` to write the plot pair)
 
 ## A cooling solid without latent heat
 
@@ -52,7 +52,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 ## A cooling solid shell on a fine mesh
 
-**Why this check exists.** The two cases above drive the lid functions alone, with a constant heat capacity. This case runs the lid inside the solver, where the heat content of the crust comes from the equation of state, and compares it with the solver's own conduction on a mesh fine enough to resolve the crust. A lid whose heat content took the heat capacity and density of its base would miss by +2.3 to +2.4 %; with the values at 780 K, by -1.2 to -1.3 %. The test sees both.
+**Why this check exists.** The two cases above drive the lid functions alone, with a constant heat capacity. This case runs the lid inside the solver, where the heat content of the crust comes from the equation of state, and compares it with the solver's own conduction on a mesh fine enough to resolve the crust. A lid whose heat content took the heat capacity and density of its base would miss by +2.3 to +2.4 %; with the values at 780 K, by -1.2 to -1.3 %. Both lie outside the tolerance of 1 %. The test runs the lid again only when `ARAGOG_LOWT_EOS_DIR` names the extended table; without it, as on CI, it compares the stored runs, and `test_v2_lid_run_on_the_test_tables` pins the lid run on the test tables to its stored values at a relative 10⁻⁶.
 
 **What it tests.** A solid shell 25 km thick starts at 1300 K, below the solidus (1421 K at the surface), and cools by conduction only through a black-body surface that radiates to 255 K. One run uses 10 nodes (cells of 2.8 km) with the lid; the other uses 4000 nodes (cells of 6.25 m) without the lid. The test compares their surface fluxes at 8 times from 300 to 5000 years. The surface of the fine mesh cools below 300 K, below the floor of the SPIDER test tables (about 320 K), so both runs use the PALEOS table extended to 67 K (md5 of `temperature_solid.dat`: `18d6f9eb5ba654d58fe3fad30ce118f0`).
 
@@ -85,7 +85,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 ## A shell freezing from the mush on a fine mesh
 
-**Why this check exists.** Here the crust grows by freezing melt, so the lid takes up the heat the melt releases as it joins the crust, latent heat included: the Stefan jump. A wrong jump grows the crust at the wrong rate. A lid that counted the heat of its crust from the lower end of the band of entropy where the table holds the temperature at the solidus, instead of from the solidus entropy, makes the crust 4.0 to 4.8 % too thin, and the test sees it.
+**Why this check exists.** Here the crust grows by freezing melt, so the lid takes up the heat the melt releases as it joins the crust, latent heat included: the Stefan jump. A wrong jump grows the crust at the wrong rate. A lid that counted the heat of its crust from the lower end of the band of entropy where the table holds the temperature at the solidus, instead of from the solidus entropy, makes the crust 4.0 to 4.8 % too thin, outside the tolerance of 2 %. As above, the test runs the lid again only with the extended table; on CI `test_v2_melt_lid_run_on_the_test_tables` pins the lid run on the test tables to its stored values at a relative 10⁻⁶.
 
 **What it tests.** The shell of the case above, 25 km thick, starts in the mush: at every node the entropy lies a fifth of the way from the solidus to the liquidus. The solid rheology is off, so the base of the crust is the solidus. The shell cools by conduction only through a black-body surface that radiates to 255 K, on the same extended PALEOS table. One run uses 10 nodes with the lid; the other uses 4000 nodes (cells of 6.25 m) without the lid. The test compares the surface flux and the crust thickness at 8 times from 100 to 5000 years. For the lid the crust thickness is the thickness of the lid; for the fine mesh it is the depth where the entropy first reaches the solidus.
 
@@ -118,7 +118,7 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 ## A molten shell freezing through on a fine mesh
 
-**Why this check exists.** A magma ocean that starts fully molten cools fast at its surface. On a coarse mesh the top cell freezes through within a few years, long before a resolved crust would be thick. Without the solid rheology the lid base is the solidus, so once the top cell is at the solidus no melt is left below the lid to freeze. A lid kept past that point keeps a crust the mesh no longer has: with the hand-over held off, the lid misses the flux of the fine mesh by TBD-m4000 (between TBD-m4000 and TBD-m4000 of the fine-mesh flux), and the test sees it.
+**Why this check exists.** A magma ocean that starts fully molten cools fast at its surface. On a coarse mesh the top cell freezes through within a few years, long before a resolved crust would be thick. Without the solid rheology the lid base is the solidus, so once the top cell is at the solidus no melt is left below the lid to freeze. A lid kept past that point keeps a crust the mesh no longer has: with the hand-over held off, the lid misses the flux of the fine mesh by TBD-m4000 (between TBD-m4000 and TBD-m4000 of the fine-mesh flux). The test runs the lid again only with the extended table.
 
 **What it tests.** The shell of the cases above, 25 km thick, starts molten: at every node the entropy lies 1.1 times the way from the solidus to the liquidus. It convects, the solid rheology is off, and it cools through a black-body surface that radiates to 255 K, on the extended PALEOS table. One run uses 10 nodes (top cell 2.8 km) with the lid; the other uses 4000 nodes without the lid. The test compares their surface fluxes at 29 times from 100 to 5000 years. The 10-node lid hands over to the mesh when its top cell cools through the solidus, at 7.9 years; from then on it must run as the 10-node shell without the lid.
 
@@ -143,7 +143,7 @@ PLACEHOLDER-PLOT: surface_lid_c3_molten_resolved_mesh (light and dark), written 
 
 **What it tests.** A mantle shell 1000 km thick (radius 5371 to 6371 km) starts hot, at a uniform entropy of 9466 J/kg/K, on the extended PALEOS table. The solid rheology is on with the `'lid'` closure, and the surface radiates as a black body to 273 K. The lid starts 0.5 m thick. The run goes to 4 × 10⁵ years on 100, 200 and 400 nodes with the floor at 10³ J/kg, and on 100 nodes with the floor at 10² and 10⁴ J/kg. A second 100-node run starts from an entropy changed by one part in 10¹²; it sets the round-off scale of the comparison.
 
-**What we know.** Up to 3 × 10⁵ years the lid thickness converges with the mesh: going from 200 to 400 nodes changes it by a factor of 1.024, against 1.341 from 100 to 200 nodes. At 4 × 10⁵ years it depends on the mesh. Going from 200 to 400 nodes changes it by a factor of 1.448, and the order is not monotone: the lid is 366.6 m thick on 100 nodes, 244.0 m on 200 nodes and 353.4 m on 400 nodes. The interior temperature of the `'lid'` closure at that time is 1587.2 K on 100 nodes, 1864.9 K on 200 nodes and 1879.3 K on 400 nodes.
+**What we know.** At 3 × 10⁵ years going from 200 to 400 nodes changes the lid thickness by a factor of 1.024, against 1.341 from 100 to 200 nodes. Earlier the step from 200 to 400 nodes is at most 1.13 from 3 × 10³ to 2 × 10⁵ years, and 2.27 at 10³ years, where the lid on 200 nodes is still at its phantom thickness of 0.5 m. At 4 × 10⁵ years it depends on the mesh. Going from 200 to 400 nodes changes it by a factor of 1.448, and the order is not monotone: the lid is 366.6 m thick on 100 nodes, 244.0 m on 200 nodes and 353.4 m on 400 nodes. The interior temperature of the `'lid'` closure at that time is 1587.2 K on 100 nodes, 1864.9 K on 200 nodes and 1879.3 K on 400 nodes.
 
 The floor changes the lid most at late times. Up to 3 × 10⁵ years the runs with the floor at 10² and 10⁴ J/kg agree with the run at 10³ J/kg to 3.2 × 10⁻² (the largest difference, at 10⁴ years). At 4 × 10⁵ years the floor of 10⁴ J/kg gives a lid of 1779.8 m, 4.854 times the lid at 10³ J/kg; the floor of 10² J/kg gives 361.8 m, a factor of 0.987. The two runs from starts one part in 10¹² apart agree to 3.1 × 10⁻⁴.
 
@@ -154,7 +154,7 @@ The floor changes the lid most at late times. Up to 3 × 10⁵ years the runs wi
 
 The step factor is the larger of the two lid thicknesses divided by the smaller one.
 
-**Why it matters.** Up to 3 × 10⁵ years a run of this kind gives a crust thickness that does not depend on the mesh or the floor. Later the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
+**Why it matters.** From 3 × 10³ to 3 × 10⁵ years a run of this kind gives a crust thickness that changes by up to 13 % from 200 to 400 nodes (2.4 % at 3 × 10⁵ years); up to 3 × 10⁵ years it changes by up to 3.2 % with the floor. Later the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
 
 ![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor.svg#only-light){ width="80%" }
 ![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor_dark.svg#only-dark){ width="80%" }
@@ -175,13 +175,15 @@ The step factor is the larger of the two lid thicknesses divided by the smaller 
 
 **Why it matters.** Until a mesh resolves that crust, the error of the lid for a molten start with the solid rheology is not known. Use the lid there only with this limit in mind.
 
+**The pressure of the lid base.** The lid takes its base temperature, heat content and density at the pressure of the top-cell centre. The cases above use thin top cells, so they do not test a coarse mesh, where the solidus at the top-cell centre lies above the solidus at the lid base (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)).
+
 **Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md) rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The lid also needs the entropy EOS tables: a run with constant properties or with an outer boundary other than the grey body (`outer_boundary_condition = 1`) stops at setup with an error. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). Its convergence with mesh refinement after the hand-over is not validated in this release.
 
 ## A crust in steady state
 
 **Why this check exists.** Under a constant heat flux from below, a crust must settle at the thickness where it conducts exactly that flux. A lid whose growth law or surface balance is wrong settles at the wrong thickness, or its profile stays curved; the test sees both.
 
-**What it tests.** The melt below delivers a constant flux $F_b$ = 100 W/m² to the base of the lid. The surface radiates as a black body to an equilibrium temperature of 255 K, and the latent heat is 4 × 10⁵ J/kg. The lid starts 10 m thick, and the test checks it after ten relaxation times $\rho L \delta_\mathrm{eq}^2 / (k \Delta T)$, here 57 years each.
+**What it tests.** The melt below delivers a constant flux $F_b$ = 100 W/m² to the base of the lid. The surface radiates as a black body to an equilibrium temperature of 255 K, and the latent heat is 4 × 10⁵ J/kg. The lid starts 10 m thick, and the test checks it after ten relaxation times $\tau = \max(\rho L \delta_\mathrm{eq}^2 / (k \Delta T),\ \delta_\mathrm{eq}^2 / \kappa)$. Here the diffusion time $\delta_\mathrm{eq}^2 / \kappa$ sets $\tau$ = 57 years; the latent-heat time is 17 years.
 
 **How we know the right answer.** In steady state the crust conducts the base flux with a straight-line profile, so its thickness is $\delta_\mathrm{eq} = k (T_b - T_s) / F_b$, with the surface temperature $T_s$ set by the radiation balance $\sigma (T_s^4 - T_\mathrm{eq}^4) = F_b$: $T_s$ = 278.2 K and $\delta_\mathrm{eq}$ = 44.87 m. This follows from the conservation of energy alone.
 

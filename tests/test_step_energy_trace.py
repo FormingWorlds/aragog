@@ -159,7 +159,7 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     """A temperature cap ends the call at a root after a steep grey-body flux decay.
 
     The kept nodes increase in time and give the surface integral of a dense-output
-    run over the same span; the call's two endpoints alone miss it by 25 percent.
+    run over the same span; the call's two endpoints alone miss it by 27 percent.
     """
     from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
 
@@ -450,7 +450,7 @@ def _heated_bower_call(tidal_rate=None, **source):
     d, t = s._solution.energy_integrals, s._solution.t
     mass = float(np.dot(np.ravel(s.evaluator.mesh.staggered_effective_density), s._volume_flat))
     # The heat the RHS adds follows the live cell mass, so the budget closes with Q_radio and
-    # Q_tidal (measured 6.7e-5 radiogenic, 8.5e-5 tidal); the source is 6.5x |state_heat|.
+    # Q_tidal (measured 7.1e-5 radiogenic, 6.9e-5 tidal); the source is 6.5x |state_heat|.
     heat = d['Q_radio'] + d['Q_tidal']
     assert abs(heat) > 3.0 * abs(d['state_heat'])
     assert d['F_int'] + d['F_cmb'] + heat == pytest.approx(d['state_heat'], rel=5e-4)
