@@ -364,6 +364,9 @@ _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 # solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
+# Relative slack of the lid thickness above the growth stop in the step check: the integrator
+# can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-8, 1.4e-8 at 1e-9).
+_LID_CAP_SLACK = 1.0e-3
 # Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
 _SUBSOLIDUS_RTOL = 1.0e-9
 _SUBSOLIDUS_ATOL = 1.0e-8
@@ -2463,6 +2466,7 @@ class EntropySolver:
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
         self._lid_const = False
+        self._lid_cap_excess = math.nan
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -3239,18 +3243,20 @@ class EntropySolver:
         ------
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
-            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6), the weight leaves [0, 1]
-            or the fluid or lid-base entropy leaves the heat table.
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6 below, ``_LID_CAP_SLACK``
+            above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
+            table. Records the largest ``delta / cap - 1`` of the call in ``_lid_cap_excess``.
         """
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        self._lid_cap_excess = float(np.fmax(self._lid_cap_excess, ev.delta / cap - 1.0))
         lo, hi = self._lid_S_range
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
-        elif ev.delta > cap * (1.0 + 1e-6) or ev.delta < delta_lo * (1.0 - 1e-6):
+        elif ev.delta > cap * (1.0 + _LID_CAP_SLACK) or ev.delta < delta_lo * (1.0 - 1e-6):
             bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
@@ -5804,7 +5810,11 @@ class EntropySolver:
             t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
+        self._lid_cap_excess = (
+            math.nan
+        )  # largest delta / cap - 1 the lid checks of the call see
         sol.energy_integrals = self._compute_step_energy_integrals()
+        sol.lid_cap_excess = self._lid_cap_excess
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
             time.perf_counter() - t_solved,
