@@ -365,7 +365,7 @@ _RATE_CAP_RTOL_LIMIT = 1.0e-7
 # solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
 # Relative slack of the lid thickness above the growth stop in the step check: the integrator
-# can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-8, 1.4e-8 at 1e-9).
+# can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-6, 1.4e-8 at 1e-7).
 _LID_CAP_SLACK = 1.0e-3
 # Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
 _SUBSOLIDUS_RTOL = 1.0e-9
