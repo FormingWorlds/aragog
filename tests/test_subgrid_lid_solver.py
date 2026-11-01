@@ -641,6 +641,8 @@ def test_handover_in_the_call(eos, method):
 
 
 @pytest.mark.skipif(not _methods()[1:], reason='CVODE not available')
+# about 110 s alone on CI, over 300 s with coverage and 4 xdist workers
+@pytest.mark.timeout(900)
 def test_subsolidus_segment_caps_the_lid_atol(eos):
     """A rate-mode CVODE segment that starts below the solidus caps the atol of the lid states
     like the column entries, at min(caller atol, 1e-8 / state scale); the solve completes and
