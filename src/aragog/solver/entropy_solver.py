@@ -2474,6 +2474,7 @@ class EntropySolver:
             self._outer_bc_kind,
             self._core_bc,
         )
+        self._lid_convection = bool(self.parameters.energy.convection)  # as the mesh state
         if self.entropy_eos is None or getattr(
             self.parameters.phase_mixed, 'const_properties', False
         ):
@@ -3112,7 +3113,7 @@ class EntropySolver:
             area=self._lid_area,
             volume_top=float(self._volume_flat[-1]),
             ra_crit=self._lid_ra_crit,
-            convection=float(self.parameters.energy.convection),
+            convection=float(self._lid_convection),
             rheo=float(on),
             closure_lid=float(self._lid_handover_armed()),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
@@ -3386,7 +3387,7 @@ class EntropySolver:
         T_f, rho_f, cp_f = top(ph.temperature()), top(ph.density()), top(ph.heat_capacity())
         base = self._lid_base_state(T_f, top(ph.melt_fraction()), float(entropy[-1]))
         H_b, H_f = (float(v) for v in self._lid_W([base['S_b'], float(entropy[-1])]))
-        q_conv = float(self.parameters.energy.convection) * _lid.convective_base_flux(
+        q_conv = float(self._lid_convection) * _lid.convective_base_flux(
             T_f - base['T_b'],
             top(ph.thermal_conductivity()),
             rho_f,
