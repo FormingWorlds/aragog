@@ -13,6 +13,7 @@ from tests.conftest import EOS_DIR, entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import _build, needs_eos
 
 T_REF, S_REF, RHO, CP, K = 1600.0, 3000.0, 3300.0, 1250.0, 3.0
+T_SURF = 300.0  # surface temperature of outer boundary 5 [K]
 
 pytestmark = pytest.mark.unit
 
@@ -22,10 +23,17 @@ def eos():
     return entropy_eos_copy(EOS_DIR)
 
 
-def _params(closure='lid', rheology=True, lid=True):
+def _params(closure='lid', rheology=True, lid=True, outer_bc=1):
     from aragog.parser import SolidRheologyParams
 
-    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=1.0)
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=outer_bc,
+        inner_bc=2,
+        n_nodes=20,
+        end_time=1.0,
+        outer_bc_value=T_SURF,
+    )
     p.boundary_conditions.subgrid_lid = lid
     p.boundary_conditions.lid_handover_cells = 1
     p.boundary_conditions.normalize()
@@ -148,10 +156,10 @@ def test_constant_property_merge_conserves_energy(S_f, frac, m):
     assert resid <= 1e-12
 
 
-def _solved(calls=None):
+def _solved(calls=None, **kw):
     """A 1-year solve of the 20-node column from 3200 J/kg/K at the bottom to 2800 at the top;
     ``calls`` collects the arguments of every lid step check."""
-    s = _solver()
+    s = _solver(**kw)
     s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
     if calls is not None:
         check = s._check_lid_step
@@ -161,10 +169,13 @@ def _solved(calls=None):
 
 
 @pytest.mark.physics_invariant
-def test_constant_property_lid_ledger_closes_over_a_solve():
-    """With constant properties the step ledger runs: it closes to 1e-10 of the surface power
-    and the state heat, lid included, to 1e-2 of the budget."""
-    ei = _solved()._solution.energy_integrals
+@pytest.mark.parametrize('outer_bc', [1, 5])
+def test_constant_property_lid_ledger_closes_over_a_solve(outer_bc):
+    """With constant properties the step ledger runs on both outer boundaries: it closes to
+    1e-10 of the surface power and the state heat, lid included, to 1e-2 of the budget."""
+    s = _solved(outer_bc=outer_bc)
+    assert s._lid_last.delta > s._lid_delta_lo
+    ei = s._solution.energy_integrals
     budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
     assert ei['F_int'] < 0.0
     assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
@@ -177,3 +188,64 @@ def test_constant_property_lid_checks_every_accepted_step():
     s = _solved(calls)
     assert len(calls) >= 2
     assert calls[-1][2] == pytest.approx(float(s._solution.t[-1]))
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    F_b=st.floats(1e-6, 1e4),
+    T_b=st.floats(150.0, 3000.0),
+    T_surf=st.floats(150.0, 3000.0),
+    eps=st.floats(0.1, 1.0),
+)
+def test_fixed_surface_existence_weight(F_b, T_b, T_surf, eps):
+    """With a fixed surface temperature the steady crust is ``k (T_b - T_surf) / F_b``, with
+    no lid when the base is not hotter than the surface; the grey-body values do not enter."""
+    from aragog import surface_lid as sl
+
+    w = sl.existence_weight(F_b, T_b, K, eps, 255.0, 500.0, T_surf=T_surf)
+    if T_b <= T_surf:
+        assert w == 0.0
+        return
+    d_eq = K * (T_b - T_surf) / F_b
+    ref = 0.5 * (1.0 + np.tanh(np.log10(d_eq / 500.0) / sl.LID_EXIST_WIDTH))
+    assert w == (pytest.approx(ref, rel=1e-12) if ref > sl.LID_WEIGHT_FLOOR else 0.0)
+    assert w == sl.existence_weight(F_b, T_b, K, 1.0, 100.0, 500.0, T_surf=T_surf)
+
+
+def _bc5(lid=True):
+    s = _solver(outer_bc=5, lid=lid)
+    s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
+    return s
+
+
+def test_fixed_surface_lid_starts_and_stays_at_the_surface_temperature():
+    """Under outer boundary 5 the phantom lid has its surface at T_surf, and so has every lid
+    profile the right-hand side solves."""
+    s = _bc5()
+    s._dSdt_single(0.0, s._S0)
+    ev = s._lid_last
+    assert ev.surf.T_s == T_SURF
+    d = s._lid_delta_lo
+    assert s._S0[-2] == d
+    heat = d * float(s._lid_hv.profile_heat(0.0, T_SURF, ev.T_b))
+    assert s._S0[-1] == pytest.approx(heat, rel=1e-12)
+    y = s._S0.copy()
+    y[-1] *= 1.05
+    s._dSdt_single(0.0, y)
+    assert s._lid_last.surf.T_s == T_SURF
+    assert s._lid_last.surf.s != pytest.approx(0.0, abs=1e-6)
+
+
+def test_fixed_surface_lid_blends_the_grid_flux_of_the_surface_face(monkeypatch):
+    """F_grid of the lid is the outer boundary 5 flux of the top face, the flux of the same
+    column without the lid."""
+    from aragog import surface_lid as sl
+
+    seen = {}
+    rates = sl.lid_rates
+    monkeypatch.setattr(sl, 'lid_rates', lambda **kw: (seen.update(kw), rates(**kw))[1])
+    s, off = _bc5(), _bc5(lid=False)
+    s._dSdt_single(0.0, s._S0)
+    off._dSdt_single(0.0, off._S0)
+    assert seen['F_grid'] == float(np.asarray(off.state._heat_flux).ravel()[-1])
+    assert seen['F_grid'] > 0.0
