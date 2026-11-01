@@ -155,7 +155,6 @@ class _LidEval:
     surf: '_lid.LidSurface'
     F_b: float
     T_m: float
-    H_lid: float
     m_lid: float
     S_f: float
     S_b: float
@@ -163,7 +162,6 @@ class _LidEval:
     H_b: float
     H_f: float
     rho: float
-    cp: float
 
 
 def _validate_eos_radius_range(mesh_params) -> None:
@@ -3145,7 +3143,7 @@ class EntropySolver:
         the 'fixed' mode). The two are blended in entropy by the melt ramp of the transition.
         Without rheology the base is the solidus. At the fluid cap ``T_b = T_f``, the jump is 0
         and the Stefan rate runs at the enthalpy floor ``LID_DH_MIN`` by design.
-        Returns ``S_b``, ``T_b`` [K], ``rho`` [kg/m^3], ``cp`` [J/kg/K].
+        Returns ``S_b``, ``T_b`` [K] and ``rho`` [kg/m^3].
         """
         eos, P, S_sol = self.entropy_eos, self._lid_P, self._lid_S_sol
         S_b = S_sol
@@ -3172,7 +3170,6 @@ class EntropySolver:
             S_b=S_b,
             T_b=float(np.asarray(eos.temperature(P, S_b)).item()),
             rho=float(np.asarray(eos.density(P, S_b)).item()),
-            cp=float(np.asarray(eos.heat_capacity(P, S_b)).item()),
         )
 
     def _check_lid_step(self, delta_lo: float, step_idx: int, time_yr: float) -> None:
@@ -3431,7 +3428,6 @@ class EntropySolver:
             surf=surf,
             F_b=F_b,
             T_m=surf.T_m,
-            H_lid=rates.H_lid,
             m_lid=delta * self._lid_hv.profile_density(surf.s, surf.T_s, base['T_b']),
             H_b=H_b,
             H_f=H_f,
@@ -5539,12 +5535,8 @@ class EntropySolver:
                 )
             all_events = events
             if lid_g is not None:
-
-                def lid_event(t_nd, y_nd):
-                    return lid_g(t_nd, y_nd)
-
-                lid_event.terminal, lid_event.direction = True, 1
-                all_events = [*(events or []), lid_event]
+                lid_g.terminal, lid_g.direction = True, 1
+                all_events = [*(events or []), lid_g]
 
             def _run(t0_nd, y0_nd):
                 res = solve_ivp(
