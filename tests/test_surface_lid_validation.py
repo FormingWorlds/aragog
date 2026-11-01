@@ -183,8 +183,9 @@ def test_v2_half_space_cooling(validation_plot):
 def test_v3_quasi_steady_crust(validation_plot):
     """V3: under a fixed base flux and a grey surface the lid settles at the steady crust,
     delta = k (T_b - T_s) / F_b with grey(T_s) = F_b, on the linear profile (s = 0): within
-    1e-4 after ten relaxation times rho dh delta^2 / (k (T_b - T_s)). A lid without the latent
-    term in the growth rate would relax to the same depth, so the check is on the end state."""
+    1e-4 after ten relaxation times max(rho dh delta^2 / (k (T_b - T_s)), delta^2 / kappa); the
+    diffusion time sets it here. A lid without the latent term in the growth rate would relax to
+    the same depth, so the check is on the end state."""
     F_b, T_eq, dh = 100.0, 255.0, 4.0e5
     T_s_eq = (F_b / Stefan_Boltzmann + T_eq**4) ** 0.25
     d_eq = K * (T_B - T_s_eq) / F_b

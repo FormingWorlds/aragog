@@ -6,7 +6,7 @@ How does Aragog follow a crust that is much thinner than the top cell of the mes
 
 ## Why the mesh alone cannot do it
 
-A magma ocean freezes from its surface down. The first crust is metres thick, while the top cell of a 100-node mantle is about 11 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
+A magma ocean freezes from its surface down. The first crust is metres thick, while the top cell of a 100-node mantle is 30 to 35 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
 
 ## The two states and the profile
 
@@ -62,13 +62,13 @@ When the crust is resolved by the mesh, the lid hands over to the mesh: the solv
 
 **Why.** The lid replaces a crust the mesh cannot resolve, so it is right only where its answer has been compared with a mesh that does resolve that crust.
 
-**What.** The [Validation page](../Validation/surface_lid.md) compares the lid with fine meshes for three starts: a solid shell below the solidus, a shell in the mush that freezes from its surface, and a molten shell without the solid rheology, where the lid hands over at the solidus. A molten start with the solid rheology on, with either closure, is not validated: on a 1000-node mesh its crust is one node thick at 100 years, so no converged reference exists yet. Where the lid base sits at the melt temperature, a hot shell with the solid rheology and the `'lid'` closure gives a crust that converges with the mesh up to 3 × 10⁵ years; later its thickness depends on the mesh and on the floor (see [mesh and floor](../Validation/surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)).
+**What.** The [Validation page](../Validation/surface_lid.md) compares the lid with fine meshes for three starts: a solid shell below the solidus, a shell in the mush that freezes from its surface, and a molten shell without the solid rheology, where the lid hands over at the solidus. A molten start with the solid rheology on, with either closure, is not validated: on a 1000-node mesh its crust is one node thick at 100 years, so no converged reference exists yet. Where the lid base sits at the melt temperature, a hot shell with the solid rheology and the `'lid'` closure gives a crust that changes by up to 13 % from 200 to 400 nodes from 3 × 10³ to 3 × 10⁵ years; later its thickness depends on the mesh and on the floor (see [mesh and floor](../Validation/surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)).
 
 **Why it matters.** Use the lid for a molten start with the solid rheology only with this limit in mind; its heat loss there has no measured error.
 
 ## A worked example
 
-A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$ = 1200 J/kg/K and a latent heat of 3.9 × 10⁵ J/kg, so the Stefan number $c_p (T_b - T_s) / L$ is 3.381 and $\lambda$ = 0.948. With $\kappa$ = 1.1 × 10⁻⁶ m²/s, the crust is $2 \lambda \sqrt{\kappa t}$ = 11 m thick after one year and 355 m after a thousand years. Both are far below an 11 km top cell.
+A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$ = 1200 J/kg/K and a latent heat of 3.9 × 10⁵ J/kg, so the Stefan number $c_p (T_b - T_s) / L$ is 3.385 and $\lambda$ = 0.948. With $\kappa$ = 1.1 × 10⁻⁶ m²/s, the crust is $2 \lambda \sqrt{\kappa t}$ = 11 m thick after one year and 353 m after a thousand years. Both are far below a 30 km top cell.
 
 ## Settings and limits
 
@@ -81,6 +81,8 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (46,109 against 9,366).
 - The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over. A molten start with the solid rheology is not validated (see [Where the lid is valid](#where-the-lid-is-valid)).
+- The lid takes its base temperature, its heat content and its density at the pressure of the top-cell centre, not at the pressure of its base. On a coarse mesh the two differ: on the 10-node mantle of the [tutorial](../Tutorials/surface_lid.md) the top-cell centre lies at 7.8 GPa, where the solidus is 2149 K, against 1439 K at the surface. Use a mesh whose top cell is thin enough that the solidus changes little across it.
+- A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) cannot use the lid: the lid sets the surface flux itself through the grey-body balance.
 - The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
 
 **Where this is checked.** [Surface lid](../Validation/surface_lid.md) compares the lid with the freezing lava layer, a cooling half-space and a steady crust, and with a fine mesh for a solid shell and for a [shell that freezes from the mush](../Validation/surface_lid.md#a-shell-freezing-from-the-mush-on-a-fine-mesh), which tests the Stefan jump. It also lists the solver tests of the energy budget, the Stefan jump and the hand-over.
