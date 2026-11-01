@@ -2488,6 +2488,7 @@ class EntropySolver:
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
+        self._lid_const = False
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -5980,13 +5981,14 @@ class EntropySolver:
             ``solver_residual`` are node integrals [J]; ``state_heat`` [J] is the heat
             content change from the start and end states alone; ``F_cmb_step_avg`` is
             ``F_cmb`` divided by ``A_cmb`` and the call duration [W/m^2]. Without an
-            entropy EOS or with fewer than 2 output points the integrals are zero and
-            ``F_cmb_step_avg`` is None.
+            entropy EOS (except with the constant-property lid) or with fewer than 2 output
+            points the integrals are zero and ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
         rheo = self._solid_rheology()
         check_rheo = self._rheology_enabled
-        if self.entropy_eos is None or sol is None or sol.t.size < 2:
+        no_ledger = self.entropy_eos is None and not getattr(self, '_lid_const', False)
+        if no_ledger or sol is None or sol.t.size < 2:
             if not check_rheo:
                 return dict(_ZERO_ENERGY_INTEGRALS)
             if sol is not None and sol.t.size > 0 and sol.y.size > 0:
@@ -6289,9 +6291,8 @@ class EntropySolver:
         p_cmb = float(self.state._heat_flux[0]) * A_cmb
 
         S_i = self._stag_entropy(y_col)
-        mass_i = self._heated_mass(
-            np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
-        )
+        dens = self.entropy_eos if self.entropy_eos is not None else self._lid_props
+        mass_i = self._heated_mass(np.asarray(dens.density(self._P_stag_flat, S_i)).ravel() * vol)
         heating_radio_i = np.asarray(self.state.heating_radio).ravel()
         heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
         Q_radio_i = float(np.dot(heating_radio_i, mass_i))
@@ -6389,11 +6390,13 @@ class EntropySolver:
         Returns
         -------
         float
-            Heat content change [J], negative when the mantle cools. Zero
-            when no EOS is attached.
+            Heat content change [J], negative when the mantle cools. With the
+            constant-property lid the closed form ``rho cp (T(Sf) - T(S0))`` per
+            volume; zero when no EOS is attached otherwise.
         """
         eos = self.entropy_eos
-        if eos is None:
+        const = eos is None and getattr(self, '_lid_const', False)
+        if eos is None and not const:
             return 0.0
         P = np.asarray(self._P_stag_flat, dtype=float).ravel()
         vol = np.asarray(self._volume_flat, dtype=float).ravel()
@@ -6401,6 +6404,8 @@ class EntropySolver:
         Sf = np.asarray(Sf_stag, dtype=float).ravel()
         n = min(P.size, vol.size, S0.size, Sf.size)
         P, vol, S0, Sf = P[:n], vol[:n], S0[:n], Sf[:n]
+        if const:
+            return float(np.sum((self._lid_W(Sf) - self._lid_W(S0)) * vol))
         dS = Sf - S0
         if n_quad is None:
             n_quad = 512 if getattr(self, '_core_bc', None) == 'core_module' else 16
