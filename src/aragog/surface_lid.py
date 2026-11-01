@@ -57,8 +57,6 @@ LID_TAU_HIDDEN: float = 1.0e10
 # Bounds of the mean ratio m = (T_m - T_s) / (T_b - T_s) the shape inverse accepts.
 LID_MEAN_RATIO_MIN: float = 1.0e-4
 LID_MEAN_RATIO_MAX: float = 0.99
-# Smallest temperature contrast [K] across the lid.
-LID_DT_MIN: float = 1.0e-6
 # Conduction floor [m] of the lid thickness.
 LID_DELTA_FLOOR: float = 1.0e-5
 
