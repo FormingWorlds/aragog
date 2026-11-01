@@ -70,9 +70,19 @@ When the crust is resolved by the mesh, the lid hands over to the mesh: the solv
 
 A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$ = 1200 J/kg/K and a latent heat of 3.9 × 10⁵ J/kg, so the Stefan number $c_p (T_b - T_s) / L$ is 3.385 and $\lambda$ = 0.948. With $\kappa$ = 1.1 × 10⁻⁶ m²/s, the crust is $2 \lambda \sqrt{\kappa t}$ = 11 m thick after one year and 353 m after a thousand years. Both are far below a 30 km top cell.
 
+## On a constant-property column
+
+The stagnant-lid benchmark rows of Korenaga (2009) and Deschamps and Vilella (2021) use constant material properties (`phase_mixed.const_properties = true`): $T(S) = T_\mathrm{ref} \exp((S - S_\mathrm{ref}) / c_p)$ with constant density, heat capacity and conductivity, no melt and no solidus. The lid runs there in one mode only: no entropy EOS attached (`entropy_eos=None`), the solid rheology on, and `stress_closure_mode = 'lid'`, whose stagnant-lid state gives the lid base. Every other combination with constant properties is refused at setup by name, also a run that attaches an EOS, because the lid would then take other physics than the column.
+
+In this mode the lid uses closed forms instead of the tables. The heat content per volume is $W(S) = \rho c_p T(S)$, zero at 0 K; the Stefan jump $W(S_f) - W(S_b) = \rho c_p (T_f - T_b)$ does not depend on that zero. With no solidus the lid base is $T_b = \min(T_\mathrm{rh}, T_f)$, the stagnant-lid isotherm capped at the fluid, for any width of the rheological transition. The hand-over merge solves $T' = (V_N W(S_f) + A (E - W(S_f)\, \delta)) / (V_N \rho c_p)$ in one step, and the lid conducts with the conductivity of the column. The step ledger and the lid step checks run as with the tables; the cell heat content is $\rho c_p (T(S_1) - T(S_0))$ per volume.
+
+## Under a fixed surface temperature
+
+With `outer_boundary_condition = 5` the surface of the lid is held at the boundary temperature $T_\mathrm{surf}$ instead of the grey-body balance. The shape of the profile follows from the lid energy at that surface temperature, the steady crust of the existence weight is $\delta_\mathrm{eq} = k (T_b - T_\mathrm{surf}) / F_b$, and there is no lid where the base is not hotter than the surface. Where the lid is thin, the flux it blends with is the conduction of the top cell to the fixed surface over the half cell.
+
 ## Settings and limits
 
-- `subgrid_lid` (bool, default false): the switch. Only with the grey-body surface, `outer_boundary_condition = 1`, and not with `core_bc = 'gradient'`; both are refused at setup.
+- `subgrid_lid` (bool, default false): the switch. Only with the grey-body surface, `outer_boundary_condition = 1`, or a fixed surface temperature, `outer_boundary_condition = 5`, and not with `core_bc = 'gradient'`; the others are refused at setup. With `const_properties` only in the mode of [On a constant-property column](#on-a-constant-property-column).
 - `lid_delta_on` \[m\] (default 1): must be finite, positive and below 0.8 of the top-cell width; a larger value is refused at solver setup with the width named.
 - `lid_delta_lo` \[m\] (default `lid_delta_on / 2`): must lie in (0, `lid_delta_on`).
 - `lid_handover_cells` (integer ≥ 1, default 3): must leave at least one cell below the hand-over face.
@@ -82,7 +92,8 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times. In a 100-node molten-start column from 3000 to 4000 yr the solver takes about 5 times the steps of the same run without the lid (46,109 against 9,366).
 - The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over. A molten start with the solid rheology is not validated (see [Where the lid is valid](#where-the-lid-is-valid)).
 - The lid takes its base temperature, its heat content and its density at the pressure of the top-cell centre, not at the pressure of its base. On a coarse mesh the two differ: on the 10-node mantle of the [tutorial](../Tutorials/surface_lid.md) the top-cell centre lies at 7.8 GPa, where the solidus is 2149 K, against 1439 K at the surface. Use a mesh whose top cell is thin enough that the solidus changes little across it.
-- A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) cannot use the lid: the lid sets the surface flux itself through the grey-body balance.
-- The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve.
+- A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) cannot use the lid: the lid sets the surface flux itself through its surface balance.
+- The lid runs on the NumPy and on the JAX right-hand side. A JAX factory for a run with the lid must be built with `lid_params=solver.jax_lid_params()`; a factory that disagrees with the run on the lid is refused before the solve. The constant-property mode and the fixed surface temperature run on the NumPy right-hand side only: `jax_lid_params()` refuses both by name.
+- Inside the lid, the depth of the lid-base isotherm that the hand-over root reads interpolates linearly between the surface and the lid base, not along the profile of the lid. For a curved profile this changes the depth value only: the lid is at most 0.8 of the top cell thick and the hand-over face lies at least one cell deep, so a crossing inside the lid gives the root the same sign either way.
 
 **Where this is checked.** [Surface lid](../Validation/surface_lid.md) compares the lid with the freezing lava layer, a cooling half-space and a steady crust, and with a fine mesh for a solid shell and for a [shell that freezes from the mush](../Validation/surface_lid.md#a-shell-freezing-from-the-mush-on-a-fine-mesh), which tests the Stefan jump. It also lists the solver tests of the energy budget, the Stefan jump and the hand-over.

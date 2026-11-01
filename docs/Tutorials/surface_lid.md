@@ -11,11 +11,11 @@ In this tutorial you switch on the sub-grid surface lid, run a short cooling ste
 ## What you need
 
 - Aragog installed (see [Installation](../How-to/installation.md)).
-- The SPIDER-format test tables, with `ARAGOG_TEST_EOS_DIR` pointing at them (see [First run](firstrun.md), step 1). The lid needs equation-of-state tables; it does not run in the constant-properties mode.
+- The SPIDER-format test tables, with `ARAGOG_TEST_EOS_DIR` pointing at them (see [First run](firstrun.md), step 1). This tutorial uses the equation-of-state tables. The lid also runs in one constant-properties mode (see [Surface lid](../Explanations/surface_lid.md#on-a-constant-property-column)).
 
 ## 1. Write the configuration
 
-The mantle has 9 cells (10 nodes), from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid needs the grey-body surface, `outer_boundary_condition = 1`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
+The mantle has 9 cells (10 nodes), from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid runs with this grey-body surface, `outer_boundary_condition = 1`, or with a fixed surface temperature, `5`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
 
 ```python
 import os
@@ -29,7 +29,7 @@ atol = 1e-8
 rtol = 1e-8
 
 [boundary_conditions]
-outer_boundary_condition = 1        # grey-body surface, needed by the lid
+outer_boundary_condition = 1        # grey-body surface
 outer_boundary_value = 0
 inner_boundary_condition = 2        # prescribed flux at the bottom
 inner_boundary_value = 0            # W/m^2: no heat crosses the bottom
