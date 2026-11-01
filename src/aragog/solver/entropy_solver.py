@@ -3101,7 +3101,6 @@ class EntropySolver:
             hs=jl.enthalpy(hs),
             P=self._lid_P,
             S_sol=self._lid_S_sol,
-            S_liq=self._lid_S_liq,
             T_sol=self._lid_T_sol,
             k=self._lid_k,
             emissivity=self._outer_bc_emiss,

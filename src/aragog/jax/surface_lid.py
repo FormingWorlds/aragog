@@ -338,7 +338,6 @@ class LidParams(NamedTuple):
     hs: Enthalpy
     P: float
     S_sol: float
-    S_liq: float
     T_sol: float
     k: float
     emissivity: float
