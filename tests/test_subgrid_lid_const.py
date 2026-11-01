@@ -250,3 +250,19 @@ def test_fixed_surface_lid_blends_the_grid_flux_of_the_surface_face(monkeypatch)
     off._dSdt_single(0.0, off._S0)
     assert seen['F_grid'] == float(np.asarray(off.state._heat_flux).ravel()[-1])
     assert seen['F_grid'] > 0.0
+
+
+@needs_eos
+def test_fixed_surface_lid_refuses_the_jax_rhs(eos):
+    """The JAX lid has the grey-body surface only: under outer boundary 5 the lid data refuses
+    by name, also with an entropy EOS."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=5, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.outer_boundary_value = 1000.0  # inside the test tables
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    with pytest.raises(ValueError, match='fixed surface temperature'):
+        s.jax_lid_params()
