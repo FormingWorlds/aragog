@@ -222,13 +222,14 @@ def test_fixed_surface_lid_starts_and_stays_at_the_surface_temperature():
     """Under outer boundary 5 the phantom lid has its surface at T_surf, and so has every lid
     profile the right-hand side solves."""
     s = _bc5()
-    s._dSdt_single(0.0, s._S0)
-    ev = s._lid_last
-    assert ev.surf.T_s == T_SURF
+    S_top = float(s._S0[s._n_stag - 1])
+    T_b = s._lid_base_state(float(_T(S_top)), 0.0, S_top)['T_b']
     d = s._lid_delta_lo
     assert s._S0[-2] == d
-    heat = d * float(s._lid_hv.profile_heat(0.0, T_SURF, ev.T_b))
+    heat = d * float(s._lid_hv.profile_heat(0.0, T_SURF, T_b))
     assert s._S0[-1] == pytest.approx(heat, rel=1e-12)
+    s._dSdt_single(0.0, s._S0)
+    assert s._lid_last.surf.T_s == T_SURF
     y = s._S0.copy()
     y[-1] *= 1.05
     s._dSdt_single(0.0, y)
