@@ -109,10 +109,14 @@ def test_lid_starts_as_the_phantom_lid(eos):
 
 
 def test_set_initial_lid_and_hot_start(eos):
-    """A set lid is used once, as given, by the next start; the start after a solve takes the
-    lid at the end of that solve, and None clears a set lid before it is used."""
+    """A set lid holds for every start until the next solve, also across a reset, as a resume
+    with a structure update starts twice; that solve consumes it, so the start of the solve
+    after it takes the lid at the end of the first. None clears a set lid before it is used."""
     s = _solver(eos)
     s.set_initial_lid(2.0, -1.0e9)
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+    s.reset()
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
     s.solve()
@@ -120,10 +124,12 @@ def test_set_initial_lid_and_hot_start(eos):
     assert not np.array_equal(end, [2.0, -1.0e9])
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], end)
+    s.solve()
+    np.testing.assert_array_equal(s._solution.y[-2:, 0], end)
     s.set_initial_lid(3.0, -2.0e9)
     s.set_initial_lid(None)
     s.set_initial_entropy(3050.0)
-    np.testing.assert_array_equal(s._S0[-2:], end)
+    np.testing.assert_array_equal(s._S0[-2:], s._solution.y[-2:, -1])
     with pytest.raises(ValueError, match='finite delta > 0'):
         s.set_initial_lid(-1.0, 0.0)
     with pytest.raises(ValueError, match='finite delta > 0'):
