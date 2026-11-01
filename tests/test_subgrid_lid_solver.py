@@ -1012,6 +1012,28 @@ def test_lid_base_temperature_floor(eos, monkeypatch):
     assert np.isfinite(base['T_b'])
 
 
+@pytest.mark.parametrize('convection', [True, False])
+def test_base_flux_takes_the_boundary_layer_flux_only_with_convection(eos, convection):
+    """With ``energy.convection`` off the mesh carries no convective flux, so the lid base gets
+    only the mesh flux into the top cell, or 0; with it on, the boundary-layer flux of the same
+    state is the larger one and sets F_b."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.energy.convection = convection
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    s._dSdt_single(0.0, s._S0.copy())
+    floor = max(float(s.state._heat_flux[-2]), 0.0)
+    if convection:
+        assert s._lid_last.F_b > floor + 1.0
+    else:
+        assert s._lid_last.F_b == floor
+
+
 @pytest.mark.parametrize('case', ['convective', 'face', 'zero'])
 def test_base_flux_is_the_largest_of_convection_face_and_zero(eos, monkeypatch, case):
     """F_b is the largest of the convective base flux, the mesh flux into the top cell and 0."""

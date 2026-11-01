@@ -99,7 +99,7 @@ def test_lid_top_matches_the_numpy_lid(case):
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
 
 
-def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True):
+def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, convection=True):
     from aragog.solver.entropy_solver import EntropySolver
     from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
     from tests.test_subgrid_lid_solver import _heat
@@ -111,6 +111,7 @@ def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True):
     if core_bc == 'core_module':
         p.boundary_conditions.core_module_params = CORE_MODULE_PARAMS
     p.boundary_conditions.normalize()
+    p.energy.convection = convection
     if rheology is not None:
         p.phase_solid.rheology = _lid_cases()[rheology]
     # core_module: the expansivity of the JAX RHS, as tests/test_jax_dsdt_core_module.py
@@ -204,7 +205,16 @@ def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
     """The JAX factory right-hand side with the lid equals the NumPy one on active and
     handed-over lids: the top cell and the 2 lid rates to relative 1e-12, the other slots to
     1e-12 of the largest mantle rate. The call counter proves the JAX path ran."""
-    s = _lid_solver(core_bc, rheology, heating)
+    _assert_rhs_parity(_lid_solver(core_bc, rheology, heating))
+
+
+def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
+    """With ``energy.convection`` off the JAX and the NumPy right-hand sides with the lid agree
+    as with convection on: neither gives the lid base the boundary-layer flux."""
+    _assert_rhs_parity(_lid_solver(convection=False))
+
+
+def _assert_rhs_parity(s):
     rhs_fn, _, info = _factory_rhs(s, s.jax_lid_params())
     assert info['lid'] and rhs_fn.lid
     f, n = _physical(rhs_fn, s._build_nondim_scales()), 0
