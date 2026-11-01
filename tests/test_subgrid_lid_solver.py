@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -846,6 +848,20 @@ def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
     warm.solve()
     assert np.isnan(warm.get_state().lid_handover_time)
     assert warm._solution.y[-2, -1] > 0.0
+
+
+def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos):
+    """A lid root in the segment after the segment ceiling still merges the lid and the call
+    runs to its end time, as with the default ceiling."""
+    s = _top_at(eos, 0.2)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = False
+    s.parameters.energy.phase_boundary_cap = 'rate'
+    s._solve_cvode_segments = functools.partial(s._solve_cvode_segments, max_segments=0)
+    s.solve()
+    assert s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
+    assert 0.0 < s.get_state().lid_handover_time < 1.0
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
 
 
 @pytest.mark.physics_invariant
