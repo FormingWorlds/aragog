@@ -49,7 +49,7 @@ The fallback is deliberate; an exception would make the JAX extra a hard depende
 
 - The CLI emits a one-line `INFO` at solve time naming the active Jacobian path.
 - `aragog --versions` lists JAX, so a bug report on slow integration can be diagnosed remotely.
-- With `backend = 'jax'`, the PROTEUS wrapper registers the factory when JAX imports and the install succeeds; when either step fails, it registers none and logs a warning (with `PROTEUS_CI_NIGHTLY=1` the failure is an error). Standalone users who care about speed read the docs.
+- With `backend = 'jax'`, the PROTEUS wrapper registers the factory when JAX imports and the install succeeds. When either step fails, it registers none and logs a warning (with `PROTEUS_CI_NIGHTLY=1` the failure is an error); a separation buoyancy that differs from the config stops the run. Standalone users who care about speed read the docs.
 
 ## Bit-parity with the numpy path
 
