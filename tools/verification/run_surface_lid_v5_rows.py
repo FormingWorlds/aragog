@@ -12,13 +12,16 @@ below ``LID_DH_MIN``, and per solver call two ledger checks:
   ``X = A (E - W_f delta)`` from the states against the trapezoid integral of
   ``dX/dt = A (dE/dt - W_f ddelta/dt - delta rho_f T_f dS_f/dt)`` up to the last node with the lid.
 
-Usage: ``python tools/verification/run_surface_lid_v5_rows.py OUT.jsonl on|off lid|local K:E230a D:f60_H4``.
+Usage: ``python tools/verification/run_surface_lid_v5_rows.py OUT.jsonl on|off lid|local K:E230a D:f60_H4``
+runs rows; ``... collect tests/reference/surface_lid_v5_rows.json IN.jsonl ...`` writes the compact
+table of ``tests/test_surface_lid_v5_rows.py`` from runs of one clean commit.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -31,8 +34,11 @@ sys.path.insert(0, str(REPO_ROOT))
 import tools.verification.evaluate_mlt_top_slope_calibration as ev  # noqa: E402
 from aragog import surface_lid as sl  # noqa: E402
 from aragog.solver import entropy_solver as es_mod  # noqa: E402
+from tools.verification._ssc_helpers import write_compact_json  # noqa: E402
 
 POWERS = ('F_int', 'F_cmb', 'Q_radio', 'Q_tidal')
+OBSERVABLES = {'K': ('Nu', 'Ti'), 'D': ('Tm', 'Phi_top', 'Phi_bot', 'd_lid')}
+EXCEEDS = {'K': 'exceeds_1', 'D': 'n_residuals_exceed_1'}  # K09 Nu; DV Tm, Phi_top, d_lid
 
 
 def lid_subledger(s, t: np.ndarray, y: np.ndarray) -> dict:
@@ -136,12 +142,52 @@ def run_row(
         'lid': lid,
         'closure': closure,
         'wall_s': time.time() - t0,
+        'n_nodes': n_nodes,
+        's_top_inf': s_top_inf,
+        'c_theta': c_theta,
+        'commit': _git('rev-parse', 'HEAD'),
+        'dirty': bool(_git('status', '--porcelain', '--', 'src', 'tools')),
         'result': keep,
         **rec,
     }
 
 
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ['git', '-C', str(REPO_ROOT), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def collect(out: Path, inputs: list[Path]) -> None:
+    """Write the compact V5 table: one block per run, keyed 'table:row:on|off:closure'."""
+    runs = [json.loads(ln) for f in inputs for ln in f.read_text().splitlines() if ln.strip()]
+    setup = {(r['commit'], r['n_nodes'], r['s_top_inf'], r['c_theta']) for r in runs}
+    if len(setup) != 1 or any(r['dirty'] for r in runs):
+        raise SystemExit(f'runs from more than one setup or a dirty tree: {setup}')
+    commit, n_nodes, s_top_inf, c_theta = setup.pop()
+    meta = {'commit': commit, 'n_nodes': n_nodes, 's_top_inf': s_top_inf, 'c_theta': c_theta}
+    table = {'meta': meta}
+    for r in runs:
+        t = r['table']
+        key = f'{t}:{r["row"]}:{"on" if r["lid"] else "off"}:{r["closure"]}'
+        if key in table:
+            raise SystemExit(f'two runs of {key}')
+        table[key] = {
+            **{k: r['result'][k] for k in OBSERVABLES[t]},
+            'exceeds': int(r['result'][EXCEEDS[t]]),
+            'handover_t': r['handover_t'],
+            'floor_steps': r['floor_steps'],
+            'checked_steps': r['checked_steps'],
+            'guard_max': max(c['guard'] for c in r['calls']),
+            'sub': [c['lid']['miss_rel'] for c in r['calls'] if 'lid' in c],
+        }
+    write_compact_json(out, table)
+
+
 def main(argv: list[str]) -> int:
+    if argv[0] == 'collect':
+        collect(Path(argv[1]), [Path(a) for a in argv[2:]])
+        return 0
     out, lid, closure, rows = Path(argv[0]), argv[1] == 'on', argv[2], argv[3:]
     with out.open('a') as f:
         for tr in rows:
