@@ -24,8 +24,8 @@ Supported ``core_bc_mode`` values:
   is ``jax.solver.dSdt_core_module``, closed by the core evolution
   budget passed as ``core_module_budget``.
 
-Unsupported (factory raises ``ValueError`` and the calling solver
-falls back to numpy RHS + FD Jacobian after logging a warning):
+Unsupported (factory raises ``UnsupportedCoreBCError`` and the calling
+solver falls back to numpy RHS + FD Jacobian after logging a warning):
 - ``bower2018``: extended state with absolute T_core. No JAX
   closure for the core thermal balance has been implemented.
 - ``gradient``: extended state with both boundary entropies. No
@@ -44,6 +44,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from aragog.config.boundary import CORE_BC_MODES
+
 logger = logging.getLogger('fwl.' + __name__)
 
 _CACHE_MAXSIZE = 8
@@ -51,8 +53,15 @@ _CACHE_MAXSIZE = 8
 # Fixed chunk length for batched per-call energy power evaluation.
 C: int = 512
 
+# The core_bc modes with a JAX RHS, each with its count of state entries after the entropies.
+_JAX_N_EXTRA = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}
+
 # Module-level counters for JIT tracing events.
 _TRACE_COUNTERS = {'rhs': 0, 'jac': 0, 'powers': 0}
+
+
+class UnsupportedCoreBCError(ValueError):
+    """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
 @dataclass
@@ -210,6 +219,7 @@ def build_jax_rhs_and_jacobian(
     core_module_q_radio: float = 0.0,
     core_module_ra_crit_cmb: float | None = None,
     lid_params=None,
+    start_time: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -240,7 +250,7 @@ def build_jax_rhs_and_jacobian(
         with dSdr_cmb and T_core; requires ``core_module_budget``).
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
-        t0_years, half_life_years)`` of 1D arrays, one entry per
+        t0_years, half_life_years)`` of 1D arrays of one shape, one entry per
         radionuclide. When non-empty, the JAX RHS evaluates the
         radiogenic source at the live integrator time ``t_phys`` so
         the heating reflects in-step decay. Empty default disables
@@ -263,6 +273,11 @@ def build_jax_rhs_and_jacobian(
         The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
         ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
         True; None, the default, builds the RHS without the lid.
+    start_time : float, optional
+        Time [yr] at which the radiogenic heating of each isotope of ``radio_isotope_params``
+        must be finite (``aragog.parser.validate_radionuclide``); None skips the check.
+        ``EntropySolver.solve`` passes no start time to the factory, and no caller in
+        aragog or PROTEUS passes one.
 
     Returns
     -------
@@ -281,15 +296,33 @@ def build_jax_rhs_and_jacobian(
     Raises
     ------
     RuntimeError
-        Without JAX or the ``aragog.jax`` module.
+        Without JAX or the ``aragog.jax`` module, for a supported ``core_bc_mode``.
     TypeError
         For ``scales`` that is not a ``NonDimScales``.
+    UnsupportedCoreBCError
+        For a ``core_bc_mode`` of ``aragog.config.boundary.CORE_BC_MODES`` with no JAX RHS
+        ('bower2018', 'gradient').
     ValueError
-        For a missing ``core_module_budget``, an unsupported ``core_bc_mode``, inputs of the
-        wrong size or shape, a type 5 setup that
+        For a missing ``core_module_budget``, a ``core_bc_mode`` outside ``CORE_BC_MODES``,
+        inputs of the wrong size or shape, a type 5 setup that
         ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
         that ``aragog.jax.solver.check_radio_arrays`` refuses.
     """
+    if core_bc_mode == 'core_module' and core_module_budget is None:
+        raise ValueError(
+            "core_bc_mode='core_module' requires core_module_budget "
+            '(the CoreEnergyBudget the solver built from its config); '
+            'got None.'
+        )
+    if core_bc_mode not in _JAX_N_EXTRA:
+        err = UnsupportedCoreBCError if core_bc_mode in CORE_BC_MODES else ValueError
+        raise err(
+            f'core_bc_mode={core_bc_mode!r} is not supported by the JAX CVODE factory. '
+            f'Supported modes: {tuple(_JAX_N_EXTRA)}. Set ``use_jax_jacobian = false`` for '
+            'the NumPy RHS; with it true, the other config modes use the NumPy RHS after a '
+            'warning.'
+        )
+
     try:
         import jax.numpy as jnp
 
@@ -299,29 +332,6 @@ def build_jax_rhs_and_jacobian(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '
             f'aragog.jax module. Original error: {exc}'
         ) from exc
-
-    if core_bc_mode == 'core_module' and core_module_budget is None:
-        raise ValueError(
-            "core_bc_mode='core_module' requires core_module_budget "
-            '(the CoreEnergyBudget the solver built from its config); '
-            'got None.'
-        )
-    if core_bc_mode not in ('quasi_steady', 'energy_balance', 'core_module'):
-        logger.warning(
-            'JAX CVODE factory: core_bc_mode=%r is not implemented '
-            'in the JAX RHS; only quasi_steady, energy_balance, and '
-            'core_module are supported. Falling back to numpy RHS + '
-            'FD Jacobian.',
-            core_bc_mode,
-        )
-        raise ValueError(
-            f'core_bc_mode={core_bc_mode!r} is not supported by the '
-            f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance', 'core_module'. To use any other mode "
-            f'(including {core_bc_mode!r}), set ``use_jax_jacobian = '
-            f'false`` in the config, or leave it true to get the '
-            f'automatic FD-Jacobian fallback.'
-        )
 
     aragog.jax.solver.check_surface_temperature(
         eos_jax, phase_params, mesh_arrays, boundary_params
@@ -340,7 +350,7 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    n_extra = _JAX_N_EXTRA[core_bc_mode]
     shell = (
         getattr(core_module_budget, 'shell', None) if core_bc_mode == 'core_module' else None
     )
@@ -384,13 +394,18 @@ def build_jax_rhs_and_jacobian(
                 '(heat_prod, abundance, concentration, t0_years, '
                 f'half_life_years); got length {len(radio_isotope_params)}'
             )
-        shapes = [np.shape(a) for a in radio_isotope_params]
+        try:
+            shapes = [np.shape(a) for a in radio_isotope_params]
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f'Radionuclide arrays: no 5 arrays of numbers ({exc})') from exc
         if len(set(shapes)) > 1:
             raise ValueError(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
             )
-        if np.size(radio_isotope_params[0]) > 0:
-            radio_arrays = aragog.jax.solver.check_radio_arrays(*radio_isotope_params)
+        checked = aragog.jax.solver.check_radio_arrays(
+            *radio_isotope_params, start_time=start_time
+        )
+        radio_arrays = checked if checked[0].size > 0 else ()
     use_radio = bool(radio_arrays)
 
     data = (

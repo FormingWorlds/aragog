@@ -87,7 +87,7 @@ pip install scikits-odes-sundials jax equinox
 The PROTEUS-side conda environment already pulls all three transitively through Atmodeller, so a PROTEUS install does not require this step.
 
 !!! info "Fallbacks for development without CVODE or JAX"
-    If `scikits-odes-sundials` is not importable, Aragog issues a warning and falls back to scipy `Radau` or `BDF`. If `jax` is not importable with `use_jax_jacobian = true`, it falls back to CVODE's finite-difference Jacobian, which is slower and noisier near the rheological transition. Both fallbacks are sufficient for short standalone tests but are not suitable for production-tolerance multi-Myr runs.
+    If `scikits-odes-sundials` is not importable, Aragog issues a warning and falls back to scipy `Radau` or `BDF`. With `use_jax_jacobian = true` and no JAX CVODE factory registered (the PROTEUS wrapper registers none when `jax` is not importable), CVODE uses its finite-difference Jacobian, which is slower and noisier near the rheological transition; a registered factory that cannot import `jax` stops the solve with a `RuntimeError`. Both fallbacks are sufficient for short standalone tests but are not suitable for production-tolerance multi-Myr runs.
 
 ## Running on HPC clusters
 

@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
+from tests.conftest import option_z_parameters as _build_parameters
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -42,95 +43,6 @@ needs_cvode = pytest.mark.skipif(
 )
 
 pytestmark = [pytest.mark.smoke, needs_eos]
-
-
-def _build_parameters(*, n_nodes: int = 12, end_time: float = 2.0):
-    from aragog.parser import (
-        Parameters,
-        _BoundaryConditionsParameters,
-        _EnergyParameters,
-        _InitialConditionParameters,
-        _MeshParameters,
-        _PhaseMixedParameters,
-        _PhaseParameters,
-        _SolverParameters,
-    )
-
-    bc = _BoundaryConditionsParameters(
-        outer_boundary_condition=1,
-        outer_boundary_value=1500.0,
-        inner_boundary_condition=2,
-        inner_boundary_value=0.0,
-        emissivity=1.0,
-        equilibrium_temperature=255.0,
-        core_heat_capacity=880.0,
-        core_bc='quasi_steady',
-    )
-    en = _EnergyParameters(
-        conduction=True,
-        convection=True,
-        gravitational_separation=False,
-        mixing=False,
-        radionuclides=False,
-        tidal=False,
-        solver_method='cvode',
-        use_jax_jacobian=True,
-    )
-    ic = _InitialConditionParameters(
-        initial_condition=1, surface_temperature=3500.0, basal_temperature=3500.0
-    )
-    mesh = _MeshParameters(
-        outer_radius=6.371e6,
-        inner_radius=3.480e6,
-        number_of_nodes=n_nodes,
-        mixing_length_profile='nearest_boundary',
-        core_density=10500.0,
-        eos_method=1,
-    )
-    pl = _PhaseParameters(
-        density=4000.0,
-        heat_capacity=1000.0,
-        melt_fraction=1.0,
-        thermal_conductivity=4.0,
-        thermal_expansivity=3e-5,
-        viscosity=10.0,
-    )
-    ps = _PhaseParameters(
-        density=4200.0,
-        heat_capacity=1000.0,
-        melt_fraction=0.0,
-        thermal_conductivity=4.0,
-        thermal_expansivity=3e-5,
-        viscosity=1e21,
-    )
-    pm = _PhaseMixedParameters(
-        latent_heat_of_fusion=4.0e5,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        solidus='solidus.dat',
-        liquidus='liquidus.dat',
-        phase='mixed',
-        phase_transition_width=0.01,
-        grain_size=1.0e-3,
-    )
-    sv = _SolverParameters(
-        start_time=0.0,
-        end_time=end_time,
-        atol=1.0e-6,
-        rtol=1.0e-6,
-        tsurf_poststep_change=30.0,
-    )
-    return Parameters(
-        boundary_conditions=bc,
-        energy=en,
-        initial_condition=ic,
-        mesh=mesh,
-        phase_solid=ps,
-        phase_liquid=pl,
-        phase_mixed=pm,
-        radionuclides=[],
-        solver=sv,
-    )
 
 
 @needs_cvode

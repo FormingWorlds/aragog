@@ -37,19 +37,19 @@ The third option keeps the JAX trace out of the solver class and lets the factor
 
 ## What "registered before solve()" means
 
-`EntropySolver.set_jax_cvode_factory(build_jax_rhs_and_jacobian)` stores the factory on the instance. When `solve()` runs with `solver_method = 'cvode'` and `use_jax_jacobian = true`, it:
+`EntropySolver.set_jax_cvode_factory(factory)` stores the factory on the instance: a callable `factory(scales, core_bc_mode)` that calls `build_jax_rhs_and_jacobian` with the bound runtime objects and returns its first 2 items (example in [CVODE and JAX](cvode_jax.md)). When `solve()` runs with `solver_method = 'cvode'` and `use_jax_jacobian = true`, it:
 
-1. Calls the factory with the bound runtime objects,
+1. Calls `factory(scales, core_bc_mode)`,
 2. Hands the resulting `(rhs, jac)` to CVODE,
 3. Lets CVODE drive the integration.
 
-If the factory is not registered, the solver silently falls back to CVODE's built-in finite-difference Jacobian. This is intentional: a caller that registers no factory still gets a working (slower) path.
+If the factory is not registered, the solver silently falls back to CVODE's built-in finite-difference Jacobian. This is intentional: a caller that registers no factory still gets a working (slower) path. A registered factory that raises `UnsupportedCoreBCError` (`core_bc` `bower2018` or `gradient`) gives the same path after a warning; any other exception from the factory propagates out of `solve()`.
 
 The fallback is deliberate; an exception would make the JAX extra a hard dependency. The cost is that a misconfigured environment (JAX installed, factory not registered) silently runs at FD-Jacobian speed instead of failing loudly. Mitigations:
 
 - The CLI emits a one-line `INFO` at solve time naming the active Jacobian path.
 - `aragog --versions` lists JAX, so a bug report on slow integration can be diagnosed remotely.
-- The PROTEUS wrapper always registers the factory; standalone users who care about speed read the docs.
+- With `backend = 'jax'`, the PROTEUS wrapper registers the factory when JAX imports and the install succeeds. When either step fails, it registers none and logs a warning (with `PROTEUS_CI_NIGHTLY=1` the failure is an error); a separation buoyancy that differs from the config stops the run. Standalone users who care about speed read the docs.
 
 ## Bit-parity with the numpy path
 
