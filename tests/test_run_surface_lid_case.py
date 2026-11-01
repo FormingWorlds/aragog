@@ -146,4 +146,4 @@ def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
     assert row['lid'] is False and row['surface_cell'] == 1000.0
     assert row['delta'] is None and row['E'] is None and row['handover_root'] is None
     r = np.load(tmp_path / f'{d.STEM}_part0.npz')['r_basic']
-    assert r[-1] - r[-2] == pytest.approx(1000.0, rel=1e-9)
+    assert r[-1] - r[-2] == pytest.approx(1000.0, rel=1e-6)  # radii from the Newton mass grid
