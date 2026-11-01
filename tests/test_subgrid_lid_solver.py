@@ -855,6 +855,15 @@ def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
     assert warm._solution.y[-2, -1] > 0.0
 
 
+def test_handed_over_lid_reports_zero_thickness_and_energy(eos):
+    """After a hand-over the output reports the lid states the solver holds, 0 and 0."""
+    s = _top_at(eos, 0.2)
+    s.solve()
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0
+    assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
+
+
 def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos):
     """A lid root in the segment after the segment ceiling still merges the lid and the call
     runs to its end time, as with the default ceiling."""
