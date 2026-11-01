@@ -233,6 +233,38 @@ def _assert_rhs_parity(s, rtol_top=1e-12):
     assert info['rhs_calls'] == n
 
 
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('cap', ['fixed', 'rate'])
+def test_lid_hands_over_inside_a_call_on_the_jax_factory(cap):
+    """Without the solid rheology a top cell 0.2 J/kg/K above its solidus cools through it
+    inside a 1-yr CVODE call on the JAX factory, with no root replaced: the lid hands over and
+    ends at exactly 0, and the step ledger closes to 1e-10 of the surface power."""
+    from aragog.solver import entropy_solver as es
+
+    if not es._CVODE_AVAILABLE:
+        pytest.skip('scikits.odes is not installed')
+    s = _lid_solver()
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = True
+    s.parameters.energy.phase_boundary_cap = cap
+    S = s._S0[: s._n_stag].copy()
+    S[-1] = s._lid_S_sol + 0.2
+    s.set_initial_entropy(S)
+    info = {}
+
+    def factory(scales, mode):
+        rhs_fn, jac_fn, info['info'] = _factory_rhs(s, s.jax_lid_params())
+        return rhs_fn, jac_fn
+
+    s.set_jax_cvode_factory(factory)
+    s.solve()
+    assert s._solution.status == 0 and info['info']['rhs_calls'] > 0
+    assert 0.0 < s.get_state().lid_handover_time < 1.0
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+
+
 @pytest.mark.parametrize(
     ('core_bc', 'rheology', 'heating'),
     [PARITY[0], PARITY[1], ('energy_balance', 'arrhenius_local', 'tidal')],
