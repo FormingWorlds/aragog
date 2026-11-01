@@ -109,14 +109,19 @@ def test_lid_starts_as_the_phantom_lid(eos):
 
 
 def test_set_initial_lid_and_hot_start(eos):
-    """A set lid is used as given; without it a second solve starts from the first's end."""
+    """A set lid is used once, as given, by the next start; the start after a solve takes the
+    lid at the end of that solve, and None clears a set lid before it is used."""
     s = _solver(eos)
     s.set_initial_lid(2.0, -1.0e9)
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
-    s.set_initial_lid(None)
     s.solve()
     end = s._solution.y[-2:, -1].copy()
+    assert not np.array_equal(end, [2.0, -1.0e9])
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], end)
+    s.set_initial_lid(3.0, -2.0e9)
+    s.set_initial_lid(None)
     s.set_initial_entropy(3050.0)
     np.testing.assert_array_equal(s._S0[-2:], end)
     with pytest.raises(ValueError, match='finite delta > 0'):
