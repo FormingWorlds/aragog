@@ -329,8 +329,9 @@ class LidParams(NamedTuple):
     """Sub-grid lid data of one solver for the JAX right-hand side (SI units).
 
     ``e`` is the heat content per volume of the solid in temperature and ``hs`` the same in
-    entropy, both at the top-cell pressure ``P``; ``rheo``, ``closure_lid`` and ``fixed`` are
-    0/1 flags of the solid rheology, its 'lid' stress closure and its 'fixed' lid-base mode.
+    entropy, both at the top-cell pressure ``P``; ``convection`` is the 0/1 flag of
+    ``energy.convection``; ``rheo``, ``closure_lid`` and ``fixed`` are 0/1 flags of the solid
+    rheology, its 'lid' stress closure and its 'fixed' lid-base mode.
     """
 
     e: Enthalpy
@@ -348,6 +349,7 @@ class LidParams(NamedTuple):
     area: float
     volume_top: float
     ra_crit: float
+    convection: float
     rheo: float
     closure_lid: float
     fixed: float
@@ -404,7 +406,7 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     delta, E = y_lid[0], y_lid[1]
     base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
     H_f = enthalpy_H(lp.hs, S_f)
-    q_conv = convective_base_flux(
+    q_conv = lp.convection * convective_base_flux(
         top['T'] - base['T_b'],
         top['k'],
         top['rho'],
