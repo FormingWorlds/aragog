@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog import surface_lid as _lid
+from aragog.config.boundary import check_subgrid_lid
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -2459,12 +2460,22 @@ class EntropySolver:
 
         The lid length scales read the mesh: the top-cell width is the radial step of the top
         two basic nodes, and the hand-over depth is the depth of the face below the top
-        ``lid_handover_cells`` cells. Refuses a ``lid_delta_on`` the top cell cannot hold.
+        ``lid_handover_cells`` cells. Refuses the lid settings ``check_subgrid_lid`` refuses (also
+        when the lid is set after parsing) and a ``lid_delta_on`` the top cell cannot hold.
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
         if not self._lid_on:
             return
+        check_subgrid_lid(
+            bc.subgrid_lid,
+            bc.lid_delta_on,
+            bc.lid_delta_lo,
+            bc.lid_handover_cells,
+            bc.lid_ra_crit,
+            self._outer_bc_kind,
+            self._core_bc,
+        )
         if self.entropy_eos is None or getattr(
             self.parameters.phase_mixed, 'const_properties', False
         ):
