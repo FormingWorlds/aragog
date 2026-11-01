@@ -1199,9 +1199,9 @@ class SolverOutput:
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
 
-    # Sub-grid lid at the end of the call (``subgrid_lid``; NaN with the lid off): thickness
-    # [m], energy [J/m^2], mean, surface and base temperature [K], weight [-], conductive
-    # thickness delta / f'(0) [m] and the flux into the lid base [W/m^2].
+    # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
+    # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
+    # [-], conductive thickness delta / f'(0) [m] and the flux into the lid base [W/m^2].
     lid_delta: float = float('nan')
     lid_E: float = float('nan')
     lid_T_mean: float = float('nan')
@@ -6434,7 +6434,7 @@ class EntropySolver:
         if self._n_lid:
             lid_out['lid_handover_time'] = getattr(self, '_lid_handover_time', float('nan'))
         if self._n_lid and not self._lid_active:
-            lid_out['lid_delta'] = 0.0
+            lid_out['lid_delta'] = lid_out['lid_E'] = 0.0
         elif self._n_lid:
             ev = self._lid_last
             lid_out = dict(
