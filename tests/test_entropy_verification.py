@@ -906,8 +906,9 @@ class TestCvodeEnergyOutputGrid:
         assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
 
         def ends_at_the_call_end(sol):
-            # A lost last trace node fails here on any CPU; a lost interior node is caught
-            # by test_a_trace_short_of_the_steps_warns.
+            # A lost last trace node fails here on any CPU; a trace short of the CVODE
+            # steps by more than max(10, nst // 100) nodes warns
+            # (test_a_trace_short_of_the_steps_warns checks a 2-node trace).
             t_tr, y_tr = sol.energy_trace
             return t_tr[-1] == sol.t[-1] and np.array_equal(y_tr[:, -1], sol.y[:, -1])
 
