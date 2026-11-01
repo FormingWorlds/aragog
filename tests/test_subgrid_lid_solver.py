@@ -332,6 +332,46 @@ def test_lid_above_the_growth_stop_fails_the_step_check(eos):
     assert 'outside' in str(err.value)
 
 
+def test_lid_just_above_the_growth_stop_passes_the_step_check(eos):
+    """A lid that settles a little above the growth stop, as the integrator leaves it there,
+    passes the step check below the slack of 1e-3 and the call records its excess."""
+    s = _solver(eos)
+    cap = sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, cap * (1.0 + 5e-4), 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(cap * (1.0 + 5e-4), E)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert 4.9e-4 < s._solution.lid_cap_excess < 1e-3
+
+
+@pytest.mark.parametrize('stop', ['removed', 'noop'])
+def test_growth_stop_keeps_a_growing_lid_inside_the_step_check(eos, stop, monkeypatch):
+    """A lid 1 m below the slack of the step check grows past it and fails the check without
+    the growth stop; with the stop (a no-op patch) it holds and passes."""
+    rate = sl.stefan_rate
+
+    def patched(q_b, F_b, rho, dh, *rest):
+        if stop == 'removed':  # the Stefan rate without the stop factor
+            return (q_b - F_b) / (rho * max(dh, sl.LID_DH_MIN)), 1.0
+        return rate(q_b, F_b, rho, dh, *rest)
+
+    monkeypatch.setattr(sl, 'stefan_rate', patched)
+    s = _solver(eos, end=100.0)
+    d = (
+        sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 1e-3) - 1.0
+    )  # 1 m below the slack; grows 0.027 m/yr
+    E, _ = _phantom_energy(s, d, 257.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    if stop == 'removed':
+        with pytest.raises(RuntimeError, match='thickness') as err:
+            s.solve()
+        assert 'at step 0,' not in str(err.value)  # it grows past the slack, not starts there
+    else:
+        s.solve()
+        assert 9.9e-4 < s._solution.lid_cap_excess < 1e-3
+
+
 def test_growth_stop_warns_once(eos, caplog):
     """A growing lid at the growth stop holds below LID_CAP_FRAC h_top and warns once."""
     import logging
