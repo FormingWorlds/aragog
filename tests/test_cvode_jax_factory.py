@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from aragog.solver.cvode_jax import UnsupportedCoreBCError
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
@@ -200,13 +202,14 @@ def test_nondim_scales_immutable():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'unknown'])
-def test_unsupported_core_bc_mode_raises_with_clear_message(mode):
+@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'new_mode', 'unknown'])
+def test_unsupported_core_bc_mode_raises_with_clear_message(mode, monkeypatch):
     """A mode with no JAX RHS raises a ValueError that names the mode, the supported modes
-    and use_jax_jacobian; only bower2018 and gradient raise UnsupportedCoreBCError, the
-    type the solver answers with the NumPy RHS."""
-    from aragog.solver.cvode_jax import UnsupportedCoreBCError
+    and use_jax_jacobian; every config mode outside the JAX set (here also a new one) raises
+    UnsupportedCoreBCError, the type the solver answers with the NumPy RHS."""
+    from aragog.solver import cvode_jax
 
+    monkeypatch.setattr(cvode_jax, 'CORE_BC_MODES', (*cvode_jax.CORE_BC_MODES, 'new_mode'))
     state_scale = np.full(4, 3.0e3)
     with pytest.raises(ValueError, match='is not supported') as exc_info:
         _build_factory(state_scale, 1.0 / state_scale, 1.0, np.zeros(4), mode)
@@ -216,35 +219,28 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('mode', ['bower2018', 'gradient'])
-def test_unsupported_core_bc_mode_falls_back_without_jax(mode, monkeypatch):
-    """Without JAX, bower2018 and gradient still raise UnsupportedCoreBCError, the type the
-    solver answers with the NumPy RHS, not the missing-JAX RuntimeError."""
-    import sys
-
-    from aragog.solver.cvode_jax import UnsupportedCoreBCError, build_jax_rhs_and_jacobian
-
-    monkeypatch.setitem(sys.modules, 'jax.numpy', None)
-    with pytest.raises(UnsupportedCoreBCError):
-        build_jax_rhs_and_jacobian(None, None, None, None, np.zeros(4), None, core_bc_mode=mode)
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'err'),
-    [('quasi_steady', RuntimeError), ('unknown', ValueError), ('core_module', ValueError)],
+    [
+        ('bower2018', UnsupportedCoreBCError),
+        ('gradient', UnsupportedCoreBCError),
+        ('quasi_steady', RuntimeError),
+        ('unknown', ValueError),
+        ('core_module', ValueError),
+    ],
 )
-def test_a_supported_or_unknown_mode_without_jax_does_not_fall_back(mode, err, monkeypatch):
-    """Without JAX a supported mode raises the missing-JAX RuntimeError, and a typo mode or
-    core_module without a budget a plain ValueError; none is UnsupportedCoreBCError."""
+def test_a_mode_without_jax_raises_its_own_type(mode, err, monkeypatch):
+    """Without JAX, bower2018 and gradient still raise UnsupportedCoreBCError (the solver
+    falls back), a supported mode the missing-JAX RuntimeError, and a typo mode or
+    core_module without a budget a plain ValueError."""
     import sys
 
-    from aragog.solver.cvode_jax import UnsupportedCoreBCError, build_jax_rhs_and_jacobian
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
     monkeypatch.setitem(sys.modules, 'jax.numpy', None)
-    with pytest.raises(err) as exc_info:
+    with pytest.raises(Exception) as exc_info:
         build_jax_rhs_and_jacobian(None, None, None, None, np.zeros(4), None, core_bc_mode=mode)
-    assert not isinstance(exc_info.value, UnsupportedCoreBCError)
+    assert exc_info.type is err, exc_info.value
 
 
 @pytest.mark.unit
