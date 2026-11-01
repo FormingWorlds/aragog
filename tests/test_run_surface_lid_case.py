@@ -69,7 +69,7 @@ def test_driver_jax_rhs_carries_the_internal_heating():
 def _options(**kw):
     import argparse
 
-    return argparse.Namespace(**{'eta': None, 'heating': None, **kw})
+    return argparse.Namespace(**{'eta': None, 'heating': None, 'surface_cell': None, **kw})
 
 
 @given(st.floats(allow_nan=True, allow_infinity=True))
@@ -96,11 +96,54 @@ def test_heating_option_accepts_only_finite_non_negative_values(heating):
             check(_options(heating=heating))
 
 
-@pytest.mark.parametrize('flag', ['--eta', '--heating'])
+@pytest.mark.parametrize('flag', ['--eta', '--heating', '--surface-cell'])
 def test_options_refuse_a_value_that_is_not_a_number(flag):
     """A value that is not a number (as a TOML true) stops the parser; no value keeps the
     default None."""
     d = _driver()
     with pytest.raises(SystemExit):
         d.parse(['out', flag, 'true'])
-    assert getattr(d.parse(['out']), flag[2:]) is None
+    assert getattr(d.parse(['out']), flag[2:].replace('-', '_')) is None
+
+
+@given(st.floats(allow_nan=True, allow_infinity=True))
+@settings(max_examples=200, deadline=None)
+def test_surface_cell_option_accepts_only_finite_values_of_at_least_2_m(cell):
+    """--surface-cell [m] passes when finite and at least 2 m, the mesh limit, and stops the run
+    otherwise."""
+    check = _driver()._check_options
+    if np.isfinite(cell) and cell >= 2.0:
+        check(_options(surface_cell=cell))
+    else:
+        with pytest.raises(SystemExit, match='--surface-cell must be finite and at least 2 m'):
+            check(_options(surface_cell=cell))
+
+
+def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
+    """--no-lid with --surface-cell runs the column without the lid on a mesh whose top cell has
+    the set thickness; the part rows hold no lid states and record both options."""
+    import json
+
+    d = _driver()
+    assert (
+        d.main(
+            [
+                str(tmp_path),
+                '--eos-dir',
+                str(EOS_DIR),
+                '--samples',
+                '1e1',
+                '--nodes',
+                '20',
+                '--no-lid',
+                '--surface-cell',
+                '1000',
+            ]
+        )
+        == 0
+    )
+    row = json.loads((tmp_path / f'{d.STEM}.json').read_text())[-1]
+    assert row['lid'] is False and row['surface_cell'] == 1000.0
+    assert row['delta'] is None and row['E'] is None and row['handover_root'] is None
+    r = np.load(tmp_path / f'{d.STEM}_part0.npz')['r_basic']
+    assert r[-1] - r[-2] == pytest.approx(1000.0, rel=1e-9)
