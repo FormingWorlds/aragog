@@ -870,18 +870,23 @@ def test_handed_over_lid_reports_zero_thickness_and_energy(eos):
     assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
 
 
-def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos):
+def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos, caplog):
     """A lid root in the segment after the segment ceiling still merges the lid and the call
-    runs to its end time, as with the default ceiling."""
+    runs to its end time, as with the default ceiling; the ceiling is reported once and the
+    step ledger closes to 1e-10 of the surface power."""
     s = _top_at(eos, 0.2)
     s.parameters.energy.solver_method = 'cvode'
     s.parameters.energy.use_jax_jacobian = False
     s.parameters.energy.phase_boundary_cap = 'rate'
     s._solve_cvode_segments = functools.partial(s._solve_cvode_segments, max_segments=0)
-    s.solve()
+    with caplog.at_level('WARNING'):
+        s.solve()
     assert s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
     assert 0.0 < s.get_state().lid_handover_time < 1.0
     assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    assert sum('segments in one call' in r.getMessage() for r in caplog.records) == 1
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
 
 
 @pytest.mark.physics_invariant
