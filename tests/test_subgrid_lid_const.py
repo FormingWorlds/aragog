@@ -146,3 +146,34 @@ def test_constant_property_merge_conserves_energy(S_f, frac, m):
     rhs = V * float(s._lid_W(S_f)) + A * (E - float(s._lid_W(S_f)) * delta)
     assert lhs == pytest.approx(rhs, rel=1e-12)
     assert resid <= 1e-12
+
+
+def _solved(calls=None):
+    """A 1-year solve of the 20-node column from 3200 J/kg/K at the bottom to 2800 at the top;
+    ``calls`` collects the arguments of every lid step check."""
+    s = _solver()
+    s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
+    if calls is not None:
+        check = s._check_lid_step
+        s._check_lid_step = lambda *a: (calls.append(a), check(*a))[1]
+    s.solve()
+    return s
+
+
+@pytest.mark.physics_invariant
+def test_constant_property_lid_ledger_closes_over_a_solve():
+    """With constant properties the step ledger runs: it closes to 1e-10 of the surface power
+    and the state heat, lid included, to 1e-2 of the budget."""
+    ei = _solved()._solution.energy_integrals
+    budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
+    assert ei['F_int'] < 0.0
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
+
+
+def test_constant_property_lid_checks_every_accepted_step():
+    """The lid step check runs on the accepted states of a constant-property solve."""
+    calls = []
+    s = _solved(calls)
+    assert len(calls) >= 2
+    assert calls[-1][2] == pytest.approx(float(s._solution.t[-1]))
