@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 
 from aragog.solver.cvode_jax import UnsupportedCoreBCError
-from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, returns
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -266,5 +266,5 @@ def test_only_an_unsupported_core_bc_falls_back_to_the_fd_jacobian(err, caplog):
                 solver.solve()
             assert exc_info.type is err
             return
-        solver.solve()
+        returns(solver.solve)
     assert solver._solution.status == 0 and 'factory refused' in caplog.text

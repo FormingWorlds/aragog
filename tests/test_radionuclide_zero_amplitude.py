@@ -17,7 +17,7 @@ from aragog.cli import cli
 from aragog.parser import Parameters, _Radionuclide, validate_radionuclide
 from aragog.rheology import SolidRheologyParams
 
-from .conftest import EOS_DIR, needs_eos
+from .conftest import EOS_DIR, needs_eos, returns
 
 BUNDLED_LOOKUP = Path(__file__).resolve().parents[1] / 'src/aragog/cfg/abe_mixed_lookup.cfg'
 AL26_ZERO = dict(
@@ -564,7 +564,7 @@ def test_check_radio_arrays_accepts_shapes_that_broadcast_to_one_dimension(shape
     if not valid:
         _refused('^Radionuclide arrays', check_radio_arrays, *arrays)
         return
-    out = check_radio_arrays(*arrays)
+    out = returns(check_radio_arrays, *arrays)
     assert all(o.shape == s and o.dtype == np.float64 for o, s in zip(out, shapes))
     for o, a in zip(out, arrays):
         np.testing.assert_array_equal(o, a.astype(np.float64))
@@ -614,7 +614,7 @@ def test_check_radio_arrays_skips_the_start_time_for_a_traced_input():
     def build(half_life):
         return check_radio_arrays([1e-4], [1.0], [1e-6], [4.55e9], half_life, start_time=0.0)[4]
 
-    assert float(jax.jit(build)(jax.numpy.array([1e9]))[0]) == 1e9
+    assert float(returns(jax.jit(build), jax.numpy.array([1e9]))[0]) == 1e9
     traced_t0 = jax.jit(lambda t0: check_radio_arrays([1e-4], [1.0], [1e-6], t0, [-1.0])[3])
     _refused('#0: half_life_years', traced_t0, jax.numpy.array([0.0]))
 

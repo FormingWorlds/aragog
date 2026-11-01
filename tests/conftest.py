@@ -48,6 +48,14 @@ def entropy_eos_copy(
     )
 
 
+def returns(fn, *args):
+    """Return ``fn(*args)``; an exception fails the test (``Failed:``) instead of erroring it."""
+    try:
+        return fn(*args)
+    except Exception as exc:
+        pytest.fail(f'{getattr(fn, "__name__", fn)} raised {exc!r}')
+
+
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
     return _ssc_helpers.entropy_eos_jax(eos_dir)
