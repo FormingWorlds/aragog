@@ -4815,7 +4815,8 @@ class EntropySolver:
             Nondimensional ``max_step`` fallback for the segment ceiling.
         max_segments : int
             Segment ceiling; the rest of the call then runs at ``h_min``
-            with only the step cap armed.
+            with only the step cap and the lid root armed (one more such
+            segment after a lid merge).
         lid_merge : callable, optional
             ``lid_merge(t, y) -> y`` (nondimensional): the hand-over of the sub-grid lid,
             applied when a segment ends at the lid root (``lid_rootfn`` in ``cvode_kw``); the
@@ -4869,7 +4870,7 @@ class EntropySolver:
                 trigger,
                 h * t_ref,
             )
-            if last:
+            if k == max_segments:
                 logger.warning(
                     'rate cap: %d segments in one call; max_step %.3g yr for the rest',
                     max_segments,
