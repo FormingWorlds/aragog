@@ -57,17 +57,24 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument('--resume', action='store_true', help='continue after the last part')
     ap.add_argument('--eta', type=float, help='solid viscosity [Pa s]; default 1e21')
     ap.add_argument('--heating', type=float, help='internal heating [W/kg]; default none')
+    ap.add_argument('--no-lid', action='store_true', help='run the column without the lid')
+    ap.add_argument(
+        '--surface-cell', type=float, help='top cell thickness [m]; default uniform'
+    )
     ap.add_argument('--collect', nargs='+', metavar=('OUT.npz', 'NAME=DIR'))
     return ap.parse_args(argv)
 
 
 def _check_options(a: argparse.Namespace) -> None:
-    """Refuse a ``--eta`` that is not finite and positive and a ``--heating`` that is not finite
-    and non-negative."""
+    """Refuse a ``--eta`` that is not finite and positive, a ``--heating`` that is not finite
+    and non-negative and a ``--surface-cell`` that is not finite and at least 2 m."""
     if a.eta is not None and not (np.isfinite(a.eta) and a.eta > 0.0):
         raise SystemExit(f'--eta must be finite and positive, got {a.eta}')
     if a.heating is not None and not (np.isfinite(a.heating) and a.heating >= 0.0):
         raise SystemExit(f'--heating must be finite and non-negative, got {a.heating}')
+    cell = a.surface_cell
+    if cell is not None and not (np.isfinite(cell) and cell >= 2.0):
+        raise SystemExit(f'--surface-cell must be finite and at least 2 m, got {cell}')
 
 
 def _table_md5(eos_dir: Path) -> dict:
@@ -88,7 +95,7 @@ def _heating_array(s):
 
 
 def _install_factory(s, eos_dir):
-    """Give ``s`` the JAX CVODE right-hand side and Jacobian, with the lid, on ``eos_dir``."""
+    """Give ``s`` the JAX CVODE right-hand side and Jacobian, with its lid, on ``eos_dir``."""
     from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams
@@ -128,7 +135,7 @@ def _install_factory(s, eos_dir):
             core_module_budget=getattr(s, '_core_module_budget', None),
             core_module_q_radio=float(getattr(s, '_core_module_q_radio', 0.0)),
             core_module_ra_crit_cmb=getattr(s, '_core_module_ra_crit_cmb', None),
-            lid_params=s.jax_lid_params(),
+            lid_params=s.jax_lid_params() if s._lid_on else None,
         )
         return rhs, jac
 
@@ -200,9 +207,10 @@ def main(argv=None) -> int:
     for head in ('[phase_mixed]\n', '[boundary_conditions]\n'):
         if text.count(head) != 1:
             raise SystemExit(f'abe_solid.toml has {text.count(head)} {head.strip()} tables')
-    text = text.replace(
-        '[boundary_conditions]\n', '[boundary_conditions]\nsubgrid_lid = true\n'
-    )
+    if not a.no_lid:
+        text = text.replace(
+            '[boundary_conditions]\n', '[boundary_conditions]\nsubgrid_lid = true\n'
+        )
     text = text.replace('[phase_mixed]\n', '[phase_mixed]\nmatprop_smooth_width = 0.01\n')
     config_hash = hashlib.sha256(
         (
@@ -215,7 +223,11 @@ def main(argv=None) -> int:
                     dh_min=sl.LID_DH_MIN,
                     **{
                         k: repr(v)
-                        for k, v in (('eta', a.eta), ('heating', a.heating))
+                        for k, v in (
+                            ('eta', a.eta),
+                            ('heating', a.heating),
+                            ('surface_cell', a.surface_cell),
+                        )
                         if v is not None
                     },
                 )
@@ -252,9 +264,11 @@ def main(argv=None) -> int:
         c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
         c.boundary_conditions.emissivity = 1.0
         c.mesh.number_of_nodes = a.nodes
+        if a.surface_cell is not None:
+            c.mesh.surface_cell_thickness = a.surface_cell
         s = EntropySolver(c, entropy_eos=eos_np)
         s.initialize()
-        if y_prev is not None:
+        if y_prev is not None and not a.no_lid:
             s.set_initial_lid(float(y_prev[-2]), float(y_prev[-1]))
         s.set_initial_entropy(a.s_init)
         _install_factory(s, a.eos_dir)
@@ -278,7 +292,7 @@ def main(argv=None) -> int:
         t_got, y_end = float(tt[-1]), yy[:, -1].copy()
         s.dSdt(t_got, y_end)
         lid = s.state._lid_state or {}
-        root = float(s._lid_root_value(t_got, y_end))
+        root = None if a.no_lid else float(s._lid_root_value(t_got, y_end))
         t_ho = float(getattr(s, '_lid_handover_time', float('nan')))
         nst = int(s._solution.get('cvode_nst', 0) or 0)
         h_max = [h for _, _, h in (s._solution.get('segments') or [])]
@@ -289,8 +303,8 @@ def main(argv=None) -> int:
                 t_target=t_end,
                 reached=bool(t_got >= t_end * (1 - 1e-9)),
                 status=int(s._solution.status),
-                delta=float(y_end[-2]),
-                E=float(y_end[-1]),
+                delta=None if a.no_lid else float(y_end[-2]),
+                E=None if a.no_lid else float(y_end[-1]),
                 F_top=float(np.ravel(s.state._heat_flux)[-1]),
                 T_i=float(np.asarray(lid['T_i'])) if 'T_i' in lid else None,
                 w_active=float(np.asarray(lid['w_active'])) if 'w_active' in lid else None,
@@ -303,6 +317,8 @@ def main(argv=None) -> int:
                 max_step_min_yr=min(h_max) if h_max else None,
                 max_step_max_yr=max(h_max) if h_max else None,
                 nodes=a.nodes,
+                lid=not a.no_lid,
+                surface_cell=a.surface_cell,
                 s_init=a.s_init,
                 dh_min=float(sl.LID_DH_MIN),
                 sha=sha,
@@ -313,7 +329,8 @@ def main(argv=None) -> int:
                 config_hash=config_hash,
             )
         )
-        np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end)
+        r_basic = np.asarray(s.evaluator.mesh.basic.radii, float).ravel()
+        np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end, r_basic=r_basic)
         out_json.write_text('[\n' + ',\n'.join(json.dumps(r) for r in rows) + '\n]\n')
         print(
             json.dumps(
