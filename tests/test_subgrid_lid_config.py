@@ -88,10 +88,11 @@ def test_handover_cells_must_be_integer_at_least_one(value):
         _both(**{**GOOD, 'lid_handover_cells': value})
 
 
-@pytest.mark.parametrize('outer', [2, 4, 5])
+@pytest.mark.parametrize('outer', [2, 4])
 def test_lid_refused_without_grey_body(outer):
-    """With the lid on, an outer boundary other than grey body is refused; off, it passes."""
-    with pytest.raises(ValueError, match='needs the grey-body outer boundary'):
+    """With the lid on, an outer boundary other than the grey body or the fixed surface
+    temperature is refused; off, it passes."""
+    with pytest.raises(ValueError, match='needs the grey-body'):
         BoundaryConfig(**{**BASE, 'outer_boundary_condition': outer}, **GOOD)
     BoundaryConfig(
         **{**BASE, 'outer_boundary_condition': outer}, **{**GOOD, 'subgrid_lid': False}
@@ -195,3 +196,8 @@ def test_lid_keys_of_a_toml_file_are_checked(tmp_path, lines, word):
     """A wrong type or value in the file fails with the name of the key."""
     with pytest.raises(ValueError, match=word):
         _toml_config(tmp_path, *lines)
+
+
+def test_lid_accepted_with_a_fixed_surface_temperature():
+    """The lid runs under a fixed surface temperature (outer boundary 5)."""
+    BoundaryConfig(**{**BASE, 'outer_boundary_condition': 5}, **GOOD)

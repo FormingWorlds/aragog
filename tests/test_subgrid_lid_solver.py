@@ -794,11 +794,10 @@ def test_lid_is_refused_with_constant_properties(eos, attach_eos):
 @pytest.mark.parametrize(
     ('kw', 'match'),
     [
-        ({'outer_bc': 4}, 'grey-body outer boundary'),
-        ({'outer_bc': 5}, 'grey-body outer boundary'),
+        ({'outer_bc': 4}, 'needs the grey-body'),
         ({'core_bc': 'gradient'}, "core_bc = 'gradient'"),
     ],
-    ids=['flux', 'surface_temperature', 'gradient'],
+    ids=['flux', 'gradient'],
 )
 def test_lid_set_after_parsing_is_refused_on_an_unsupported_boundary(eos, kw, match):
     """The solver setup refuses the lid on a boundary it does not support also when the lid is
