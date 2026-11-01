@@ -55,7 +55,8 @@ def check_subgrid_lid(
     ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
     positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
     ``lid_handover_cells`` an integer of at least 1. With the lid on, the outer boundary must
-    be the grey body (1) and the core boundary not ``'gradient'``. The check against the
+    be the grey body (1) or the fixed surface temperature (5) and the core boundary not
+    ``'gradient'``. The check against the
     top-cell width needs the mesh and runs at solver setup.
 
     Raises
@@ -83,10 +84,10 @@ def check_subgrid_lid(
         raise ValueError(f'lid_handover_cells must be an integer, got {lid_handover_cells!r}')
     if lid_handover_cells < 1:
         raise ValueError(f'lid_handover_cells must be >= 1, got {lid_handover_cells!r}')
-    if subgrid_lid and outer_boundary_condition != 1:
+    if subgrid_lid and outer_boundary_condition not in (1, 5):
         raise ValueError(
-            'subgrid_lid needs the grey-body outer boundary (outer_boundary_condition = 1), '
-            f'got {outer_boundary_condition}'
+            'subgrid_lid needs the grey-body (1) or the fixed surface temperature (5) outer '
+            f'boundary, got outer_boundary_condition = {outer_boundary_condition}'
         )
     if subgrid_lid and core_bc == 'gradient':
         raise ValueError("subgrid_lid is not available on core_bc = 'gradient'")

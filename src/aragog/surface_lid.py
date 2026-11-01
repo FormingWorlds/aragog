@@ -418,21 +418,34 @@ def stefan_rate(
 
 
 def existence_weight(
-    F_b: float, T_b: float, k: float, emissivity: float, T_eq: float, delta_on: float
+    F_b: float,
+    T_b: float,
+    k: float,
+    emissivity: float,
+    T_eq: float,
+    delta_on: float,
+    T_surf: float | None = None,
 ) -> float:
     """Weight [0, 1] of the lid from the quasi-steady crust thickness.
 
     A crust in steady state carries ``F_b`` by conduction, ``delta_eq = k (T_b - T_s) / F_b``,
-    with ``grey(T_s) = F_b``. The lid acts where ``delta_eq`` exceeds ``delta_on``:
+    with ``grey(T_s) = F_b``, or ``T_s = T_surf`` [K] at a fixed surface temperature. The lid
+    acts where ``delta_eq`` exceeds ``delta_on``:
     ``w = (1 + tanh(log10(delta_eq / delta_on) / LID_EXIST_WIDTH)) / 2``, set to 0 below
-    ``LID_WEIGHT_FLOOR``. A fluid that delivers more than the grey flux at ``T_b`` carries no lid.
+    ``LID_WEIGHT_FLOOR``. A fluid that delivers more than the grey flux at ``T_b``, or a base
+    not hotter than ``T_surf``, carries no lid.
     """
-    F_rad = grey_flux(T_b, emissivity, T_eq)
+    if T_surf is not None and T_b <= T_surf:
+        return 0.0
     if F_b <= 0.0:
         return 1.0
-    if F_rad <= 0.0 or F_b >= F_rad:
-        return 0.0
-    T_s = (F_b / (emissivity * Stefan_Boltzmann) + T_eq**4) ** 0.25
+    if T_surf is not None:
+        T_s = T_surf
+    else:
+        F_rad = grey_flux(T_b, emissivity, T_eq)
+        if F_rad <= 0.0 or F_b >= F_rad:
+            return 0.0
+        T_s = (F_b / (emissivity * Stefan_Boltzmann) + T_eq**4) ** 0.25
     d_eq = k * (T_b - T_s) / F_b
     w = 0.5 * (1.0 + np.tanh(np.log10(d_eq / delta_on) / LID_EXIST_WIDTH))
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0

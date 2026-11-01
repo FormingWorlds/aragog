@@ -3040,11 +3040,18 @@ class EntropySolver:
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
         base = self._lid_base_state(T_f, phi_f, S_top)
-        d = self._lid_delta_lo
-        T_s = _lid.linear_lid_surface(
-            d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
-        )
+        d, T_s = self._lid_delta_lo, self._lid_T_surf()
+        if T_s is None:
+            T_s = _lid.linear_lid_surface(
+                d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
+            )
         return np.array([d, d * self._lid_hv.profile_heat(0.0, T_s, base['T_b'])])
+
+    def _lid_T_surf(self) -> float | None:
+        """Surface temperature [K] of outer boundary 5, the lid surface there; None on the
+        grey body."""
+        bc5 = self.state._surface_temperature_bc if self._outer_bc_kind == 5 else None
+        return None if bc5 is None else float(bc5[1])
 
     def _lid_handover_armed(self) -> bool:
         """True when the lid can hand over: the solid rheology runs the 'lid' stress closure,
@@ -3448,11 +3455,25 @@ class EntropySolver:
             self._lid_ra_crit,
         )
         F_b = max(q_conv, float(self.state._heat_flux[-2]), 0.0)
-        eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
-        w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
-        surf = _lid.surface_state(
-            delta, E, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR, self._lid_hv
+        eps, T_eq, T_surf = self._outer_bc_emiss, self._outer_bc_T_eq, self._lid_T_surf()
+        w = _lid.existence_weight(
+            F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on, T_surf=T_surf
         )
+        if T_surf is None:
+            surf = _lid.surface_state(
+                delta,
+                E,
+                base['T_b'],
+                self._lid_k,
+                eps,
+                T_eq,
+                _lid.LID_DELTA_FLOOR,
+                self._lid_hv,
+            )
+        else:
+            surf = _lid.fixed_surface_state(
+                delta, E, base['T_b'], self._lid_k, T_surf, _lid.LID_DELTA_FLOOR, self._lid_hv
+            )
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
