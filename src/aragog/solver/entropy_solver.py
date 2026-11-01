@@ -3221,6 +3221,11 @@ class EntropySolver:
                 'the constant-property lid runs on the NumPy right-hand side only '
                 '(the JAX right-hand side has no constant-property mode)'
             )
+        if self._outer_bc_kind == 5:
+            raise ValueError(
+                'the lid under a fixed surface temperature (outer boundary 5) runs on the NumPy '
+                'right-hand side only (the JAX lid has the grey-body surface)'
+            )
         S_knots = self._lid_W_of_S.x
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
