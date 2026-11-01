@@ -1,7 +1,7 @@
 """The lid base at the melt temperature: the R1 column with the solid rheology and the 'lid'
 closure, on 100, 200 and 400 nodes and on 100 nodes with the jump floor at 1e2, 1e3 and
-1e4 J/kg, from the runs that ``tools/verification/run_surface_lid_case.py --collect`` stored at
-aragog 2673b255 (the npz field ``commit``). The test does not run the cases again (about 10 h each).
+1e4 J/kg, from the runs that ``tools/verification/run_surface_lid_case.py --collect`` stored; the
+npz field ``commit`` names the code that wrote them. The test does not run the cases again.
 """
 
 from __future__ import annotations

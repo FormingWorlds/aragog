@@ -1,7 +1,7 @@
 """Validation of the sub-grid lid closure against the Neumann solution of crust growth over melt.
 
 The case drives the lid functions of ``aragog.surface_lid`` through time with the fixed material
-properties and helpers of ``tests/test_surface_lid_validation.py``; it runs about 2 minutes.
+properties and helpers of ``tests/test_surface_lid_validation.py``.
 """
 
 from __future__ import annotations
