@@ -29,7 +29,7 @@ When a CVODE call stalls or runs far slower than expected, check whether CVODE i
 
 ## CVODE specifics
 
-CVODE is selected by default and is the only path that supports the JAX-traced analytic Jacobian (`use_jax_jacobian = true`). With JAX absent, CVODE falls back to a finite-difference Jacobian: correct, but $O(N)$ RHS evaluations per Jacobian build and noisier on stiff profiles. See the [CVODE and JAX explainer](../Explanations/cvode_jax.md).
+CVODE is selected by default and is the only path that supports the JAX-traced analytic Jacobian (`use_jax_jacobian = true`). With no JAX CVODE factory registered (in a PROTEUS run, also when JAX is not importable), CVODE uses a finite-difference Jacobian: correct, but $O(N)$ RHS evaluations per Jacobian build and noisier on stiff profiles. See the [CVODE and JAX explainer](../Explanations/cvode_jax.md).
 
 The tolerance warning also names a configured `atol` above `1e-8`, but only on the `energy_balance` core, the one setup whose lock data show a loose `atol` adding to the lock. No lock data exist for the other core boundary conditions, `core_module` included, so the warning makes no `atol` claim for them.
 
