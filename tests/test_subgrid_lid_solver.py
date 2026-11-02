@@ -378,6 +378,17 @@ def test_early_stop_reports_no_lid_excess(eos, monkeypatch):
     s = _solver(eos)
     s.solve()
     assert s.stop_early
+    assert np.isnan(getattr(s._solution, 'lid_cap_excess', 0.0))
+
+
+def test_call_after_the_hand_over_reports_no_lid_excess(eos):
+    """A call whose lid states are all 0, as after a hand-over, has lid_cap_excess NaN."""
+    s = _solver(eos)
+    s.solve()
+    assert s._solution.lid_cap_excess > -1.0
+    s._solution.y[-2:] = 0.0
+    s._lid_active = False
+    s._compute_step_energy_integrals()
     assert np.isnan(s._solution.lid_cap_excess)
 
 
