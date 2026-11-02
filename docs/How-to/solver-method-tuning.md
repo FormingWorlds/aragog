@@ -1,53 +1,194 @@
 # Solver method tuning
 
-Aragog dispatches stiff time integration through `_EnergyParameters.solver_method` (see `src/aragog/parser.py`). Three values are accepted: `"cvode"` (default), `"radau"`, and `"bdf"`. This page is the practical recipe for picking one and tuning the associated tolerances.
+Use this page to choose an integrator, set its tolerances, get a stalled run moving, and decide what to do when a run leaves the EOS tables. The integrator is `_EnergyParameters.solver_method` (see `src/aragog/parser.py`).
 
 !!! note "Default is CVODE"
-    Production PROTEUS runs rely on `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
+    Normal PROTEUS runs use `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
 
-## Available integrators
+## Choose an integrator
 
-| `solver_method` | Backend | When to use |
+| `solver_method` | Solver | When to use |
 |-----------------|---------|-------------|
-| `"cvode"` | SUNDIALS CVODE via `scikits_odes` | Default for all production runs. Modified Newton with cached Jacobian; matches SPIDER's solver class. Required for the JAX-traced analytic Jacobian path. |
-| `"radau"` | scipy `solve_ivp(method="Radau")` | Pure-Python fallback when `scikits_odes` is not installed. Fully implicit; reliable on smooth profiles but stalls at the rheological transition on long cooling runs. |
-| `"bdf"` | scipy `solve_ivp(method="BDF")` | Pure-Python fallback. Cheaper per step than Radau, weaker at sharp Jacobians. Use only for quick smoke tests. |
+| `"cvode"` | SUNDIALS CVODE via `scikits_odes` | The default for all normal runs. Modified Newton with a cached Jacobian, the solver class of SPIDER. Required for the JAX-traced analytic Jacobian path. |
+| `"radau"` | scipy `solve_ivp(method="Radau")` | Pure-Python fallback when `scikits_odes` is not installed. Fully implicit. Reliable on smooth profiles, but stalls at the rheological transition on long cooling runs. |
+| `"bdf"` | scipy `solve_ivp(method="BDF")` | Pure-Python fallback. Cheaper per step than Radau, weaker at sharp Jacobians. Use it only for quick smoke tests. |
 
-If `solver_method = "cvode"` is selected and `scikits_odes` is missing, the solver logs a warning and falls back to `Radau`. See [Installation: production solver path](installation.md#production-solver-path-sundials-cvode-jax-analytic-jacobian).
+If you select `"cvode"` and `scikits_odes` is missing, the solver logs a warning and falls back to `Radau`. See [Installation: production solver path](installation.md#production-solver-path-sundials-cvode-jax-analytic-jacobian).
 
-## Picking tolerances
+## Pick tolerances
 
-The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); `atol` is floored at $10^{-8}$ inside the solver, and `rtol` is used as given. Suggested starting points:
+Start with `solver.atol` and `solver.rtol` both at `1e-8`. Loosen them only for a quick check, because a loose tolerance can lock CVODE (see below). The solver floors `atol` at $10^{-8}$ and uses `rtol` as given.
 
-| Regime | `atol` | `rtol` | Notes |
+| Use | `atol` | `rtol` | What you get |
 |--------|--------|--------|-------|
-| Production coupled run, CVODE + JAX | `1e-8` (from `atol_temperature_equivalent`) | `1e-8` | Matches the PROTEUS defaults for Aragog in `proteus.config._interior`. Tight enough that energy-conservation checks close. |
-| Standalone smoke test | `1e-7` | `1e-7` | Lets the integrator march through the rheological transition in seconds. Acceptable for first-run sanity checks; not for paper plots. With CVODE, logs the tolerance warning. |
-| Tight verification or parity test | `1e-10` (applied as `1e-8`) | `1e-10` | Useful for SPIDER bit-parity diagnostics. Wall time roughly doubles. |
+| Coupled run, CVODE + JAX | `1e-8` (from `atol_temperature_equivalent`) | `1e-8` | The PROTEUS defaults for Aragog in `proteus.config._interior`. Tight enough that the energy-conservation checks close. |
+| Standalone smoke test | `1e-7` | `1e-7` | The integrator marches through the rheological transition in seconds. Good for a first-run check, not for paper plots. With CVODE it logs the tolerance warning. |
+| Tight verification or parity test | `1e-10` (applied as `1e-8`) | `1e-10` | For SPIDER bit-parity diagnostics. Wall time roughly doubles. |
 
-When a CVODE call stalls or runs far slower than expected, check whether CVODE is locked at the convective switch (the convective mask and the $\kappa_h$ floor). In a lock the step stays at one small value and the entropy difference across one basic node oscillates with period 2 (around zero in the measured locks, all at $D = 0$); in the measured locks CVODE used about 1.4 RHS evaluations per step and evaluated its Jacobian about every 50 to 60 steps (with INFO logging, the `CVODE stats` line shows `rhs_wrap/nst` and a small `last_step`). Two of the runs counted below were run again with every accepted step recorded: both kept a constant step with a period-2 oscillation of the entropy difference at mid-mantle nodes, at 1.41 RHS evaluations per step on the energy_balance core (the difference stayed just below zero) and at 1.14 on the quasi_steady core (around zero); the other counted runs were not checked for the pattern. A lock can run for a long time without an error, or end in `CV_TOO_MUCH_WORK` once `max_steps` is used up in one output interval. Locks were seen at `rtol` `1e-6` and not at `1e-8`; the remedy is `rtol` and `atol` at `1e-8`, and a CVODE run logs one warning when `solver.rtol` is above `1e-8`. The counts below were measured at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$; the probe did not cover $D > 0$, where CVODE also stalled at `1e-8` (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). They come from a probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, fixed cap unless stated) that draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$; the probe script is not in the repository, and the runs were on macOS arm64. A run counts as locked when it has not reached 200 yr after 600 s of wall time: every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations. With `rtol` = `atol` = `1e-6`, CVODE locked in 12 of 1133 runs, in 4 of 474 on the quasi_steady core and in 2 of 286 with the rate cap, where 2 more runs finished only after 233 s and 346 s. With both at `1e-5`, all 80 runs were run to 600 s and none locked (too few runs to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations), but the median run needed about $1.6 \times 10^4$ RHS evaluations, against about $1.3 \times 10^3$ at `1e-8`. With both at `1e-8`, CVODE locked in none of 1026, 627 and 1224 runs for three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). With `atol` at `1e-8` and `rtol` at `2e-8`, `5e-8` or `1e-7`, the values of the PROTEUS retry ladder, it locked in none of the runs: 1308 to 1836 for each value and core with the fixed cap, and 620 and 636 with the rate cap at `5e-8` and `1e-7`. These counts hold for the 24-node standalone case, not for a coupled solve. At $D = 0$ the interior flux is continuous at the switch and only its slope jumps, but with `core_bc` `energy_balance` or `gradient` the convective CMB flux jumps by $\rho T \kappa_h^\mathrm{floor}\,|\partial S/\partial r|_\mathrm{cmb}$ when the node above the CMB crosses 0; at $D > 0$ the convective flux stays continuous at 0, but the mixing flux of a mush and the CMB flux jump at 0 and the floor flux jumps at $D$ (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)), so the $D = 0$ counts and the `1e-8` remedy do not carry over to $D > 0$. On CI the AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion. For a stall without this pattern, raise `max_steps`; the PROTEUS retry ladder raises `max_steps` and relaxes `rtol`, and the relaxed `rtol` can itself be above `1e-8` (see [PROTEUS coupling](proteus_coupling.md)). If the stall persists with an effective `rtol` of `1e-8`, the issue is usually a sharp solidus/liquidus crossing, not the integrator class; consider enabling [`phi_step_cap`](phi-step-cap.md). With `convective_threshold` above 0 it can also be a node whose gradient stays near $dS/dr = 0$; the default 0 does not have that jump.
+### When a CVODE call stalls
 
-## CVODE specifics
+A call that stalls or runs far slower than expected can be locked at the convective switch, which is the convective mask together with the $\kappa_h$ floor. Check for a lock first, because its remedy is different.
 
-CVODE is selected by default and is the only path that supports the JAX-traced analytic Jacobian (`use_jax_jacobian = true`). With no JAX CVODE factory registered (in a PROTEUS run, also when JAX is not importable), CVODE uses a finite-difference Jacobian: correct, but $O(N)$ RHS evaluations per Jacobian build and noisier on stiff profiles. See the [CVODE and JAX explainer](../Explanations/cvode_jax.md).
+Signs of a lock:
 
-The tolerance warning also names a configured `atol` above `1e-8`, but only on the `energy_balance` core, the one setup whose lock data show a loose `atol` adding to the lock. No lock data exist for the other core boundary conditions, `core_module` included, so the warning makes no `atol` claim for them.
+- The step stays at one small value.
+- The entropy difference across one basic node oscillates with period 2 (around zero in the measured locks, all at $D = 0$).
+- CVODE uses about 1.4 RHS evaluations per step and evaluates its Jacobian about every 50 to 60 steps. With INFO logging, the `CVODE stats` line shows `rhs_wrap/nst` and a small `last_step`.
+- The run goes on for a long time without an error, or ends in `CV_TOO_MUCH_WORK` once `max_steps` is used up in one output interval.
 
-CVODE also accepts a SUNDIALS root function for melt-fraction step capping; see [`phi_step_cap` how-to](phi-step-cap.md). The scipy fallbacks register the equivalent capping logic as a `solve_ivp` event with `terminal=True`, so the same TOML config behaves consistently.
+What to do:
 
-## Radau and BDF specifics
+1. For a lock at the default `convective_threshold = 0`, set `rtol` and `atol` to `1e-8`. Locks were seen at `rtol` `1e-6` and not at `1e-8`. A CVODE run logs one warning when `solver.rtol` is above `1e-8`.
+2. For a stall without this pattern, raise `max_steps`. The PROTEUS retry ladder raises `max_steps` and relaxes `rtol`, and the relaxed `rtol` can itself be above `1e-8` (see [PROTEUS coupling](proteus_coupling.md)).
+3. If the stall persists with an effective `rtol` of `1e-8`, the cause is usually a sharp solidus or liquidus crossing, not the integrator class. Consider enabling [`phi_step_cap`](phi-step-cap.md).
+4. With `convective_threshold` above 0, the cause can also be a node whose gradient stays near $dS/dr = 0$. The default 0 does not have that jump, and CVODE also stalled at `1e-8` at $D > 0$ (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)).
 
-Both scipy paths use `solve_ivp` with `dense_output=False` and a 1 yr `max_step` near phase boundaries. They do not support the JAX-traced Jacobian; a Jacobian is computed by scipy via finite differences when needed.
+The measured counts behind this advice are in [Lock measurements](#lock-measurements).
 
-With `phase_boundary_cap = "fixed"` the 1 yr `max_step` activates at the same trigger on all three integrators. The default `"rate"` runs only on CVODE: it arms within the larger of `phase_boundary_entropy_margin` and the stiff-zone half-width and integrates the call in segments; the scipy paths fall back to the 1 yr step.
+## CVODE
 
-## EOS floor
+- CVODE is the default and the only path that supports the JAX-traced analytic Jacobian (`use_jax_jacobian = true`).
+- With no JAX CVODE factory registered, CVODE uses a finite-difference Jacobian. In a PROTEUS run that also happens when JAX is not importable. It is correct, but takes $O(N)$ RHS evaluations per Jacobian build and is noisier on stiff profiles. See the [CVODE and JAX explainer](../Explanations/cvode_jax.md).
+- The tolerance warning also names a configured `atol` above `1e-8`, but only on the `energy_balance` core, the one setup whose lock data show a loose `atol` adding to the lock. No lock data exist for the other core boundary conditions, `core_module` included, so the warning makes no `atol` claim for them.
+- CVODE accepts a SUNDIALS root function for melt-fraction step capping; see the [`phi_step_cap` how-to](phi-step-cap.md).
 
-The entropy state of CVODE has no lower bound, but the EOS tables stop at a minimum entropy $S_\mathrm{min}$; below it every lookup is clamped to the table edge, so a cell keeps losing entropy at a fixed temperature. This happens when a prescribed surface flux, fixed over a coupling step, drains the top cell after it crystallises. The EOS floor (`energy.eos_floor_margin` $m$) is off by default ($m = 0$). With the floor off, the EOS table guard is the safety net: with the rheology off, a call with a cell entropy, in an accepted or root-search state, outside the global entropy range of the loaded tables by more than $10^{-3}$ J kg$^{-1}$ K$^{-1}$ fails with status -1 after it ends and holds its states from before the first one outside (its start state for a start outside); with the rheology on, an invariant raises. A caller can retry a failed call with a shorter step; this does not help for a start outside, and the message says so. In PROTEUS the retry ladder halves the step, keeps the previous interior state when the ladder fails, and stops the run at the third such failure in a row. A cell at a table edge fails after about $10^{-3}$ J kg$^{-1}$ K$^{-1}$ over its outward rate. Only `EntropySolver.solve` has the guard; the direct JAX integration in `aragog.jax.solver` does not. The guard does not set the step and does not remove the cause of a drain. It does not judge the extrapolated basic nodes or the padded rows of a pressure column. A positive margin below the entropy span of the tables turns it on; 100 J kg$^{-1}$ K$^{-1}$ is the tested value. PROTEUS has no key for it, so PROTEUS runs have the floor off. When on, the floor is one more component of the step-cap root function. It watches the smaller of the top basic-node entropy, which sets the surface temperature, and the smallest cell entropy (the CMB basic node is not watched); with `top_node = 'limited'` and with a prescribed surface temperature (`outer_boundary_condition = 5`), where the top basic node is not the linear extrapolation of the cells, it watches the top cell in its place, and it ends the call when that value reaches $S_\mathrm{min} + m$, or $S_\mathrm{min} + m/2$ when the call starts below $S_\mathrm{min} + m$. A start counts as above the level $S_\mathrm{min} + m$ or $S_\mathrm{min} + m/2$ only when it lies more than $10^{-6} m$ above it; the table boundary below uses $2 \times 10^{-6} m$. CVODE then returns status 0 with a shorter `dt_actual`, scipy status 1 at the event, and the stop is logged as a WARNING with its level. A call that starts at or below $S_\mathrm{min} + m/2$ arms a level at half its distance to $S_\mathrm{min}$; it does not advance (status 1, `dt_actual = 0`) when the rate of that entropy at the call start, taken over every component no more than $10^{-6} m$ above that entropy, reaches the level before the call ends. Above $S_\mathrm{min} + 2 \times 10^{-6} m$ the rate of a linear top basic node (not with `top_node = 'limited'` or outer boundary condition 5) is the larger of its own rate and the rate of the top cell: the node is a linear extrapolation of the top two cells and can fall when only the gradient below it steepens. Inside that band its own rate counts. A start at or below $S_\mathrm{min} + 2 \times 10^{-6} m$ also arms half its distance to $S_\mathrm{min}$, but does not advance on any fall of its lowest component, however slow, at every span, nor when no level fits strictly between $S_\mathrm{min}$ and the start. Every start at or below $S_\mathrm{min}$ is refused, also a linear top basic node extrapolated below $S_\mathrm{min}$ from a steep top gradient while every cell is inside the table and the node or the top cell rises, so no call advances from a top node outside the table. A top node that falls only by extrapolation while the top cell warms therefore advances above the band in calls that each stop at half its distance, at most $\lceil \log_2 (d_0 / 2 \times 10^{-6} m) \rceil$ calls that stop at the floor from a distance $d_0 \le m/2$ (a call too short to reach its level adds one that does not stop), and is refused once inside the band. A call with no span (start equal to end) skips the floor. Between $S_\mathrm{min} + 2 \times 10^{-6} m$ and $S_\mathrm{min} + m/2$ the refusal depends on the call span, so a caller that retries with a shorter span can then advance. A refused or discarded call returns status 1, `dt_actual = 0` and its start state, with a WARNING. PROTEUS runs have the floor off; with the floor on, PROTEUS would treat such a call as a failed attempt: its retry ladder retries with half the span (and up to 5 times the `atol`), which can then advance in that range, so under a drain that does not stop the surface entropy can come closer to $S_\mathrm{min}$ than $m/2$; at the table minimum a shorter span does not advance a falling start. When the ladder runs out, PROTEUS would keep the interior state of the previous step while the other modules advance, and stop the run at the third failure in a row. Above $S_\mathrm{min} + 2 \times 10^{-6} m$, a drain too slow to reach half the distance in the call, a pause or a warming surface continues. The refusal is logged as a WARNING that says the entropy is at or below the table minimum, leaves no level between it and the table minimum, falls at the table minimum, or falls too fast between the band and $S_\mathrm{min} + m/2$, also when the start rate is NaN. A floor stop at the call start, where the level lies within the root location error of the start, is a refusal with its own WARNING.
+## Radau and BDF
 
-With $m > 0$ the floor is armed in every solve with the entropy EOS, except on the `gradient` core; a call in which it does not fire takes the same steps and gives the same result as without it. CVODE locates a root to a time tolerance of about $100\,u\,(|t| + |h|)$, with $u$ the unit roundoff, $t$ the absolute call time and $h$ the step, so a stop can lie below its level by up to about $|dS/dt| \times 2.2 \times 10^{-14} \times (|t| + |h|)$ ($t$ and $h$ in yr), about $|dS/dt| \times 2.2 \times 10^{-14} \times t$ for steps much shorter than $t$; scipy event location also loses precision with $t$, more slowly; for the 11-cell state of the floor tests under $10^6$ W m$^{-2}$, a stop at $10^9$ yr lay $1.6 \times 10^{-3}$ J kg$^{-1}$ K$^{-1}$ below its level on CVODE, $6 \times 10^{-6}$ below it on Radau and $9 \times 10^{-6}$ above it on BDF (a scipy event can stop on either side of its level). A call whose returned states or energy trace hold a top basic-node or cell entropy below $S_\mathrm{min}$ is discarded: it is solved again as a refusal, so its state, time and energy trace stay at the call start, and the WARNING names the time after the call start, and that entropy and the level as offsets from $S_\mathrm{min}$. So, with the floor on, every state a call returns is inside the table when the call starts inside it; with the floor off ($m \le 0$, the default) the EOS table guard judges the cells, and the extrapolated basic nodes of a returned state can lie below $S_\mathrm{min}$. Trial steps and Newton iterates of the integrator can still evaluate the right-hand side below $S_\mathrm{min}$, with clamped lookups, at any margin; with the floor on, the returned states and the energy trace cannot hold such a state. The floor guards the table range, not its resolution: where a table is flat in temperature above $S_\mathrm{min}$, a stop at the level still gives the clamped edge temperature. In the solid table of the floor tests, $T$ is the same over the first four entropy rows ($S_\mathrm{min}$ to $S_\mathrm{min} + 322$ J kg$^{-1}$ K$^{-1}$) at every pressure up to 6 GPa, so with $m = 100$ the floor keeps the state inside the table but the surface temperature at the edge value; in one PALEOS solid table at the lowest pressure, $T$ is the same over the rows from about $S_\mathrm{min} + 70$ to $S_\mathrm{min} + 620$ J kg$^{-1}$ K$^{-1}$.
+- Both use `solve_ivp` with `dense_output=False` and a 1 yr `max_step` near phase boundaries.
+- They do not support the JAX-traced Jacobian. scipy computes a Jacobian by finite differences when needed.
+- They register the melt-fraction capping logic as a `solve_ivp` event with `terminal=True`, so the same TOML config behaves consistently.
+- With `phase_boundary_cap = "fixed"` the 1 yr `max_step` activates at the same trigger on all 3 integrators.
+- The default `"rate"` runs only on CVODE: it arms within the larger of `phase_boundary_entropy_margin` and the stiff-zone half-width and integrates the call in segments. The scipy paths fall back to the 1 yr step.
 
-## Cross-references
+## Leaving the EOS tables
+
+The entropy state of CVODE has no lower bound, but the EOS tables stop at a minimum entropy $S_\mathrm{min}$. Below it every lookup is clamped to the table edge, so a cell keeps losing entropy at a fixed temperature. This happens when a prescribed surface flux, fixed over a coupling step, drains the top cell after it crystallises.
+
+Two controls deal with this. The guard needs no setting and fails a call that has left the tables. The floor is off by default and stops a call before it leaves them.
+
+Trial steps and Newton iterates of the integrator can evaluate the right-hand side below $S_\mathrm{min}$, with clamped lookups, with either control and at any margin.
+
+### EOS table guard
+
+The guard is a safety net. It does not set the step and does not remove the cause of a drain.
+
+**What it does.** With the rheology off, a call fails when a cell entropy lies outside the global entropy range of the loaded tables by more than $10^{-3}$ J kg$^{-1}$ K$^{-1}$, in an accepted or root-search state. With the rheology on, an invariant raises instead.
+
+**What you see.**
+
+- The call ends with status -1 after it has run to its end, with an ERROR message that names the guard, the cell, its entropy and the table range.
+- The result holds the states from before the first one outside, or the start state for a start outside. `dt_actual` reaches the last state kept, and the energy integrals are zero.
+- `cvode_flag_name` is `EOS_TABLE_GUARD`, and `cvode_flag` keeps its value, which is 0 on the scipy paths.
+- Before that, the EOS lookup logs an out-of-range WARNING on the 1st, 10th, 100th, ... occurrence of each lookup. For an EOS that a caller builds with `strict_range=True`, the lookup raises instead: on a scipy path the error reaches the caller, and on CVODE the solver call reports it.
+
+**What to do.**
+
+- Retry the call with a shorter step. This does not help for a start outside, and the message says so.
+- In PROTEUS the retry ladder halves the step and keeps the previous interior state when the ladder fails. It stops the run at the third such failure in a row.
+- Look at the coupling step: a flux fixed over a step is what drains the top cell.
+
+**What it does not judge.**
+
+- The extrapolated basic nodes: with the floor off they can lie below $S_\mathrm{min}$ in a returned state.
+- The padded rows of a pressure column.
+- A run with constant properties or without tables, and a call that does not advance.
+
+A cell at a table edge passes until it has moved past it by the tolerance, so it fails after about $10^{-3}$ J kg$^{-1}$ K$^{-1}$ over its outward rate.
+
+Only `EntropySolver.solve` has the guard. The direct JAX integration in `aragog.jax.solver` does not.
+
+### EOS floor
+
+Turn the floor on in a standalone run when a drain must stop at a known entropy, with a state that stays inside the table. PROTEUS has no key for it, so PROTEUS runs have the floor off.
+
+**How.** Set `energy.eos_floor_margin` $m$ to a positive value below the entropy span of the tables. The tested value is 100 J kg$^{-1}$ K$^{-1}$. The default is $m = 0$, which is off, as is $m \le 0$.
+
+**What it does.** The floor is one more component of the step-cap root function. It ends the call when the entropy it watches reaches $S_\mathrm{min} + m$, or $S_\mathrm{min} + m/2$ when the call starts below $S_\mathrm{min} + m$.
+
+- It watches the smaller of the top basic-node entropy, which sets the surface temperature, and the smallest cell entropy. The CMB basic node is not watched.
+- With `top_node = 'limited'` and with a prescribed surface temperature (`outer_boundary_condition = 5`), the top basic node is not the linear extrapolation of the cells, so the floor watches the top cell in its place.
+
+**What you see.**
+
+- At a stop, CVODE returns status 0 with a shorter `dt_actual`, and scipy returns status 1 at the event. A WARNING logs the stop and its level.
+- A refused or discarded call returns status 1, `dt_actual = 0` and its start state, with a WARNING.
+- A start close to the table can be refused; see [Floor refusals](#floor-refusals).
+
+**What it costs.** With $m > 0$ the floor is armed in every solve with the entropy EOS, except on the `gradient` core. A call in which it does not fire takes the same steps and gives the same result as without it.
+
+**What it does not do.** The floor guards the table range, not its resolution. Where a table is flat in temperature above $S_\mathrm{min}$, a stop at the level still gives the clamped edge temperature.
+
+- In the solid table of the floor tests, $T$ is the same over the first 4 entropy rows ($S_\mathrm{min}$ to $S_\mathrm{min} + 322$ J kg$^{-1}$ K$^{-1}$) at every pressure up to 6 GPa. With $m = 100$ the floor keeps the state inside the table but the surface temperature at the edge value.
+- In one PALEOS solid table at the lowest pressure, $T$ is the same over the rows from about $S_\mathrm{min} + 70$ to $S_\mathrm{min} + 620$ J kg$^{-1}$ K$^{-1}$.
+
+With the floor on, every state a call returns is inside the table when the call starts inside it, and the returned states and the energy trace cannot hold a state below $S_\mathrm{min}$.
+
+## Details
+
+### Floor refusals
+
+??? note "When the floor refuses a call"
+    **Levels.** A start counts as above the level $S_\mathrm{min} + m$ or $S_\mathrm{min} + m/2$ only when it lies more than $10^{-6} m$ above it. The band below uses $2 \times 10^{-6} m$.
+
+    **Start at or below $S_\mathrm{min} + m/2$.** The call arms a level at half its distance to $S_\mathrm{min}$. It does not advance (status 1, `dt_actual = 0`) when the rate of that entropy at the call start, taken over every component no more than $10^{-6} m$ above that entropy, reaches the level before the call ends. Between $S_\mathrm{min} + 2 \times 10^{-6} m$ and $S_\mathrm{min} + m/2$ the refusal depends on the call span, so a caller that retries with a shorter span can then advance.
+
+    **Rate of a linear top node.** Above $S_\mathrm{min} + 2 \times 10^{-6} m$, the rate of a linear top basic node (not with `top_node = 'limited'` or outer boundary condition 5) is the larger of its own rate and the rate of the top cell. The node is a linear extrapolation of the top 2 cells and can fall when only the gradient below it steepens. Inside the band its own rate counts.
+
+    **Start at or below $S_\mathrm{min} + 2 \times 10^{-6} m$.** The call also arms half its distance to $S_\mathrm{min}$, but does not advance on any fall of its lowest component, however slow, at every span, nor when no level fits strictly between $S_\mathrm{min}$ and the start.
+
+    **Start at or below $S_\mathrm{min}$.** Every such start is refused. This includes a linear top basic node extrapolated below $S_\mathrm{min}$ from a steep top gradient while every cell is inside the table and the node or the top cell rises, so no call advances from a top node outside the table.
+
+    **A top node that falls only by extrapolation.** While the top cell warms, it advances above the band in calls that each stop at half its distance, and is refused once inside the band. That takes at most $\lceil \log_2 (d_0 / 2 \times 10^{-6} m) \rceil$ calls that stop at the floor from a distance $d_0 \le m/2$. A call too short to reach its level adds one that does not stop.
+
+    **What continues.** Above $S_\mathrm{min} + 2 \times 10^{-6} m$, a drain too slow to reach half the distance in the call, a pause or a warming surface continues. A call with no span (start equal to end) skips the floor.
+
+    **Warnings.** The refusal WARNING says that the entropy is at or below the table minimum, leaves no level between it and the table minimum, falls at the table minimum, or falls too fast between the band and $S_\mathrm{min} + m/2$, also when the start rate is NaN. A floor stop at the call start, where the level lies within the root location error of the start, is a refusal with its own WARNING.
+
+    **In PROTEUS, if the floor were on.** PROTEUS would treat a refused call as a failed attempt. Its retry ladder retries with half the span and up to 5 times the `atol`, which can then advance in the range above, so under a drain that does not stop the surface entropy can come closer to $S_\mathrm{min}$ than $m/2$. At the table minimum a shorter span does not advance a falling start. When the ladder runs out, PROTEUS would keep the interior state of the previous step while the other modules advance, and stop the run at the third failure in a row.
+
+### Root location limits
+
+??? note "How exactly a stop lands on its level"
+    CVODE locates a root to a time tolerance of about $100\,u\,(|t| + |h|)$, with $u$ the unit roundoff, $t$ the absolute call time and $h$ the step. A stop can lie below its level by up to about $|dS/dt| \times 2.2 \times 10^{-14} \times (|t| + |h|)$, with $t$ and $h$ in yr. For steps much shorter than $t$ that is about $|dS/dt| \times 2.2 \times 10^{-14} \times t$.
+
+    scipy event location also loses precision with $t$, more slowly, and a scipy event can stop on either side of its level.
+
+    For the 11-cell state of the floor tests under $10^6$ W m$^{-2}$, a stop at $10^9$ yr lay:
+
+    | Integrator | Distance from the level (J kg$^{-1}$ K$^{-1}$) |
+    |---|---|
+    | CVODE | $1.6 \times 10^{-3}$ below |
+    | Radau | $6 \times 10^{-6}$ below |
+    | BDF | $9 \times 10^{-6}$ above |
+
+    A call whose returned states or energy trace hold a top basic-node or cell entropy below $S_\mathrm{min}$ is discarded. It is solved again as a refusal, so its state, time and energy trace stay at the call start. The WARNING names the time after the call start, and that entropy and the level as offsets from $S_\mathrm{min}$.
+
+### Lock measurements
+
+??? note "What the lock counts rest on"
+    **Setup.** A probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py`: 24 nodes, 200 yr, fixed cap unless stated. It draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$. The probe script is not in the repository, and the runs were on macOS arm64. The counts hold for this 24-node standalone case at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$, not for a coupled solve.
+
+    **What counts as locked.** A run that has not reached 200 yr after 600 s of wall time. Every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations.
+
+    | `rtol` and `atol` | Setup | Locked |
+    |---|---|---|
+    | both `1e-6` | energy_balance, fixed cap | 12 of 1133 |
+    | both `1e-6` | quasi_steady | 4 of 474 |
+    | both `1e-6` | rate cap | 2 of 286; 2 more finished only after 233 s and 346 s |
+    | both `1e-5` | all run to 600 s | 0 of 80, too few to show it safe; the slowest finished after 100.6 s and $6.5 \times 10^4$ RHS evaluations |
+    | both `1e-8` | fixed and rate cap on energy_balance, fixed cap on quasi_steady | 0 of 1026, 0 of 627, 0 of 1224 |
+    | `atol` `1e-8`, `rtol` `2e-8`, `5e-8` or `1e-7` (the values of the PROTEUS retry ladder) | each value and core with the fixed cap | 0 of 1308 to 1836 |
+    | same | rate cap at `5e-8` and `1e-7` | 0 of 620 and 0 of 636 |
+
+    The median run needed about $1.6 \times 10^4$ RHS evaluations at `1e-5`, against about $1.3 \times 10^3$ at `1e-8`.
+
+    **Recorded steps.** 2 of the counted runs were run again with every accepted step recorded. Both kept a constant step with a period-2 oscillation of the entropy difference at mid-mantle nodes, at 1.41 RHS evaluations per step on the energy_balance core, where the difference stayed just below zero, and at 1.14 on the quasi_steady core, around zero. The other counted runs were not checked for the pattern.
+
+    **Why $D > 0$ differs.** At $D = 0$ the interior flux is continuous at the switch and only its slope jumps, but with `core_bc` `energy_balance` or `gradient` the convective CMB flux jumps by $\rho T \kappa_h^\mathrm{floor}\,|\partial S/\partial r|_\mathrm{cmb}$ when the node above the CMB crosses 0. At $D > 0$ the convective flux stays continuous at 0, but the mixing flux of a mush and the CMB flux jump at 0 and the floor flux jumps at $D$ (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). So the $D = 0$ counts and the `1e-8` remedy do not carry over to $D > 0$, and the probe did not cover it.
+
+    **On CI.** The AVX-512 numpy path made the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion.
+
+## See also
 
 - [CVODE and JAX explainer](../Explanations/cvode_jax.md): why the analytic Jacobian helps and how `set_jax_cvode_factory` is wired.
 - [`phi_step_cap` how-to](phi-step-cap.md): SUNDIALS-rootfn capping of $|\Delta\phi|$ across a step.
