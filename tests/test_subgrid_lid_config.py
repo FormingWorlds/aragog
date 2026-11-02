@@ -54,7 +54,7 @@ def test_valid_settings_pass_on_both_layers():
     _both(**GOOD)
     _both(**{**GOOD, 'lid_delta_lo': 0.25, 'lid_handover_cells': 1})
     _both(**{**GOOD, 'subgrid_lid': False, 'lid_delta_on': 5e3})
-    assert check_subgrid_lid(True, 1.0, 0.999999, 1, 1e-3, 1, 'core_module') is None
+    assert check_subgrid_lid(True, 1.0, 0.999999, 1, 1e-3, 1, 'core_module', False) is None
 
 
 @pytest.mark.parametrize('value', [1, 0, 'true', None, 1.0])
@@ -125,7 +125,7 @@ def test_validator_accepts_exactly_the_valid_domain(on, lo, cells, ra):
         and cells >= 1
     )
     try:
-        check_subgrid_lid(True, on, lo, cells, ra, 1, 'energy_balance')
+        check_subgrid_lid(True, on, lo, cells, ra, 1, 'energy_balance', False)
         accepted = True
     except ValueError:
         accepted = False
@@ -144,6 +144,12 @@ def test_lid_refuses_a_setup_it_would_ignore_or_has_no_test_of(fields, word):
     with pytest.raises(ValueError, match=word):
         _both(**GOOD, **fields)
     _both(**{**GOOD, 'subgrid_lid': False}, **fields)
+
+
+def test_the_check_takes_the_utbl_setting_from_every_caller():
+    """A caller cannot leave the UTBL setting out and skip its refusal."""
+    with pytest.raises(TypeError, match='param_utbl'):
+        check_subgrid_lid(True, 1.0, None, 1, 1.0, 1, 'quasi_steady')
 
 
 def _toml_config(tmp_path, *lid_lines):

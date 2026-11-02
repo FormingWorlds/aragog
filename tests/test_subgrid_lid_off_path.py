@@ -7,7 +7,8 @@ finite-difference Jacobian and with a JAX factory (here built with ``lid_params=
 mesh and the right-hand side must match to rtol 1e-10 and the solve to rtol 1e-9, above the
 round-off between the macOS and Linux builds; a JAX case must have called the JAX right-hand
 side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals
-to rtol 1e-8; the solver residual, a difference of large terms, to 1e-12 of the surface energy.
+to rtol 1e-8, with internal heating; the solver residual, a difference of large terms, to 1e-15
+of the surface energy.
 """
 
 from __future__ import annotations
@@ -83,10 +84,11 @@ def test_lid_off_core_mode_equals_the_base(reference, mode):
     np.testing.assert_allclose(got['y_end'], stored['y_end'], rtol=OFF_PATH_RTOL, atol=0)
     integrals = {k for k in stored if k.startswith('ei/')}
     assert len(integrals) > 3
+    assert all(float(stored[k][0]) != 0.0 for k in ('ei/F_int', 'ei/Q_radio', 'ei/Q_tidal'))
     assert integrals <= set(got)
     for key in integrals - {'ei/solver_residual'}:
         np.testing.assert_allclose(
             got[key], stored[key], rtol=OFF_PATH_RTOL, atol=0, err_msg=key
         )
     heat = abs(float(stored['ei/F_int'][0]))
-    assert abs(got['ei/solver_residual'][0] - stored['ei/solver_residual'][0]) <= 1e-12 * heat
+    assert abs(got['ei/solver_residual'][0] - stored['ei/solver_residual'][0]) <= 1e-15 * heat

@@ -4,7 +4,7 @@
 or without the solid rheology (the 'lid' stress closure), on CVODE with the finite-difference
 Jacobian or with a JAX factory, and returns the mesh, one right-hand side at the start state and
 a 2-yr solve. ``mode_probe(core_bc)`` runs a 12-node NumPy column on a core mode for 5 yr and
-returns the end state and every energy integral. ``build_subgrid_lid_v0_reference.py`` stores
+returns the end state and every energy integral, with tidal and radiogenic heating. ``build_subgrid_lid_v0_reference.py`` stores
 both for the commit the lid branches from; ``tests/test_subgrid_lid_off_path.py`` compares the
 current code with it.
 """
@@ -106,6 +106,7 @@ def probe(rheology: bool, jax: bool, eos_dir, factory_kw=None) -> dict[str, np.n
 
 def mode_probe(core_bc: str, eos_dir) -> dict[str, np.ndarray]:
     """End time, status, end state and energy integrals of a 5-yr solve on one core mode."""
+    from aragog.parser import _Radionuclide
     from aragog.solver.entropy_solver import EntropySolver
     from tests.conftest import entropy_eos_copy
     from tests.test_entropy_solver_bc_dispatch_smoke import _build
@@ -121,6 +122,9 @@ def mode_probe(core_bc: str, eos_dir) -> dict[str, np.ndarray]:
     )
     if core_module:
         p.boundary_conditions.core_module_params = CORE_MODULE_PARAMS
+    p.energy.tidal, p.energy.tidal_array = True, np.array([3.0e-7])
+    p.energy.radionuclides = True
+    p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
     s = EntropySolver(p, entropy_eos=entropy_eos_copy(eos_dir, identity_alpha=core_module))
     s.initialize()
     s.set_initial_entropy(np.linspace(*S_PROFILE, s._n_stag))

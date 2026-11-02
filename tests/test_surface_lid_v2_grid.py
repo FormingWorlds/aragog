@@ -246,14 +246,14 @@ def test_c3_molten_lid_run_on_the_test_tables():
 
 
 @pytest.mark.parametrize(
-    ('name', 'ratio'),
-    [('test tables', 1.1877), ('extended table', 1.1848)],
+    ('name', 'solid', 'melt'),
+    [('test tables', 3037.5, 3607.8), ('extended table', 3040.8, 3602.8)],
     ids=['test', 'lowt'],
 )
-def test_melt_density_against_the_solid_at_the_top_cell_pressure(name, ratio):
+def test_melt_density_against_the_solid_at_the_top_cell_pressure(name, solid, melt):
     """The page quotes the density sign of these tables at the top-cell pressure of its shells:
-    the melt at the liquidus is denser than the solid at the solidus. The lid has no buoyancy
-    test, so this number only tells which way a crust would sink on these tables."""
+    the melt just above the liquidus is denser than the solid just below the solidus. The lid
+    has no buoyancy test, so this tells only which way a crust would sink on these tables."""
     table = EOS_DIR if name == 'test tables' else _lowt_table()
     if not table:
         pytest.skip('ARAGOG_LOWT_EOS_DIR is not set')
@@ -261,10 +261,13 @@ def test_melt_density_against_the_solid_at_the_top_cell_pressure(name, ratio):
     P = float(np.asarray(shell(10, False, eos, 1.0, 0.0)._P_stag_flat)[-1])
     S_sol = float(np.asarray(eos.solidus_entropy(P)).item())
     S_liq = float(np.asarray(eos.liquidus_entropy(P)).item())
-    rho_solid = float(np.asarray(eos.density(P, S_sol - 1.0)).item())
-    rho_melt = float(np.asarray(eos.density(P, S_liq + 1.0)).item())
     assert P == pytest.approx(55.68e6, rel=1e-3)
-    assert rho_melt / rho_solid == pytest.approx(ratio, rel=1e-3)
+    assert float(np.asarray(eos.density(P, S_sol - 1.0)).item()) == pytest.approx(
+        solid, rel=1e-3
+    )
+    assert float(np.asarray(eos.density(P, S_liq + 1.0)).item()) == pytest.approx(
+        melt, rel=1e-3
+    )
 
 
 def test_tutorial_blocks_run_and_match_page(monkeypatch, capsys, tmp_path):
@@ -289,3 +292,15 @@ def test_tutorial_blocks_run_and_match_page(monkeypatch, capsys, tmp_path):
     want, got = (np.array(re.findall(number, t), dtype=float) for t in (expected, out))
     assert want.size >= 10
     np.testing.assert_allclose(got, want, rtol=1e-3)
+    prose = ns['EntropySolver'].from_file(filename='surface_lid.toml', eos_dir=ns['eos_dir'])
+    prose.initialize()
+    P = float(np.asarray(prose._P_stag_flat)[-1])
+    eos = prose.entropy_eos
+    assert P == pytest.approx(7.8e9, rel=5e-3)
+    T_sol = float(np.asarray(eos.temperature(P, eos.solidus_entropy(P))).item())
+    assert T_sol == pytest.approx(2149.0, rel=1e-3)
+    assert float(np.asarray(eos.melt_fraction(P, 3050.0)).item()) == pytest.approx(
+        0.36, abs=5e-3
+    )
+    r = np.asarray(prose.evaluator.mesh.basic.radii, dtype=float).ravel()
+    assert r[-1] - r[-2] == pytest.approx(380.0e3, rel=5e-3)

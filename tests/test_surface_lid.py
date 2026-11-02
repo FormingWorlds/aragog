@@ -394,3 +394,10 @@ def test_lid_heating_uses_the_profile_density():
     )
     assert rates.H_lid == pytest.approx(1e-8 * 50.0 * rho_mean, rel=1e-12)
     assert abs(rho_mean / 3040.0 - 1.0) > 0.01
+
+
+def test_first_knot_of_the_heat_content():
+    """The table starts at its first temperature; constant properties have no lower end."""
+    assert sl.LidEnthalpy.linear(3000.0, 1200.0, 1400.0, 0.0).first_knot == -np.inf
+    table = sl.LidEnthalpy.table([300.0, 500.0], [1.0e9, 2.0e9], [3000.0, 3000.0])
+    assert table.first_knot == 300.0
