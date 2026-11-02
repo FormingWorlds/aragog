@@ -150,7 +150,13 @@ def sheet(eos: EntropyEOS) -> list[Row]:
             absent(check, band, source)
             continue
         a_m, a_s = _alpha(eos, p, 'melt'), _alpha(eos, p, 'solid')
-        add(check, f'{a_m / a_s:.3f} ({a_m:.3g} / {a_s:.3g})', band, source, a_m > a_s)
+        add(
+            check,
+            f'{a_m / a_s if a_s else np.inf:.3f} ({a_m:.3g} / {a_s:.3g})',
+            band,
+            source,
+            a_m > a_s,
+        )
 
     for p_gpa in UPPER_MANTLE_GPA:
         p = p_gpa * GPA
