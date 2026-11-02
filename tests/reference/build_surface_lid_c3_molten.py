@@ -49,6 +49,7 @@ def _rows(path: str, n_nodes: int) -> tuple[np.ndarray, str, str]:
 if __name__ == '__main__':
     from aragog.solver.entropy_solver import EntropySolver
 
+    assert len(sys.argv) == 3, 'usage: build_surface_lid_c3_molten.py <n400.json> <n800.json>'
     table = Path(os.environ['ARAGOG_LOWT_EOS_DIR'])
     md5 = hashlib.md5((table / 'temperature_solid.dat').read_bytes()).hexdigest()
     assert md5 == LOWT_EOS_MD5, md5
@@ -61,8 +62,10 @@ if __name__ == '__main__':
     out['coarse'], _ = molten_column(10, False, MOLTEN_TIMES_YR, eos)
     root = EntropySolver._lid_solidus_root
     EntropySolver._lid_solidus_root = lambda self, y: -1.0
-    out['lid_kept'], _ = molten_column(10, True, MOLTEN_TIMES_YR, eos)
-    EntropySolver._lid_solidus_root = root
+    try:
+        out['lid_kept'], _ = molten_column(10, True, MOLTEN_TIMES_YR, eos)
+    finally:
+        EntropySolver._lid_solidus_root = root
     out['pin'], out['pin_handover_yr'] = molten_column(
         10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR)
     )

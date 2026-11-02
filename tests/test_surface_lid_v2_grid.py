@@ -179,7 +179,8 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     np.testing.assert_allclose(d['refined_400'], grid, rtol=C3_BOUND)
     assert 0.0 < float(d['handover_yr']) < MOLTEN_TIMES_YR[0]
     np.testing.assert_allclose(d['lid'], d['coarse'], rtol=FLOOR)
-    np.testing.assert_allclose(d['lid'], grid, rtol=C3_TOL)
+    for run in ('lid', 'coarse'):
+        np.testing.assert_allclose(d[run], grid, rtol=C3_TOL)
     assert np.max(np.abs(d['lid_kept'] / grid - 1)) > 0.5
     table = _lowt_table()
     if table:
