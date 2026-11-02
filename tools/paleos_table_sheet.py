@@ -267,7 +267,7 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     source = 'MK19a p3 Eq 3, p15'
     if _reaches(eos, 100.0 * GPA) and d_low > 0.0:
         ratio = _delta_s(eos, 100.0 * GPA) / d_low
-        add(check, f'{ratio:.3f}', band, source, 0.0 < ratio < 1.0, ratio)
+        add(check, f'{ratio:.3f}', band, source, 0.0 < ratio < 1.0)
     else:
         absent(check, band, source)
 
@@ -295,7 +295,7 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         absent(check, band, source)
     else:
         ok = PHI0_BAND_GPA[0] * GPA <= p_phi0 <= PHI0_BAND_GPA[1] * GPA
-        add(check, f'{p_phi0 / GPA:.2f}', band, source, ok, p_phi0)
+        add(check, f'{p_phi0 / GPA:.2f}', band, source, ok)
 
     table = eos._tables['temperature_solid']
     spans = np.array([_padded_span(table, i) for i in range(len(table['P']))])
