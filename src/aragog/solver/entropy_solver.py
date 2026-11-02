@@ -952,8 +952,8 @@ _ZERO_ENERGY_INTEGRALS = {
 }
 
 
-# EOS table guard tolerance [J/kg/K]. Over 10 yr at rtol x 10, a state held at a table edge moves
-# past it by below 1e-6 on CVODE and BDF, and by 5e-4 on Radau at S_max.
+# EOS table guard tolerance [J/kg/K]. A cell at a table edge fails after about this value over
+# its outward rate: at 1e-8 J/kg/K per yr, a call of about 1e5 yr.
 _EOS_TABLE_TOL = 1.0e-3
 
 
@@ -1145,7 +1145,7 @@ class SolverOutput:
 
     # Raw CVODE return flag, apart from ``status`` to tell CV_TOO_MUCH_WORK from CV_CONV_FAILURE.
     # The scipy ``solve_ivp`` path has flag 0 and name 'N/A'. A call the EOS table guard fails
-    # keeps its flag and has the name 'EOS_TABLE_GUARD'.
+    # keeps its flag and has the name 'EOS_TABLE_GUARD'; its dt_actual reaches the last state kept.
     cvode_flag: int = 0
     cvode_flag_name: str = 'N/A'
 
@@ -4267,7 +4267,8 @@ class EntropySolver:
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. With the rheology off, a call that leaves the EOS tables fails with status -1 (see
-        ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that warning: a call whose
+        ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that warning:
+        a call whose
         floor root returns a state below the EOS table, or stops at the call start, is solved
         again this way, so it returns its start state.
         """
@@ -5003,7 +5004,9 @@ class EntropySolver:
         )
 
     def _eos_table_failure(self, sol) -> tuple[float, str] | None:
-        """Find the first accepted cell entropy of a call outside the loaded EOS tables.
+        """Find the first cell entropy of a call outside the loaded EOS tables.
+
+        The call's accepted and root-search states count.
 
         A safety net with the rheology off, where a table lookup clamps to the table edge and the
         run would go on at that edge temperature. It judges the global entropy range of the

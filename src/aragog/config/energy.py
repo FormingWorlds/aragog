@@ -148,7 +148,7 @@ class EnergyConfig:
         grows with the call time, is discarded as a refusal. A call with no
         span skips the floor. Default 0: the floor is off. A drain past S_min
         then meets the EOS table guard, the safety net of the solver: with
-        the rheology off, a call with an accepted cell entropy outside the
+        the rheology off, a call with a cell entropy outside the
         global entropy range of the loaded tables, by more than 1e-3 J/kg/K,
         fails with status -1 after it ends and holds its states from before
         the first one outside (its start state for a start outside), so a
