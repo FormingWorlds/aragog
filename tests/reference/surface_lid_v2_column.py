@@ -20,6 +20,7 @@ MELT_TIMES_YR = np.geomspace(100.0, 5000.0, 8)
 PHI_0 = 0.2  # start entropy, as a fraction of the way from the solidus to the liquidus
 MOLTEN_0 = 1.1  # molten start, the same fraction past the liquidus
 MOLTEN_TIMES_YR = np.geomspace(100.0, 5000.0, 29)
+PIN_TIMES_YR = MELT_TIMES_YR[:5]  # the molten shell on the test tables, on real table entries
 
 
 def shell(

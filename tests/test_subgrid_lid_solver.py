@@ -487,6 +487,35 @@ def test_a_lid_at_the_growth_stop_is_carried_to_a_new_start(eos):
         assert s._S0[-2] == d
 
 
+@pytest.mark.parametrize(
+    ('past_top', 'refused'),
+    [(5e-4, False), (2e-3, True)],
+    ids=['in_the_band', 'above_the_band'],
+)
+def test_heat_table_check_has_the_band_of_the_eos_guard(eos, past_top, refused):
+    """A top cell above the table top passes within the tolerance of the EOS table guard, where
+    the lid continues its heat content linearly; above it the guard fails the call, as without
+    the lid."""
+    s = _solver(eos, lid=True)
+    S = np.full(s._n_stag, 3050.0)
+    S[-1] = float(eos.S_max) + past_top
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == (-1 if refused else 0)
+    assert ('EOS table guard' in str(s._solution.message)) is refused
+
+
+def test_a_lid_over_a_state_held_at_the_table_top_runs_as_without_it(eos):
+    """A column held at the table top drifts into the band of the EOS guard: the run passes with
+    the lid on as it does with the lid off."""
+    T_top = float(np.asarray(eos.temperature(5.0e7, float(eos.S_max))).item())
+    for lid in (False, True):
+        s = _solver(eos, lid=lid, end=10.0, equilibrium_temperature=T_top)
+        s.set_initial_entropy(np.full(s._n_stag, float(eos.S_max)))
+        s.solve()
+        assert s._solution.status == 0
+
+
 def _table_floor_run(eos, caplog, T_s_above_the_floor):
     """A solve whose lid surface lies above or below the first knot of the lid heat table."""
     s = _solver(eos, S0=3050.0)
@@ -1584,6 +1613,19 @@ def test_lid_step_check_refuses_an_entropy_outside_the_heat_table(eos, change):
     s._dSdt_single(0.0, s._S0)
     with pytest.raises(RuntimeError, match='outside the lid heat table'):
         _checked(s, **dict(change))
+
+
+@pytest.mark.parametrize('field', ['S_f', 'S_b'])
+@pytest.mark.parametrize('end', [0, -1], ids=['bottom', 'top'])
+def test_lid_step_check_has_the_guard_band_at_both_table_ends(eos, field, end):
+    """Within the tolerance of the EOS table guard past a table end the step check passes;
+    twice that past the end it refuses, on both ends and for both entropies."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    edge, sign = float(s._lid_W_of_S.x[end]), -1.0 if end == 0 else 1.0
+    _checked(s, **{field: edge + sign * 5e-4})
+    with pytest.raises(RuntimeError, match='outside the lid heat table'):
+        _checked(s, **{field: edge + sign * 2e-3})
 
 
 @pytest.mark.parametrize('field', ['S_f', 'S_b'])
