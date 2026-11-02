@@ -24,6 +24,44 @@ STEP_4E5 = 1.4  # at 4e5 yr both steps stay above: the late lid depends on the m
 FLOOR_TOL = 4e-2  # floor runs against the 1e3 J/kg run up to 3e5 yr
 
 
+def _legend_figure(**legend_kw):
+    """A figure with one line at the bottom and a legend at the top right of its axes."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(5.0, 3.4))
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot()
+    ax.plot([0.0, 1.0], [0.0, 0.0], label='line')
+    ax.set_ylim(-0.1, 1.0)
+    ax.legend(loc='upper right', **legend_kw)
+    return fig, ax
+
+
+@pytest.mark.parametrize(
+    'legend_kw',
+    [
+        dict(frameon=True, framealpha=0.5),
+        dict(frameon=False),
+        dict(frameon=True, facecolor='none'),
+    ],
+    ids=['alpha', 'no_frame', 'no_face'],
+)
+def test_legend_check_refuses_a_frame_that_shows_the_grid(legend_kw):
+    """A gridline stays visible behind the text of a legend without an opaque frame."""
+    fig, _ = _legend_figure(**legend_kw)
+    with pytest.raises(AssertionError, match='not opaque'):
+        assert_legend_clear(fig)
+
+
+def test_legend_check_refuses_a_legend_on_a_band():
+    """An opaque frame cuts a corner out of the band, so the legend stays off the band."""
+    fig, ax = _legend_figure(frameon=True, framealpha=1.0)
+    ax.axhspan(0.5, 1.0, alpha=0.15)
+    with pytest.raises(AssertionError, match='covers a band'):
+        assert_legend_clear(fig)
+
+
 def _step(a, b):
     """The factor between two thicknesses, at least 1."""
     r = a / b
