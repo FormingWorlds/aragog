@@ -368,6 +368,7 @@ _CVODE_TOL_LIMIT = 1.0e-8
 # Relative slack of the lid thickness above the growth stop in the step check: the integrator
 # can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-6, 1.4e-8 at 1e-7).
 _LID_CAP_SLACK = 1.0e-3
+_LID_LO_SLACK = 1.0e-6  # relative slack of the lid thickness below the melt-back stop
 # Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
 _SUBSOLIDUS_RTOL = 1.0e-9
 _SUBSOLIDUS_ATOL = 1.0e-8
@@ -3186,8 +3187,8 @@ class EntropySolver:
         ------
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
-            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6 below, ``_LID_CAP_SLACK``
-            above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
+            ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
             table.
         """
         ev = self._lid_last
@@ -3198,7 +3199,7 @@ class EntropySolver:
         bad = None
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
-        elif ev.delta > cap * (1.0 + _LID_CAP_SLACK) or ev.delta < delta_lo * (1.0 - 1e-6):
+        elif not delta_lo * (1.0 - _LID_LO_SLACK) <= ev.delta <= cap * (1.0 + _LID_CAP_SLACK):
             bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
@@ -5776,7 +5777,8 @@ class EntropySolver:
         both branches, while invariants that require a refreshed RHS state are checked on the
         final step on the JAX batch path and at every step on the NumPy loop. The lid thickness
         is checked against both stops on every accepted step on both branches, and
-        ``sol.lid_cap_excess`` is set to its largest ``delta / cap - 1`` (NaN without a lid).
+        ``sol.lid_cap_excess`` is set to its largest ``delta / cap - 1`` (NaN without a lid or
+        without a replay).
 
         Returns
         -------
@@ -5820,9 +5822,10 @@ class EntropySolver:
         t_pts = np.asarray(t_pts, dtype=float)
         y_pts = np.asarray(y_pts, dtype=float)
         if self._n_lid:  # largest delta / cap - 1 over the accepted states with a lid
-            d = y_pts[-2][y_pts[-2] > 0.0]
-            cap = _lid.LID_CAP_FRAC * self._lid_h_top
-            sol.lid_cap_excess = float(d.max() / cap - 1.0) if d.size else math.nan
+            d, cap = y_pts[-2], _lid.LID_CAP_FRAC * self._lid_h_top
+            lid_lo = min(self._lid_delta_lo, float(d[0]))
+            grown = d[d > 0.0]
+            sol.lid_cap_excess = float(grown.max() / cap - 1.0) if grown.size else math.nan
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
         P = None
@@ -5866,9 +5869,7 @@ class EntropySolver:
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
-                    d, cap = y_pts[-2], _lid.LID_CAP_FRAC * self._lid_h_top
-                    lid_lo = min(self._lid_delta_lo, float(d[0]))
-                    thin = (d != 0.0) & (d < lid_lo * (1.0 - 1e-6))
+                    thin = (d != 0.0) & (d < lid_lo * (1.0 - _LID_LO_SLACK))
                     bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
                     if bad.size:
                         k = int(bad[0])
@@ -5877,7 +5878,6 @@ class EntropySolver:
                             f'{d[k]:.6g} m outside [{lid_lo:.6g}, {cap:.6g}] m'
                         )
                 if self._n_lid and self._lid_active:
-                    lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
                     self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
                 if check_rheo:
                     self._check_rheology_step_invariants(
@@ -5889,14 +5889,13 @@ class EntropySolver:
                     t_pts.size,
                 )
                 rows = []
-                lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0])) if self._n_lid else None
                 for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
                     if check_rheo:
                         self._check_rheology_eos_range(
                             self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
                         )
                     rows.append(self._step_powers(float(t), y))
-                    if lid_lo is not None and self._lid_active:
+                    if self._n_lid and self._lid_active:
                         self._check_lid_step(lid_lo, step_idx, float(t))
                     if check_rheo:
                         self._check_rheology_step_invariants(
