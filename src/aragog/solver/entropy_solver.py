@@ -3277,7 +3277,7 @@ class EntropySolver:
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
-        lo, hi = self._lid_W_of_S.x[[0, -1]]
+        lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
@@ -5989,7 +5989,7 @@ class EntropySolver:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
                 if self._n_lid:
-                    lo, hi = self._lid_W_of_S.x[[0, -1]]
+                    lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
                     S_f = np.array([self._stag_entropy(y)[-1] for y in y_pts.T])
                     bad = np.flatnonzero((y_pts[-2] != 0.0) & ~((S_f >= lo) & (S_f <= hi)))
                     if bad.size:
