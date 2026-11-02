@@ -279,6 +279,16 @@ def test_resume_after_a_hand_over_reports_the_given_time(eos):
         r.set_initial_lid(2.0, -1.0e9, handover_time=7.5)
 
 
+def test_a_time_set_after_the_entropy_reaches_the_output(eos):
+    """The order of the setters does not matter for the hand-over time either."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.solve()
+    state = s.get_state()
+    assert state.lid_delta == 0.0
+    assert state.lid_handover_time == pytest.approx(7.5, abs=0)
+
+
 def test_a_new_live_lid_clears_the_hand_over_time(eos):
     """A live lid set on a solver that has handed over has no hand-over yet."""
     s = _solver(eos)
