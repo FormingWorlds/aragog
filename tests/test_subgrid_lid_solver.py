@@ -344,32 +344,30 @@ def test_lid_just_above_the_growth_stop_passes_the_step_check(eos):
     assert 4.9e-4 < s._solution.lid_cap_excess < 1e-3
 
 
-@pytest.mark.parametrize('stop', ['removed', 'noop'])
-def test_growth_stop_keeps_a_growing_lid_inside_the_step_check(eos, stop, monkeypatch):
-    """A lid 1 m below the slack of the step check grows past it and fails the check without
-    the growth stop; with the stop (a no-op patch) it holds and passes."""
+@pytest.mark.parametrize('stop', ['kept', 'removed'])
+def test_growth_stop_holds_a_driven_lid_inside_the_step_check(eos, stop, monkeypatch):
+    """A lid driven to grow at 600 m/yr from the middle of the stop ramp closes on the growth
+    stop and holds below it; without the stop it grows past the slack of the step check and
+    fails the check after step 0."""
     rate = sl.stefan_rate
 
-    def patched(q_b, F_b, rho, dh, *rest):
-        if stop == 'removed':  # the Stefan rate without the stop factor
-            return (q_b - F_b) / (rho * max(dh, sl.LID_DH_MIN)), 1.0
-        return rate(q_b, F_b, rho, dh, *rest)
+    def driven(q_b, F_b, rho, dh, delta, h_top, delta_lo):
+        f = rate(1.0, 0.0, 1.0, 1.0, delta, h_top, delta_lo)[1] if stop == 'kept' else 1.0
+        return 600.0 / 3.15576e7 * f, f
 
-    monkeypatch.setattr(sl, 'stefan_rate', patched)
+    monkeypatch.setattr(sl, 'stefan_rate', driven)
     s = _solver(eos, end=100.0)
-    d = (
-        sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 1e-3) - 1.0
-    )  # 1 m below the slack; grows 0.027 m/yr
+    d = (sl.LID_CAP_FRAC - 0.5 * sl.LID_CAP_WIDTH) * s._lid_h_top
     E, _ = _phantom_energy(s, d, 257.0)
     s.set_initial_lid(d, E)
     s.set_initial_entropy(3050.0)
     if stop == 'removed':
         with pytest.raises(RuntimeError, match='thickness') as err:
             s.solve()
-        assert 'at step 0,' not in str(err.value)  # it grows past the slack, not starts there
+        assert 'at step 0,' not in str(err.value)
     else:
         s.solve()
-        assert 9.9e-4 < s._solution.lid_cap_excess < 1e-3
+        assert -1e-5 < s._solution.lid_cap_excess < 1e-6  # starts at -1.25e-2
 
 
 def test_early_stop_reports_no_lid_excess(eos, monkeypatch):
