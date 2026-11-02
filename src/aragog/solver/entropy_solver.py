@@ -1143,11 +1143,9 @@ class SolverOutput:
     time: float  # absolute time of the returned state [yr], the last output time reached
     status: int  # 0 success, 1 stop at a step-cap event, any other value failure
 
-    # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
-    # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
-    # CV_CONV_FAILURE. Defaults describe the scipy ``solve_ivp`` fallback,
-    # which runs no CVODE integration: flag 0 and name 'N/A'. A call the EOS table guard
-    # fails keeps its flag and has the name 'EOS_TABLE_GUARD'.
+    # Raw CVODE return flag, apart from ``status`` to tell CV_TOO_MUCH_WORK from CV_CONV_FAILURE.
+    # The scipy ``solve_ivp`` path has flag 0 and name 'N/A'. A call the EOS table guard fails
+    # keeps its flag and has the name 'EOS_TABLE_GUARD'.
     cvode_flag: int = 0
     cvode_flag_name: str = 'N/A'
 
