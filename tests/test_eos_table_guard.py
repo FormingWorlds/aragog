@@ -14,9 +14,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
-from scipy.optimize import OptimizeResult
 
 from aragog.rheology import SolidRheologyParams
 from aragog.solver import entropy_solver as es
@@ -24,9 +21,10 @@ from aragog.solver.entropy_solver import EntropySolver
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_eos_floor import _UNSET, CVODE_BDF, _drained, needs_cvode
+from .test_eos_table_guard_decision import _sol
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
-pytestmark = needs_eos
+pytestmark = [pytest.mark.smoke, needs_eos]
 
 _TOL = 1.0e-3  # the documented guard tolerance [J/kg/K]
 _SHIFT = -400.0  # entropy zero of the shifted table set [J/kg/K]
@@ -37,13 +35,6 @@ _LOWT_DIR = os.environ.get('ARAGOG_TEST_LOWT_EOS_DIR')
 @pytest.fixture(scope='module')
 def eos():
     return entropy_eos_copy(EOS_DIR)
-
-
-@pytest.fixture(scope='module')
-def solver(eos):
-    s = EntropySolver(_build_mushy_parameters(solver_method='bdf'), entropy_eos=eos)
-    s.initialize()
-    return s
 
 
 def _shifted_tables(dst: Path) -> Path:
@@ -57,14 +48,6 @@ def _shifted_tables(dst: Path) -> Path:
     return dst
 
 
-def _sol(cells: np.ndarray, t=(0.0, 1.0)) -> OptimizeResult:
-    """A two-point call whose accepted states both hold ``cells``."""
-    return OptimizeResult(
-        t=np.asarray(t), y=np.column_stack([cells, cells]), status=0, message=''
-    )
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize('margin', [_UNSET, 0.0, -50.0], ids=['default', 'zero', 'negative'])
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_drain_past_the_table_minimum_fails_the_call(eos, caplog, method, margin):
@@ -82,19 +65,44 @@ def test_a_drain_past_the_table_minimum_fails_the_call(eos, caplog, method, marg
     assert sol.energy_integrals == dict(es._ZERO_ENERGY_INTEGRALS)
     out = s.get_state()
     assert out.status == -1 and out.cvode_flag_name == 'EOS_TABLE_GUARD'
-    assert out.cvode_flag != -1  # PROTEUS sends a flag of -1 to its stiffness recovery
+    assert out.cvode_flag in (0, 2)  # PROTEUS sends a flag of -1 to its stiffness recovery
+    assert sol.success is False and 'energy_trace' not in sol
     assert out.dt_actual == pytest.approx(sol.t[-1])
 
 
-@pytest.mark.smoke
-@pytest.mark.parametrize('core', ['energy_balance', 'gradient'])
-def test_the_failure_holds_on_each_core_mode(eos, core):
+@pytest.mark.parametrize('core', ['energy_balance', 'gradient', 'bower2018'])
+@pytest.mark.parametrize('method', CVODE_BDF)
+def test_the_failure_holds_on_each_core_mode(eos, core, method):
     """The core modes with their own state layout end the same drain in the same way."""
-    s, _ = _drained(eos, float(eos.S_min) + 400.0, margin=0.0, method='bdf', core=core)
-    assert s._solution.status == -1 and 'EOS table guard' in s._solution.message
+    s, _ = _drained(eos, float(eos.S_min) + 400.0, margin=0.0, method=method, core=core)
+    sol = s._solution
+    assert sol.status == -1 and 'EOS table guard' in sol.message and sol.t[-1] < 10.0
+    cells = np.column_stack([s._stag_entropy(y) for y in sol.y.T])
+    assert cells.min() >= float(eos.S_min) - _TOL
 
 
-@pytest.mark.smoke
+@needs_cvode
+def test_a_call_that_failed_already_keeps_its_own_failure(eos, monkeypatch):
+    """An integrator failure is not judged: its flag name and message stay the integrator's."""
+    monkeypatch.setattr(
+        EntropySolver, '_eos_table_failure', lambda self, sol: pytest.fail('judged')
+    )
+    p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s._max_steps = 1
+    s.set_initial_entropy(float(eos.S_min) + 400.0)
+    s.solve()
+    assert s._solution.status == -1 and s._solution.cvode_flag_name == 'TOO_MUCH_WORK'
+
+
+def test_a_strict_range_eos_stops_the_drain_before_the_guard():
+    """With ``strict_range`` the lookup raises; on a scipy path the error reaches the caller."""
+    strict = entropy_eos_copy(EOS_DIR, strict_range=True)
+    with pytest.raises(RuntimeError, match='outside table range'):
+        _drained(strict, float(strict.S_min) + 400.0, margin=0.0, method='bdf')
+
+
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_retry_with_a_shorter_span_passes_inside_the_table(eos, method):
     """The call that fails over 10 yr passes over 2 yr from the same start."""
@@ -105,30 +113,30 @@ def test_a_retry_with_a_shorter_span_passes_inside_the_table(eos, method):
     assert sol.energy_integrals['F_int'] != 0.0
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_start_outside_the_table_names_the_call_start(eos, method):
     """A start outside fails at any span, also when the call heats back into the table: the
     message says that a shorter step does not help, and the result holds the start."""
     S0 = np.full(_N_CELLS, float(eos.S_min) + 400.0)
     S0[-1] = float(eos.S_min) - 0.5
-    for span in (10.0, 1.0e-3):
-        s, _ = _drained(eos, S0, flux=-1.0e6, margin=0.0, end_time=span, method=method)
+    for t0, span in ((0.0, 10.0), (0.0, 1.0e-3), (5.0, 1.0)):
+        s, _ = _drained(
+            eos, S0, flux=-1.0e6, margin=0.0, end_time=span, start_time=t0, method=method
+        )
         sol = s._solution
         assert sol.status == -1 and 'at the call start' in sol.message
         assert 'shorter step does not help' in sol.message
-        assert sol.t.size == 1 and sol.t[0] == 0.0
+        assert sol.t.size == 1 and sol.t[0] == t0
 
 
-@pytest.mark.smoke
-@pytest.mark.parametrize('method', CVODE_BDF)
+@pytest.mark.parametrize('method', [*CVODE_BDF, 'radau'])
 def test_a_state_held_at_the_table_edge_passes(eos, method):
-    """A state at exactly S_min that the solver moves by its error passes on the tolerance."""
+    """A state at exactly S_min that moves slightly below it over a short call passes on the
+    tolerance."""
     s, _ = _drained(eos, float(eos.S_min), flux=0.0, margin=0.0, method=method)
     assert s._solution.status == 0 and s._solution.y[: s._n_stag].min() < float(eos.S_min)
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_drain_with_the_rheology_on_raises_its_invariant(eos, method):
     """The rheology-on path keeps its raise: the guard does not replace it."""
@@ -145,7 +153,6 @@ def test_a_drain_with_the_rheology_on_raises_its_invariant(eos, method):
         s.solve()
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_rise_past_the_table_maximum_fails_the_call(eos, method):
     """The guard holds on the S_max side too: a surface heated from above leaves the table."""
@@ -154,7 +161,6 @@ def test_a_rise_past_the_table_maximum_fails_the_call(eos, method):
     assert sol.status == -1 and f'{float(eos.S_max):.3f}' in sol.message
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_the_guard_reads_its_edges_from_the_loaded_tables(eos, tmp_path, method):
     """The same drain on a table set with another range fails against that range: no number of
@@ -172,7 +178,6 @@ def test_the_guard_reads_its_edges_from_the_loaded_tables(eos, tmp_path, method)
     assert f'{float(shifted.S_max):.3f}' in failure[1]
 
 
-@pytest.mark.smoke
 @pytest.mark.skipif(not _LOWT_DIR, reason='ARAGOG_TEST_LOWT_EOS_DIR not set')
 def test_a_drain_on_the_low_t_extended_tables_fails_at_their_minimum():
     """A low-temperature extended set (ARAGOG_TEST_LOWT_EOS_DIR) moves the edge the guard uses."""
@@ -184,10 +189,10 @@ def test_a_drain_on_the_low_t_extended_tables_fails_at_their_minimum():
     assert s._solution.status == -1 and f'{float(lowt.S_min):.3f}' in s._solution.message
 
 
-@pytest.mark.smoke
 @needs_cvode
 def test_the_jax_factory_path_fails_the_call():
     """The production path, CVODE with the JAX factory, ends the same drain in the same way."""
+    pytest.importorskip('jax')
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
     from .test_rheology_solver_wiring import (
@@ -229,78 +234,12 @@ def test_the_jax_factory_path_fails_the_call():
     assert s._solution.status == -1 and 'EOS table guard' in s._solution.message
 
 
-@pytest.mark.unit
-@settings(max_examples=200, deadline=None)
-@given(
-    outward=st.one_of(
-        st.floats(allow_nan=True, allow_infinity=True),
-        st.sampled_from([0.0, 5.0e-4, 9.9e-4, 1.01e-3, 2.0e-3, 1.0e6]),
-    ),
-    side=st.sampled_from(['min', 'max']),
-    cell=st.integers(0, _N_CELLS - 1),
-)
-def test_the_failure_follows_the_range_and_tolerance_on_every_input(
-    solver, outward, side, cell
-):
-    """A non-finite cell, or a cell past an edge by more than 1e-3 J/kg/K, fails the call; a cell
-    within it does not, whichever cell it is. ``outward`` is the distance past the edge."""
-    eos = solver.entropy_eos
-    span = float(eos.S_max) - float(eos.S_min)
-    value = float(eos.S_min) - outward if side == 'min' else float(eos.S_max) + outward
-    cells = np.full(_N_CELLS, float(eos.S_min) + 0.5 * span)
-    cells[cell] = value
-    fails = not np.isfinite(value) or outward > _TOL or -outward > span + _TOL
-    assert (solver._eos_table_failure(_sol(cells)) is not None) == fails
-
-
-@pytest.mark.unit
-def test_a_late_step_outside_the_table_fails_even_if_the_end_state_is_inside(solver):
-    """Every accepted state counts, not only the end of the call."""
-    good = np.full(_N_CELLS, float(solver.entropy_eos.S_min) + 400.0)
-    y = np.column_stack([good, good, good])
-    y[-1, 1] = float(solver.entropy_eos.S_min) - 1.0
-    sol = OptimizeResult(t=np.array([0.0, 1.0, 2.0]), y=y, status=0, message='')
-    t_bad, message = solver._eos_table_failure(sol)
-    assert t_bad == 1.0 and 'cell 10 ' in message and 'call start' not in message
-    trace = OptimizeResult(
-        t=np.array([0.0, 2.0]), y=y[:, [0, 2]], status=0, message='', energy_trace=(sol.t, y)
-    )
-    assert solver._eos_table_failure(trace)[0] == 1.0
-
-
-@pytest.mark.unit
-def test_no_failure_for_a_call_that_does_not_advance_or_holds_no_table(solver, eos):
-    """A refused or zero-span call, the rheology-on path and a run without tables stay as they are."""
-    bad = np.full(_N_CELLS, float(eos.S_min) - 50.0)
-    assert solver._eos_table_failure(_sol(bad, t=(3.0, 3.0))) is None
-    assert solver._eos_table_failure(OptimizeResult(t=np.array([1.0]), y=bad[:, None])) is None
-    assert (
-        solver._eos_table_failure(OptimizeResult(t=np.array([]), y=bad[:, None][:, :0])) is None
-    )
-    on = EntropySolver(_build_mushy_parameters(solver_method='bdf'), entropy_eos=eos)
-    on.parameters.phase_solid = dataclasses.replace(
-        on.parameters.phase_solid, rheology=SolidRheologyParams(enabled=True)
-    )
-    on.initialize()
-    assert on._eos_table_failure(_sol(bad)) is None
-    const = EntropySolver(_build_mushy_parameters(solver_method='bdf'), entropy_eos=eos)
-    const.parameters.phase_mixed = dataclasses.replace(
-        const.parameters.phase_mixed, const_properties=True
-    )
-    assert const._eos_table_failure(_sol(bad)) is None
-    no_eos = EntropySolver.__new__(EntropySolver)
-    no_eos.entropy_eos = None
-    assert no_eos._eos_table_failure(_sol(bad)) is None
-
-
-@pytest.mark.smoke
 def test_a_refused_floor_call_keeps_its_refusal(eos):
     """With the floor on, a start below the table keeps status 1 and the floor message."""
     s, _ = _drained(eos, float(eos.S_min) - 10.0, margin=100.0, method='bdf')
     assert s._solution.status == 1 and 'EOS floor' in s._solution.message
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize('rheology', [False, True], ids=['rheology-off', 'rheology-on'])
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_call_inside_the_table_is_bit_equal_with_and_without_the_guard(
