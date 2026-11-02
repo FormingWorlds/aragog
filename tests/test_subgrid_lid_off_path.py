@@ -9,7 +9,7 @@ round-off between the macOS and Linux builds; a JAX case must have called the JA
 side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals
 to rtol 1e-8, with tidal and radiogenic heating. The solver residual and the core energy are
 differences of large terms, so they match to 1e-15 and 1e-12 of the surface energy (measured
-between macOS and Linux: 2.3e-17 and 2.2e-14); these limits act only across platforms.
+between macOS and Linux: 8.2e-17 and 2.2e-14); these limits act only across platforms.
 """
 
 from __future__ import annotations
