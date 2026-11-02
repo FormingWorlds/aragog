@@ -25,6 +25,7 @@ __all__ = [
     'assert_legend_clear',
     'entropy_eos_copy',
     'entropy_eos_jax',
+    'opaque_legend',
     'package_logger_isolation',
 ]
 
@@ -67,11 +68,20 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     return _ssc_helpers.entropy_eos_jax(eos_dir)
 
 
+def opaque_legend(ax, **kwargs):
+    """Draw a legend of ``ax`` in 8 pt whose frame, in the axes colour, hides the grid."""
+    kwargs.setdefault('fontsize', 8)
+    return ax.legend(
+        frameon=True, framealpha=1.0, facecolor=ax.get_facecolor(), edgecolor='none', **kwargs
+    )
+
+
 def assert_legend_clear(fig) -> None:
     """Assert that no legend of ``fig`` covers a marker or a line of its axes, or a text.
 
     Each drawn line is sampled at 50 points per segment in display space, markers at their
-    points, and the legend box is padded by half the marker size. Bands (patches, filled collections) may lie under it.
+    points, and the legend box is padded by half the marker size. The frame must be opaque, so
+    that no gridline shows behind the text, and the box must stay off every band of the axes.
     No visible text of the figure outside the legend may overlap the legend box.
     """
     from matplotlib.text import Text
@@ -81,6 +91,13 @@ def assert_legend_clear(fig) -> None:
         legend = ax.get_legend()
         if legend is None:
             continue
+        assert legend.get_frame_on() and legend.get_frame().get_facecolor()[3] == 1.0, (
+            f'the legend frame of {ax.get_ylabel()!r} is not opaque'
+        )
+        for band in ax.patches:
+            assert not legend.get_window_extent().overlaps(band.get_window_extent()), (
+                f'the legend of {ax.get_ylabel()!r} covers a band'
+            )
         paths = [
             (
                 ln.get_transform().transform(ln.get_xydata()),

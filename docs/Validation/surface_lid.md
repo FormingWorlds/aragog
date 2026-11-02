@@ -16,8 +16,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 **Why it matters.** When the surface of a magma ocean starts to freeze, the crust thickness sets how much heat the planet loses, and so how fast the interior cools.
 
-![Crust thickness divided by the square root of kappa t against time for three Stefan numbers, with the Neumann values as horizontal lines](../assets/validation/surface_lid_v1_neumann_growth.svg#only-light){ width="80%" }
-![Crust thickness divided by the square root of kappa t against time for three Stefan numbers, with the Neumann values as horizontal lines](../assets/validation/surface_lid_v1_neumann_growth_dark.svg#only-dark){ width="80%" }
+![Crust thickness divided by the square root of kappa t against time for three Stefan numbers, with the Neumann values as horizontal lines](../assets/validation/surface_lid_v1_neumann_growth.svg#only-light){ width="70%" }
+![Crust thickness divided by the square root of kappa t against time for three Stefan numbers, with the Neumann values as horizontal lines](../assets/validation/surface_lid_v1_neumann_growth_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** The vertical axis is the crust thickness divided by $\sqrt{\kappa t}$, which is constant, $2\lambda$, on the textbook solution. The horizontal lines are $2\lambda$ for each Stefan number, and the dots are the lid at the three test times. The dots lie on the lines. The dashed curves are the lids that start at 1 m: they start too thick for their age and reach the lines within a few years.
 
@@ -38,8 +38,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 **Why it matters.** Once a crust has frozen through, it cools as a solid; this sets the late heat loss of a planet with a stagnant lid.
 
-![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space.svg#only-light){ width="80%" }
-![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space_dark.svg#only-dark){ width="80%" }
+![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space.svg#only-light){ width="70%" }
+![Surface heat flux of the lid divided by the half-space flux against time, inside a band of plus or minus 1 percent](../assets/validation/surface_lid_v2_half_space_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** The vertical axis is the surface flux of the lid divided by the half-space flux; the shaded band is the tolerance of ±1 %. The dots stay at 1.0007, the small offset that the depth of the lid explains, inside the band at all times.
 
@@ -71,8 +71,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 **Why it matters.** The lid exists so that a coarse mesh loses heat as a fine one would. Without the lid, the 10-node shell loses only 8 to 30 % of the heat the fine mesh loses over these times.
 
-![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh.svg#only-light){ width="80%" }
-![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh_dark.svg#only-dark){ width="80%" }
+![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh.svg#only-light){ width="70%" }
+![Surface flux of the 10-node shell with the lid divided by that of the 4000-node shell, against time, with the error bound of the fine mesh](../assets/validation/surface_lid_v2_resolved_mesh_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** The dots are the surface flux of the shell with the lid divided by that of the fine mesh; the shaded band is the tolerance of ±1 %. The bars show how much the fine mesh itself can be off: long at early times, when the cooled layer is thin, and short later. The dots sit 0.3 to 0.5 % above 1, inside the band. Until about 2000 years they also lie inside the bars; later the bars are shorter than the offset of 0.3 %, which is then the difference of the lid itself.
 
@@ -104,8 +104,8 @@ Three of the cases drive the lid functions of `aragog.surface_lid` through time.
 
 **Why it matters.** A magma ocean that freezes from its surface forms its first crust this way. In a run on a coarse mesh, the crust thickness and the heat the planet loses through it depend on the Stefan jump of the lid. Without the lid, the 10-node shell misses the flux of the fine mesh by 28 % or more and makes its crust 4.4 to 30 times too thick.
 
-![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh.svg#only-light){ width="80%" }
-![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh_dark.svg#only-dark){ width="80%" }
+![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh.svg#only-light){ width="70%" }
+![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** The horizontal axis is time in years. The circles are the surface flux and the squares the crust thickness of the 10-node shell with the lid, each divided by the value of the 4000-node shell. The shaded band is the tolerance of ±2 %. Early on the lid loses up to 0.7 % more heat and its crust is up to 1.0 % thinner; both ratios approach 1 as the crust grows. All points lie inside the band; the error of the fine mesh itself is in the table above.
 
@@ -157,8 +157,8 @@ The step factor is the larger of the two lid thicknesses divided by the smaller 
 
 **Why it matters.** From 3 × 10³ to 3 × 10⁵ years a run of this kind gives a crust thickness that changes by up to 13 % from 200 to 400 nodes (2.4 % at 3 × 10⁵ years); up to 3 × 10⁵ years it changes by up to 3.2 % with the floor. Later the crust thickness is a result of the floor and the mesh, not of a latent heat. Read it as an estimate with the spread given here.
 
-![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor.svg#only-light){ width="80%" }
-![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor_dark.svg#only-dark){ width="80%" }
+![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor.svg#only-light){ width="100%" }
+![Lid thickness against time on a log scale: panel (a) for 100, 200 and 400 nodes, panel (b) for floors of 100, 1000 and 10000 J/kg on 100 nodes, with dotted lines at 300 and 400 thousand years](../assets/validation/surface_lid_base_cap_mesh_floor_dark.svg#only-dark){ width="100%" }
 
 **How to read the plot.** The horizontal axis is time in thousands of years, the vertical axis the lid thickness on a log scale. The runs were sampled at 0.1, 1, 3, 10, 30, 100, 200, 300 and 400 thousand years; the lines join the samples. The dotted lines mark 300 and 400 thousand years. Panel (a) shows the three meshes with the floor at 10³ J/kg, panel (b) the three floors on 100 nodes. In panel (b) the lines of 10² and 10³ J/kg lie on top of each other at all times.
 
@@ -190,8 +190,8 @@ The step factor is the larger of the two lid thicknesses divided by the smaller 
 
 **Why it matters.** A lid that floats on a convecting magma ocean sits close to this balance, so the crust thickness and the surface temperature of a run with the lid depend on it.
 
-![Lid thickness and base heat flux divided by their steady values against time in units of the relaxation time](../assets/validation/surface_lid_v3_steady_crust.svg#only-light){ width="80%" }
-![Lid thickness and base heat flux divided by their steady values against time in units of the relaxation time](../assets/validation/surface_lid_v3_steady_crust_dark.svg#only-dark){ width="80%" }
+![Lid thickness and base heat flux divided by their steady values against time in units of the relaxation time](../assets/validation/surface_lid_v3_steady_crust.svg#only-light){ width="70%" }
+![Lid thickness and base heat flux divided by their steady values against time in units of the relaxation time](../assets/validation/surface_lid_v3_steady_crust_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** The horizontal axis is time divided by the relaxation time. The solid line is the lid thickness and the dashed line the heat conducted into the base of the lid, both divided by their steady values. The thin lid first conducts too much heat and grows; both lines stay inside 1 % of 1 from 2.5 relaxation times on.
 

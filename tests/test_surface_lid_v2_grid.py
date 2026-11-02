@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import assert_legend_clear, entropy_eos_copy
+from tests.conftest import assert_legend_clear, entropy_eos_copy, opaque_legend
 from tests.reference.surface_lid_v2_column import (
     LOWT_EOS_MD5,
     MELT_TIMES_YR,
@@ -93,7 +93,7 @@ def test_v2_lid_matches_the_resolved_mesh(validation_plot):
         ax.set_ylim(0.97, 1.03)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel('lid / resolved flux')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
@@ -142,10 +142,10 @@ def test_v2_melt_lid_matches_the_resolved_mesh(validation_plot):
             ratio = d[f'lid_{q}'] / d[f'grid_4000_{q}']
             ax.plot(MELT_TIMES_YR, ratio, mark, color=color, ms=5, label=q)
         ax.set_xscale('log')
-        ax.set_ylim(0.97, 1.03)
+        ax.set_ylim(0.96, 1.04)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel('lid / resolved')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
@@ -205,7 +205,7 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
         ax.set_ylim(1 - 2 * C3_TOL, 1 + 2 * C3_TOL)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel('lid / resolved flux')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig

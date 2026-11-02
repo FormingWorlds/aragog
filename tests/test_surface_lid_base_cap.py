@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import assert_legend_clear
+from tests.conftest import assert_legend_clear, opaque_legend
 
 pytestmark = [pytest.mark.unit]
 
@@ -52,6 +52,15 @@ def test_legend_check_refuses_a_frame_that_shows_the_grid(legend_kw):
     fig, _ = _legend_figure(**legend_kw)
     with pytest.raises(AssertionError, match='not opaque'):
         assert_legend_clear(fig)
+
+
+def test_opaque_legend_passes_the_check():
+    """The frame of ``opaque_legend`` satisfies the check, in the axes colour of the style."""
+    fig, ax = _legend_figure()
+    legend = opaque_legend(ax, loc='upper right')
+    assert_legend_clear(fig)
+    assert legend.get_frame().get_alpha() == 1.0
+    assert legend.get_frame().get_facecolor() == ax.get_facecolor()
 
 
 def test_legend_check_refuses_a_legend_on_a_band():
@@ -116,14 +125,13 @@ def test_lid_base_cap_on_the_mesh_and_the_floor(validation_plot):
             ax.grid(False, axis='x')
             ax.yaxis.set_major_formatter('{x:g}')
             ax.set_xticks([100, 200, 300, 400])
-            ax.legend(
+            opaque_legend(
+                ax,
                 title=head,
-                fontsize=8,
                 title_fontsize=8,
                 loc='lower center',
                 bbox_to_anchor=(0.5, 1.0),
                 ncol=3,
-                frameon=False,
             )
         axes[0].set_ylabel('lid thickness (m)')
         axes[1].tick_params(axis='y', left=False)
