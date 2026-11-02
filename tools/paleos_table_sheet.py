@@ -5,7 +5,7 @@ One row per check: the measured value, the band, the source, and pass, outside o
 row is a reading, not a failure: the bands come from other melting models. Grid and edges come from
 the loaded tables only; a check that needs a pressure the tables do not reach reads n/a.
 
-Usage: ``python tools/paleos_table_sheet.py <table folder> [<table folder> ...]``
+Usage: ``python tools/paleos_table_sheet.py <table folder> [...] [--paleos-commit FOLDER=COMMIT]``
 """
 
 from __future__ import annotations
@@ -278,14 +278,29 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     return rows
 
 
-def describe(folder: Path) -> str:
-    """Sheet of one table folder as Markdown, headed by its range and the md5 of its tables."""
+def _paleos_commit(folder: Path, given: str | None) -> str:
+    """The PALEOS commit of a table set: given on the command line, else from a table header."""
+    if given:
+        return f'{given} (given)'
+    for path in sorted(folder.glob('[!.]*.dat')):
+        with path.open(errors='replace') as handle:
+            for line in handle:
+                if not line.startswith('#'):
+                    break
+                if line.startswith('# PALEOS commit:'):
+                    return f'{line.split(":", 1)[1].strip()} (table header)'
+    return 'not recorded in the tables; give it with --paleos-commit'
+
+
+def describe(folder: Path, commit: str | None = None) -> str:
+    """Sheet of one table folder as Markdown, headed by its range, PALEOS commit and table md5."""
     eos = EntropyEOS(folder)
     rows = sheet(eos)
     counts = Counter(row.status for row in rows)
     lines = [
         f'## {folder}',
         f'S {eos.S_min:.3f} to {eos.S_max:.3f} J/kg/K, P {eos.P_min:.3g} to {eos.P_max:.3g} Pa',
+        f'PALEOS commit: {_paleos_commit(folder, commit)}',
     ]
     lines += [
         f'{path.name} md5 {hashlib.md5(path.read_bytes()).hexdigest()}'
@@ -307,8 +322,17 @@ def main(argv: list[str] | None = None) -> int:
     """Print the sheet of each table folder; an outside row does not change the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('folders', nargs='+', type=Path, help='P-S table folders')
-    for folder in parser.parse_args(argv).folders:
-        print(describe(folder))
+    parser.add_argument(
+        '--paleos-commit',
+        action='append',
+        default=[],
+        metavar='FOLDER=COMMIT',
+        help='PALEOS commit of a table set whose headers do not record it',
+    )
+    args = parser.parse_args(argv)
+    commits = dict(item.rsplit('=', 1) for item in args.paleos_commit)
+    for folder in args.folders:
+        print(describe(folder, commits.get(str(folder))))
     return 0
 
 
