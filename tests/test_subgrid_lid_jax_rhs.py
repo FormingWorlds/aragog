@@ -501,6 +501,27 @@ def test_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     assert s._batch_powers_calls >= 1
 
 
+@pytest.mark.parametrize(
+    ('past_top', 'refused'),
+    [(5e-4, False), (2e-3, True)],
+    ids=['in_the_band', 'above_the_band'],
+)
+def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(past_top, refused):
+    """On the trace of the JAX batch path a fluid entropy above the table top passes within the
+    tolerance of the EOS table guard, and fails above it."""
+    s = _jax_cvode_lid_solver()
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    y[s._n_stag - 1, t.size // 2] = float(s._lid_W_of_S.x[-1]) + past_top
+    sol['energy_trace'] = (t, y)
+    if refused:
+        with pytest.raises(RuntimeError, match='outside the lid heat table'):
+            s._compute_step_energy_integrals()
+    else:
+        s._compute_step_energy_integrals()
+
+
 def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     """The JAX batch path checks the fluid entropy of every accepted state against the heat
     table, not only the last one: one state in the middle of the trace past the table top

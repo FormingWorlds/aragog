@@ -22,6 +22,7 @@ from tests.reference.surface_lid_v2_column import (
     LOWT_EOS_MD5,
     MELT_TIMES_YR,
     MOLTEN_TIMES_YR,
+    PIN_TIMES_YR,
     TIMES_YR,
     melt_column,
     molten_column,
@@ -228,15 +229,17 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
 
 @pytest.mark.reference_pinned
 def test_c3_molten_lid_run_on_the_test_tables():
-    """The molten-start lid run on the SPIDER test tables equals its stored pin and hands
-    over. From 1635 yr its top cell sits at the floor of the test tables (320.4 K), so the
-    last three fluxes are equal; the pin checks only that the run repeats. A solidus shifted by
-    10 J/kg/K moves these fluxes by 2e-6, below their round-off floor, so a shifted hand-over
-    fails only the time checks: the crossing of the solidus by the stored run without the lid
-    sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K."""
+    """The molten-start lid run on the SPIDER test tables equals its stored pin and hands over,
+    up to 935 yr. Later the top of this shell leaves real table entries: from before 1635 yr its
+    surface lies on the padded rows of the table at about 320.23 K, and from about 2334 yr a cell
+    lies below the table, which the EOS guard refuses. The pin checks only that the run repeats.
+    A solidus shifted by 10 J/kg/K moves these fluxes by 2e-6, below their round-off floor, so a
+    shifted hand-over fails only the time checks: the crossing of the solidus by the stored run
+    without the lid sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
-    np.testing.assert_array_equal(d['pin_times_yr'], MELT_TIMES_YR)
-    live, t_ho = molten_column(10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR))
+    np.testing.assert_array_equal(d['pin_times_yr'], PIN_TIMES_YR)
+    assert np.all(np.diff(d['pin']) < -100.0)  # every row off the padded table rows
+    live, t_ho = molten_column(10, True, PIN_TIMES_YR, entropy_eos_copy(EOS_DIR))
     crossing = solidus_crossing(
         d['pin_nolid_t'], d['pin_nolid_S_top'], float(d['pin_nolid_S_sol'])
     )
