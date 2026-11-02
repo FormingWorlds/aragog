@@ -2469,7 +2469,6 @@ class EntropySolver:
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
-        self._lid_cap_excess = math.nan
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -3189,12 +3188,11 @@ class EntropySolver:
             When a lid state or rate is not finite, the thickness leaves
             ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6 below, ``_LID_CAP_SLACK``
             above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
-            table. Records the largest ``delta / cap - 1`` of the call in ``_lid_cap_excess``.
+            table.
         """
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
-        self._lid_cap_excess = float(np.fmax(self._lid_cap_excess, ev.delta / cap - 1.0))
         lo, hi = self._lid_W_of_S.x[[0, -1]]
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
@@ -5722,6 +5720,7 @@ class EntropySolver:
             self.state._pb_cache_misses = 0
 
         self._log_solution_outcome(self.parameters.solver.end_time)
+        sol.lid_cap_excess = math.nan  # the energy replay sets it from the trace
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
@@ -5734,11 +5733,7 @@ class EntropySolver:
             t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
-        self._lid_cap_excess = (
-            math.nan
-        )  # largest delta / cap - 1 the lid checks of the call see
         sol.energy_integrals = self._compute_step_energy_integrals()
-        sol.lid_cap_excess = self._lid_cap_excess
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
             time.perf_counter() - t_solved,
@@ -5779,7 +5774,9 @@ class EntropySolver:
         adds energy to the mantle. The lid heat-table range of the fluid entropy, and with
         solid rheology the EOS entropy-range invariant, are checked on every accepted step on
         both branches, while invariants that require a refreshed RHS state are checked on the
-        final step on the JAX batch path and at every step on the NumPy loop.
+        final step on the JAX batch path and at every step on the NumPy loop. The lid thickness
+        is checked against both stops on every accepted step on both branches, and
+        ``sol.lid_cap_excess`` is set to its largest ``delta / cap - 1`` (NaN without a lid).
 
         Returns
         -------
@@ -5822,6 +5819,10 @@ class EntropySolver:
         t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
         t_pts = np.asarray(t_pts, dtype=float)
         y_pts = np.asarray(y_pts, dtype=float)
+        if self._n_lid:  # largest delta / cap - 1 over the accepted states with a lid
+            d = y_pts[-2][y_pts[-2] > 0.0]
+            cap = _lid.LID_CAP_FRAC * self._lid_h_top
+            sol.lid_cap_excess = float(d.max() / cap - 1.0) if d.size else math.nan
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
         P = None
@@ -5864,6 +5865,16 @@ class EntropySolver:
                         raise RuntimeError(
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
+                        )
+                    d, cap = y_pts[-2], _lid.LID_CAP_FRAC * self._lid_h_top
+                    lid_lo = min(self._lid_delta_lo, float(d[0]))
+                    thin = (d != 0.0) & (d < lid_lo * (1.0 - 1e-6))
+                    bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
+                    if bad.size:
+                        k = int(bad[0])
+                        raise RuntimeError(
+                            f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: thickness '
+                            f'{d[k]:.6g} m outside [{lid_lo:.6g}, {cap:.6g}] m'
                         )
                 if self._n_lid and self._lid_active:
                     lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
