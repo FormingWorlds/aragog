@@ -181,6 +181,20 @@ def test_the_padded_row_counts_give_the_columns_and_their_pressure_range(good, t
     assert f'span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
 
 
+def test_the_sheet_names_the_paleos_commit_of_each_set(tmp_path, capsys):
+    """A commit comes from a table header or from the command line; a set with neither says so."""
+    for name in ('a', 'b', 'c'):
+        _tables(tmp_path / name)
+    stamped = tmp_path / 'b' / 'temperature_solid.dat'
+    stamped.write_text('# PALEOS commit: abc1234\n' + stamped.read_text())
+    args = [str(tmp_path / n) for n in 'abc'] + ['--paleos-commit', f'{tmp_path / "c"}=def5678']
+    assert sheet_tool.main(args) == 0
+    out = capsys.readouterr().out
+    assert 'PALEOS commit: not recorded in the tables' in out
+    assert 'PALEOS commit: abc1234 (table header)' in out
+    assert 'PALEOS commit: def5678 (given)' in out
+
+
 def test_a_degenerate_table_gives_rows_and_no_crash(tmp_path):
     """A liquidus at or below the solidus, or a solidus that never reaches the isentrope, reads n/a."""
     for name, change in (
