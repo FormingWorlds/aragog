@@ -299,7 +299,7 @@ def test_c3_handover_spread_follows_the_solver_tolerance(name, end_yr, rows):
     default, fine = (_handover_spread(table, end_yr, tol) for tol in (None, 1e-8))
     print(f'{name}: default {default:.2e}, 1e-8 {fine:.2e}')
     assert default <= rows[0] and fine <= rows[1]
-    assert default >= 10.0 * fine
+    assert default > 10.0 * fine
 
 
 @pytest.mark.parametrize(
