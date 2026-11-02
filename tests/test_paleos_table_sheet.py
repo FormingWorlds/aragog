@@ -335,6 +335,16 @@ def test_a_solid_table_is_held_against_the_solidus_entropy(tmp_path):
     assert not sheet_tool._reaches(eos, 20.0 * GPA)
 
 
+def test_a_phase_table_that_starts_above_its_boundary_entropy_reads_na(tmp_path):
+    """The lower edge counts as well: a solid table from 2600 misses the 2480 solidus at 20 GPa."""
+    eos = _tables(tmp_path)
+    table = eos._tables['density_solid']
+    keep = table['S'] >= 2600.0
+    table['S'], table['values'] = table['S'][keep], table['values'][:, keep]
+    assert not sheet_tool._reaches(eos, 20.0 * GPA)
+    assert _status(eos, 'rho_melt - rho_solid at 20 GPa') == ['n/a']
+
+
 def test_a_liquidus_above_the_table_top_reads_na(tmp_path):
     """A liquidus above every melt table is not a value at the table edge."""
     eos = _tables(tmp_path, ds0=7000.0, ds_slope=0.0)
@@ -428,7 +438,10 @@ def test_the_commit_flag_names_a_folder_by_its_path_in_any_spelling(
     _tables(tmp_path / 'a')
     monkeypatch.chdir(tmp_path)
     for flag in (f'{tmp_path / "a"}=abc', 'a/../a=abc', './a=abc'):
-        assert sheet_tool.main(['a', '--paleos-commit', flag]) == 0
+        try:
+            assert sheet_tool.main(['a', '--paleos-commit', flag]) == 0
+        except SystemExit as stop:
+            pytest.fail(f'the flag {flag} stopped the tool with status {stop.code}')
         assert 'PALEOS commit: abc (given)' in capsys.readouterr().out
     with pytest.raises(SystemExit) as stop:
         sheet_tool.main(['a', '--paleos-commit', 'a=abc', '--paleos-commit', './a=def'])
