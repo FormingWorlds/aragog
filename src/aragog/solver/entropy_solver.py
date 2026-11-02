@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog import surface_lid as _lid
-from aragog.config.boundary import check_subgrid_lid
+from aragog.config.boundary import _is_real, check_subgrid_lid
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -2829,6 +2829,8 @@ class EntropySolver:
         temperature derived from ``S_init`` via the EOS unless
         ``set_initial_core_temperature`` has been called first.
         """
+        if _lid_slots(self):
+            self._check_carried_lid()
         # Prefer the cached _n_stag from _initialize_internals; fall
         # back to the mesh accessor for legacy callers that bypass it.
         if hasattr(self, '_n_stag') and self._n_stag is not None:
@@ -3013,17 +3015,35 @@ class EntropySolver:
         profile). ``(0, 0)`` is a lid handed over to the mesh, which does not grow again;
         ``handover_time`` [yr] is then the ``lid_handover_time`` of the output, NaN if not
         known. A live lid has no hand-over time and clears the stored one.
+
+        Raises
+        ------
+        ValueError
+            For a time that is neither NaN nor finite and >= 0, a time with a live or cleared
+            lid, or a lid other than ``(0, 0)`` that is not finite with ``delta > 0``.
         """
-        if delta is None:
+        known = _is_real(handover_time) and not math.isnan(handover_time)
+        if not _is_real(handover_time) or (known and not 0.0 <= handover_time < math.inf):
+            raise ValueError(
+                f'set_initial_lid needs a hand-over time that is NaN or finite and >= 0, '
+                f'got {handover_time!r}'
+            )
+        if delta is None and not known:
             self._lid_init = None
             return
+        if delta is None:
+            raise ValueError(
+                'set_initial_lid takes a hand-over time only for a handed-over lid'
+            )
+        if not _is_real(delta) or not _is_real(E_lid):
+            raise ValueError(f'set_initial_lid needs numbers, got {delta!r}, {E_lid!r}')
         if delta == 0.0 and E_lid == 0.0:  # a lid handed over to the mesh
             self._lid_init = (0.0, 0.0)
-        elif E_lid is None or not np.isfinite(delta) or not np.isfinite(E_lid) or delta <= 0:
+        elif not math.isfinite(delta) or not math.isfinite(E_lid) or delta <= 0:
             raise ValueError(
                 f'set_initial_lid needs a finite delta > 0 and E_lid, got {delta}, {E_lid}'
             )
-        elif not np.isnan(handover_time):
+        elif known:
             raise ValueError(
                 'set_initial_lid takes a hand-over time only for a handed-over lid'
             )
@@ -3034,23 +3054,42 @@ class EntropySolver:
         if self._n_lid and s0 is not None and s0.size == self._n_core_state() + 2:
             s0[-2:] = self._lid_init
 
+    def _previous_lid(self) -> npt.NDArray | None:
+        """Lid states at the end of the previous solution, None without one of this layout."""
+        prev = getattr(self, '_solution', None)
+        y = None if prev is None else getattr(prev, 'y', None)
+        if y is None or np.ndim(y) != 2 or np.shape(y)[0] != self._n_core_state() + 2:
+            return None
+        return np.asarray(y)[-2:, -1].copy()
+
+    def _check_carried_lid(self) -> None:
+        """Refuse a lid of the previous solution above the growth stop of the top cell, before
+        a new start changes any state."""
+        lid = None if getattr(self, '_lid_init', None) is not None else self._previous_lid()
+        cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        if lid is not None and lid[0] > cap * (1.0 + _LID_CAP_SLACK):
+            raise ValueError(
+                f'the lid of the previous solution ({lid[0]:.6g} m) lies above the growth stop of '
+                f'the top cell ({cap:.6g} m); use a thicker top cell, or call set_initial_lid '
+                'with a start and then set_initial_entropy'
+            )
+
     def _initial_lid(self, S_top: float) -> npt.NDArray:
-        """Lid start: the set values, else the previous solution's, else the phantom lid."""
+        """Lid start: the set values, else the previous solution's, else the phantom lid. A
+        start with a live lid has no hand-over time."""
+        start = self._lid_start(S_top)
+        if start[0] != 0.0:
+            self._lid_handover_time = float('nan')
+        return start
+
+    def _lid_start(self, S_top: float) -> npt.NDArray:
+        """The start of :meth:`_initial_lid`."""
         init = getattr(self, '_lid_init', None)
         if init is not None:
             return np.array(init)
-        prev = getattr(self, '_solution', None)
-        if prev is not None and getattr(prev, 'y', None) is not None:
-            y = np.asarray(prev.y)
-            if y.ndim == 2 and y.shape[0] == self._n_core_state() + 2:
-                cap = _lid.LID_CAP_FRAC * self._lid_h_top
-                if y[-2, -1] > cap * (1.0 + _LID_CAP_SLACK):
-                    raise ValueError(
-                        f'the lid of the previous solution ({y[-2, -1]:.6g} m) lies above the '
-                        f'growth stop of the top cell ({cap:.6g} m); use a thicker top cell or '
-                        'give a start with set_initial_lid'
-                    )
-                return y[-2:, -1].copy()
+        lid = self._previous_lid()
+        if lid is not None:
+            return lid
         eos, P = self.entropy_eos, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
@@ -3241,7 +3280,7 @@ class EntropySolver:
                 f'sub-grid lid: the growth stop holds the lid near {cap:.6g} m '
                 f'({_lid.LID_CAP_FRAC} of the top cell) from t={time_yr:.6e} yr',
             )
-        T_knot = float(self._lid_hv.data[1][0])
+        T_knot = self._lid_hv.first_knot
         if ev.surf.T_s < T_knot:
             self._warn_once(
                 'lid_table_floor',
@@ -4967,6 +5006,10 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
+        if _floor_discard is None:
+            self._lid_handover_time_at_start = getattr(self, '_lid_handover_time', float('nan'))
+        else:  # the discarded attempt may have merged the lid
+            self._lid_handover_time = self._lid_handover_time_at_start
         self._lid_init = None  # a set initial lid holds until this solve
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()

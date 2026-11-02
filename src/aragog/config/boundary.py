@@ -49,7 +49,7 @@ def check_subgrid_lid(
     lid_ra_crit,
     outer_boundary_condition: int,
     core_bc: str,
-    param_utbl: bool = False,
+    param_utbl: bool,
 ) -> None:
     """Refuse invalid sub-grid lid settings, and the lid on a boundary setup it does not support.
 

@@ -34,6 +34,7 @@ cooling of a half-space (eq. 4.116, p. 189).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -146,6 +147,11 @@ class LidEnthalpy:
     H: Callable[[npt.ArrayLike], npt.NDArray]
     rho: Callable[[npt.ArrayLike], npt.NDArray]
     data: tuple = ()  # ('linear', rho, cp, T_b, h_b) or ('table', T, H, rho), for the JAX form
+
+    @property
+    def first_knot(self) -> float:
+        """Lowest temperature [K] of the table behind ``H``; -inf for constant properties."""
+        return float(self.data[1][0]) if self.data[:1] == ('table',) else -math.inf
 
     @classmethod
     def linear(cls, rho: float, cp: float, T_b: float, h_b: float) -> LidEnthalpy:
