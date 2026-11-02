@@ -130,8 +130,9 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
 
 @pytest.mark.reference_pinned
 def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
-    """The approved limit of EVENT_LIMIT on the flux step at a hand-over is missed: the flux rises
-    by 15 to 27 % at the merge, at least 80 times the step of the reference over the same time."""
+    """The approved limit of EVENT_LIMIT on the flux step at a hand-over is missed: from the stored
+    state at the hand-over to the next one the flux rises by 15 to 27 %, at least 80 times the step
+    of the reference over the same time. The excess falls below 5 % sooner on a finer mesh."""
     for m, low, high in zip(MESHES, (0.25, 0.13, 0.18), (0.30, 0.17, 0.22)):
         t0, before, after = _flux_step(d, m)
         step = after / before - 1
@@ -141,3 +142,10 @@ def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
         ref_step = abs(_at(d, 's500', 'F_top', d[f'{m}_t'][i]) - _at(d, 's500', 'F_top', t0))
         assert after - before > 80.0 * ref_step
         assert before == pytest.approx(_at(d, 's500', 'F_top', t0), rel=2.5e-2)
+    late = []
+    for m in MESHES:
+        t = d[f'{m}_t']
+        after = t > float(d[f'{m}_handover_yr']) + 1.0e5
+        excess = d[f'{m}_F_top'][after] / _at(d, 's500', 'F_top', t[after]) - 1
+        late.append((t[after][np.argmax(excess < 0.05)] - float(d[f'{m}_handover_yr'])) / 1e6)
+    np.testing.assert_allclose(late, (28.9, 8.0, 2.1), rtol=0.05)
