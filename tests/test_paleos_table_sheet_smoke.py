@@ -21,6 +21,13 @@ def test_the_sheet_reads_a_real_table_set(capsys):
     for name in ('temperature_solid.dat', 'density_melt.dat', 'solidus_P-S.dat'):
         digest = hashlib.md5((EOS_DIR / name).read_bytes()).hexdigest()
         assert f'{name} md5 {digest}' in out
-    assert 'not a failure' in out and 'MK22A: ' in out
+    assert 'not verdicts' in out and 'MK22A: ' in out
     rows = sheet_tool.sheet(EntropyEOS(EOS_DIR))
-    assert rows and {r.status for r in rows} <= {'pass', 'outside', 'n/a'}
+    assert rows and {r.status for r in rows} <= {'pass', 'outside', 'report', 'n/a'}
+    values = {r.check: r.value for r in rows}
+    assert values['rho_melt - rho_solid at 1 GPa [kg/m3]'] == '449.2'
+    assert values['T_liquidus - T_solidus at 50 GPa [K]'] == '1029'
+    assert values['Delta S at 100 GPa / lowest pressure'] == '3.243'
+    assert (
+        values['solid temperature rows copied above S_min, lowest pressure [J/kg/K]'] == '321.7'
+    )

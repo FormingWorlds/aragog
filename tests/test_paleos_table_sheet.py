@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,8 @@ _GOOD = {
     'gap': 750.0,
     'pad_solid': 0,
     'pad_solid_last': 0,
+    'sol_curve': 0.0,  # J/kg/K per GPa^2
+    'p_max_density': None,
 }
 
 
@@ -42,16 +45,16 @@ def _tables(folder: Path, **change) -> EntropyEOS:
     folder.mkdir(exist_ok=True)
     p = np.linspace(1.0e5, a['p_max'], 41)
     s = np.linspace(100.0, 8000.0, 81)
-    s_sol = 2000.0 + a['sol_slope'] * p / GPA
+    s_sol = 2000.0 + a['sol_slope'] * p / GPA + a['sol_curve'] * (p / GPA) ** 2
     s_liq = s_sol + a['ds0'] + a['ds_slope'] * p / GPA
 
     def t_solid(pp, ss):
         return 1000.0 + 0.5 * (ss - 2000.0) + 1.0e-8 * pp
 
-    def write(name, fun):
-        pp, ss = np.meshgrid(p, s)
+    def write(name, fun, grid=p):
+        pp, ss = np.meshgrid(grid, s)
         rows = np.column_stack([pp.ravel(), ss.ravel(), fun(pp, ss).ravel()])
-        head = f'5 {p.size} {s.size}\nPressure, Entropy, Quantity\nx\ny\n1.0 1.0 1.0'
+        head = f'5 {grid.size} {s.size}\nPressure, Entropy, Quantity\nx\ny\n1.0 1.0 1.0'
         np.savetxt(folder / name, rows, header=head, fmt='%.12e')
 
     def solid_t(pp, ss):
@@ -68,7 +71,8 @@ def _tables(folder: Path, **change) -> EntropyEOS:
         ('solid', a['rho_solid'], a['grad_solid']),
         ('melt', a['rho_melt'], a['grad_melt']),
     ):
-        write(f'density_{phase}.dat', lambda pp, ss, v=rho: np.full_like(pp, v))
+        rho_grid = np.linspace(1.0e5, a['p_max_density'], p.size) if a['p_max_density'] else p
+        write(f'density_{phase}.dat', lambda pp, ss, v=rho: np.full_like(pp, v), rho_grid)
         write(f'heat_capacity_{phase}.dat', lambda pp, ss: np.full_like(pp, 1000.0))
         write(f'adiabat_temp_grad_{phase}.dat', lambda pp, ss, v=grad: np.full_like(pp, v))
     for name, curve in (('solidus_P-S.dat', s_sol), ('liquidus_P-S.dat', s_liq)):
@@ -96,19 +100,17 @@ def good(tmp_path_factory):
 @pytest.mark.parametrize(
     ('start', 'bad'),
     [
-        ('rho_melt - rho_solid', {'rho_melt': 3500.0}),
+        ('rho_melt - rho_solid at 1 GPa', {'rho_melt': 3500.0}),
+        ('rho_melt - rho_solid at 5 GPa', {'rho_melt': 3500.0}),
         ('alpha_melt', {'grad_melt': 0.1e-8}),
         ('alpha_melt', {'grad_solid': 0.0}),
         ('alpha_melt', {'grad_solid': -1.0e-8}),
         ('Delta S at the lowest', {'ds0': 1000.0, 'ds_slope': 0.0}),
         ('Delta S at the lowest', {'ds0': 100.0, 'ds_slope': 0.0}),
         ('Delta S at 100 GPa', {'ds_slope': 1.0}),
-        ('T_liquidus', {'gap': 1500.0}),
-        ('T_liquidus', {'gap': 150.0}),
+        ('Delta S at 100 GPa', {'ds_slope': -5.0}),
         ('pressure where the isentrope', {'sol_slope': 12.0}),
         ('pressure where the isentrope', {'sol_slope': 60.0}),
-        ('solid temperature rows copied above S_min, lowest', {'pad_solid': 4}),
-        ('solid temperature rows copied above S_min, highest', {'pad_solid_last': 4}),
     ],
 )
 def test_a_row_passes_on_the_good_table_and_reports_outside_on_a_bad_one(
@@ -122,10 +124,17 @@ def test_the_values_are_the_measured_ones(good):
     """Printed values, not only the status: the isentrope reaches phi 0 at 0.4 x 300 / 24 GPa."""
     assert _rows(good, 'rho_melt - rho_solid at 1 GPa')[0].value == '-300.0'
     assert float(_rows(good, 'pressure where the isentrope')[0].value) == pytest.approx(
-        5.05, abs=0.1
+        5.0, abs=0.01
     )
     assert _rows(good, 'T_liquidus - T_solidus at 50 GPa')[0].value == f'{750 - 0.5 * 50:.0f}'
-    assert _rows(good, 'alpha_melt and alpha_solid at 1 GPa')[0].value.count(',') == 1
+    # rho cp (dT/dP)_S / T: solidus 2024 and liquidus 2323 J/kg/K at 1 GPa, T of the tables linear
+    t_solid = 1000.0 + 0.5 * 24.0 + 10.0
+    t_melt = 1000.0 + 0.5 * 323.0 + 10.0 + 750.0 - 150.0
+    melt, solid = _rows(good, 'alpha_melt and alpha_solid, ordering at 1 GPa')[0].value.split(
+        ', '
+    )
+    assert float(melt) == pytest.approx(3000.0 * 1000.0 * 2.0e-8 / t_melt, rel=1.0e-2)
+    assert float(solid) == pytest.approx(3300.0 * 1000.0 * 1.0e-8 / t_solid, rel=1.0e-2)
     assert float(_rows(good, 'Delta S at 100 GPa')[0].value) == pytest.approx(
         200.0 / 300.0, abs=1.0e-2
     )
@@ -135,10 +144,39 @@ def test_the_mixed_gradient_row_reports_both_states(good, tmp_path):
     """The mixture is steeper than both phases when the liquidus falls fast with pressure; between
     the phases it is outside."""
     steep = {'sol_slope': -40.0, 'ds_slope': -1.0, 'gap': 500.0}
-    assert set(_status(_tables(tmp_path / 'a', **steep), '(dT/dP)_S mixed')) == {'pass'}
+    status = _status(_tables(tmp_path / 'a', **steep), '(dT/dP)_S mixed')
+    assert 'pass' in status and 'outside' not in status
     assert 'outside' in _status(good, '(dT/dP)_S mixed')
     between = _tables(tmp_path / 'b', **steep, grad_melt=5.0e-6, grad_solid=1.0e-10)
     assert 'outside' in _status(between, '(dT/dP)_S mixed')
+
+
+def test_the_mixed_gradient_row_prints_both_steps_and_leaves_a_step_out_of_the_mixture(
+    tmp_path,
+):
+    """A curved solidus gives a different gradient at each step, both printed; a wide step that
+    leaves the mixed region reads n/a."""
+    curved = _tables(tmp_path / 'curved', sol_slope=-40.0, sol_curve=0.5, gap=500.0)
+    value = _rows(curved, '(dT/dP)_S mixed vs pure phases at 20 GPa')[0].value
+    wide, narrow = re.findall(r'(-?[0-9.]+) at', value)
+    assert float(wide) != float(narrow)
+    steep = _tables(tmp_path / 'steep', sol_slope=200.0, ds0=300.0, ds_slope=0.0)
+    assert _status(steep, '(dT/dP)_S mixed vs pure phases at 20 GPa') == ['n/a']
+
+
+def test_a_row_with_no_band_of_the_same_quantity_reports_a_value(good):
+    """No pass or outside where the source gives another quantity, or for a table property."""
+    for start in (
+        'rho_melt - rho_solid at 10 GPa',
+        'rho_melt - rho_solid at 20 GPa',
+        'T_liquidus - T_solidus at 50 GPa',
+        'T_liquidus - T_solidus at 100 GPa',
+        'solid temperature rows copied above S_min, lowest',
+        'solid temperature rows copied above S_min, highest',
+        'pressure columns with solid temperature rows copied',
+        'melt temperature rows copied above the liquidus at 1 GPa',
+    ):
+        assert _status(good, start) == ['report'], start
 
 
 def test_the_canary_row_fails_on_a_planted_sign_flip(tmp_path):
@@ -154,7 +192,7 @@ def test_a_pressure_the_tables_do_not_reach_reads_na(tmp_path):
     eos = _tables(tmp_path, p_max=15.0 * GPA)
     for start in (
         'rho_melt - rho_solid at 20 GPa',
-        'alpha_melt and alpha_solid at 20 GPa',
+        'alpha_melt and alpha_solid, ordering at 20 GPa',
         '(dT/dP)_S mixed vs pure phases at 20 GPa',
         'Delta S at 100 GPa',
         'T_liquidus - T_solidus at 50 GPa',
@@ -171,16 +209,16 @@ def test_the_padded_row_counts_give_the_columns_and_their_pressure_range(good, t
     gives 1 of the columns, its pressure, and the largest span."""
     row = _rows(good, 'pressure columns with solid temperature rows copied')[0]
     assert (
-        row.status == 'pass'
+        row.status == 'report'
         and row.value == f'0 of {len(good._tables["temperature_solid"]["P"])}'
     )
     eos = _tables(tmp_path, pad_solid=4)
     table = eos._tables['temperature_solid']
     table['values'][1:] = table['values'][1:] + np.linspace(0.0, 1.0, table['S'].size)
     row = _rows(eos, 'pressure columns with solid temperature rows copied')[0]
-    assert row.status == 'outside' and row.value.startswith('1 of 41')
+    assert row.status == 'report' and row.value.startswith('1 of 41')
     assert f'{float(table["P"][0]) / GPA:.3g}-{float(table["P"][0]) / GPA:.3g} GPa' in row.value
-    assert f'span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
+    assert f'largest span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
 
 
 def test_the_sheet_names_the_paleos_commit_of_each_set(tmp_path, capsys):
@@ -194,6 +232,35 @@ def test_the_sheet_names_the_paleos_commit_of_each_set(tmp_path, capsys):
     assert 'PALEOS commit: not recorded in the tables' in out
     assert 'PALEOS commit: abc1234 (table header)' in out
     assert 'PALEOS commit: def5678 (given)' in out
+
+
+def test_a_table_with_a_narrower_range_reads_na(tmp_path):
+    """A lookup clamps to the range of its own table, so every table must hold the pressure."""
+    eos = _tables(tmp_path, p_max_density=30.0 * GPA)
+    assert _status(eos, 'rho_melt - rho_solid at 20 GPa') == ['report']
+    assert _status(eos, 'T_liquidus - T_solidus at 50 GPa') == ['n/a']
+    assert _status(eos, 'Delta S at 100 GPa') == ['n/a']
+
+
+def test_a_non_finite_first_row_is_not_a_span_of_zero(tmp_path):
+    """A NaN at the table minimum gives NaN, not a span of 0."""
+    eos = _tables(tmp_path)
+    table = eos._tables['temperature_solid']
+    table['values'][0, 0] = np.nan
+    assert np.isnan(sheet_tool._padded_span(table, 0))
+    assert _rows(eos, 'solid temperature rows copied above S_min, lowest')[0].value == 'nan'
+
+
+def test_the_commit_flag_refuses_a_bad_item_and_an_unused_folder(tmp_path, capsys):
+    """An item with no = and a folder not given stop with a message, not a traceback."""
+    _tables(tmp_path)
+    for item in ('no-equal-sign', f'{tmp_path}=', f'{tmp_path / "other"}=abc'):
+        with pytest.raises(SystemExit) as stop:
+            sheet_tool.main([str(tmp_path), '--paleos-commit', item])
+        assert stop.value.code == 2
+        assert '--paleos-commit' in capsys.readouterr().err
+    assert sheet_tool.main([f'{tmp_path}/', '--paleos-commit', f'{tmp_path}=abc']) == 0
+    assert 'PALEOS commit: abc (given)' in capsys.readouterr().out
 
 
 def test_a_degenerate_table_gives_rows_and_no_crash(tmp_path):
@@ -216,7 +283,9 @@ def test_the_melt_rows_copied_above_the_liquidus_are_measured(tmp_path):
     eos = _tables(tmp_path)
     table = eos._tables['temperature_melt']
     assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == 0.0
-    assert set(_status(eos, 'melt temperature rows copied')) == {'pass'}
+    assert (
+        _rows(eos, 'melt temperature rows copied above the liquidus at 1 GPa')[0].value == '0.0'
+    )
     i = int(np.argmin(np.abs(table['P'] - GPA)))
     s_liq = float(eos.liquidus_entropy(float(table['P'][i])))
     j = int(np.searchsorted(table['S'], s_liq))
@@ -225,9 +294,9 @@ def test_the_melt_rows_copied_above_the_liquidus_are_measured(tmp_path):
     assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == pytest.approx(
         float(table['S'][j + 5]) - s_liq
     )
-    assert _status(eos, 'melt temperature rows copied above the liquidus at 1 GPa') == [
-        'outside'
-    ]
+    assert (
+        _rows(eos, 'melt temperature rows copied above the liquidus at 1 GPa')[0].value != '0.0'
+    )
     table['values'][i] = original
     table['values'][i, j:] = table['values'][i, j - 1]
     assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == pytest.approx(
