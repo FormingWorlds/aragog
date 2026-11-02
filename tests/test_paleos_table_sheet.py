@@ -164,6 +164,23 @@ def test_a_pressure_the_tables_do_not_reach_reads_na(tmp_path):
     assert _status(near, 'rho_melt - rho_solid at 10 GPa') != ['n/a']
 
 
+def test_the_padded_row_counts_give_the_columns_and_their_pressure_range(good, tmp_path):
+    """Each pressure column with copied rows counts: none on the good table; a padded lowest column
+    gives 1 of the columns, its pressure, and the largest span."""
+    row = _rows(good, 'pressure columns with solid temperature rows copied')[0]
+    assert (
+        row.status == 'pass'
+        and row.value == f'0 of {len(good._tables["temperature_solid"]["P"])}'
+    )
+    eos = _tables(tmp_path, pad_solid=4)
+    table = eos._tables['temperature_solid']
+    table['values'][1:] = table['values'][1:] + np.linspace(0.0, 1.0, table['S'].size)
+    row = _rows(eos, 'pressure columns with solid temperature rows copied')[0]
+    assert row.status == 'outside' and row.value.startswith('1 of 41')
+    assert f'{float(table["P"][0]) / GPA:.3g}-{float(table["P"][0]) / GPA:.3g} GPa' in row.value
+    assert f'span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
+
+
 def test_a_degenerate_table_gives_rows_and_no_crash(tmp_path):
     """A liquidus at or below the solidus, or a solidus that never reaches the isentrope, reads n/a."""
     for name, change in (
