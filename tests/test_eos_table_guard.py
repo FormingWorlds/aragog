@@ -175,7 +175,7 @@ def test_the_guard_reads_its_edges_from_the_loaded_tables(eos, tmp_path, method)
     # below the standard minimum but inside this range; inside the standard range but above this one
     assert probe._eos_table_failure(_sol(np.full(_N_CELLS, float(eos.S_min) - 10.0))) is None
     failure = probe._eos_table_failure(_sol(np.full(_N_CELLS, float(eos.S_max) - 10.0)))
-    assert f'{float(shifted.S_max):.3f}' in failure[1]
+    assert failure is not None and f'{float(shifted.S_max):.3f}' in failure[1]
 
 
 @pytest.mark.skipif(not _LOWT_DIR, reason='ARAGOG_TEST_LOWT_EOS_DIR not set')

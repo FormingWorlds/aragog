@@ -6,14 +6,14 @@ import dataclasses
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from scipy.optimize import OptimizeResult
 
 from aragog.rheology import SolidRheologyParams
 from aragog.solver.entropy_solver import EntropySolver
 
-from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
+from .conftest import EOS_DIR, entropy_eos_copy, needs_eos, returns
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
 pytestmark = [pytest.mark.unit, needs_eos]
@@ -42,6 +42,8 @@ def _sol(cells: np.ndarray, t=(0.0, 1.0)) -> OptimizeResult:
 
 
 @settings(max_examples=200, deadline=None)
+@example(outward=float('nan'), side='min', cell=3)
+@example(outward=float('inf'), side='max', cell=3)
 @given(
     outward=st.one_of(
         st.floats(allow_nan=True, allow_infinity=True),
@@ -70,12 +72,15 @@ def test_a_late_step_outside_the_table_fails_even_if_the_end_state_is_inside(sol
     y = np.column_stack([good, good, good])
     y[-1, 1] = float(solver.entropy_eos.S_min) - 1.0
     sol = OptimizeResult(t=np.array([0.0, 1.0, 2.0]), y=y, status=0, message='')
-    t_bad, message = solver._eos_table_failure(sol)
+    failure = solver._eos_table_failure(sol)
+    assert failure is not None
+    t_bad, message = failure
     assert t_bad == 1.0 and 'cell 10 ' in message and 'call start' not in message
     trace = OptimizeResult(
         t=np.array([0.0, 2.0]), y=y[:, [0, 2]], status=0, message='', energy_trace=(sol.t, y)
     )
-    assert solver._eos_table_failure(trace)[0] == 1.0
+    failure = solver._eos_table_failure(trace)
+    assert failure is not None and failure[0] == 1.0
 
 
 def test_no_failure_for_a_call_that_does_not_advance_or_holds_no_table(solver, eos):
@@ -83,9 +88,8 @@ def test_no_failure_for_a_call_that_does_not_advance_or_holds_no_table(solver, e
     bad = np.full(_N_CELLS, float(eos.S_min) - 50.0)
     assert solver._eos_table_failure(_sol(bad, t=(3.0, 3.0))) is None
     assert solver._eos_table_failure(OptimizeResult(t=np.array([1.0]), y=bad[:, None])) is None
-    assert (
-        solver._eos_table_failure(OptimizeResult(t=np.array([]), y=bad[:, None][:, :0])) is None
-    )
+    empty = OptimizeResult(t=np.array([]), y=bad[:, None][:, :0])
+    assert returns(solver._eos_table_failure, empty) is None
     on = EntropySolver(_build_mushy_parameters(solver_method='bdf'), entropy_eos=eos)
     on.parameters.phase_solid = dataclasses.replace(
         on.parameters.phase_solid, rheology=SolidRheologyParams(enabled=True)
@@ -93,10 +97,11 @@ def test_no_failure_for_a_call_that_does_not_advance_or_holds_no_table(solver, e
     on.initialize()
     assert on._eos_table_failure(_sol(bad)) is None
     const = EntropySolver(_build_mushy_parameters(solver_method='bdf'), entropy_eos=eos)
+    const.initialize()
     const.parameters.phase_mixed = dataclasses.replace(
         const.parameters.phase_mixed, const_properties=True
     )
-    assert const._eos_table_failure(_sol(bad)) is None
+    assert returns(const._eos_table_failure, _sol(bad)) is None
     no_eos = EntropySolver.__new__(EntropySolver)
     no_eos.entropy_eos = None
     assert no_eos._eos_table_failure(_sol(bad)) is None
