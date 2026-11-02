@@ -628,6 +628,21 @@ def test_intermediate_lid_above_the_slack_fails_the_jax_batch_path():
         s._compute_step_energy_integrals()
 
 
+def test_intermediate_lid_below_the_melt_back_stop_fails_the_jax_batch_path():
+    """One state in the middle of the trace thinner than the melt-back stop fails the lid
+    invariant on the JAX batch path, as on the NumPy loop."""
+    s = _jax_cvode_lid_solver()
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    k = t.size // 2
+    assert y[-2, k] > 0.0
+    y[-2, k] = 0.5 * min(s._lid_delta_lo, y[-2, 0])
+    sol.energy_trace = (t, y)
+    with pytest.raises(RuntimeError, match=f'at step {k},.*thickness'):
+        s._compute_step_energy_integrals()
+
+
 def test_jax_path_records_the_largest_lid_excess_of_the_call():
     """On the JAX batch path lid_cap_excess is the largest delta / cap - 1 over the accepted
     states of the call, here at the start of a lid set above the growth stop."""
