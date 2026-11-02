@@ -6,7 +6,8 @@ a 2-yr solve, without and with the solid rheology ('lid' closure), on CVODE with
 finite-difference Jacobian and with a JAX factory (here built with ``lid_params=None``). The
 mesh and the right-hand side must match to rtol 1e-10 and the solve to rtol 1e-9, above the
 round-off between the macOS and Linux builds; a JAX case must have called the JAX right-hand
-side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals.
+side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals
+to rtol 1e-8; the solver residual, a difference of large terms, to 1e-12 of the surface energy.
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def test_lid_off_core_mode_equals_the_base(reference, mode):
     integrals = {k for k in stored if k.startswith('ei/')}
     assert len(integrals) > 3
     assert integrals <= set(got)
-    for key in integrals:
-        np.testing.assert_allclose(
-            got[key], stored[key], rtol=OFF_PATH_RTOL, atol=1e-6, err_msg=key
-        )
+    for key in integrals - {'ei/solver_residual'}:
+        np.testing.assert_allclose(got[key], stored[key], rtol=OFF_PATH_RTOL, atol=0, err_msg=key)
+    heat = abs(float(stored['ei/F_int'][0]))
+    assert abs(got['ei/solver_residual'][0] - stored['ei/solver_residual'][0]) <= 1e-12 * heat
