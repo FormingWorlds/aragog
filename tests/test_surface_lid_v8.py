@@ -5,6 +5,7 @@ stored runs (``tests/reference/build_surface_lid_v8.py``); they take days on a c
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from tests.conftest import assert_legend_clear, opaque_legend
 pytestmark = [pytest.mark.unit]
 
 REF = Path(__file__).resolve().parent / 'reference' / 'surface_lid_v8.npz'
+MERGE = REF.with_name('surface_lid_v8_merge.json')
 MESHES = ('n100', 'n200', 'n400')
 PART_ENDS = np.arange(2, 11) * 1.0e8
 WINDOW = 2.0e7  # years: longer than the swings of the flux after the transition
@@ -149,3 +151,22 @@ def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
         excess = d[f'{m}_F_top'][after] / _at(d, 's500', 'F_top', t[after]) - 1
         late.append((t[after][np.argmax(excess < 0.05)] - float(d[f'{m}_handover_yr'])) / 1e6)
     np.testing.assert_allclose(late, (28.9, 8.0, 2.1), rtol=0.05)
+
+
+@pytest.mark.reference_pinned
+def test_v8_the_merge_states_and_the_offset_of_the_growth_stop():
+    """From ``tools/verification/run_surface_lid_merge_state.py``: the merge keeps the energy, the
+    surface node falls below the equilibrium temperature, so the flux is negative for up to about
+    900 yr, and the top node before the merge is warmer than the run without the lid by the offset
+    (delta - h/2) (T_b - T_s) / delta within 5 %."""
+    runs = json.loads(MERGE.read_text())
+    assert list(runs) == list(MESHES)
+    for d, years in zip(runs.values(), (923.0, 448.0, 195.0)):
+        assert d['merge_residual'] < 1e-15
+        assert d['after']['flux'] < -20.0 < 0.0 < d['before']['flux']
+        assert d['after']['T_node'] < 273.0 < d['before']['T_node']
+        assert d['after']['T_cell'] < d['before']['T_cell']
+        assert d['negative_yr'] == pytest.approx(years, rel=1e-2)
+        assert d['offset_measured'] == pytest.approx(d['offset_predicted'], rel=5e-2)
+    assert runs['n100']['offset_measured'] > 1.8 * runs['n200']['offset_measured']
+    assert runs['n200']['offset_measured'] > 1.8 * runs['n400']['offset_measured']
