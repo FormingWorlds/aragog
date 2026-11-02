@@ -65,4 +65,3 @@ def test_the_viscosity_ratio_between_1350_and_1600_c_is_the_published_one():
     for low, high in ((eta_low, eta_high), (jax_eta_low, jax_eta_high)):
         assert low[cell] == pytest.approx(1.0e19, rel=1.0e-3)
         assert low[cell] / high[cell] == pytest.approx(19.43, abs=0.05)
-        assert low[cell] / high[cell] == pytest.approx(20.0, abs=1.0)
