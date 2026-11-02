@@ -39,7 +39,7 @@ def eos():
 
 def _shifted_tables(dst: Path) -> Path:
     """Copy the tables with every entropy moved by ``_SHIFT``: another range, the same physics."""
-    for src in Path(EOS_DIR).glob('*.dat'):
+    for src in Path(EOS_DIR).glob('[!.]*.dat'):  # the CI archive holds ._*.dat metadata files
         header = [ln for ln in src.read_text().splitlines() if ln.startswith('#')]
         s_scale = float(header[-1].split()[2])
         data = np.loadtxt(src)
