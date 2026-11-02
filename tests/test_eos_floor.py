@@ -104,7 +104,7 @@ def test_the_default_config_leaves_the_floor_off(
     shared_eos, caplog, monkeypatch, method, margin
 ):
     """Without eos_floor_margin in the config (or with 0 or a negative margin) and with no other cap,
-    no step-cap root is built and a draining call runs to its end below the table with no floor log."""
+    no step-cap root is built and the EOS table guard fails a draining call, with no floor log."""
     built, real = [], es._PhiCapRootFunction.__init__
     monkeypatch.setattr(
         es._PhiCapRootFunction,
@@ -113,21 +113,21 @@ def test_the_default_config_leaves_the_floor_off(
     )
     S_min = float(shared_eos.S_min)
     with caplog.at_level(logging.INFO):
-        s, f = _drained(shared_eos, S_min + 400.0, margin=margin, method=method)
+        s, _ = _drained(shared_eos, S_min + 400.0, margin=margin, method=method)
     assert s.parameters.energy.eos_floor_margin == (0.0 if margin is _UNSET else margin)
     assert not _floor_logs(caplog)
-    assert not built and s._solution.status == 0
-    assert s._solution.t[-1] == pytest.approx(10.0) and f[-1] < S_min
+    assert not built and s._solution.status == -1
+    assert 'EOS table guard' in s._solution.message and s._solution.t[-1] < 10.0
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_the_default_config_is_bit_equal_to_margin_zero(shared_eos, method):
-    """A draining call with no margin in the config gives the same output times, states and
-    energy integrals as the same call with eos_floor_margin = 0."""
+    """A draining call inside the table with no margin in the config gives the same output times,
+    states and energy integrals as the same call with eos_floor_margin = 0."""
     S0 = float(shared_eos.S_min) + 400.0
-    a = _drained(shared_eos, S0, margin=_UNSET, method=method)[0]._solution
-    b = _drained(shared_eos, S0, margin=0.0, method=method)[0]._solution
-    assert a.status == b.status == 0
+    a = _drained(shared_eos, S0, margin=_UNSET, method=method, end_time=1.0)[0]._solution
+    b = _drained(shared_eos, S0, margin=0.0, method=method, end_time=1.0)[0]._solution
+    assert a.status == b.status == 0 and a.energy_integrals['F_int'] != 0.0
     assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
     assert a.energy_integrals == b.energy_integrals
 
@@ -135,7 +135,7 @@ def test_the_default_config_is_bit_equal_to_margin_zero(shared_eos, method):
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     """CVODE (status 0) and scipy (status 1) stop at S_min + 100 before the call end with one
-    WARNING; without the floor the same call drains below the table."""
+    WARNING; without the floor the EOS table guard fails the same call."""
     S_min = float(shared_eos.S_min)
     with caplog.at_level(logging.INFO):
         s, f = _drained(shared_eos, S_min + 400.0, method=method)
@@ -147,8 +147,8 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     assert f'level={S_min + 100.0:.6g}' in logs[0][1]
     if method == 'cvode':
         assert sol.cap_label == 'eos_floor' and sol.cap_value == S_min + 100.0
-    s_off, f_off = _drained(shared_eos, S_min + 400.0, margin=None, method=method)
-    assert s_off._solution.t[-1] == pytest.approx(10.0) and f_off[-1] < S_min
+    s_off, _ = _drained(shared_eos, S_min + 400.0, margin=None, method=method)
+    assert s_off._solution.status == -1 and 'EOS table guard' in s_off._solution.message
 
 
 @needs_cvode
