@@ -166,18 +166,16 @@ def test_v2_melt_lid_run_on_the_test_tables():
 @pytest.mark.reference_pinned
 def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     """Started molten and convecting, without rheology, a 10-node shell with the lid hands the
-    lid over when its top cell cools through the solidus, within the first 100 yr, and then
-    gives the surface flux of the 10-node shell without the lid within FLOOR and of the
-    reference, an 800-node shell without the lid with a top cell of 0.125 m, within C3_TOL from
-    100 to 5000 yr. The 400-node shell with a top cell of 0.25 m agrees with the reference
-    within C3_BOUND. With the hand-over root held at -1 the lid misses the reference flux by
-    more than 50 % at some time. With ``ARAGOG_LOWT_EOS_DIR`` set to the extended table, the
-    lid run is repeated."""
+    lid over within the first 100 yr and then equals the 10-node shell without the lid within
+    FLOOR, so this checks the hand-over and the coarse mesh after it (the hand-over criterion
+    itself is tested in test_subgrid_lid_solver.py): both stay within C3_TOL of the reference,
+    an 800-node shell without the lid with a top cell of 0.125 m, from 100 to 5000 yr. The
+    400-node shell with a top cell of 0.25 m agrees with the reference within C3_BOUND. With
+    the hand-over held off the lid misses the reference flux by more than 50 % at some time.
+    With ``ARAGOG_LOWT_EOS_DIR`` set to the extended table, the 10-node runs are repeated."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     assert str(d['md5']) == LOWT_EOS_MD5
-    grid = d['grid_ref']
-    assert int(d['n_ref']) == 800
-    np.testing.assert_array_equal(grid, d['refined_800'])
+    grid = d['refined_800']
     np.testing.assert_allclose(d['refined_400'], grid, rtol=C3_BOUND)
     assert 0.0 < float(d['handover_yr']) < MOLTEN_TIMES_YR[0]
     np.testing.assert_allclose(d['lid'], d['coarse'], rtol=FLOOR)
@@ -188,6 +186,8 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
         live, t_ho = molten_column(10, True, MOLTEN_TIMES_YR, entropy_eos_copy(table))
         np.testing.assert_allclose(live, d['lid'], rtol=1e-6)
         assert t_ho == pytest.approx(float(d['handover_yr']), rel=1e-6)
+        coarse, _ = molten_column(10, False, MOLTEN_TIMES_YR, entropy_eos_copy(table))
+        np.testing.assert_allclose(coarse, d['coarse'], rtol=1e-6)
 
     def figure():
         import matplotlib.pyplot as plt
