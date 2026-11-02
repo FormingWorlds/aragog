@@ -625,7 +625,6 @@ def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8
     """The depth of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
     from types import SimpleNamespace
 
-
     T = np.asarray(T_cells, dtype=float)
     c = SimpleNamespace(
         state=SimpleNamespace(

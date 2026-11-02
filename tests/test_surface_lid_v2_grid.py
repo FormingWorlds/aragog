@@ -25,6 +25,7 @@ from tests.reference.surface_lid_v2_column import (
     TIMES_YR,
     melt_column,
     molten_column,
+    solidus_crossing,
     surface_flux,
 )
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, needs_eos
@@ -37,6 +38,7 @@ MELT_TOL, FLOOR = 2e-2, 1e-5  # melt start: tolerance, round-off floor of the me
 C3_TOL = 3e-2  # molten start
 C3_BOUND = 1e-4  # top-refined 400-node run against the 800-node reference
 C3_HANDOVER_TOL = 3e-4  # hand-over time on the extended table: round-off spread 7.5e-5
+C3_CROSSING_TOL = 5e-4  # hand-over against the crossing without the lid: gap at most 3.5e-5
 
 
 def _stored(name, times=TIMES_YR):
@@ -173,12 +175,15 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     an 800-node shell without the lid with a top cell of 0.125 m, from 100 to 5000 yr. The
     400-node shell with a top cell of 0.25 m agrees with the reference within C3_BOUND. With
     the hand-over held off the lid misses the reference flux by more than 50 % at some time.
+    The hand-over time lies within C3_CROSSING_TOL of the time at which the top cell of the stored
+    10-node run without the lid cools through the solidus, a run the lid code does not touch.
     With ``ARAGOG_LOWT_EOS_DIR`` set to the extended table, the 10-node runs are repeated."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     assert str(d['md5']) == LOWT_EOS_MD5
     grid = d['refined_800']
     np.testing.assert_allclose(d['refined_400'], grid, rtol=C3_BOUND)
-    assert 0.0 < float(d['handover_yr']) < MOLTEN_TIMES_YR[0]
+    crossing = solidus_crossing(d['nolid_t'], d['nolid_S_top'], float(d['nolid_S_sol']))
+    assert float(d['handover_yr']) == pytest.approx(crossing, rel=C3_CROSSING_TOL)
     np.testing.assert_allclose(d['lid'], d['coarse'], rtol=FLOOR)
     for run in ('lid', 'coarse'):
         np.testing.assert_allclose(d[run], grid, rtol=C3_TOL)
@@ -187,6 +192,7 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     if table:
         live, t_ho = molten_column(10, True, MOLTEN_TIMES_YR, entropy_eos_copy(table))
         np.testing.assert_allclose(live, d['lid'], rtol=FLOOR)
+        assert t_ho == pytest.approx(crossing, rel=C3_CROSSING_TOL)
         assert t_ho == pytest.approx(float(d['handover_yr']), rel=C3_HANDOVER_TOL)
         coarse, _ = molten_column(10, False, MOLTEN_TIMES_YR, entropy_eos_copy(table))
         np.testing.assert_allclose(coarse, d['coarse'], rtol=FLOOR)
@@ -220,9 +226,14 @@ def test_c3_molten_lid_run_on_the_test_tables():
     over. From 1635 yr its top cell sits at the floor of the test tables (320.4 K), so the
     last three fluxes are equal; the pin checks only that the run repeats. A solidus shifted by
     10 J/kg/K moves these fluxes by 2e-6, below their round-off floor, so a shifted hand-over
-    fails only the time check, which sees a shift of 0.1 J/kg/K."""
+    fails only the time checks: the crossing of the solidus by the stored run without the lid
+    sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     np.testing.assert_array_equal(d['pin_times_yr'], MELT_TIMES_YR)
     live, t_ho = molten_column(10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR))
+    crossing = solidus_crossing(
+        d['pin_nolid_t'], d['pin_nolid_S_top'], float(d['pin_nolid_S_sol'])
+    )
+    assert t_ho == pytest.approx(crossing, rel=C3_CROSSING_TOL)
     np.testing.assert_allclose(live, d['pin'], rtol=FLOOR)
     assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
