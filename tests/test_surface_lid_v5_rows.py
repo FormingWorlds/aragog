@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import assert_legend_clear
+from tests.conftest import assert_legend_clear, opaque_legend
 from tools.verification.run_surface_lid_v5_rows import OBSERVABLES, run_row
 
 REF = Path(__file__).resolve().parent / 'reference' / 'surface_lid_v5_rows.json'
@@ -118,13 +118,13 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
         ax.set_ylabel('largest relative change')
         handles, names = ax.get_legend_handles_labels()
         keep = dict(zip(names, handles))
-        ax.legend(
-            keep.values(),
-            keep.keys(),
+        opaque_legend(
+            ax,
+            handles=list(keep.values()),
+            labels=list(keep.keys()),
             loc='lower center',
             bbox_to_anchor=(0.5, 1.0),
             ncol=3,
-            frameon=False,
             fontsize=8,
         )
         fig.tight_layout()
