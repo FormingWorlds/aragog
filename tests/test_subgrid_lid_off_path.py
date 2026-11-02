@@ -1,7 +1,7 @@
-"""With the sub-grid lid off, the solve path equals the main commit the lid branches from.
+"""With the sub-grid lid off, the solve path equals the stored run of the code without the lid.
 
 The reference (``tests/reference/subgrid_lid_v0_reference.npz``) is the off-path probe of
-``tests/reference/subgrid_lid_v0_probe.py`` on that commit: the mesh, one right-hand side and
+``tests/reference/subgrid_lid_v0_probe.py`` on the commit in its ``base_commit`` key: the mesh, one right-hand side and
 a 2-yr solve, without and with the solid rheology ('lid' closure), on CVODE with the
 finite-difference Jacobian and with a JAX factory (here built with ``lid_params=None``). The
 mesh and the right-hand side must match to rtol 1e-10 and the solve to rtol 1e-9, above the

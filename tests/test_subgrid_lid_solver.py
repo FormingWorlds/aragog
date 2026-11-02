@@ -1077,7 +1077,7 @@ def _full_rhs_root(s, t, y):
     z = _lid_depth(s)
     if z is None:
         return -1.0
-    return min((z - s._lid_handover_depth) / s._lid_handover_depth, *s._lid_gate())
+    return min((z - s._lid_handover_depth) / s._lid_handover_depth, *s._lid_solid_regime())
 
 
 ROOT_CASES = [
@@ -1096,7 +1096,7 @@ def test_root_equals_the_full_rhs_root(eos, kw):
     right-hand side evaluation to relative 1e-12 and in sign, on lids from the phantom
     thickness to 0.8 of the top cell; it runs the lid evaluation only when the crossing can
     lie in the lid."""
-    s = _gate_column(eos, **kw)
+    s = _solid_regime_column(eos, **kw)
     calls, evaluate = [0], s._lid_evaluate
 
     def counted(entropy):
@@ -1316,7 +1316,7 @@ def test_no_handover_without_the_lid_closure(eos, closure):
     assert out.lid_delta > 0.0
 
 
-def _gate_column(eos, S_top=None, uniform=None):
+def _solid_regime_column(eos, S_top=None, uniform=None):
     """A 20-node 'lid'-closure column: cold below with the top cell at ``S_top``, or uniform."""
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
@@ -1348,7 +1348,7 @@ def test_no_handover_outside_the_solid_regime(eos, kw, w_active, molten_top):
     transition (w_phi > 0.5)."""
     from aragog.rheology_lid import _melt_ramp
 
-    s = _gate_column(eos, **kw)
+    s = _solid_regime_column(eos, **kw)
     g = s._lid_root_value(0.0, s._S0)
     s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
     assert _lid_depth(s) > s._lid_handover_depth
@@ -1370,12 +1370,12 @@ def test_handover_root_in_the_solid_regime(eos):
     s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
     margin = (_lid_depth(s) - s._lid_handover_depth) / s._lid_handover_depth
     assert 0.0 < g == pytest.approx(margin, rel=1e-12)
-    assert min(s._lid_gate()) > margin
+    assert min(s._lid_solid_regime()) > margin
 
 
-def test_handover_fires_where_the_gate_opens(eos):
+def test_handover_fires_where_the_solid_regime_begins(eos):
     """With the isotherm already below the face, the hand-over fires where the solid-regime
-    gate opens, located by the root search."""
+    solid regime begins, located by the root search."""
     t_star = 0.4
     s = _cold_top_solver(eos)
     root, clock = s._lid_root_value, {}
@@ -1385,7 +1385,7 @@ def test_handover_fires_where_the_gate_opens(eos):
         return root(t, y)
 
     s._lid_root_value = timed_root
-    s._lid_gate = lambda: ((clock['t'] - t_star) / t_star,)
+    s._lid_solid_regime = lambda: ((clock['t'] - t_star) / t_star,)
     s.solve()
     assert s.get_state().lid_handover_time == pytest.approx(t_star, rel=1e-6)
 

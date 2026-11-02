@@ -40,7 +40,10 @@ TOL = 1e-2
 MELT_TOL, FLOOR = 2e-2, 1e-5  # melt start: tolerance, round-off floor of the mesh run
 C3_TOL = 3e-2  # molten start
 C3_BOUND = 1e-4  # top-refined 400-node run against the 800-node reference
-C3_HANDOVER_TOL = 3e-4  # hand-over time on the extended table: round-off spread 7.5e-5
+C3_HANDOVER_TOL = 3e-4  # hand-over time on the extended table: spread up to 8e-5 at 1e-13
+C3_PIN_FLUX_TOL = (
+    3e-5  # flux pin of the molten shell on the test tables: spread 2.3e-6 at 1e-13
+)
 C3_CROSSING_TOL = 5e-4  # hand-over against the crossing without the lid: gap at most 3.5e-5
 
 
@@ -234,9 +237,10 @@ def test_c3_molten_lid_run_on_the_test_tables():
     up to 935 yr. Later the top of this shell leaves real table entries: from before 1635 yr its
     surface lies on the padded rows of the table at about 320.23 K, and from about 2334 yr a cell
     lies below the table, which the EOS guard refuses. The pin checks only that the run repeats.
-    A solidus shifted by 10 J/kg/K moves these fluxes by 2e-6, below their round-off floor, so a
+    A solidus shifted by 10 J/kg/K moves these fluxes by at most 2.2e-6, inside their round-off, so a
     shifted hand-over fails only the time checks: the crossing of the solidus by the stored run
-    without the lid sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K."""
+    without the lid sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K. The pin does not see
+    the heat content of the merge; test_merge_is_energy_exact checks that."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     np.testing.assert_array_equal(d['pin_times_yr'], PIN_TIMES_YR)
     assert np.all(np.diff(d['pin']) < -100.0)  # every row off the padded table rows
@@ -245,7 +249,7 @@ def test_c3_molten_lid_run_on_the_test_tables():
         d['pin_nolid_t'], d['pin_nolid_S_top'], float(d['pin_nolid_S_sol'])
     )
     assert t_ho == pytest.approx(crossing, rel=C3_CROSSING_TOL)
-    np.testing.assert_allclose(live, d['pin'], rtol=FLOOR)
+    np.testing.assert_allclose(live, d['pin'], rtol=C3_PIN_FLUX_TOL)
     assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
 
 

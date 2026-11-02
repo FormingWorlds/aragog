@@ -1559,7 +1559,10 @@ def _isotherm_depth(T_iso, delta, T_b, T_s_of, z_cells, T_cells) -> float | None
 
 
 def _real_or_none(value) -> float | None:
-    """``value`` as a float; None when it is not a real number or too large for a float."""
+    """``value`` as a float; None when it is not a real number or too large for a float. A 0-d
+    real array with data counts as a number."""
+    if isinstance(value, np.ndarray) and value.ndim == 0 and value.dtype.kind in 'fiu':
+        value = None if np.ma.is_masked(value) else value.item()
     try:
         return float(value) if _is_real(value) else None
     except OverflowError:
@@ -3023,8 +3026,8 @@ class EntropySolver:
 
         It holds in either order with ``set_initial_entropy``, apart from a start that refuses
         the lid of the previous solution; every start uses it until the next ``solve``, which
-        consumes it. A lid above the growth stop fails the step check at step 0. ``None`` clears the stored value: a later start then
-        takes the lid of the previous solution, or the phantom lid (``lid_delta_lo``, linear
+        consumes it. A lid above the growth stop fails the step check at step 0. ``None`` clears
+        the stored value: a later start then takes the lid of the previous solution, or the phantom lid (``lid_delta_lo``, linear
         profile). ``(0, 0)`` is a lid handed over to the mesh, which does not grow again;
         ``handover_time`` [yr] is then the ``lid_handover_time`` of the output, NaN if not
         known. A live lid has no hand-over time and clears the stored one.
@@ -3127,9 +3130,7 @@ class EntropySolver:
         return rheo is not None and rheo.stress_closure_mode == 'lid'
 
     def _n_core_state(self) -> int:
-        """Length of the state vector without the lid tail, for the configured core_bc."""
-        if self._core_bc == 'gradient':
-            return self._n_stag + 2
+        """Length of the state vector without the lid tail, for a core_bc the lid runs on."""
         return self._n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ())) + self._n_shell()
 
     def _lid_enthalpy_table(self) -> '_lid.LidEnthalpy':
@@ -3216,7 +3217,8 @@ class EntropySolver:
     def _lid_W(self, S: npt.ArrayLike) -> npt.NDArray:
         """Heat content per volume ``W(S)`` [J/m^3] at the top-cell pressure, zero at the
         solidus (:meth:`_lid_enthalpy_table`). Outside the table it continues linearly with
-        the end slope, as the JAX table does; :meth:`_check_lid_step` refuses such a state."""
+        the end slope, as the JAX table does; :meth:`_check_lid_step` refuses a state more than
+        ``_EOS_TABLE_TOL`` outside."""
         pp = self._lid_W_of_S
         S = np.asarray(S, dtype=float)
         edge = np.clip(S, *pp.x[[0, -1]])
@@ -3271,8 +3273,9 @@ class EntropySolver:
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
             ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
-            ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
-            table.
+            ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy
+            lies more than ``_EOS_TABLE_TOL`` outside the heat table. With the solid rheology on,
+            its own check refuses any state outside the table before this one runs.
         """
         ev = self._lid_last
         r = ev.rates
@@ -3324,7 +3327,7 @@ class EntropySolver:
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
         """Hand-over root of a physical state: the smallest of the margin
-        ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_gate`. It is positive once
+        ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_solid_regime`. It is positive once
         the lid-base isotherm lies below the face of ``lid_handover_cells`` top cells in the
         solid regime; -1 for a handed-over lid or without the stagnant-lid state. It updates
         only the column, the lid base and, when the crossing can lie in the lid, the lid surface;
@@ -3355,7 +3358,9 @@ class EntropySolver:
         )
         if z is None:
             return -1.0
-        return min((z - self._lid_handover_depth) / self._lid_handover_depth, *self._lid_gate())
+        return min(
+            (z - self._lid_handover_depth) / self._lid_handover_depth, *self._lid_solid_regime()
+        )
 
     def _lid_solidus_root(self, y: npt.NDArray) -> float:
         """Freeze-through root without the solid rheology, where the lid base is the solidus:
@@ -3368,7 +3373,7 @@ class EntropySolver:
         span = float(eos.S_max) - float(eos.S_min)
         return (self._lid_S_sol - float(y[self._n_stag - 1])) / span
 
-    def _lid_gate(self) -> tuple[float, ...]:
+    def _lid_solid_regime(self) -> tuple[float, ...]:
         """Solid-regime terms of the hand-over root at the last RHS state: ``2 w_active - 1``
         of the stagnant-lid state and ``1 - 2 w_phi``, with ``w_phi`` the melt ramp of the top
         cell that also sets the lid base. Both are positive only with an active stagnant lid
@@ -5023,8 +5028,7 @@ class EntropySolver:
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. With the rheology off, a call that leaves the EOS tables fails with status -1 (see
         ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that warning:
-        a call whose
-        floor root returns a state below the EOS table, or stops at the call start, is solved
+        a call whose floor root returns a state below the EOS table, or stops at the call start, is solved
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
@@ -5801,6 +5805,10 @@ class EntropySolver:
             sol.t, sol.y = sol.t[keep], sol.y[:, keep]
             sol.pop('energy_trace', None)
             sol.status, sol.success, sol.cvode_flag_name = -1, False, 'EOS_TABLE_GUARD'
+            if (
+                self._n_lid and sol.y[-2, -1] != 0.0
+            ):  # the cut removed any hand-over of this call
+                self._lid_handover_time = self._lid_start_handover_time
         self._log_solution_outcome(self.parameters.solver.end_time)
         sol.lid_cap_excess = math.nan  # the energy replay sets it from the trace
         if self.stop_early:
