@@ -279,6 +279,65 @@ def test_resume_after_a_hand_over_reports_the_given_time(eos):
         r.set_initial_lid(2.0, -1.0e9, handover_time=7.5)
 
 
+@pytest.mark.parametrize(
+    'wrap', [np.array, np.ma.masked_array, np.float64], ids=['array', 'masked', 'scalar']
+)
+def test_set_initial_lid_takes_a_zero_dimensional_real_value(eos, wrap):
+    """A scalar read from a NetCDF file arrives as a 0-d array and starts the lid as a float."""
+    s = _solver(eos)
+    s.set_initial_lid(wrap(0.5), wrap(-1.875e9))
+    assert s._lid_init == (0.5, -1.875e9)
+
+
+@pytest.mark.parametrize(
+    'value',
+    [np.array([0.5]), np.array(True), np.array('0.5'), np.ma.masked_array(0.5, mask=True)],
+    ids=['1d', 'bool', 'string', 'masked_out'],
+)
+def test_set_initial_lid_refuses_an_array_that_is_not_one_real_value(eos, value):
+    """Only a 0-d real value with data counts as a number."""
+    with pytest.raises(ValueError, match='set_initial_lid needs numbers'):
+        _solver(eos).set_initial_lid(value, -1.875e9)
+
+
+def test_a_chained_solve_on_the_stratified_core_carries_the_shell(eos):
+    """A second solve takes the shell temperatures of a stratified core from the previous
+    solution with the lid in the state, and ends where one solve over both spans ends."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+
+    def make(end):
+        p = _build(core_bc='core_module', outer_bc=1, inner_bc=1, n_nodes=10, end_time=end)
+        p.energy.solver_method = 'cvode'
+        p.energy.use_jax_jacobian = False
+        p.boundary_conditions.core_module_params = {
+            **CORE_MODULE_PARAMS,
+            'stratification': True,
+            'k_core': 130.0,
+        }
+        p.boundary_conditions.subgrid_lid = True
+        p.boundary_conditions.normalize()
+        s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR, identity_alpha=True))
+        s.initialize()
+        s.set_initial_entropy(3050.0)
+        s.solve()
+        return s
+
+    chained, single = make(0.5), make(1.0)
+    prev = np.array(chained._solution.y[:, -1])
+    chained.parameters.solver.start_time, chained.parameters.solver.end_time = 0.5, 1.0
+    chained.set_initial_entropy(prev[: chained._n_stag])
+    n_core = chained._n_core_state()
+    assert n_core > chained._n_stag + 2
+    np.testing.assert_array_equal(
+        chained._S0[chained._n_stag + 2 : n_core], prev[chained._n_stag + 2 : n_core]
+    )
+    chained.solve()
+    np.testing.assert_allclose(
+        chained._solution.y[:n_core, -1], single._solution.y[:n_core, -1], rtol=1e-10
+    )
+
+
 def test_a_time_set_after_the_entropy_reaches_the_output(eos):
     """The order of the setters does not matter for the hand-over time either."""
     s = _solver(eos)
@@ -506,14 +565,52 @@ def test_heat_table_check_has_the_band_of_the_eos_guard(eos, past_top, refused):
 
 
 def test_a_lid_over_a_state_held_at_the_table_top_runs_as_without_it(eos):
-    """A column held at the table top drifts into the band of the EOS guard: the run passes with
-    the lid on as it does with the lid off."""
-    T_top = float(np.asarray(eos.temperature(5.0e7, float(eos.S_max))).item())
+    """A column held at the table top enters the band of the EOS guard: the run passes with the
+    lid on, its column stays within the band of the run with the lid off."""
+    S_max = float(eos.S_max)
+    T_top = float(np.asarray(eos.temperature(5.0e7, S_max)).item())
+    end = {}
     for lid in (False, True):
         s = _solver(eos, lid=lid, end=10.0, equilibrium_temperature=T_top)
-        s.set_initial_entropy(np.full(s._n_stag, float(eos.S_max)))
+        s.set_initial_entropy(np.full(s._n_stag, S_max))
         s.solve()
-        assert s._solution.status == 0
+        sol = s._solution
+        assert sol.status == 0
+        trace = sol.get('energy_trace')
+        y = trace[1] if trace is not None else sol.y
+        assert 0.0 < np.max(y[: s._n_stag]) - S_max <= 1e-3
+        end[lid] = sol.y[: s._n_stag, -1]
+    np.testing.assert_allclose(end[True], end[False], rtol=0.0, atol=1e-3)
+
+
+def test_the_band_of_the_heat_table_holds_with_the_rheology_off_only(eos):
+    """With the solid rheology on, its own check refuses a state past the table top at step 0,
+    inside the band that the lid and the EOS guard accept with the rheology off."""
+    s = _cold_top_solver(eos)
+    S = np.array(s._S0[: s._n_stag])
+    S[-1] = float(eos.S_max) - 5e-4
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == 0
+    s = _cold_top_solver(eos)
+    S[-1] = float(eos.S_max) + 5e-4
+    s.set_initial_entropy(S)
+    with pytest.raises(RuntimeError, match='rheology invariant violated'):
+        s.solve()
+
+
+def test_a_guard_cut_before_the_hand_over_removes_its_time(eos):
+    """A table exit whose kept states end with a live lid fails the call without the time of the
+    hand-over it cut away, in the output and in a second read of it."""
+    s = _solver(eos, end=10.0)
+    S = np.full(s._n_stag, 3050.0)
+    S[-1], S[0] = s._lid_S_sol + 1e-4, float(eos.S_max) + 2e-3
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == -1 and 'EOS table guard' in str(s._solution.message)
+    out = s.get_state()
+    assert out.lid_delta > 0.0
+    assert math.isnan(out.lid_handover_time)
 
 
 def _table_floor_run(eos, caplog, T_s_above_the_floor):
@@ -531,18 +628,14 @@ def _table_floor_run(eos, caplog, T_s_above_the_floor):
     return s, T_floor
 
 
-def test_lid_surface_below_the_heat_table_warns_once(eos, caplog):
-    """Below its first knot the heat table continues with its end slope, so the lid says so."""
-    s, T_floor = _table_floor_run(eos, caplog, False)
-    assert s.get_state().lid_T_surface < T_floor
-    assert sum('below the first knot' in r.getMessage() for r in caplog.records) == 1
-
-
-def test_lid_surface_above_the_heat_table_floor_does_not_warn(eos, caplog):
-    """The warning stays off while the lid surface lies inside the table."""
-    s, T_floor = _table_floor_run(eos, caplog, True)
-    assert s.get_state().lid_T_surface > T_floor
-    assert not any('below the first knot' in r.getMessage() for r in caplog.records)
+@pytest.mark.parametrize('above', [False, True], ids=['below', 'above'])
+def test_lid_surface_against_the_heat_table_floor(eos, caplog, above):
+    """Below its first knot the heat table continues with its end slope, and the lid says so
+    once; the warning stays off while the lid surface lies inside the table."""
+    s, T_floor = _table_floor_run(eos, caplog, above)
+    assert bool(s.get_state().lid_T_surface > T_floor) is above
+    n = sum('below the first knot' in r.getMessage() for r in caplog.records)
+    assert n == (0 if above else 1)
 
 
 @pytest.mark.parametrize('heating', HEATING)
@@ -1627,18 +1720,6 @@ def test_lid_step_check_has_the_guard_band_at_both_table_ends(eos, field, end):
     _checked(s, **{field: edge + sign * 5e-4})
     with pytest.raises(RuntimeError, match='outside the lid heat table'):
         _checked(s, **{field: edge + sign * 2e-3})
-
-
-@pytest.mark.parametrize('field', ['S_f', 'S_b'])
-@pytest.mark.parametrize('end', [0, -1])
-def test_lid_step_check_accepts_an_entropy_on_the_table_ends(eos, field, end):
-    """An entropy exactly on an end of the heat table passes the step check."""
-    s = _solver(eos)
-    s._dSdt_single(0.0, s._S0)
-    try:
-        _checked(s, **{field: float(s._lid_W_of_S.x[end])})
-    except RuntimeError as err:
-        pytest.fail(f'step check refused a table end: {err}')
 
 
 @pytest.mark.parametrize(

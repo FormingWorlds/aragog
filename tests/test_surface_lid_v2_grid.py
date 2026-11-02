@@ -26,6 +26,7 @@ from tests.reference.surface_lid_v2_column import (
     TIMES_YR,
     melt_column,
     molten_column,
+    molten_start,
     shell,
     solidus_crossing,
     surface_flux,
@@ -246,6 +247,55 @@ def test_c3_molten_lid_run_on_the_test_tables():
     assert t_ho == pytest.approx(crossing, rel=C3_CROSSING_TOL)
     np.testing.assert_allclose(live, d['pin'], rtol=FLOOR)
     assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
+
+
+def test_a_guard_cut_after_the_hand_over_keeps_its_time():
+    """The molten shell on the test tables leaves the table after its hand-over: the call fails
+    at the EOS guard, its kept states end with the lid handed over, and the time stays."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = shell(10, True, eos, 3000.0, 0.0, rheology=False, convection=True)
+    s.set_initial_entropy(molten_start(s, eos))
+    s.solve()
+    assert s._solution.status == -1 and 'EOS table guard' in str(s._solution.message)
+    assert s._solution.t[-1] > 1000.0
+    out = s.get_state()
+    d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
+    assert out.lid_delta == 0.0
+    assert out.lid_handover_time == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
+
+
+def _handover_spread(table, end_yr, tol):
+    """Relative spread of the hand-over time of the molten shell for 2 starts 1e-13 apart, at
+    the default solver tolerance (``tol`` None) or at ``rtol = atol = tol``."""
+    times = []
+    for shift in (0.0, 1e-13):
+        eos = entropy_eos_copy(table)
+        s = shell(10, True, eos, end_yr, 0.0, rheology=False, convection=True)
+        if tol:
+            s.parameters.solver.rtol = s.parameters.solver.atol = tol
+        s.set_initial_entropy(molten_start(s, eos) * (1.0 + shift))
+        s.solve()
+        assert s._solution.status == 0
+        times.append(float(s.get_state().lid_handover_time))
+    return abs(times[1] - times[0]) / times[0]
+
+
+@pytest.mark.parametrize(
+    ('name', 'end_yr', 'rows'),
+    [('test', 40.0, (1e-6, 1e-8)), ('lowt', 12.0, (3e-4, 1e-7))],
+    ids=['test', 'lowt'],
+)
+def test_c3_handover_spread_follows_the_solver_tolerance(name, end_yr, rows):
+    """A start shift of 1e-13 moves the hand-over time by far less at rtol = atol = 1e-8 than at
+    the default tolerance of the pins, on the test tables and on the extended table. The bounds
+    hold the 2 rows of the page; the printed numbers are the ones the page quotes."""
+    table = EOS_DIR if name == 'test' else _lowt_table()
+    if not table:
+        pytest.skip('ARAGOG_LOWT_EOS_DIR is not set')
+    default, fine = (_handover_spread(table, end_yr, tol) for tol in (None, 1e-8))
+    print(f'{name}: default {default:.2e}, 1e-8 {fine:.2e}')
+    assert default <= rows[0] and fine <= rows[1]
+    assert default >= 10.0 * fine
 
 
 @pytest.mark.parametrize(

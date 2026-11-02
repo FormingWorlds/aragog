@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -519,7 +521,10 @@ def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(end, past, re
         with pytest.raises(RuntimeError, match='outside the lid heat table'):
             s._compute_step_energy_integrals()
     else:
+        calls = s._batch_powers_calls
         s._compute_step_energy_integrals()
+        assert s._batch_powers_calls > calls
+        assert all(math.isfinite(v) for v in sol.energy_integrals.values())
 
 
 def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():

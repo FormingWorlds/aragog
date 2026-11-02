@@ -106,6 +106,15 @@ def melt_column(n_nodes: int, lid: bool, times_yr, eos, perturb: float = 0.0):
     return np.array(flux), np.array(crust)
 
 
+def molten_start(s, eos):
+    """Start entropy of the molten shell ``s``, ``MOLTEN_0`` of the way from the solidus to the
+    liquidus entropy at each node."""
+    P = np.asarray(s._P_stag_flat)
+    S_sol = np.asarray(eos.solidus_entropy(P), dtype=float).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(P), dtype=float).ravel()
+    return S_sol + MOLTEN_0 * (S_liq - S_sol)
+
+
 def molten_column(n_nodes: int, lid: bool, times_yr, eos):
     """Surface heat flux [W/m^2] at ``times_yr`` and the hand-over time [yr] of the lid (NaN
     without one) from chained solves of the shell started ``MOLTEN_0`` of the way from the
@@ -114,10 +123,7 @@ def molten_column(n_nodes: int, lid: bool, times_yr, eos):
     for t in times_yr:
         s = shell(n_nodes, lid, eos, float(t), t_prev, rheology=False, convection=True)
         if y is None:
-            P = np.asarray(s._P_stag_flat)
-            S_sol = np.asarray(eos.solidus_entropy(P), dtype=float).ravel()
-            S_liq = np.asarray(eos.liquidus_entropy(P), dtype=float).ravel()
-            S = S_sol + MOLTEN_0 * (S_liq - S_sol)
+            S = molten_start(s, eos)
         else:
             S = y[: s._n_stag]
             if lid:
