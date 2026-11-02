@@ -687,6 +687,19 @@ L 261.048941 168.62
 " style="fill: none; stroke: #10151b; stroke-width: 1.1; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="legend_1">
+    <g id="patch_5">
+     <path d="M 91.941658 41.32 
+L 238.594158 41.32 
+Q 240.194158 41.32 240.194158 39.72 
+L 240.194158 8.8 
+Q 240.194158 7.2 238.594158 7.2 
+L 91.941658 7.2 
+Q 90.341658 7.2 90.341658 8.8 
+L 90.341658 39.72 
+Q 90.341658 41.32 91.941658 41.32 
+z
+" style="fill: #f2f5f7"/>
+    </g>
     <g id="text_10">
      <!-- (a) nodes -->
      <g style="fill: #10151b" transform="translate(137.408533 16.16) scale(0.08 -0.08)">
@@ -934,7 +947,7 @@ L 215.139158 33.68
    </g>
   </g>
   <g id="axes_2">
-   <g id="patch_5">
+   <g id="patch_6">
     <path d="M 282.629602 168.62 
 L 474.191668 168.62 
 L 474.191668 45.32 
@@ -1078,17 +1091,30 @@ L 421.936582 45.32
 L 465.484302 45.32 
 " clip-path="url(#p290da65793)" style="fill: none; stroke-dasharray: 0.8,1.32; stroke-dashoffset: 0; stroke: #10151b; stroke-width: 0.8"/>
    </g>
-   <g id="patch_6">
+   <g id="patch_7">
     <path d="M 282.629602 168.62 
 L 282.629602 45.32 
 " style="fill: none; stroke: #10151b; stroke-width: 1.1; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
-   <g id="patch_7">
+   <g id="patch_8">
     <path d="M 282.629602 168.62 
 L 474.191668 168.62 
 " style="fill: none; stroke: #10151b; stroke-width: 1.1; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="legend_2">
+    <g id="patch_9">
+     <path d="M 298.545635 41.32 
+L 458.275635 41.32 
+Q 459.875635 41.32 459.875635 39.72 
+L 459.875635 8.8155 
+Q 459.875635 7.2155 458.275635 7.2155 
+L 298.545635 7.2155 
+Q 296.945635 7.2155 296.945635 8.8155 
+L 296.945635 39.72 
+Q 296.945635 41.32 298.545635 41.32 
+z
+" style="fill: #f2f5f7"/>
+    </g>
     <g id="text_18">
      <!-- (b) floor (J/kg) -->
      <g style="fill: #10151b" transform="translate(351.18751 16.448) scale(0.08 -0.08)">

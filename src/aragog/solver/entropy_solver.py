@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog import surface_lid as _lid
-from aragog.config.boundary import check_subgrid_lid
+from aragog.config.boundary import _is_real, check_subgrid_lid
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -51,6 +51,7 @@ from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.rheology import R_GAS as _R_GAS
 from aragog.solver.boundary import BoundaryConditions
+from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
 from aragog.solver.entropy_state import EntropyState
 from aragog.utilities import positive_gravity
 
@@ -365,8 +366,9 @@ _RATE_CAP_RTOL_LIMIT = 1.0e-7
 # solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
 # Relative slack of the lid thickness above the growth stop in the step check: the integrator
-# can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-8, 1.4e-8 at 1e-9).
+# can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-6, 1.4e-8 at 1e-7).
 _LID_CAP_SLACK = 1.0e-3
+_LID_LO_SLACK = 1.0e-6  # relative slack of the lid thickness below the melt-back stop
 # Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
 _SUBSOLIDUS_RTOL = 1.0e-9
 _SUBSOLIDUS_ATOL = 1.0e-8
@@ -1210,7 +1212,8 @@ class SolverOutput:
     lid_weight: float = float('nan')
     lid_delta_eff: float = float('nan')
     lid_F_base: float = float('nan')
-    # Time [yr] of the hand-over of the lid to the mesh, NaN before (or without) it.
+    # Time [yr] of the hand-over of the lid to the mesh; NaN before it, without it, or on a
+    # resume of a handed-over lid that does not give the time.
     lid_handover_time: float = float('nan')
 
     # ── NetCDF output ──────────────────────────────────────────────
@@ -1551,6 +1554,14 @@ def _isotherm_depth(T_iso, delta, T_b, T_s_of, z_cells, T_cells) -> float | None
     return float(zs[i - 1] + (T_iso - Ts[i - 1]) * (zs[i] - zs[i - 1]) / (Ts[i] - Ts[i - 1]))
 
 
+def _real_or_none(value) -> float | None:
+    """``value`` as a float; None when it is not a real number or too large for a float."""
+    try:
+        return float(value) if _is_real(value) else None
+    except OverflowError:
+        return None
+
+
 def _lid_slots(solver) -> int:
     """Number of lid states at the end of the state vector of ``solver``: 2 with the lid on,
     else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works too."""
@@ -1668,7 +1679,10 @@ class EntropySolver:
             ``rhs_fn`` may optionally carry a ``step_powers(t_nodes, Y_nodes, aux)``
             attribute for batched per-call energy power evaluation.
             May be None to disable the Option Z path even if the flag
-            is on.
+            is on. A factory that raises
+            ``aragog.solver.cvode_jax.UnsupportedCoreBCError`` (bower2018,
+            gradient) gives the NumPy RHS after a warning; any other
+            exception it raises propagates out of ``solve()``.
         phase_params : PhaseParams, optional
             When supplied, validates immediately that ``phase_params.rheology``
             matches ``self.parameters.phase_solid.rheology``.
@@ -2466,7 +2480,6 @@ class EntropySolver:
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
         self._lid_const = False
-        self._lid_cap_excess = math.nan
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -2477,6 +2490,7 @@ class EntropySolver:
             bc.lid_ra_crit,
             self._outer_bc_kind,
             self._core_bc,
+            bc.param_utbl,
         )
         self._lid_convection = bool(self.parameters.energy.convection)  # as the mesh state
         self._lid_const = bool(getattr(self.parameters.phase_mixed, 'const_properties', False))
@@ -2840,6 +2854,8 @@ class EntropySolver:
         temperature derived from ``S_init`` via the EOS unless
         ``set_initial_core_temperature`` has been called first.
         """
+        if _lid_slots(self):
+            self._check_carried_lid()
         # Prefer the cached _n_stag from _initialize_internals; fall
         # back to the mesh accessor for legacy callers that bypass it.
         if hasattr(self, '_n_stag') and self._n_stag is not None:
@@ -3010,36 +3026,103 @@ class EntropySolver:
         """Number of lid states at the end of the state vector: 2 with the lid on, else 0."""
         return _lid_slots(self)
 
-    def set_initial_lid(self, delta: float | None, E_lid: float | None = None) -> None:
+    def set_initial_lid(
+        self,
+        delta: float | None,
+        E_lid: float | None = None,
+        handover_time: float = float('nan'),
+    ) -> None:
         """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
 
-        Must be called before ``set_initial_entropy``; every start uses it until the next
-        ``solve``, which consumes it. ``None`` clears it: the lid then starts from the previous
-        solution, or as the phantom lid (``lid_delta_lo``, linear profile).
-        ``(0, 0)`` is a lid handed over to the mesh, which does not grow again.
+        It holds in either order with ``set_initial_entropy``, apart from a start that refuses
+        the lid of the previous solution; every start uses it until the next ``solve``, which
+        consumes it. A lid above the growth stop fails the step check at step 0. ``None`` clears the stored value: a later start then
+        takes the lid of the previous solution, or the phantom lid (``lid_delta_lo``, linear
+        profile). ``(0, 0)`` is a lid handed over to the mesh, which does not grow again;
+        ``handover_time`` [yr] is then the ``lid_handover_time`` of the output, NaN if not
+        known. A live lid has no hand-over time and clears the stored one.
+
+        Raises
+        ------
+        ValueError
+            For a time that is neither NaN nor finite and >= 0, a time with a live or cleared
+            lid, or a lid other than ``(0, 0)`` that is not finite with ``delta > 0``.
         """
-        if delta is None:
+        time_yr, delta_m, E = (_real_or_none(v) for v in (handover_time, delta, E_lid))
+        known = time_yr is not None and not math.isnan(time_yr)
+        if time_yr is None or (known and not 0.0 <= time_yr < math.inf):
+            raise ValueError(
+                f'set_initial_lid needs a hand-over time that is NaN or finite and >= 0, '
+                f'got {handover_time!r}'
+            )
+        if delta is None and not known:
             self._lid_init = None
             return
-        if delta == 0.0 and E_lid == 0.0:  # a lid handed over to the mesh
+        if delta is None:
+            raise ValueError(
+                'set_initial_lid takes a hand-over time only for a handed-over lid'
+            )
+        if delta_m is None or E is None:
+            raise ValueError(f'set_initial_lid needs numbers, got {delta!r}, {E_lid!r}')
+        if delta_m == 0.0 and E == 0.0:  # a lid handed over to the mesh
             self._lid_init = (0.0, 0.0)
-            return
-        if E_lid is None or not np.isfinite(delta) or not np.isfinite(E_lid) or delta <= 0:
+        elif not math.isfinite(delta_m) or not math.isfinite(E) or delta_m <= 0:
             raise ValueError(
                 f'set_initial_lid needs a finite delta > 0 and E_lid, got {delta}, {E_lid}'
             )
-        self._lid_init = (float(delta), float(E_lid))
+        elif known:
+            raise ValueError(
+                'set_initial_lid takes a hand-over time only for a handed-over lid'
+            )
+        else:
+            self._lid_init = (delta_m, E)
+        self._lid_handover_time = self._lid_start_handover_time = time_yr
+        s0 = getattr(self, '_S0', None)
+        if self._n_lid and s0 is not None and s0.size == self._n_core_state() + 2:
+            s0[-2:] = self._lid_init
+
+    def _previous_lid(self) -> npt.NDArray | None:
+        """Lid states at the end of the previous solution, None without one of this layout."""
+        prev = getattr(self, '_solution', None)
+        y = None if prev is None else getattr(prev, 'y', None)
+        if y is None or np.ndim(y) != 2 or np.shape(y)[0] != self._n_core_state() + 2:
+            return None
+        return np.asarray(y)[-2:, -1].copy()
+
+    def _check_carried_lid(self) -> None:
+        """Refuse a lid of the previous solution above the growth stop of the top cell, before
+        a new start changes any state."""
+        lid = None if getattr(self, '_lid_init', None) is not None else self._previous_lid()
+        cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        if lid is not None and lid[0] > cap * (1.0 + _LID_CAP_SLACK):
+            raise ValueError(
+                f'the lid of the previous solution ({lid[0]:.6g} m) lies above the growth stop of '
+                f'the top cell ({cap:.6g} m); use a thicker top cell, or call set_initial_lid '
+                'with a start and then set_initial_entropy'
+            )
 
     def _initial_lid(self, S_top: float) -> npt.NDArray:
-        """Lid start: the set values, else the previous solution's, else the phantom lid."""
+        """Lid start: the set values, else the previous solution's, else the phantom lid. A
+        start with a live lid has no hand-over time."""
+        start = self._lid_start(S_top)
+        if start[0] != 0.0:
+            self._lid_handover_time = float('nan')
+        self._lid_start_handover_time = getattr(self, '_lid_handover_time', float('nan'))
+        return start
+
+    def _lid_start(self, S_top: float) -> npt.NDArray:
+        """The start of :meth:`_initial_lid`."""
         init = getattr(self, '_lid_init', None)
         if init is not None:
             return np.array(init)
-        prev = getattr(self, '_solution', None)
-        if prev is not None and getattr(prev, 'y', None) is not None:
-            y = np.asarray(prev.y)
-            if y.ndim == 2 and y.shape[0] == self._n_core_state() + 2:
-                return y[-2:, -1].copy()
+        lid = self._previous_lid()
+        if lid is not None:
+            return lid
+        if getattr(getattr(self, '_solution', None), 'lid_cap_excess', None) is not None:
+            logger.warning(
+                'sub-grid lid: the lid of the previous solution is not carried to a new node '
+                'count, so the phantom lid starts; use set_initial_lid to pass it on'
+            )
         eos, P = self._lid_props, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
@@ -3243,20 +3326,19 @@ class EntropySolver:
         ------
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
-            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slack 1e-6 below, ``_LID_CAP_SLACK``
-            above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
-            table. Records the largest ``delta / cap - 1`` of the call in ``_lid_cap_excess``.
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
+            ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy leaves the heat
+            table.
         """
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
-        self._lid_cap_excess = float(np.fmax(self._lid_cap_excess, ev.delta / cap - 1.0))
         lo, hi = self._lid_S_range
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
-        elif ev.delta > cap * (1.0 + _LID_CAP_SLACK) or ev.delta < delta_lo * (1.0 - 1e-6):
+        elif not delta_lo * (1.0 - _LID_LO_SLACK) <= ev.delta <= cap * (1.0 + _LID_CAP_SLACK):
             bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
@@ -3274,6 +3356,14 @@ class EntropySolver:
                 f'sub-grid lid: the growth stop holds the lid near {cap:.6g} m '
                 f'({_lid.LID_CAP_FRAC} of the top cell) from t={time_yr:.6e} yr',
             )
+        T_knot = self._lid_hv.first_knot
+        if ev.surf.T_s < T_knot:
+            self._warn_once(
+                'lid_table_floor',
+                f'sub-grid lid: surface temperature {ev.surf.T_s:.6g} K below the first knot '
+                f'{T_knot:.6g} K of the lid heat table at t={time_yr:.6e} yr; the heat content '
+                'continues with the slope at that knot',
+            )
         dh = (ev.H_f - ev.H_b) / ev.rho
         if dh < _lid.LID_DH_MIN:
             self._warn_once(
@@ -3287,27 +3377,6 @@ class EntropySolver:
                 f'sub-grid lid: the lid energy lies outside the profile family at t={time_yr:.6e} '
                 'yr; the bound profile is used',
             )
-
-    def _lid_depth(self) -> float | None:
-        """Depth [m] of the lid-base isotherm of the solid rheology on the column with the lid.
-
-        The profile runs from the lid surface (``T_s``) to the lid base (``delta``, ``T_b``), the
-        top-cell node and the cell nodes below. The depth is the base of the cold region: the
-        deepest point where the profile rises through ``T_lid_iso`` of the stagnant-lid state,
-        by linear interpolation. In the solid regime the lid base sits at ``T_lid_iso``, so the
-        profile may only touch the isotherm there. 0 when the whole profile is at or above
-        ``T_lid_iso``; None when it stays below it, without that state (rheology off or not in
-        the 'lid' closure) or with the lid handed over.
-        """
-        ls = getattr(self.state, 'lid_state', None)
-        if ls is None or not self._lid_active:
-            return None
-        ev = self._lid_last
-        T = np.asarray(self.state.phase_staggered.temperature()).ravel()[::-1]
-        T_iso = float(np.asarray(ls['T_lid_iso']))
-        return _isotherm_depth(
-            T_iso, ev.delta, ev.T_b, lambda: ev.surf.T_s, self._lid_z_stag, T
-        )
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
         """Hand-over root of a physical state: the smallest of the margin
@@ -5031,6 +5100,8 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
+        if _lid_slots(self):  # the time belongs to the start: an earlier call may have merged
+            self._lid_handover_time = getattr(self, '_lid_start_handover_time', float('nan'))
         self._lid_init = None  # a set initial lid holds until this solve
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()
@@ -5458,11 +5529,9 @@ class EntropySolver:
                         'EntropySolver: option Z active '
                         '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
                     )
-                except Exception as exc:  # pragma: no cover - fallback path
-                    from aragog.solver.cvode_jax import LidFactoryMismatch
-
-                    if isinstance(exc, LidFactoryMismatch):
-                        raise ValueError(f'JAX CVODE factory: {exc}') from exc
+                except LidFactoryMismatch as exc:
+                    raise ValueError(f'JAX CVODE factory: {exc}') from exc
+                except UnsupportedCoreBCError as exc:
                     logger.warning(
                         'EntropySolver: JAX CVODE factory failed (%s); '
                         'falling back to numpy RHS + FD Jacobian',
@@ -5798,6 +5867,7 @@ class EntropySolver:
             self.state._pb_cache_misses = 0
 
         self._log_solution_outcome(self.parameters.solver.end_time)
+        sol.lid_cap_excess = math.nan  # the energy replay sets it from the trace
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
@@ -5810,11 +5880,7 @@ class EntropySolver:
             t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
-        self._lid_cap_excess = (
-            math.nan
-        )  # largest delta / cap - 1 the lid checks of the call see
         sol.energy_integrals = self._compute_step_energy_integrals()
-        sol.lid_cap_excess = self._lid_cap_excess
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
             time.perf_counter() - t_solved,
@@ -5855,7 +5921,10 @@ class EntropySolver:
         adds energy to the mantle. The lid heat-table range of the fluid entropy, and with
         solid rheology the EOS entropy-range invariant, are checked on every accepted step on
         both branches, while invariants that require a refreshed RHS state are checked on the
-        final step on the JAX batch path and at every step on the NumPy loop.
+        final step on the JAX batch path and at every step on the NumPy loop. The lid thickness
+        is checked against both stops on every accepted step on both branches, and
+        ``sol.lid_cap_excess`` is set to its largest ``delta / cap - 1`` (NaN without a lid or
+        without a replay).
 
         Returns
         -------
@@ -5899,6 +5968,11 @@ class EntropySolver:
         t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
         t_pts = np.asarray(t_pts, dtype=float)
         y_pts = np.asarray(y_pts, dtype=float)
+        if self._n_lid:  # largest delta / cap - 1 over the accepted states with a lid
+            d, cap = y_pts[-2], _lid.LID_CAP_FRAC * self._lid_h_top
+            lid_lo = min(self._lid_delta_lo, float(d[0]))
+            grown = d[d > 0.0]
+            sol.lid_cap_excess = float(grown.max() / cap - 1.0) if grown.size else math.nan
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
         P = None
@@ -5942,8 +6016,15 @@ class EntropySolver:
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
+                    thin = (d != 0.0) & (d < lid_lo * (1.0 - _LID_LO_SLACK))
+                    bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
+                    if bad.size:
+                        k = int(bad[0])
+                        raise RuntimeError(
+                            f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: thickness '
+                            f'{d[k]:.6g} m outside [{lid_lo:.6g}, {cap:.6g}] m'
+                        )
                 if self._n_lid and self._lid_active:
-                    lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0]))
                     self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
                 if check_rheo:
                     self._check_rheology_step_invariants(
@@ -5955,14 +6036,13 @@ class EntropySolver:
                     t_pts.size,
                 )
                 rows = []
-                lid_lo = min(self._lid_delta_lo, float(y_pts[-2, 0])) if self._n_lid else None
                 for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
                     if check_rheo:
                         self._check_rheology_eos_range(
                             self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
                         )
                     rows.append(self._step_powers(float(t), y))
-                    if lid_lo is not None and self._lid_active:
+                    if self._n_lid and self._lid_active:
                         self._check_lid_step(lid_lo, step_idx, float(t))
                     if check_rheo:
                         self._check_rheology_step_invariants(
@@ -6530,7 +6610,7 @@ class EntropySolver:
                 lid_T_surface=ev.surf.T_s,
                 lid_T_base=ev.T_b,
                 lid_weight=ev.rates.w,
-                lid_delta_eff=ev.delta / _lid.shape(ev.surf.s)[0],
+                lid_delta_eff=_lid.effective_thickness(ev.delta, ev.surf.s),
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
             )

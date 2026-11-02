@@ -18,6 +18,8 @@ LOWT_EOS_MD5 = '18d6f9eb5ba654d58fe3fad30ce118f0'  # temperature_solid.dat
 TIMES_YR = np.geomspace(300.0, 5000.0, 8)
 MELT_TIMES_YR = np.geomspace(100.0, 5000.0, 8)
 PHI_0 = 0.2  # start entropy, as a fraction of the way from the solidus to the liquidus
+MOLTEN_0 = 1.1  # molten start, the same fraction past the liquidus
+MOLTEN_TIMES_YR = np.geomspace(100.0, 5000.0, 29)
 
 
 def shell(
@@ -28,6 +30,7 @@ def shell(
     start_yr: float = 0.0,
     T_eq: float = 255.0,
     rheology: bool = True,
+    convection: bool = False,
 ):
     """The initialized solver of the shell (entropy not yet set); ``rheology=False`` turns the
     solid rheology off, which puts the lid base at the solidus."""
@@ -38,7 +41,7 @@ def shell(
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=n_nodes, end_time=end_yr)
     p.solver.start_time = start_yr
     p.mesh.inner_radius = 6.346e6
-    p.energy.convection = False
+    p.energy.convection = convection
     p.boundary_conditions.equilibrium_temperature = T_eq
     p.boundary_conditions.subgrid_lid = lid
     p.boundary_conditions.normalize()
@@ -100,3 +103,54 @@ def melt_column(n_nodes: int, lid: bool, times_yr, eos, perturb: float = 0.0):
         z_sol = z[k - 1] - d[k - 1] * (z[k] - z[k - 1]) / (d[k] - d[k - 1]) if k else np.nan
         crust.append(float(y[-2]) if lid else float(z_sol))
     return np.array(flux), np.array(crust)
+
+
+def molten_column(n_nodes: int, lid: bool, times_yr, eos):
+    """Surface heat flux [W/m^2] at ``times_yr`` and the hand-over time [yr] of the lid (NaN
+    without one) from chained solves of the shell started ``MOLTEN_0`` of the way from the
+    solidus to the liquidus entropy at each node, convecting, without rheology."""
+    flux, y, t_prev, t_ho = [], None, 0.0, float('nan')
+    for t in times_yr:
+        s = shell(n_nodes, lid, eos, float(t), t_prev, rheology=False, convection=True)
+        if y is None:
+            P = np.asarray(s._P_stag_flat)
+            S_sol = np.asarray(eos.solidus_entropy(P), dtype=float).ravel()
+            S_liq = np.asarray(eos.liquidus_entropy(P), dtype=float).ravel()
+            S = S_sol + MOLTEN_0 * (S_liq - S_sol)
+        else:
+            S = y[: s._n_stag]
+            if lid:
+                s.set_initial_lid(float(y[-2]), float(y[-1]))
+        s.set_initial_entropy(np.asarray(S))
+        s.solve()
+        assert s._solution.status == 0
+        y, t_prev = np.asarray(s._solution.y[:, -1]), float(t)
+        st = s.get_state()
+        flux.append(float(st.heat_flux[-1]))
+        if lid and np.isnan(t_ho):
+            t_ho = float(st.lid_handover_time)
+    return np.array(flux), t_ho
+
+
+def molten_top_cell(eos, end_yr: float = 100.0) -> tuple[np.ndarray, np.ndarray, float]:
+    """Time [yr], top-cell entropy [J/kg/K] at each step and the top-cell solidus entropy of one
+    solve of the molten start on 10 nodes without the lid."""
+    s = shell(10, False, eos, end_yr, 0.0, rheology=False, convection=True)
+    P = np.asarray(s._P_stag_flat)
+    S_sol = np.asarray(eos.solidus_entropy(P), dtype=float).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(P), dtype=float).ravel()
+    s.set_initial_entropy(S_sol + MOLTEN_0 * (S_liq - S_sol))
+    s.solve()
+    assert s._solution.status == 0
+    return (
+        np.asarray(s._solution.t, dtype=float),
+        s._solution.y[s._n_stag - 1],
+        float(S_sol[-1]),
+    )
+
+
+def solidus_crossing(t: np.ndarray, S_top: np.ndarray, S_sol: float) -> float:
+    """Time [yr] at which ``S_top`` first falls to ``S_sol``, linear between the steps."""
+    i = int(np.argmax(S_top <= S_sol))
+    assert i > 0 and S_top[i] <= S_sol < S_top[i - 1]
+    return float(np.interp(-S_sol, -S_top[i - 1 : i + 1], t[i - 1 : i + 1]))

@@ -34,6 +34,7 @@ cooling of a half-space (eq. 4.116, p. 189).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -171,6 +172,11 @@ class LidEnthalpy:
     rho: Callable[[npt.ArrayLike], npt.NDArray]
     data: tuple = ()  # ('linear', rho, cp, T_b, h_b) or ('table', T, H, rho), for the JAX form
 
+    @property
+    def first_knot(self) -> float:
+        """Lowest temperature [K] of the table behind ``H``; -inf for constant properties."""
+        return float(self.data[1][0]) if self.data[:1] == ('table',) else -math.inf
+
     @classmethod
     def linear(cls, rho: float, cp: float, T_b: float, h_b: float) -> LidEnthalpy:
         """Constant properties: ``H(T) = rho (h_b + cp (T - T_b))``."""
@@ -211,6 +217,13 @@ class LidEnthalpy:
         """Mean density [kg/m^3] of a lid with shape ``s`` from ``T_s`` to ``T_b``."""
         x, w = profile_nodes(s)
         return float(np.dot(w, self.rho(T_s + (T_b - T_s) * profile(s, x))))
+
+
+def effective_thickness(delta: float, s: float) -> float:
+    """Thickness [m] of the linear lid with the surface gradient of a lid of thickness ``delta``
+    and shape ``s``: ``delta / f'(0)``. NaN at the lower shape bound, where ``f'(0)`` is 0."""
+    slope = shape(s)[0]
+    return delta / slope if slope > 0.0 else float('nan')
 
 
 def grey_surface_temperature(

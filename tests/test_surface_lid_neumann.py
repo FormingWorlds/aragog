@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from aragog import surface_lid as sl
-from tests.conftest import assert_legend_clear
+from tests.conftest import assert_legend_clear, opaque_legend
 from tests.test_surface_lid_validation import (
     CP,
     KAPPA,
@@ -74,7 +74,7 @@ def test_v1_crust_growth_follows_neumann(validation_plot):
         ax.set_xscale('log')
         ax.set_xlabel('time (yr)')
         ax.set_ylabel(r'$\delta / \sqrt{\kappa t}$')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig

@@ -14,9 +14,9 @@ from pathlib import Path
 import numpy as np
 
 import aragog
-from tests.reference.subgrid_lid_v0_probe import CASES, case_name, probe
+from tests.reference.subgrid_lid_v0_probe import CASES, MODES, case_name, mode_probe, probe
 
-BASE_COMMIT = '4ae8167d469763449b51cb5097c59f83b5472843'
+BASE_COMMIT = '65e0d18ef13606515da9fa6ecba917e0620208d1'
 OUT = Path(__file__).resolve().parent / 'subgrid_lid_v0_reference.npz'
 
 if __name__ == '__main__':
@@ -29,5 +29,8 @@ if __name__ == '__main__':
     for rheology, jax in CASES:
         for key, value in probe(rheology, jax, os.environ['ARAGOG_TEST_EOS_DIR']).items():
             arrays[f'{case_name(rheology, jax)}/{key}'] = value
+    for mode in MODES:
+        for key, value in mode_probe(mode, os.environ['ARAGOG_TEST_EOS_DIR']).items():
+            arrays[f'mode_{mode}/{key}'] = value
     np.savez_compressed(OUT, base_commit=np.array(BASE_COMMIT), **arrays)
     print(OUT, len(arrays), 'arrays')

@@ -318,7 +318,9 @@ def _cvode_solver(lid, factory_lid):
 def test_lid_solve_refuses_a_factory_without_lid_params():
     """A lid solve with a JAX factory built without the lid raises and names the fix."""
     s = _cvode_solver(lid=True, factory_lid=False)
-    with pytest.raises(ValueError, match=r'pass lid_params=solver\.jax_lid_params\(\)'):
+    with pytest.raises(
+        ValueError, match=r'^JAX CVODE factory: .*pass lid_params=solver\.jax_lid_params\(\)'
+    ):
         s.solve()
 
 
@@ -326,7 +328,10 @@ def test_solve_without_the_lid_refuses_a_factory_with_lid_params():
     """A solve without the lid and a JAX factory built with the lid raises; it never drops
     the 2 lid slots."""
     s = _cvode_solver(lid=False, factory_lid=True)
-    with pytest.raises(ValueError, match='runs without the sub-grid lid; pass lid_params=None'):
+    with pytest.raises(
+        ValueError,
+        match=r'^JAX CVODE factory: .*runs without the sub-grid lid; pass lid_params=None',
+    ):
         s.solve()
 
 
@@ -605,3 +610,65 @@ def test_jax_base_flux_is_never_negative(monkeypatch):
 
     np.testing.assert_array_equal(lid(-100.0), lid(0.0))
     assert not np.array_equal(lid(50.0), lid(0.0))
+
+
+@pytest.mark.parametrize('case', ['growth', 'melt_back', 'start_below'])
+def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
+    """The JAX batch path checks every accepted state, not only the last: one state in the
+    middle of the trace past the growth stop with its slack, or thinner than the melt-back
+    stop, fails the lid invariant at its step. A lid that starts the call below ``delta_lo``
+    passes, and the lower bound is then its start thickness."""
+    s = _jax_cvode_lid_solver()
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    k = t.size // 2
+    assert y[-2, k] > 0.0
+    if case == 'growth':
+        y[-2, k] = sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 2e-3)
+    elif case == 'melt_back':
+        y[-2, k] = 0.5 * min(s._lid_delta_lo, y[-2, 0])
+    else:
+        y[-2] *= 0.8 * s._lid_delta_lo / y[-2, 0]
+        sol.energy_trace = (t, y)
+        calls = s._batch_powers_calls
+        s._compute_step_energy_integrals()
+        assert s._batch_powers_calls == calls + 1
+        y[-2, k] = y[-2, 0] * (1.0 - 2e-6)
+    sol.energy_trace = (t, y)
+    calls = s._batch_powers_calls
+    with pytest.raises(RuntimeError, match=f'at step {k},.*thickness'):
+        s._compute_step_energy_integrals()
+    assert s._batch_powers_calls == calls + 1
+
+
+def test_jax_path_records_the_largest_lid_excess_of_the_call():
+    """On the JAX batch path lid_cap_excess is the largest delta / cap - 1 over the accepted
+    states of the call, here at the start of a lid set above the growth stop."""
+    from tests.test_subgrid_lid_solver import _phantom_energy
+
+    s = _jax_cvode_lid_solver(end=100.0)
+    cap = sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, cap * (1.0 + 5e-4), 2140.0)
+    s.set_initial_lid(cap * (1.0 + 5e-4), E)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    sol = s._solution
+    _, y = sol.get('energy_trace') or (sol.t, sol.y)
+    d = np.asarray(y, dtype=float)[-2]
+    assert s._batch_powers_calls >= 1
+    assert sol.lid_cap_excess == np.max(d[d > 0.0]) / cap - 1.0
+    assert sol.lid_cap_excess == pytest.approx(5e-4, rel=1e-9)
+
+
+def test_lid_params_follows_the_positional_arguments_of_main():
+    """A caller that passes ``start_time`` by position, as the signature of main allows, still
+    binds it to ``start_time``: the lid argument comes last and has a keyword only."""
+    import inspect
+
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    params = inspect.signature(build_jax_rhs_and_jacobian).parameters
+    names = list(params)
+    assert names.index('start_time') == names.index('core_module_ra_crit_cmb') + 1
+    assert params['lid_params'].kind is inspect.Parameter.KEYWORD_ONLY

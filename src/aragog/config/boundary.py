@@ -49,15 +49,17 @@ def check_subgrid_lid(
     lid_ra_crit,
     outer_boundary_condition: int,
     core_bc: str,
+    param_utbl: bool,
 ) -> None:
     """Refuse invalid sub-grid lid settings, and the lid on a boundary setup it does not support.
 
     ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
     positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
     ``lid_handover_cells`` an integer of at least 1. With the lid on, the outer boundary must
-    be the grey body (1) or the fixed surface temperature (5) and the core boundary not
-    ``'gradient'``. The check against the
-    top-cell width needs the mesh and runs at solver setup.
+    be the grey body (1) or the fixed surface temperature (5), the core boundary neither
+    ``'gradient'`` nor ``'bower2018'``, and ``param_utbl`` off, because the lid replaces the
+    surface flux the correction acts on. The check against the top-cell width needs the mesh and
+    runs at solver setup.
 
     Raises
     ------
@@ -89,8 +91,10 @@ def check_subgrid_lid(
             'subgrid_lid needs the grey-body (1) or the fixed surface temperature (5) outer '
             f'boundary, got outer_boundary_condition = {outer_boundary_condition}'
         )
-    if subgrid_lid and core_bc == 'gradient':
-        raise ValueError("subgrid_lid is not available on core_bc = 'gradient'")
+    if subgrid_lid and core_bc in ('gradient', 'bower2018'):
+        raise ValueError(f'subgrid_lid is not available on core_bc = {core_bc!r}')
+    if subgrid_lid and param_utbl:
+        raise ValueError('subgrid_lid replaces the surface flux that param_utbl corrects')
 
 
 def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
@@ -214,4 +218,5 @@ class BoundaryConfig:
             self.lid_ra_crit,
             self.outer_boundary_condition,
             self.core_bc,
+            self.param_utbl,
         )

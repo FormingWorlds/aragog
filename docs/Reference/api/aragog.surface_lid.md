@@ -7,6 +7,7 @@ The `aragog.surface_lid` module holds the sub-grid surface lid: a conductive cru
 | `shape` | Slopes at the top and the base and the mean of the profile $f_s$ for the shape parameter $s$. |
 | `surface_state` | Surface temperature, surface flux and base conduction of a lid under a grey-body surface. |
 | `fixed_surface_state` | The same for a fixed surface temperature. |
+| `effective_thickness` | Thickness of the linear lid with the same surface gradient. |
 | `convective_base_flux` | Boundary-layer flux of the melt under the lid at the critical Rayleigh number. |
 | `stefan_rate` | Growth rate of the lid base, with the growth stop and the melt-back stop. |
 | `existence_weight` | Weight of the lid from the thickness of a steady crust. |

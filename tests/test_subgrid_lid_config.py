@@ -54,7 +54,7 @@ def test_valid_settings_pass_on_both_layers():
     _both(**GOOD)
     _both(**{**GOOD, 'lid_delta_lo': 0.25, 'lid_handover_cells': 1})
     _both(**{**GOOD, 'subgrid_lid': False, 'lid_delta_on': 5e3})
-    assert check_subgrid_lid(True, 1.0, 0.999999, 1, 1e-3, 1, 'core_module') is None
+    assert check_subgrid_lid(True, 1.0, 0.999999, 1, 1e-3, 1, 'core_module', False) is None
 
 
 @pytest.mark.parametrize('value', [1, 0, 'true', None, 1.0])
@@ -126,7 +126,7 @@ def test_validator_accepts_exactly_the_valid_domain(on, lo, cells, ra):
         and cells >= 1
     )
     try:
-        check_subgrid_lid(True, on, lo, cells, ra, 1, 'energy_balance')
+        check_subgrid_lid(True, on, lo, cells, ra, 1, 'energy_balance', False)
         accepted = True
     except ValueError:
         accepted = False
@@ -137,3 +137,67 @@ def test_validator_accepts_exactly_the_valid_domain(on, lo, cells, ra):
 def test_lid_accepted_with_a_fixed_surface_temperature():
     """The lid runs under a fixed surface temperature (outer boundary 5)."""
     BoundaryConfig(**{**BASE, 'outer_boundary_condition': 5}, **GOOD)
+
+
+@pytest.mark.parametrize(
+    ('fields', 'word'),
+    [(dict(param_utbl=True), 'param_utbl'), (dict(core_bc='bower2018'), 'bower2018')],
+)
+def test_lid_refuses_a_setup_it_would_ignore_or_has_no_test_of(fields, word):
+    """The lid replaces the surface flux, so the UTBL correction would be dropped without a
+    message; the parity core mode has no lid path under test. Both layers refuse them with the
+    lid on and accept them with the lid off."""
+    with pytest.raises(ValueError, match=word):
+        _both(**GOOD, **fields)
+    _both(**{**GOOD, 'subgrid_lid': False}, **fields)
+
+
+def test_the_check_takes_the_utbl_setting_from_every_caller():
+    """A caller cannot leave the UTBL setting out and skip its refusal."""
+    with pytest.raises(TypeError, match='param_utbl'):
+        check_subgrid_lid(True, 1.0, None, 1, 1.0, 1, 'quasi_steady')
+
+
+def _toml_config(tmp_path, *lid_lines):
+    """Parse the shipped config file with ``lid_lines`` added to its boundary table."""
+    from importlib.resources import files
+
+    from aragog.parser import Parameters
+
+    text = files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    head = '[boundary_conditions]\n'
+    assert text.count(head) == 1
+    path = tmp_path / 'lid.toml'
+    path.write_text(text.replace(head, head + ''.join(f'{v}\n' for v in lid_lines)))
+    return Parameters.from_file(str(path))
+
+
+def test_lid_keys_reach_the_config_from_a_toml_file(tmp_path):
+    """Every lid key of a TOML file reaches the boundary config, typed as the file gives it."""
+    bc = _toml_config(
+        tmp_path,
+        'subgrid_lid = true',
+        'lid_delta_on = 2.0',
+        'lid_delta_lo = 0.25',
+        'lid_handover_cells = 2',
+        'lid_ra_crit = 500.0',
+    ).boundary_conditions
+    assert bc.subgrid_lid is True
+    assert (bc.lid_delta_on, bc.lid_delta_lo, bc.lid_handover_cells) == (2.0, 0.25, 2)
+    assert bc.lid_ra_crit == pytest.approx(500.0, abs=0)
+    assert _toml_config(tmp_path).boundary_conditions.subgrid_lid is False
+
+
+@pytest.mark.parametrize(
+    ('lines', 'word'),
+    [
+        (('subgrid_lid = 1',), 'subgrid_lid'),
+        (('subgrid_lid = true', 'lid_delta_on = true'), 'lid_delta_on'),
+        (('subgrid_lid = true', 'lid_delta_lo = 5.0'), 'lid_delta_lo'),
+        (('subgrid_lid = true', 'lid_handover_cells = 2.0'), 'lid_handover_cells'),
+    ],
+)
+def test_lid_keys_of_a_toml_file_are_checked(tmp_path, lines, word):
+    """A wrong type or value in the file fails with the name of the key."""
+    with pytest.raises(ValueError, match=word):
+        _toml_config(tmp_path, *lines)

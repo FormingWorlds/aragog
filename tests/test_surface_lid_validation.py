@@ -15,7 +15,7 @@ from scipy.optimize import brentq
 from scipy.special import erf
 
 from aragog import surface_lid as sl
-from tests.conftest import assert_legend_clear
+from tests.conftest import assert_legend_clear, opaque_legend
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -111,7 +111,7 @@ def test_v2_half_space_cooling(validation_plot):
         ax.set_ylim(0.98, 1.02)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel(r'$F_s \,/\, (k \Delta T / \sqrt{\pi \kappa t})$')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
@@ -154,7 +154,7 @@ def test_v3_quasi_steady_crust(validation_plot):
         ax.axhline(1.0, color=plt.rcParams['text.color'], lw=0.8)
         ax.set_xlabel('time / relaxation time')
         ax.set_ylabel('ratio to steady state')
-        ax.legend(fontsize=8)
+        opaque_legend(ax)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
