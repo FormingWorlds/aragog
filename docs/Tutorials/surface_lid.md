@@ -93,7 +93,7 @@ Path('surface_lid.toml').write_text(config)
 
 ## 2. Run with and without the lid
 
-Each cell starts at the entropy 3050 J/kg/K. At the pressure of the top cell, 7.8 GPa, this is in the mush, with a melt fraction of 0.36. The top cell of this coarse mesh is 380 km thick, and the lid takes its base temperature at the pressure of the top-cell centre: the solidus there is 2149 K, against 1439 K at the surface. The run shows how the lid works; for a real planet use a mesh with a thin top cell (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)). The function `run` builds a solver from the file, sets the end time and the lid switch, and runs one call.
+Each cell starts at the entropy 3050 J/kg/K. At the pressure of the top cell, 7.8 GPa, this is in the mush, with a melt fraction of 0.36. The top cell of this coarse mesh is 380 km thick, and the lid takes its base temperature at the pressure of the top-cell centre: the solidus there is 2149 K, against 1439 K at the surface. The run shows how the lid works, so its crust thickness and temperatures below are numbers of this coarse mesh, not physical values; for a real planet use a mesh with a thin top cell (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)). The function `run` builds a solver from the file, sets the end time and the lid switch, and runs one call.
 
 ```python
 from aragog.solver import EntropySolver

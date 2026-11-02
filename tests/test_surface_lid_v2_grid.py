@@ -25,6 +25,7 @@ from tests.reference.surface_lid_v2_column import (
     TIMES_YR,
     melt_column,
     molten_column,
+    shell,
     solidus_crossing,
     surface_flux,
 )
@@ -68,6 +69,9 @@ def test_v2_lid_matches_the_resolved_mesh(validation_plot):
     lid, grid = d['lid'], d['grid_4000']
     np.testing.assert_allclose(lid, grid, rtol=TOL)
     assert np.all(np.abs(d['coarse'] / grid - 1) > 0.1)
+    assert (
+        0.08 < np.min(d['coarse'] / grid) < np.max(d['coarse'] / grid) < 0.30
+    )  # the page quotes this range
     table = _lowt_table()
     if table:
         live = surface_flux(10, True, TIMES_YR, entropy_eos_copy(table))
@@ -87,7 +91,7 @@ def test_v2_lid_matches_the_resolved_mesh(validation_plot):
             fmt='none',
             color=plt.rcParams['text.color'],
             capsize=3,
-            label='grid bound',
+            label='grid error estimate',
         )
         ax.plot(TIMES_YR, lid / grid, 'o', color='C1', ms=5, label='10 nodes with lid')
         ax.set_xscale('log')
@@ -128,6 +132,8 @@ def test_v2_melt_lid_matches_the_resolved_mesh(validation_plot):
         np.testing.assert_allclose(d[f'grid_1000_p_{q}'], d[f'grid_1000_{q}'], rtol=FLOOR)
         np.testing.assert_allclose(d[f'lid_{q}'], grid, rtol=MELT_TOL)
         assert np.all(np.abs(d[f'coarse_{q}'] / grid - 1) > 0.25)
+    crust = d['coarse_crust'] / d['grid_4000_crust']
+    assert 4.3 < np.min(crust) < np.max(crust) < 30.5  # the page quotes this range
     table = _lowt_table()
     if table:
         live = melt_column(10, True, MELT_TIMES_YR, entropy_eos_copy(table))
@@ -237,3 +243,49 @@ def test_c3_molten_lid_run_on_the_test_tables():
     assert t_ho == pytest.approx(crossing, rel=C3_CROSSING_TOL)
     np.testing.assert_allclose(live, d['pin'], rtol=FLOOR)
     assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
+
+
+@pytest.mark.parametrize(
+    ('name', 'ratio'),
+    [('test tables', 1.1877), ('extended table', 1.1848)],
+    ids=['test', 'lowt'],
+)
+def test_melt_density_against_the_solid_at_the_top_cell_pressure(name, ratio):
+    """The page quotes the density sign of these tables at the top-cell pressure of its shells:
+    the melt at the liquidus is denser than the solid at the solidus. The lid has no buoyancy
+    test, so this number only tells which way a crust would sink on these tables."""
+    table = EOS_DIR if name == 'test tables' else _lowt_table()
+    if not table:
+        pytest.skip('ARAGOG_LOWT_EOS_DIR is not set')
+    eos = entropy_eos_copy(table)
+    P = float(np.asarray(shell(10, False, eos, 1.0, 0.0)._P_stag_flat)[-1])
+    S_sol = float(np.asarray(eos.solidus_entropy(P)).item())
+    S_liq = float(np.asarray(eos.liquidus_entropy(P)).item())
+    rho_solid = float(np.asarray(eos.density(P, S_sol - 1.0)).item())
+    rho_melt = float(np.asarray(eos.density(P, S_liq + 1.0)).item())
+    assert P == pytest.approx(55.68e6, rel=1e-3)
+    assert rho_melt / rho_solid == pytest.approx(ratio, rel=1e-3)
+
+
+def test_tutorial_blocks_run_and_match_page(monkeypatch, capsys, tmp_path):
+    """The Python blocks of the lid tutorial run on the test tables and print the numbers of the
+    page, each to a relative 1e-3."""
+    import re
+
+    path = Path(__file__).resolve().parents[1] / 'docs' / 'Tutorials' / 'surface_lid.md'
+    text = path.read_text(encoding='utf-8')
+    blocks = re.findall(r'```python\n(.*?)```', text, flags=re.DOTALL)
+    expected = ''.join(re.findall(r'```text\n(.*?)```', text, flags=re.DOTALL))
+    assert blocks and expected
+    monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', str(EOS_DIR))
+    monkeypatch.chdir(tmp_path)
+    ns: dict[str, object] = {'__name__': '__main__'}
+    for block in blocks:
+        exec(compile(block, str(path), 'exec'), ns)  # noqa: S102
+    out = capsys.readouterr().out
+    number = r'-?\d+\.\d+'
+    words = [re.sub(number, '#', line).split() for line in expected.strip().splitlines()]
+    assert [re.sub(number, '#', line).split() for line in out.strip().splitlines()] == words
+    want, got = (np.array(re.findall(number, t), dtype=float) for t in (expected, out))
+    assert want.size >= 10
+    np.testing.assert_allclose(got, want, rtol=1e-3)

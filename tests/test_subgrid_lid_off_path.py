@@ -85,6 +85,8 @@ def test_lid_off_core_mode_equals_the_base(reference, mode):
     assert len(integrals) > 3
     assert integrals <= set(got)
     for key in integrals - {'ei/solver_residual'}:
-        np.testing.assert_allclose(got[key], stored[key], rtol=OFF_PATH_RTOL, atol=0, err_msg=key)
+        np.testing.assert_allclose(
+            got[key], stored[key], rtol=OFF_PATH_RTOL, atol=0, err_msg=key
+        )
     heat = abs(float(stored['ei/F_int'][0]))
     assert abs(got['ei/solver_residual'][0] - stored['ei/solver_residual'][0]) <= 1e-12 * heat
