@@ -3,8 +3,9 @@ molten and convecting, without rheology (``molten_column``), at ``MOLTEN_TIMES_Y
 PALEOS low-temperature table named by ``ARAGOG_LOWT_EOS_DIR``: with the lid on 10 nodes, with the
 lid and its hand-over root held at -1, and without the lid on 10 nodes; the stored runs without
 the lid on 400 and 800 nodes with top cells of 0.25 and 0.125 m in radius coordinates (the
-800-node run is the reference); and the lid run on the SPIDER test tables at ``MELT_TIMES_YR`` as
-the pin of CI.
+800-node run is the reference); the lid run on the SPIDER test tables at ``MELT_TIMES_YR`` as
+the pin of CI; and, on both tables, the top-cell entropy of the 10-node run without the lid at
+each step (``molten_top_cell``), whose crossing of the solidus checks the hand-over time.
 
 The mesh runs take hours, so they are read from their row files (JSON with a list ``rows`` of
 ``t`` and ``F_s``): ``python tests/reference/build_surface_lid_c3_molten.py <n400.json>
@@ -28,6 +29,7 @@ from tests.reference.surface_lid_v2_column import (
     MELT_TIMES_YR,
     MOLTEN_TIMES_YR,
     molten_column,
+    molten_top_cell,
 )
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR
 
@@ -69,6 +71,8 @@ if __name__ == '__main__':
     out['pin'], out['pin_handover_yr'] = molten_column(
         10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR)
     )
+    for key, tab in (('nolid', eos), ('pin_nolid', entropy_eos_copy(EOS_DIR))):
+        out[f'{key}_t'], out[f'{key}_S_top'], out[f'{key}_S_sol'] = molten_top_cell(tab)
     for k, v in out.items():
         print(k, v, flush=True)
     meta = dict(times_yr=MOLTEN_TIMES_YR, pin_times_yr=MELT_TIMES_YR, md5=md5)

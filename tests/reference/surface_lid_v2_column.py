@@ -130,3 +130,27 @@ def molten_column(n_nodes: int, lid: bool, times_yr, eos):
         if lid and np.isnan(t_ho):
             t_ho = float(st.lid_handover_time)
     return np.array(flux), t_ho
+
+
+def molten_top_cell(eos, end_yr: float = 100.0) -> tuple[np.ndarray, np.ndarray, float]:
+    """Time [yr], top-cell entropy [J/kg/K] at each step and the top-cell solidus entropy of one
+    solve of the molten start on 10 nodes without the lid."""
+    s = shell(10, False, eos, end_yr, 0.0, rheology=False, convection=True)
+    P = np.asarray(s._P_stag_flat)
+    S_sol = np.asarray(eos.solidus_entropy(P), dtype=float).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(P), dtype=float).ravel()
+    s.set_initial_entropy(S_sol + MOLTEN_0 * (S_liq - S_sol))
+    s.solve()
+    assert s._solution.status == 0
+    return (
+        np.asarray(s._solution.t, dtype=float),
+        s._solution.y[s._n_stag - 1],
+        float(S_sol[-1]),
+    )
+
+
+def solidus_crossing(t: np.ndarray, S_top: np.ndarray, S_sol: float) -> float:
+    """Time [yr] at which ``S_top`` first falls to ``S_sol``, linear between the steps."""
+    i = int(np.argmax(S_top <= S_sol))
+    assert i > 0 and S_top[i] <= S_sol < S_top[i - 1]
+    return float(np.interp(-S_sol, -S_top[i - 1 : i + 1], t[i - 1 : i + 1]))
