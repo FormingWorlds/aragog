@@ -501,19 +501,19 @@ def test_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     assert s._batch_powers_calls >= 1
 
 
+@pytest.mark.parametrize('end', [0, -1], ids=['bottom', 'top'])
 @pytest.mark.parametrize(
-    ('past_top', 'refused'),
-    [(5e-4, False), (2e-3, True)],
-    ids=['in_the_band', 'above_the_band'],
+    ('past', 'refused'), [(5e-4, False), (2e-3, True)], ids=['in_the_band', 'above_the_band']
 )
-def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(past_top, refused):
-    """On the trace of the JAX batch path a fluid entropy above the table top passes within the
-    tolerance of the EOS table guard, and fails above it."""
+def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(end, past, refused):
+    """On the trace of the JAX batch path a fluid entropy past a table end passes within the
+    tolerance of the EOS table guard, and fails beyond it."""
     s = _jax_cvode_lid_solver()
     s.solve()
     sol = s._solution
     t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
-    y[s._n_stag - 1, t.size // 2] = float(s._lid_W_of_S.x[-1]) + past_top
+    sign = -1.0 if end == 0 else 1.0
+    y[s._n_stag - 1, t.size // 2] = float(s._lid_W_of_S.x[end]) + sign * past
     sol['energy_trace'] = (t, y)
     if refused:
         with pytest.raises(RuntimeError, match='outside the lid heat table'):

@@ -1617,6 +1617,19 @@ def test_lid_step_check_refuses_an_entropy_outside_the_heat_table(eos, change):
 
 
 @pytest.mark.parametrize('field', ['S_f', 'S_b'])
+@pytest.mark.parametrize('end', [0, -1], ids=['bottom', 'top'])
+def test_lid_step_check_has_the_guard_band_at_both_table_ends(eos, field, end):
+    """Within the tolerance of the EOS table guard past a table end the step check passes;
+    twice that past the end it refuses, on both ends and for both entropies."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    edge, sign = float(s._lid_W_of_S.x[end]), -1.0 if end == 0 else 1.0
+    _checked(s, **{field: edge + sign * 5e-4})
+    with pytest.raises(RuntimeError, match='outside the lid heat table'):
+        _checked(s, **{field: edge + sign * 2e-3})
+
+
+@pytest.mark.parametrize('field', ['S_f', 'S_b'])
 @pytest.mark.parametrize('end', [0, -1])
 def test_lid_step_check_accepts_an_entropy_on_the_table_ends(eos, field, end):
     """An entropy exactly on an end of the heat table passes the step check."""
