@@ -96,7 +96,7 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
         import matplotlib.pyplot as plt
 
         start = _last_handover(d)
-        t = np.linspace(start + WINDOW, 1.0e9 - WINDOW, 45)
+        t = np.linspace(start + WINDOW, 1.0e9 - WINDOW, 18)
         fig, axes = plt.subplots(2, 1, figsize=(5.0, 5.4), sharex=True)
         ink = plt.rcParams['text.color']
         for key, ax in zip(('F_top', 'z_lid'), axes):
@@ -107,16 +107,17 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
                 ('n400', 'C3', '-.'),
                 ('s1000', ink, ':'),
             ):
-                label = (
-                    f'{run[1:]} nodes with lid' if run != 's1000' else 'reference, 1000 m cell'
-                )
+                label = f'{run[1:]} nodes' if run != 's1000' else '1000 m cell'
                 ratio = _window_mean(d, run, key, t, start) / base
                 ax.plot(t / 1e8, ratio, color=c, ls=ls, label=label)
             ax.axhline(1.0, color=ink, lw=0.8)
+            ax.grid(False)
         axes[0].set_ylabel('flux ratio')
         axes[1].set_ylabel('depth ratio')
-        axes[1].set_xlabel('time ($10^8$ yr)')
-        opaque_legend(axes[0], loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=2)
+        axes[1].set_xlabel('time (100 Myr)')
+        axes[0].set_ylim(0.5, 1.25)
+        axes[1].set_ylim(0.9, 2.1)
+        opaque_legend(axes[0], loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=4)
         fig.tight_layout()
         assert_legend_clear(fig)
         fig.canvas.draw()
