@@ -25,4 +25,14 @@ python tools/compare_snapshots.py main.nc branch.nc \
 
 ## Compare a P-S table set with published values
 
-`python tools/paleos_table_sheet.py <table folder> [<table folder> ...]` prints a sheet for each set: its PALEOS commit, from a table header or from `--paleos-commit FOLDER=COMMIT`, the md5 of each table, then one row per check with the measured value, the band, the source and a status. The checks cover the density and expansivity contrast of melt and solid, the isentropic gradient in the mixture, the entropy of fusion and its trend with pressure, the gap between liquidus and solidus, the depth where the isentrope with a melt fraction of 0.4 at the surface reaches the solidus, and the temperature rows that a table copies. `pass` and `outside` compare with the band; `n/a` means the tables do not reach the pressure. An `outside` row is a reading, not a failure: the bands come from other melting models, and bands that the tool chose around a published value say so. Grid and edges come from the loaded tables, so a new table set needs no edit.
+`python tools/paleos_table_sheet.py <table folder> [...] [--paleos-commit FOLDER=COMMIT]` prints a sheet for each set: its PALEOS commit, the md5 of each table, then one row per check with the measured value, the band, the source and a status. Run it with `src` of a checkout on `PYTHONPATH` to read with that code; otherwise it imports the installed aragog. No table writer emits a commit line yet, so give the commit with the flag.
+
+The checks cover the density and expansivity contrast of melt and solid, the isentropic gradient in the mixture, the entropy of fusion and its trend with pressure, the gap between liquidus and solidus, the depth where the isentrope with a melt fraction of 0.4 at the surface reaches the solidus, and the temperature rows that a table copies.
+
+| Status | Meaning |
+|---|---|
+| `pass`, `outside` | A comparison with a band of the same quantity. This is a reading, not a verdict: the bands come from other melting models, and a band the tool chose around a published value says so. |
+| `report` | A value with no band: no source gives the same quantity, or the row is a property of the table. |
+| `n/a` | A table does not hold the pressure or the entropy of the check, or a difference step leaves the mixed region. |
+
+Grid and edges come from the loaded tables, so a new table set needs no edit.
