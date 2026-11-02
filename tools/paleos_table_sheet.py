@@ -105,6 +105,26 @@ def _padded_span(table: dict, column: int) -> float:
     )
 
 
+def _padded_columns(table: dict) -> tuple[int, float, float, float]:
+    """Pressure columns whose first rows copy the row above S_min, their P range [Pa], largest span.
+
+    Returns
+    -------
+    tuple
+        Count, lowest and highest pressure of those columns (NaN when none), largest span [J/kg/K].
+    """
+    spans = np.array([_padded_span(table, i) for i in range(len(table['P']))])
+    padded = np.flatnonzero(spans > 0.0)
+    if not padded.size:
+        return 0, float('nan'), float('nan'), 0.0
+    return (
+        padded.size,
+        float(table['P'][padded[0]]),
+        float(table['P'][padded[-1]]),
+        float(spans.max()),
+    )
+
+
 def _melt_copied_above_liquidus(eos: EntropyEOS, p: float) -> float:
     """Entropy span [J/kg/K] above the liquidus where the melt temperature keeps its value there.
 
@@ -239,6 +259,14 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         span = _padded_span(table, column)
         check = f'solid temperature rows copied above S_min, {name} pressure [J/kg/K]'
         add(check, f'{span:.1f}', '0', 'property of the table', span == 0.0)
+    count, p_low_pad, p_high_pad, largest = _padded_columns(table)
+    where = (
+        f', {p_low_pad / GPA:.3g}-{p_high_pad / GPA:.3g} GPa, span {largest:.1f}'
+        if count
+        else ''
+    )
+    check = 'pressure columns with solid temperature rows copied above S_min [J/kg/K]'
+    add(check, f'{count} of {len(table["P"])}{where}', '0', 'property of the table', count == 0)
     for p_gpa in (1.0, 20.0):
         p = p_gpa * GPA
         check = f'melt temperature rows copied above the liquidus at {p_gpa:g} GPa [J/kg/K]'
