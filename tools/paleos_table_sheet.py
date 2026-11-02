@@ -2,10 +2,12 @@
 """Print a sheet that reads a P-S table set next to published magma ocean values.
 
 One row per check: the measured value, the band, the source, and a status. ``pass`` and ``outside``
-compare with a band of the same quantity, as a reading and not a verdict: the bands come from other
-melting models. ``report`` gives a value that no source gives as the same quantity, or a property of
-the table with no published value. ``n/a`` means the tables do not reach the check or a measured
-value is not finite. Grid and edges come from the loaded tables only.
+compare with a band that holds a published value of the same quantity, as a reading and not a
+verdict: the bands come from other melting models. ``report`` gives a value with no reading: a
+published number of the same name stands next to it for another composition, or no source gives the
+quantity, or the row is a property of the table, or the 2 steps of a difference disagree. ``n/a``
+means a table or melting curve does not hold the check, a difference step leaves the mixed region,
+or a measured value is not finite. Grid and edges come from the loaded tables only.
 
 Usage: ``python tools/paleos_table_sheet.py <table folder> [...] [--paleos-commit FOLDER=COMMIT]``
 Run it with ``src`` of a checkout on PYTHONPATH to read with that code; otherwise it imports the
@@ -33,14 +35,14 @@ REFERENCES = {
     'MK22A': 'Miyazaki & Korenaga 2022, Astrobiology',
 }
 UPPER_MANTLE_GPA = (1.0, 5.0, 10.0, 20.0)
-DELTA_S_LOW_P = (150.0, 600.0)  # J/kg/K, a factor 2 around the published 300, chosen here
 # model cooling below the cotectic [K], not the same quantity as the table gap
 GAP_COTECTIC_K = {50.0: 900.0, 100.0: 700.0}
-PHI0_BAND_GPA = (3.0, 8.0)  # around the published 5 GPa, chosen here
 TABLE_PROPERTY = 'none: a property of the table'
 ALPHA_MELT, ALPHA_SOLID = 4.6e-5, 3.0e-5  # [1/K], prescribed by MK22A p23
-NEAR_SURFACE_GPA = 5.0  # the density rows with a same-quantity band reach this pressure
+NEAR_SURFACE_GPA = 5.0  # depth of the melt layer whose isentrope uses these values, MK22A p5
 MIX_STEPS = (0.25, 0.01)  # steps of the mixed gradient, as fractions of the pressure
+MIX_STEP_AGREE = 1.5  # a reading needs the 2 steps within this factor: else the step decides it
+READ_TABLES = ('temperature', 'density', 'heat_capacity', 'dTdPs')
 
 
 class Row(NamedTuple):
@@ -54,17 +56,21 @@ class Row(NamedTuple):
 
 
 def _reaches(eos: EntropyEOS, p: float) -> bool:
-    """Whether every table and melting curve holds ``p``, and each phase table its boundary entropy.
+    """Whether every table the sheet reads and each melting curve holds ``p``, and each phase table
+    its boundary entropy.
 
     A lookup clamps to the range of its own table without a word, so each range counts.
     """
-    curves = (eos._solidus, eos._liquidus)
-    if not all(c['P'][0] <= p <= c['P'][-1] for c in (*eos._tables.values(), *curves)):
+    solid, melt = (
+        [eos._tables[f'{q}_{phase}'] for q in READ_TABLES] for phase in ('solid', 'melt')
+    )
+    if not all(
+        c['P'][0] <= p <= c['P'][-1] for c in (*solid, *melt, eos._solidus, eos._liquidus)
+    ):
         return False
-    boundary = {'solid': float(eos.solidus_entropy(p)), 'melt': float(eos.liquidus_entropy(p))}
-    return all(
-        table['S'][0] <= boundary[name.rpartition('_')[2]] <= table['S'][-1]
-        for name, table in eos._tables.items()
+    s_sol, s_liq = float(eos.solidus_entropy(p)), float(eos.liquidus_entropy(p))
+    return all(t['S'][0] <= s_sol <= t['S'][-1] for t in solid) and all(
+        t['S'][0] <= s_liq <= t['S'][-1] for t in melt
     )
 
 
@@ -106,21 +112,27 @@ def _mix_gradient(eos: EntropyEOS, p: float, step: float) -> float:
     return (t_hi - t_lo) / (2.0 * dp)
 
 
-def _phi0_pressure(eos: EntropyEOS) -> float | None:
-    """Pressure [Pa] where the isentrope with melt fraction 0.4 at the lowest pressure reaches 0.
+def _phi0_pressure(eos: EntropyEOS) -> tuple[float | None, float]:
+    """First pressure [Pa] where the isentrope with melt fraction 0.4 at the lowest pressure reaches
+    0, and the top of the searched range.
 
-    The isentrope keeps its entropy, so this is where the solidus entropy rises to it. None when
-    the tables hold no such pressure.
+    The isentrope keeps its entropy, so this is the first node interval where the solidus entropy
+    rises to it. The pressure is None when the solidus stays below it up to the top of the range.
     """
     p0 = float(eos.P_min)
     s = float(eos.solidus_entropy(p0)) + 0.4 * _delta_s(eos, p0)
+    top = min(float(eos.P_max), float(eos._solidus['P'][-1]))
+    grid = np.asarray(eos._solidus['P'], dtype=float)
+    nodes = np.r_[p0, grid[(grid > p0) & (grid < top)], top]
 
     def above(p):
         return float(eos.solidus_entropy(p)) - s
 
-    if not above(p0) < 0.0 <= above(float(eos.P_max)):
-        return None
-    return float(brentq(above, p0, float(eos.P_max)))
+    crossed = np.flatnonzero([above(float(p)) >= 0.0 for p in nodes])
+    if not crossed.size:
+        return None, top
+    i = int(crossed[0])
+    return float(brentq(above, nodes[i - 1], nodes[i])), top
 
 
 def _padded_span(table: dict, column: int) -> float:
@@ -139,13 +151,17 @@ def _padded_span(table: dict, column: int) -> float:
     )
 
 
+def _nearest_column(table: dict, p: float) -> int:
+    return int(np.argmin(np.abs(table['P'] - p)))
+
+
 def _melt_copied_above_liquidus(eos: EntropyEOS, p: float) -> float:
     """Entropy span [J/kg/K] above the liquidus where the melt temperature keeps its value there.
 
-    Read on the table column nearest to ``p``, with the liquidus at the pressure of that column.
+    Read on the column at ``_nearest_column``, with the liquidus at the pressure of that column.
     """
     table = eos._tables['temperature_melt']
-    i = int(np.argmin(np.abs(table['P'] - p)))
+    i = _nearest_column(table, p)
     column, s_grid = np.asarray(table['values'])[i], np.asarray(table['S'])
     s_liq = float(eos.liquidus_entropy(float(table['P'][i])))
     first_above = int(np.searchsorted(s_grid, s_liq))
@@ -172,14 +188,15 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     """
     rows: list[Row] = []
 
-    def add(check, value, band, source, ok, *measured):
-        status = 'pass' if ok else 'outside'
-        rows.append(
-            Row(check, value, band, source, status if np.all(np.isfinite(measured)) else 'n/a')
-        )
+    def row(check, value, band, source, status, measured):
+        finite = np.all(np.isfinite(measured))
+        rows.append(Row(check, value, band, source, status if finite else 'n/a'))
 
-    def report(check, value, band, source):
-        rows.append(Row(check, value, band, source, 'report'))
+    def add(check, value, band, source, ok, *measured):
+        row(check, value, band, source, 'pass' if ok else 'outside', measured)
+
+    def report(check, value, band, source, *measured):
+        row(check, value, band, source, 'report', measured)
 
     def absent(check, band, source):
         rows.append(Row(check, '-', band, source, 'n/a'))
@@ -188,12 +205,12 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         p = p_gpa * GPA
         check = f'rho_melt - rho_solid at {p_gpa:g} GPa [kg/m3]'
         near_surface = p_gpa <= NEAR_SURFACE_GPA
-        band = (
-            '< 0 near the surface (2900 - 3300 prescribed)'
-            if near_surface
-            else 'none: their model has melt heavier here, with a crossover near 75 GPa'
-        )
-        source = 'MK22A p23; MK19b p9'
+        if near_surface:
+            band = '< 0 from the prescribed 2900 and 3300, cut at the 5 GPa melt layer depth'
+            source = 'MK22A p23, p5'
+        else:
+            band = 'none: the MK19b model has melt heavier here, with a crossover near 75 GPa'
+            source = 'MK19b p9'
         if not _reaches(eos, p):
             absent(check, band, source)
             continue
@@ -201,16 +218,17 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         if near_surface:
             add(check, f'{d:.1f}', band, source, d < 0.0, d)
         else:
-            report(check, f'{d:.1f}', band, source)
+            report(check, f'{d:.1f}', band, source, d)
 
     for p_gpa in UPPER_MANTLE_GPA:
         p = p_gpa * GPA
         check = f'alpha_melt and alpha_solid, ordering at {p_gpa:g} GPa [1/K]'
         near_surface = p_gpa <= NEAR_SURFACE_GPA
+        limit = '5 GPa limit: a reading of p5 and p23, not a statement of the paper'
         band = (
-            'melt above solid above 0, ordering only; magnitudes not compared'
+            f'melt above solid above 0, ordering only, magnitudes not compared; {limit}'
             if near_surface
-            else 'none: the prescribed values hold to about 5 GPa'
+            else f'none; {limit}'
         )
         source = 'MK22A p5, p23'
         if not _reaches(eos, p):
@@ -224,12 +242,13 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         if near_surface:
             add(check, value, band, source, a_m > a_s > 0.0, a_m, a_s)
         else:
-            report(check, value, band, source)
+            report(check, value, band, source, a_m, a_s)
 
     for p_gpa in UPPER_MANTLE_GPA:
         p = p_gpa * GPA
         check = f'(dT/dP)_S mixed vs pure phases at {p_gpa:g} GPa [K/GPa]'
-        band, source = 'mixed above both, read at the wide step', 'MK19b p5'
+        band = f'mixed above both, at the wide step where the steps agree within {MIX_STEP_AGREE:g}'
+        source = 'MK19b p5'
         wide = MIX_STEPS[0]
         ends = (p * (1.0 - wide), p * (1.0 + wide))
         if not (all(_reaches(eos, x) for x in ends) and _mix_stays_mixed(eos, p, wide)):
@@ -239,35 +258,28 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         melt = GPA * _boundary(eos, 'dTdPs', p, 'melt')
         solid = GPA * _boundary(eos, 'dTdPs', p, 'solid')
         value = f'{mix[0]:.2f} at step {wide:g} P, {mix[1]:.2f} at {MIX_STEPS[1]:g} P'
-        add(
-            check,
-            f'{value} (melt {melt:.2f}, solid {solid:.2f})',
-            band,
-            source,
-            mix[0] > max(melt, solid),
-            mix[0],
-            melt,
-            solid,
-        )
+        value = f'{value} (melt {melt:.2f}, solid {solid:.2f})'
+        measured = (*mix, melt, solid)
+        small, large = sorted(map(abs, mix))
+        if mix[0] * mix[1] > 0.0 and large <= MIX_STEP_AGREE * small:
+            add(check, value, band, source, mix[0] > max(melt, solid), *measured)
+        else:
+            report(check, value, band, source, *measured)
 
     p_low = float(eos.P_min)
+    low_held = _reaches(eos, p_low)
     d_low = _delta_s(eos, p_low)
-    add(
-        f'Delta S at the lowest pressure {p_low / GPA:.3g} GPa [J/kg/K]',
-        f'{d_low:.1f}',
-        f'300 prescribed for a pyrolite; band chosen here {DELTA_S_LOW_P[0]:g}-{DELTA_S_LOW_P[1]:g}',
-        'MK22A p23',
-        DELTA_S_LOW_P[0] <= d_low <= DELTA_S_LOW_P[1],
-        d_low,
-    )
+    check = f'Delta S at the lowest pressure {p_low / GPA:.3g} GPa [J/kg/K]'
+    band, source = 'none: 300 prescribed for a pyrolite', 'MK22A p23'
+    if low_held:
+        report(check, f'{d_low:.1f}', band, source)
+    else:
+        absent(check, band, source)
     check = 'Delta S at 100 GPa / lowest pressure'
-    band = (
-        '< 1 in their MgO model, a similar trend for MgSiO3; other studies find little change'
-    )
+    band = 'none: < 1 in their MgO model, a similar trend for MgSiO3; others find little change'
     source = 'MK19a p3 Eq 3, p15'
-    if _reaches(eos, 100.0 * GPA) and d_low > 0.0:
-        ratio = _delta_s(eos, 100.0 * GPA) / d_low
-        add(check, f'{ratio:.3f}', band, source, 0.0 < ratio < 1.0)
+    if low_held and _reaches(eos, 100.0 * GPA) and d_low > 0.0:
+        report(check, f'{_delta_s(eos, 100.0 * GPA) / d_low:.3f}', band, source)
     else:
         absent(check, band, source)
 
@@ -285,23 +297,22 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         gap = _boundary(eos, 'temperature', p, 'melt') - _boundary(
             eos, 'temperature', p, 'solid'
         )
-        report(check, f'{gap:.0f}', band, source)
+        report(check, f'{gap:.0f}', band, source, gap)
 
     check = 'pressure where the isentrope with phi 0.4 at the surface reaches phi 0 [GPa]'
-    band = f'about 5 for a pyrolite (Katz 2003 model); band chosen here {PHI0_BAND_GPA[0]:g}-{PHI0_BAND_GPA[1]:g}'
-    source = 'MK22A p5'
-    p_phi0 = _phi0_pressure(eos)
-    if p_phi0 is None:
-        absent(check, band, source)
+    band, source = 'none: about 5 for a pyrolite (Katz 2003 model)', 'MK22A p5'
+    if low_held and d_low > 0.0:
+        p_phi0, top = _phi0_pressure(eos)
+        shown = f'> {top / GPA:.3g}' if p_phi0 is None else f'{p_phi0 / GPA:.2f}'
+        report(check, shown, band, source)
     else:
-        ok = PHI0_BAND_GPA[0] * GPA <= p_phi0 <= PHI0_BAND_GPA[1] * GPA
-        add(check, f'{p_phi0 / GPA:.2f}', band, source, ok)
+        absent(check, band, source)
 
     table = eos._tables['temperature_solid']
     spans = np.array([_padded_span(table, i) for i in range(len(table['P']))])
     for name, span in (('lowest', spans[0]), ('highest', spans[-1])):
         check = f'solid temperature rows copied above S_min, {name} pressure [J/kg/K]'
-        report(check, f'{span:.1f}', TABLE_PROPERTY, 'the table')
+        report(check, f'{span:.1f}', TABLE_PROPERTY, 'the table', span)
     padded = np.flatnonzero(spans > 0.0)
     where = (
         f', {table["P"][padded[0]] / GPA:.3g}-{table["P"][padded[-1]] / GPA:.3g} GPa, '
@@ -321,7 +332,10 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         if not _reaches(eos, p):
             absent(check, TABLE_PROPERTY, 'the table')
             continue
-        report(check, f'{_melt_copied_above_liquidus(eos, p):.1f}', TABLE_PROPERTY, 'the table')
+        melt_table = eos._tables['temperature_melt']
+        at = float(melt_table['P'][_nearest_column(melt_table, p)])
+        value = f'{_melt_copied_above_liquidus(eos, p):.1f} in the column at {at / GPA:.4g} GPa'
+        report(check, value, TABLE_PROPERTY, 'the table')
     return rows
 
 
@@ -355,8 +369,8 @@ def describe(folder: Path, commit: str | None = None) -> str:
     ]
     lines += [
         f'{counts["pass"]} pass, {counts["outside"]} outside, {counts["report"]} report, '
-        f'{counts["n/a"]} n/a. Pass and outside are readings against other melting models, not '
-        'verdicts; report has no band of the same quantity.',
+        f'{counts["n/a"]} n/a. Pass and outside are readings against published values of other '
+        'melting models, not verdicts; report gives a value with no reading.',
         '',
         '| check | value | band | source | status |',
         '|---|---|---|---|---|',
@@ -391,7 +405,10 @@ def main(argv: list[str] | None = None) -> int:
     if unused:
         parser.error(f'--paleos-commit names a folder not given: {sorted(map(str, unused))}')
     for folder in args.folders:
-        print(describe(folder, commits.get(folder.resolve())))
+        try:
+            print(describe(folder, commits.get(folder.resolve())))
+        except FileNotFoundError as missing:
+            parser.error(f'{folder}: {missing}')
     return 0
 
 
