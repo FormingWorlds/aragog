@@ -7,8 +7,9 @@ finite-difference Jacobian and with a JAX factory (here built with ``lid_params=
 mesh and the right-hand side must match to rtol 1e-10 and the solve to rtol 1e-9, above the
 round-off between the macOS and Linux builds; a JAX case must have called the JAX right-hand
 side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals
-to rtol 1e-8, with internal heating; the solver residual, a difference of large terms, to 1e-15
-of the surface energy.
+to rtol 1e-8, with tidal and radiogenic heating. The solver residual and the core energy are
+differences of large terms, so they match to 1e-15 and 1e-12 of the surface energy (measured
+between macOS and Linux: 2.3e-17 and 2.2e-14); these limits act only across platforms.
 """
 
 from __future__ import annotations
@@ -86,9 +87,14 @@ def test_lid_off_core_mode_equals_the_base(reference, mode):
     assert len(integrals) > 3
     assert all(float(stored[k][0]) != 0.0 for k in ('ei/F_int', 'ei/Q_radio', 'ei/Q_tidal'))
     assert integrals <= set(got)
-    for key in integrals - {'ei/solver_residual'}:
+    heat = abs(float(stored['ei/F_int'][0]))
+    limits = {'ei/solver_residual': 1e-15 * heat, 'ei/core': 1e-12 * heat}
+    for key in integrals - set(limits):
         np.testing.assert_allclose(
             got[key], stored[key], rtol=OFF_PATH_RTOL, atol=0, err_msg=key
         )
-    heat = abs(float(stored['ei/F_int'][0]))
-    assert abs(got['ei/solver_residual'][0] - stored['ei/solver_residual'][0]) <= 1e-15 * heat
+    for key, limit in limits.items():
+        assert abs(got[key][0] - stored[key][0]) <= limit, key
+    assert not np.isclose(
+        float(stored['ei/Q_radio'][0]), float(stored['ei/Q_tidal'][0]), rtol=0.1
+    )

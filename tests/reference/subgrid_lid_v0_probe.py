@@ -124,7 +124,7 @@ def mode_probe(core_bc: str, eos_dir) -> dict[str, np.ndarray]:
         p.boundary_conditions.core_module_params = CORE_MODULE_PARAMS
     p.energy.tidal, p.energy.tidal_array = True, np.array([3.0e-7])
     p.energy.radionuclides = True
-    p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
+    p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 1.0e-4, 1.0e-3, 1.0e9)]
     s = EntropySolver(p, entropy_eos=entropy_eos_copy(eos_dir, identity_alpha=core_module))
     s.initialize()
     s.set_initial_entropy(np.linspace(*S_PROFILE, s._n_stag))
