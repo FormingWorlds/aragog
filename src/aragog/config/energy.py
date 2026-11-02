@@ -151,10 +151,11 @@ class EnergyConfig:
         the rheology off, a call with an accepted cell entropy outside the
         global entropy range of the loaded tables, by more than 1e-3 J/kg/K,
         fails with status -1 after it ends and holds its states from before
-        the first one outside, so a caller can retry it with a shorter step
-        (this does not help for a start outside); with the rheology on an
-        invariant raises. The guard does not judge the extrapolated basic
-        nodes or the padded rows of a pressure column. A positive margin
+        the first one outside (its start state for a start outside), so a
+        caller can retry it with a shorter step, which does not help for a
+        start outside; with the rheology on an invariant raises. The guard
+        does not judge the extrapolated basic nodes, the padded rows of a
+        pressure column or constant properties. A positive margin
         turns it on (100 is the tested value) and must stay below the
         entropy span of the tables; ``None`` (not in TOML) or a non-positive
         value disables it, and a bool, NaN, infinity or a value that is not

@@ -952,8 +952,8 @@ _ZERO_ENERGY_INTEGRALS = {
 }
 
 
-# EOS table guard tolerance [J/kg/K]; a state held at a table edge for 10 yr moved past it by
-# below 1e-6 on CVODE and BDF and 5e-4 on Radau, with rtol raised tenfold.
+# EOS table guard tolerance [J/kg/K]. Over 10 yr at rtol x 10, a state held at a table edge moves
+# past it by below 1e-6 on CVODE and BDF, and by 5e-4 on Radau at S_max.
 _EOS_TABLE_TOL = 1.0e-3
 
 
@@ -4982,7 +4982,8 @@ class EntropySolver:
             keep = sol.t < t_bad
             keep[0] = True  # a failed call holds the states before the first one outside
             sol.t, sol.y = sol.t[keep], sol.y[:, keep]
-            sol.status, sol.cvode_flag_name = -1, 'EOS_TABLE_GUARD'
+            sol.pop('energy_trace', None)
+            sol.status, sol.success, sol.cvode_flag_name = -1, False, 'EOS_TABLE_GUARD'
         self._log_solution_outcome(self.parameters.solver.end_time)
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
@@ -5010,7 +5011,7 @@ class EntropySolver:
         run would go on at that edge temperature. It judges the global entropy range of the
         tables, not the padded rows of a pressure column, and not the extrapolated basic nodes.
         The rheology-on path raises at its own check. A call that does not advance (a floor
-        refusal, a zero span) is not judged.
+        refusal, a zero span) and a run with constant properties are not judged.
 
         Parameters
         ----------
