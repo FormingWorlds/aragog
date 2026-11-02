@@ -136,6 +136,127 @@ def test_set_initial_lid_and_hot_start(eos):
         s.set_initial_lid(1.0, float('nan'))
 
 
+def test_solver_setup_refuses_the_utbl_set_after_parsing(eos):
+    """The check at solver setup sees a correction switched on after the parser ran."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.boundary_conditions.param_utbl = True
+    with pytest.raises(ValueError, match='param_utbl'):
+        EntropySolver(p, entropy_eos=eos).initialize()
+
+
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance'])
+def test_set_initial_lid_after_the_entropy_starts_that_lid(eos, core_bc):
+    """The order of the 2 setters does not matter: a lid set after the entropy is the lid of the
+    next solve, with the core states of the mode in place."""
+    s = _solver(eos, core_bc=core_bc)
+    core = s._S0[:-2].copy()
+    s.set_initial_lid(2.0, -1.0e9)
+    np.testing.assert_array_equal(s._S0[:-2], core)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+    s.solve()
+    np.testing.assert_array_equal(s._solution.y[-2:, 0], [2.0, -1.0e9])
+
+
+def test_clearing_a_lid_after_the_entropy_keeps_the_state(eos):
+    """``None`` clears only the stored value; the state tail is written by the setters."""
+    s = _solver(eos)
+    tail = s._S0[-2:].copy()
+    s.set_initial_lid(None)
+    np.testing.assert_array_equal(s._S0[-2:], tail)
+
+
+def test_resume_after_a_hand_over_reports_the_given_time(eos):
+    """A resume of a handed-over lid reports the hand-over time it is given, and NaN (time not
+    known) without one, also after its solve; only a handed-over lid takes a time."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s.get_state().lid_handover_time == pytest.approx(7.5, abs=0)
+    r = _solver(eos)
+    r.set_initial_lid(0.0, 0.0)
+    r.set_initial_entropy(3050.0)
+    r.solve()
+    assert np.isnan(r.get_state().lid_handover_time)
+    with pytest.raises(ValueError, match='handed-over'):
+        r.set_initial_lid(2.0, -1.0e9, handover_time=7.5)
+
+
+def test_a_new_live_lid_clears_the_hand_over_time(eos):
+    """A live lid set on a solver that has handed over has no hand-over yet."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    s.set_initial_lid(2.0, -1.0e9)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+def test_effective_thickness_at_the_shape_bound_is_nan():
+    """At the lower shape bound the surface slope of the profile is 0; the thickness in the
+    output is NaN there, without a floating-point warning, and delta / f'(0) elsewhere."""
+    import warnings
+
+    assert sl.shape(sl.LID_SHAPE_MIN)[0] == 0.0
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert np.isnan(sl.effective_thickness(2.0, sl.LID_SHAPE_MIN))
+    assert sl.effective_thickness(2.0, 0.0) == pytest.approx(2.0 / sl.shape(0.0)[0], rel=1e-14)
+    assert sl.effective_thickness(2.0, -1.0) == pytest.approx(
+        2.0 / sl.shape(-1.0)[0], rel=1e-14
+    )
+
+
+def test_reset_onto_a_thinner_top_cell_refuses_the_carried_lid(eos):
+    """A previous solution's lid above the growth stop of the new top cell fails at the new
+    start, naming both thicknesses and the way out, not at step 0 of the solve."""
+    s = _solver(eos)
+    s.solve()
+    d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
+    s._solution.y[-2:, -1] = [d, s._solution.y[-1, -1]]
+    with pytest.raises(ValueError, match='growth stop') as err:
+        s.set_initial_entropy(3050.0)
+    assert 'set_initial_lid' in str(err.value)
+    s._solution.y[-2:, -1] = [0.999 * sl.LID_CAP_FRAC * s._lid_h_top, -1.0e9]
+    s.set_initial_entropy(3050.0)
+    assert s._S0[-2] == pytest.approx(0.999 * sl.LID_CAP_FRAC * s._lid_h_top, rel=1e-15)
+
+
+def _table_floor_run(eos, caplog, T_s_above_the_floor):
+    """A solve whose lid surface lies above or below the first knot of the lid heat table."""
+    s = _solver(eos, S0=3050.0)
+    T_floor = float(s._lid_hv.data[1][0])
+    T_eq = T_floor + 30.0 if T_s_above_the_floor else T_floor - 60.0
+    s._outer_bc_T_eq = T_eq
+    d = 0.5 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, T_eq + 5.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    return s, T_floor
+
+
+def test_lid_surface_below_the_heat_table_warns_once(eos, caplog):
+    """Below its first knot the heat table continues with its end slope, so the lid says so."""
+    s, T_floor = _table_floor_run(eos, caplog, False)
+    assert s.get_state().lid_T_surface < T_floor
+    assert sum('below the first knot' in r.getMessage() for r in caplog.records) == 1
+
+
+def test_lid_surface_above_the_heat_table_floor_does_not_warn(eos, caplog):
+    """The warning stays off while the lid surface lies inside the table."""
+    s, T_floor = _table_floor_run(eos, caplog, True)
+    assert s.get_state().lid_T_surface > T_floor
+    assert not any('below the first knot' in r.getMessage() for r in caplog.records)
+
+
 @pytest.mark.parametrize('heating', HEATING)
 @pytest.mark.physics_invariant
 @settings(

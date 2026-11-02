@@ -659,3 +659,16 @@ def test_jax_path_records_the_largest_lid_excess_of_the_call():
     assert s._batch_powers_calls >= 1
     assert sol.lid_cap_excess == np.max(d[d > 0.0]) / cap - 1.0
     assert sol.lid_cap_excess == pytest.approx(5e-4, rel=1e-9)
+
+
+def test_lid_params_follows_the_positional_arguments_of_main():
+    """A caller that passes ``start_time`` by position, as the signature of main allows, still
+    binds it to ``start_time``: the lid argument comes last and has a keyword only."""
+    import inspect
+
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    params = inspect.signature(build_jax_rhs_and_jacobian).parameters
+    names = list(params)
+    assert names.index('start_time') == names.index('core_module_ra_crit_cmb') + 1
+    assert params['lid_params'].kind is inspect.Parameter.KEYWORD_ONLY
