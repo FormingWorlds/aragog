@@ -153,6 +153,7 @@ class _BoundaryConditionsParameters:
             self.lid_ra_crit,
             self.outer_boundary_condition,
             self.core_bc,
+            self.param_utbl,
         )
 
     def _normalize_inner_boundary_condition(self) -> None:

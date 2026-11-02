@@ -189,6 +189,13 @@ class LidEnthalpy:
         return float(np.dot(w, self.rho(T_s + (T_b - T_s) * profile(s, x))))
 
 
+def effective_thickness(delta: float, s: float) -> float:
+    """Thickness [m] of the linear lid with the surface gradient of a lid of thickness ``delta``
+    and shape ``s``: ``delta / f'(0)``. NaN at the lower shape bound, where ``f'(0)`` is 0."""
+    slope = shape(s)[0]
+    return delta / slope if slope > 0.0 else float('nan')
+
+
 def grey_surface_temperature(
     f0: float, d: float, T_b: float, k: float, emissivity: float, T_eq: float
 ) -> float:

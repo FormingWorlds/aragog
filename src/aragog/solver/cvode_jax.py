@@ -218,8 +218,9 @@ def build_jax_rhs_and_jacobian(
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
     core_module_ra_crit_cmb: float | None = None,
-    lid_params=None,
     start_time: float | None = None,
+    *,
+    lid_params=None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
