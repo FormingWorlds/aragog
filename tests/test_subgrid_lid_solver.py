@@ -372,6 +372,16 @@ def test_growth_stop_keeps_a_growing_lid_inside_the_step_check(eos, stop, monkey
         assert 9.9e-4 < s._solution.lid_cap_excess < 1e-3
 
 
+def test_early_stop_reports_no_lid_excess(eos, monkeypatch):
+    """A solve that stops early has lid_cap_excess NaN: no lid check ran."""
+    from aragog.solver import entropy_solver as es
+
+    monkeypatch.setattr(es, '_status_failed', lambda status: True)
+    s = _solver(eos)
+    s.solve()
+    assert np.isnan(s._solution.lid_cap_excess)
+
+
 def test_growth_stop_warns_once(eos, caplog):
     """A growing lid at the growth stop holds below LID_CAP_FRAC h_top and warns once."""
     import logging
