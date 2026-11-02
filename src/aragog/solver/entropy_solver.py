@@ -952,7 +952,8 @@ _ZERO_ENERGY_INTEGRALS = {
 }
 
 
-# EOS table guard tolerance [J/kg/K]; a state at a table edge drifts past it by at most 1e-5.
+# EOS table guard tolerance [J/kg/K]; a state held at a table edge for 10 yr moved past it by
+# below 1e-6 on CVODE and BDF and 5e-4 on Radau, with rtol raised tenfold.
 _EOS_TABLE_TOL = 1.0e-3
 
 
@@ -1145,7 +1146,8 @@ class SolverOutput:
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
     # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
     # CV_CONV_FAILURE. Defaults describe the scipy ``solve_ivp`` fallback,
-    # which runs no CVODE integration: flag 0 and name 'N/A'.
+    # which runs no CVODE integration: flag 0 and name 'N/A'. A call the EOS table guard
+    # fails keeps its flag and has the name 'EOS_TABLE_GUARD'.
     cvode_flag: int = 0
     cvode_flag_name: str = 'N/A'
 
@@ -4975,9 +4977,12 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
-        table_failure = None if _status_failed(sol.status) else self._eos_table_failure(sol)
-        if table_failure is not None:
-            sol.status, sol.message, sol.cvode_flag_name = -1, table_failure, 'EOS_TABLE_GUARD'
+        if not _status_failed(sol.status) and (bad := self._eos_table_failure(sol)):
+            t_bad, sol.message = bad
+            keep = sol.t < t_bad
+            keep[0] = True  # a failed call holds the states before the first one outside
+            sol.t, sol.y = sol.t[keep], sol.y[:, keep]
+            sol.status, sol.cvode_flag_name = -1, 'EOS_TABLE_GUARD'
         self._log_solution_outcome(self.parameters.solver.end_time)
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
@@ -4998,12 +5003,14 @@ class EntropySolver:
             t_solved - wall_start,
         )
 
-    def _eos_table_failure(self, sol) -> str | None:
-        """Name the first accepted cell entropy of a call outside the loaded EOS tables.
+    def _eos_table_failure(self, sol) -> tuple[float, str] | None:
+        """Find the first accepted cell entropy of a call outside the loaded EOS tables.
 
         A safety net with the rheology off, where a table lookup clamps to the table edge and the
-        run would go on at that edge temperature. The rheology-on path raises at its own check. A
-        call that does not advance (a floor refusal, a zero span) is not judged.
+        run would go on at that edge temperature. It judges the global entropy range of the
+        tables, not the padded rows of a pressure column, and not the extrapolated basic nodes.
+        The rheology-on path raises at its own check. A call that does not advance (a floor
+        refusal, a zero span) is not judged.
 
         Parameters
         ----------
@@ -5012,9 +5019,10 @@ class EntropySolver:
 
         Returns
         -------
-        str or None
-            The failure message, or None when every state lies inside ``[S_min, S_max]`` of the
-            tables, within ``_EOS_TABLE_TOL``, and for a call the guard does not judge.
+        tuple of (float, str), or None
+            Time [yr] of the first state outside and the failure message; None when every state
+            lies inside ``[S_min, S_max]`` of the tables, within ``_EOS_TABLE_TOL``, and for a
+            call the guard does not judge.
         """
         eos = self.entropy_eos
         if (
@@ -5032,10 +5040,13 @@ class EntropySolver:
             bad = ~((s >= s_min - _EOS_TABLE_TOL) & (s <= s_max + _EOS_TABLE_TOL))
             if bad.any():
                 node = int(np.flatnonzero(bad)[0])
-                return (
-                    f'EOS table guard: cell {node} entropy {s[node]:.6g} J/kg/K outside the EOS '
-                    f'tables [{s_min:.3f}, {s_max:.3f}] J/kg/K at t={float(t):.6e} yr'
+                where = (
+                    'at the call start, a shorter step does not help' if t == t_pts[0] else ''
                 )
+                return float(t), (
+                    f'EOS table guard: cell {node} entropy {s[node]:.6g} J/kg/K outside the EOS '
+                    f'tables [{s_min:.3f}, {s_max:.3f}] J/kg/K at t={float(t):.6e} yr {where}'
+                ).rstrip()
         return None
 
     def _log_solution_outcome(self, end_time: float) -> None:

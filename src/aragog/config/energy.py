@@ -147,12 +147,14 @@ class EnergyConfig:
         whose stop lands below S_min through the root location error, which
         grows with the call time, is discarded as a refusal. A call with no
         span skips the floor. Default 0: the floor is off. A drain past S_min
-        then ends the call with the EOS table guard, the safety net of the
-        solver: with the rheology off, a call with an accepted cell entropy
-        outside the loaded tables fails with status -1, so a caller can
-        retry it with a shorter step; with the rheology on an invariant
-        raises. Only a top basic node outside the tables passes the guard.
-        A positive margin
+        then meets the EOS table guard, the safety net of the solver: with
+        the rheology off, a call with an accepted cell entropy outside the
+        global entropy range of the loaded tables, by more than 1e-3 J/kg/K,
+        fails with status -1 after it ends and holds its states from before
+        the first one outside, so a caller can retry it with a shorter step
+        (this does not help for a start outside); with the rheology on an
+        invariant raises. The guard does not judge the extrapolated basic
+        nodes or the padded rows of a pressure column. A positive margin
         turns it on (100 is the tested value) and must stay below the
         entropy span of the tables; ``None`` (not in TOML) or a non-positive
         value disables it, and a bool, NaN, infinity or a value that is not
