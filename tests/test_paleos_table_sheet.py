@@ -324,10 +324,11 @@ def test_a_solid_table_is_held_against_the_solidus_entropy(tmp_path):
     assert not sheet_tool._reaches(eos, 20.0 * GPA)
 
 
-def test_a_phase_table_that_starts_above_its_boundary_entropy_reads_na(tmp_path):
-    """The lower edge counts as well: a solid table from 2600 misses the 2480 solidus at 20 GPa."""
+@pytest.mark.parametrize(('name', 'low'), [('density_solid', 2600.0), ('density_melt', 2900.0)])
+def test_a_phase_table_that_starts_above_its_boundary_entropy_reads_na(tmp_path, name, low):
+    """The lower edge counts as well: 2480 solidus and 2760 liquidus at 20 GPa, below each start."""
     eos = _tables(tmp_path)
-    _cut_entropy(eos._tables['density_solid'], low=2600.0)
+    _cut_entropy(eos._tables[name], low=low)
     assert not sheet_tool._reaches(eos, 20.0 * GPA)
     assert _status(eos, 'rho_melt - rho_solid at 20 GPa') == ['n/a']
 
