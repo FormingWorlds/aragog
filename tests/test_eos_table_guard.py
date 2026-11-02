@@ -21,14 +21,12 @@ from aragog.solver.entropy_solver import EntropySolver
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_eos_floor import _UNSET, CVODE_BDF, _drained, needs_cvode
-from .test_eos_table_guard_decision import _sol
+from .test_eos_table_guard_decision import _N_CELLS, _TOL, _sol
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
 pytestmark = [pytest.mark.smoke, needs_eos]
 
-_TOL = 1.0e-3  # the documented guard tolerance [J/kg/K]
 _SHIFT = -400.0  # entropy zero of the shifted table set [J/kg/K]
-_N_CELLS = 11  # cells of _build_mushy_parameters
 _LOWT_DIR = os.environ.get('ARAGOG_TEST_LOWT_EOS_DIR')
 
 
@@ -70,15 +68,18 @@ def test_a_drain_past_the_table_minimum_fails_the_call(eos, caplog, method, marg
     assert out.dt_actual == pytest.approx(sol.t[-1])
 
 
-@pytest.mark.parametrize('core', ['energy_balance', 'gradient', 'bower2018'])
+@pytest.mark.parametrize('core', ['energy_balance', 'gradient', 'bower2018', 'core_module'])
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_the_failure_holds_on_each_core_mode(eos, core, method):
-    """The core modes with their own state layout end the same drain in the same way."""
+    """The core modes with their own state layout end the same drain in the same way, and the
+    result holds as many times as state columns, the last one inside the tables."""
     s, _ = _drained(eos, float(eos.S_min) + 400.0, margin=0.0, method=method, core=core)
     sol = s._solution
     assert sol.status == -1 and 'EOS table guard' in sol.message and sol.t[-1] < 10.0
+    assert sol.t.size == sol.y.shape[1] > 1
     cells = np.column_stack([s._stag_entropy(y) for y in sol.y.T])
     assert cells.min() >= float(eos.S_min) - _TOL
+    assert s._stag_entropy(sol.y[:, -1]).min() >= float(eos.S_min) - _TOL
 
 
 @needs_cvode
@@ -114,6 +115,29 @@ def test_a_retry_with_a_shorter_span_passes_inside_the_table(eos, method):
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
+def test_a_retry_on_the_same_solver_equals_a_fresh_call(eos, method):
+    """The PROTEUS sequence after a failure: a shorter end time, reset, the entry state and the
+    compression term back. The result is bit-equal to a fresh solver over the shorter span. A
+    direct user who calls reset alone on this unchanged mesh gets a compression term of 0."""
+    S0 = float(eos.S_min) + 400.0
+    fresh = _drained(eos, S0, margin=0.0, method=method, end_time=2.0)[0]._solution
+    s, _ = _drained(eos, S0, margin=0.0, method=method)
+    assert s._solution.status == -1
+    entry = np.full(s._n_stag, S0)
+    s.parameters.solver.end_time = 2.0
+    s.reset()
+    assert s._last_compression_J == 0.0
+    s._S0, s._last_compression_J = entry.copy(), 0.0
+    s.solve()
+    sol = s._solution
+    assert (
+        sol.status == 0 and not s.stop_early and sol.get('cvode_flag_name') != 'EOS_TABLE_GUARD'
+    )
+    assert np.array_equal(sol.t, fresh.t) and np.array_equal(sol.y, fresh.y)
+    assert sol.energy_integrals == fresh.energy_integrals
+
+
+@pytest.mark.parametrize('method', CVODE_BDF)
 def test_a_start_outside_the_table_names_the_call_start(eos, method):
     """A start outside fails at any span, also when the call heats back into the table: the
     message says that a shorter step does not help, and the result holds the start."""
@@ -129,12 +153,22 @@ def test_a_start_outside_the_table_names_the_call_start(eos, method):
         assert sol.t.size == 1 and sol.t[0] == t0
 
 
+@pytest.mark.parametrize('edge', ['S_min', 'S_max'])
 @pytest.mark.parametrize('method', [*CVODE_BDF, 'radau'])
-def test_a_state_held_at_the_table_edge_passes(eos, method):
-    """A state at exactly S_min that moves slightly below it over a short call passes on the
-    tolerance."""
-    s, _ = _drained(eos, float(eos.S_min), flux=0.0, margin=0.0, method=method)
-    assert s._solution.status == 0 and s._solution.y[: s._n_stag].min() < float(eos.S_min)
+def test_a_start_at_a_table_edge_passes_a_short_call(eos, method, edge):
+    """With no surface flux a state at an edge moves past it at a small rate, inside the tolerance
+    over 10 yr, on all 3 integrators."""
+    s, _ = _drained(eos, float(getattr(eos, edge)), flux=0.0, margin=0.0, method=method)
+    assert s._solution.status == 0
+
+
+@pytest.mark.parametrize('edge', ['S_min', 'S_max'])
+@pytest.mark.parametrize('method', CVODE_BDF)
+def test_a_start_at_a_table_edge_fails_a_long_call(eos, method, edge):
+    """The same state fails once its distance from the edge passes 1e-3 J/kg/K, before 1e5 yr."""
+    S0 = float(getattr(eos, edge))
+    sol = _drained(eos, S0, flux=0.0, margin=0.0, method=method, end_time=1.0e5)[0]._solution
+    assert sol.status == -1 and 'EOS table guard' in sol.message
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
