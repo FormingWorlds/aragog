@@ -104,7 +104,8 @@ def test_the_default_config_leaves_the_floor_off(
     shared_eos, caplog, monkeypatch, method, margin
 ):
     """Without eos_floor_margin in the config (or with 0 or a negative margin) and with no other cap,
-    no step-cap root is built and a draining call runs to its end below the table with no floor log."""
+    no step-cap root is built and a draining call runs to its end below the table with no floor log,
+    where the EOS table guard fails it."""
     built, real = [], es._PhiCapRootFunction.__init__
     monkeypatch.setattr(
         es._PhiCapRootFunction,
@@ -116,7 +117,7 @@ def test_the_default_config_leaves_the_floor_off(
         s, f = _drained(shared_eos, S_min + 400.0, margin=margin, method=method)
     assert s.parameters.energy.eos_floor_margin == (0.0 if margin is _UNSET else margin)
     assert not _floor_logs(caplog)
-    assert not built and s._solution.status == 0
+    assert not built and s._solution.status == -1
     assert s._solution.t[-1] == pytest.approx(10.0) and f[-1] < S_min
 
 
@@ -127,7 +128,7 @@ def test_the_default_config_is_bit_equal_to_margin_zero(shared_eos, method):
     S0 = float(shared_eos.S_min) + 400.0
     a = _drained(shared_eos, S0, margin=_UNSET, method=method)[0]._solution
     b = _drained(shared_eos, S0, margin=0.0, method=method)[0]._solution
-    assert a.status == b.status == 0
+    assert a.status == b.status == -1
     assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
     assert a.energy_integrals == b.energy_integrals
 

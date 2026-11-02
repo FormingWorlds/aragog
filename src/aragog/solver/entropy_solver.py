@@ -952,6 +952,10 @@ _ZERO_ENERGY_INTEGRALS = {
 }
 
 
+# EOS table guard tolerance [J/kg/K]; a state at a table edge drifts past it by at most 1e-5.
+_EOS_TABLE_TOL = 1.0e-3
+
+
 def _status_failed(status: int) -> bool:
     """Whether a solver status is a failure: 0 (success) and 1 (step-cap stop) are not."""
     return status not in (0, 1)
@@ -4262,7 +4266,8 @@ class EntropySolver:
 
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
-        zeros. ``_floor_discard`` (internal) refuses the call with that warning: a call whose
+        zeros. With the rheology off, a call that leaves the EOS tables fails with status -1 (see
+        ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that warning: a call whose
         floor root returns a state below the EOS table, or stops at the call start, is solved
         again this way, so it returns its start state.
         """
@@ -4970,6 +4975,9 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
+        table_failure = None if _status_failed(sol.status) else self._eos_table_failure(sol)
+        if table_failure is not None:
+            sol.status, sol.message, sol.cvode_flag_name = -1, table_failure, 'EOS_TABLE_GUARD'
         self._log_solution_outcome(self.parameters.solver.end_time)
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
@@ -4989,6 +4997,46 @@ class EntropySolver:
             time.perf_counter() - t_solved,
             t_solved - wall_start,
         )
+
+    def _eos_table_failure(self, sol) -> str | None:
+        """Name the first accepted cell entropy of a call outside the loaded EOS tables.
+
+        A safety net with the rheology off, where a table lookup clamps to the table edge and the
+        run would go on at that edge temperature. The rheology-on path raises at its own check. A
+        call that does not advance (a floor refusal, a zero span) is not judged.
+
+        Parameters
+        ----------
+        sol : OptimizeResult
+            Result of the call, with ``energy_trace`` when CVODE recorded its accepted steps.
+
+        Returns
+        -------
+        str or None
+            The failure message, or None when every state lies inside ``[S_min, S_max]`` of the
+            tables, within ``_EOS_TABLE_TOL``, and for a call the guard does not judge.
+        """
+        eos = self.entropy_eos
+        if (
+            eos is None
+            or self._rheology_enabled
+            or self.parameters.phase_mixed.const_properties
+            or sol.t.size < 2
+            or not sol.t[-1] > sol.t[0]
+        ):
+            return None
+        s_min, s_max = float(eos.S_min), float(eos.S_max)
+        t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
+        for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
+            s = self._stag_entropy(y)
+            bad = ~((s >= s_min - _EOS_TABLE_TOL) & (s <= s_max + _EOS_TABLE_TOL))
+            if bad.any():
+                node = int(np.flatnonzero(bad)[0])
+                return (
+                    f'EOS table guard: cell {node} entropy {s[node]:.6g} J/kg/K outside the EOS '
+                    f'tables [{s_min:.3f}, {s_max:.3f}] J/kg/K at t={float(t):.6e} yr'
+                )
+        return None
 
     def _log_solution_outcome(self, end_time: float) -> None:
         """Log the outcome of the last integration and set ``stop_early`` on a failure."""
