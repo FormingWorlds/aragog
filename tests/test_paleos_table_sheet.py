@@ -631,9 +631,14 @@ def test_a_folder_that_is_missing_or_incomplete_stops_with_a_message(tmp_path, c
         folder = tmp_path / 'part'
         _tables(folder)
         (folder / remove).unlink()
-    with pytest.raises(SystemExit) as stop:
+    try:
         sheet_tool.main([str(folder)])
-    assert stop.value.code == 2
+    except FileNotFoundError as missing:
+        pytest.fail(f'a traceback, not a message: {missing}')
+    except SystemExit as stop:
+        assert stop.code == 2
+    else:
+        pytest.fail('no stop on a folder without its tables')
     assert str(folder) in capsys.readouterr().err
 
 
