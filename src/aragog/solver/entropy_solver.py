@@ -3024,7 +3024,9 @@ class EntropySolver:
                 f'set_initial_lid needs a finite delta > 0 and E_lid, got {delta}, {E_lid}'
             )
         elif not np.isnan(handover_time):
-            raise ValueError('set_initial_lid takes a hand-over time only for a handed-over lid')
+            raise ValueError(
+                'set_initial_lid takes a hand-over time only for a handed-over lid'
+            )
         else:
             self._lid_init = (float(delta), float(E_lid))
         self._lid_handover_time = float(handover_time)
@@ -3260,27 +3262,6 @@ class EntropySolver:
                 f'sub-grid lid: the lid energy lies outside the profile family at t={time_yr:.6e} '
                 'yr; the bound profile is used',
             )
-
-    def _lid_depth(self) -> float | None:
-        """Depth [m] of the lid-base isotherm of the solid rheology on the column with the lid.
-
-        The profile runs from the lid surface (``T_s``) to the lid base (``delta``, ``T_b``), the
-        top-cell node and the cell nodes below. The depth is the base of the cold region: the
-        deepest point where the profile rises through ``T_lid_iso`` of the stagnant-lid state,
-        by linear interpolation. In the solid regime the lid base sits at ``T_lid_iso``, so the
-        profile may only touch the isotherm there. 0 when the whole profile is at or above
-        ``T_lid_iso``; None when it stays below it, without that state (rheology off or not in
-        the 'lid' closure) or with the lid handed over.
-        """
-        ls = getattr(self.state, 'lid_state', None)
-        if ls is None or not self._lid_active:
-            return None
-        ev = self._lid_last
-        T = np.asarray(self.state.phase_staggered.temperature()).ravel()[::-1]
-        T_iso = float(np.asarray(ls['T_lid_iso']))
-        return _isotherm_depth(
-            T_iso, ev.delta, ev.T_b, lambda: ev.surf.T_s, self._lid_z_stag, T
-        )
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
         """Hand-over root of a physical state: the smallest of the margin

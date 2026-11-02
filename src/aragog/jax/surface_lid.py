@@ -11,6 +11,21 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
+from aragog.surface_lid import (
+    _GL16,
+    _S_SERIES,
+    LID_CAP_FRAC,
+    LID_CAP_WIDTH,
+    LID_DELTA_FLOOR,
+    LID_DH_MIN,
+    LID_EXIST_WIDTH,
+    LID_SHAPE_MAX,
+    LID_SHAPE_MIN,
+    LID_TAU_HIDDEN,
+    LID_WEIGHT_FLOOR,
+    PROFILE_PANELS,
+)
+
 jax.config.update('jax_enable_x64', True)
 
 DAWSON_H: float = 0.25
@@ -53,8 +68,6 @@ def shape(s: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     parameter ``s`` [-], with the series below ``|s| = 1e-6`` and Dawson's integral for
     ``s < 0``. Each branch is evaluated on a safe argument, so the gradient has no NaN.
     """
-    from aragog.surface_lid import _S_SERIES
-
     s = jnp.asarray(s, dtype=float)
     series = (1.0 + s / 3.0, 1.0 - 2.0 * s / 3.0, 0.5 + s / 12.0)
     sp = jnp.where(s >= _S_SERIES, s, 1.0)
@@ -80,8 +93,6 @@ def grey_flux(T_s: jax.Array, emissivity: jax.Array, T_eq: jax.Array) -> jax.Arr
 
 def profile(s, x):
     """The similarity profile f_s(x), as :func:`aragog.surface_lid.profile`."""
-    from aragog.surface_lid import _S_SERIES
-
     s, x = jnp.asarray(s, dtype=float), jnp.asarray(x, dtype=float)
     sp = jnp.where(s >= _S_SERIES, s, 1.0)
     mu = jnp.sqrt(sp)
@@ -95,8 +106,6 @@ def profile(s, x):
 
 def profile_nodes(s):
     """Quadrature nodes and weights on [0, 1], as :func:`aragog.surface_lid.profile_nodes`."""
-    from aragog.surface_lid import _GL16, PROFILE_PANELS
-
     g, w = (jnp.asarray(v) for v in _GL16)
     s = jnp.asarray(s, dtype=float)
     c_grow = jnp.minimum(0.5, 6.0 / jnp.sqrt(jnp.where(s > 0.0, s, 1.0)))
@@ -241,8 +250,6 @@ def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
     tuple of jax.Array
         ``(T_s, F_s, q_b, s, clipped, T_m)`` in the units and meaning of ``LidSurface``.
     """
-    from aragog.surface_lid import LID_SHAPE_MAX, LID_SHAPE_MIN
-
     d = jnp.hypot(delta, delta_floor)
     q = E / jnp.maximum(delta, delta_floor)
 
@@ -275,8 +282,6 @@ def convective_base_flux(dT, k, rho, cp, alpha, g, eta, ra_crit):
 
 def stefan_rate(q_b, F_b, rho, dh, delta, h_top, delta_lo):
     """Base growth rate [m/s] and stop factor, as :func:`aragog.surface_lid.stefan_rate`."""
-    from aragog.surface_lid import LID_CAP_FRAC, LID_CAP_WIDTH, LID_DH_MIN
-
     r = (q_b - F_b) / (rho * jnp.maximum(dh, LID_DH_MIN))
     grow = jnp.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0)
     melt = jnp.clip((delta - delta_lo) / delta_lo, 0.0, 1.0)
@@ -287,8 +292,6 @@ def stefan_rate(q_b, F_b, rho, dh, delta, h_top, delta_lo):
 def existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on):
     """Weight [0, 1] of the lid, as :func:`aragog.surface_lid.existence_weight`."""
     from scipy.constants import Stefan_Boltzmann
-
-    from aragog.surface_lid import LID_EXIST_WIDTH, LID_WEIGHT_FLOOR
 
     F_rad = grey_flux(T_b, emissivity, T_eq)
     inside = (F_b > 0.0) & (F_rad > 0.0) & (F_b < F_rad)
@@ -311,8 +314,6 @@ def lid_rates(
     tuple of jax.Array
         ``(ddelta, dE, F_top, F_fluid, w, stop, H_lid)`` as ``LidRates``.
     """
-    from aragog.surface_lid import LID_TAU_HIDDEN
-
     T_s, F_s, q_b, s = surf[0], surf[1], surf[2], surf[3]
     r, stop = stefan_rate(q_b, F_b, rho, (H_f - H_b) / rho, delta, h_top, delta_lo)
     E_ph = delta_lo * profile_heat(e, 0.0, T_s, T_b)
@@ -400,8 +401,6 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         ledger terms ``(H_f, m_lid)``: the fluid heat content per volume [J/m^3] and the lid
         mass per area [kg/m^2].
     """
-    from aragog.surface_lid import LID_DELTA_FLOOR
-
     delta, E = y_lid[0], y_lid[1]
     base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
     H_f = enthalpy_H(lp.hs, S_f)

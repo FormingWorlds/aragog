@@ -36,6 +36,20 @@ def _heat(p, heating):
         p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
 
 
+def _lid_depth(s):
+    """The lid-base isotherm depth [m] of the last right-hand side of ``s``, by the function of
+    the hand-over root. None without a stagnant-lid state or with the lid handed over."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    ls = getattr(s.state, 'lid_state', None)
+    if ls is None or not s._lid_active:
+        return None
+    ev = s._lid_last
+    T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
+    T_iso = float(np.asarray(ls['T_lid_iso']))
+    return _isotherm_depth(T_iso, ev.delta, ev.T_b, lambda: ev.surf.T_s, s._lid_z_stag, T)
+
+
 def _solver(eos, lid=True, end=1.0, core_bc='quasi_steady', S0=3050.0, heating=None, **lidkw):
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -584,8 +598,8 @@ def test_lid_depth_is_the_isotherm_depth(eos):
     interpolated at that depth gives T_lid_iso, below the top-cell face here."""
     s = _cold_top_solver(eos)
     g = s._lid_root_value(0.0, s._S0)
-    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
-    z = s._lid_depth()
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    z = _lid_depth(s)
     T_iso = float(np.asarray(s.state.lid_state['T_lid_iso']))
     T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
     ev = s._lid_last
@@ -604,14 +618,13 @@ def test_lid_depth_of_a_handed_over_start_is_none(eos):
     assert np.array_equal(s._S0[-2:], [0.0, 0.0])
     s._dSdt_single(0.0, s._S0)
     assert s.state.lid_state is not None
-    assert s._lid_depth() is None
+    assert _lid_depth(s) is None
 
 
 def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8638394321628):
-    """``_lid_depth`` of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
+    """The depth of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
     from types import SimpleNamespace
 
-    from aragog.solver.entropy_solver import EntropySolver
 
     T = np.asarray(T_cells, dtype=float)
     c = SimpleNamespace(
@@ -623,7 +636,7 @@ def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8
         _lid_active=True,
         _lid_z_stag=np.asarray(z_cells, dtype=float),
     )
-    return EntropySolver._lid_depth(c)
+    return _lid_depth(c)
 
 
 V4_Z = (5435.244756473228, 16294.031285804696, 27137.215143142268, 37964.79998192191)
@@ -695,7 +708,7 @@ def _full_rhs_root(s, t, y):
     if float(y[-2]) == 0.0:
         return -1.0
     s._dSdt_single(t, y)
-    z = s._lid_depth()
+    z = _lid_depth(s)
     if z is None:
         return -1.0
     return min((z - s._lid_handover_depth) / s._lid_handover_depth, *s._lid_gate())
@@ -734,7 +747,7 @@ def test_root_equals_the_full_rhs_root(eos, kw):
         s._lid_evaluate = evaluate
         assert got == pytest.approx(want, rel=1e-12, abs=1e-15)
         assert np.sign(got) == np.sign(want)
-        if s._lid_depth() is None or s._lid_depth() > delta:
+        if _lid_depth(s) is None or _lid_depth(s) > delta:
             assert calls[0] == 0
 
 
@@ -971,8 +984,8 @@ def test_no_handover_outside_the_solid_regime(eos, kw, w_active, molten_top):
 
     s = _gate_column(eos, **kw)
     g = s._lid_root_value(0.0, s._S0)
-    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
-    assert s._lid_depth() > s._lid_handover_depth
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    assert _lid_depth(s) > s._lid_handover_depth
     ph, act = s.state.phase_staggered, float(s.state.lid_state['w_active'])
     w_phi = float(_melt_ramp(np.ravel(ph.melt_fraction())[-1], ph._phi_rheo, ph._phi_width))
     assert (act < 0.5) if w_active == 'low' else (act > 0.5)
@@ -988,8 +1001,8 @@ def test_handover_root_in_the_solid_regime(eos):
     positive root of the isotherm margin."""
     s = _cold_top_solver(eos)
     g = s._lid_root_value(0.0, s._S0)
-    s._dSdt_single(0.0, s._S0)  # the lid of this state for _lid_depth
-    margin = (s._lid_depth() - s._lid_handover_depth) / s._lid_handover_depth
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    margin = (_lid_depth(s) - s._lid_handover_depth) / s._lid_handover_depth
     assert 0.0 < g == pytest.approx(margin, rel=1e-12)
     assert min(s._lid_gate()) > margin
 
