@@ -4,12 +4,13 @@
 One row per check: the measured value, the band, the source, and a status. ``pass`` and ``outside``
 compare with a band of the same quantity, as a reading and not a verdict: the bands come from other
 melting models. ``report`` gives a value that no source gives as the same quantity, or a property of
-the table with no published value. ``n/a`` means the tables do not reach the check. Grid and edges
-come from the loaded tables only.
+the table with no published value. ``n/a`` means the tables do not reach the check or a measured
+value is not finite. Grid and edges come from the loaded tables only.
 
 Usage: ``python tools/paleos_table_sheet.py <table folder> [...] [--paleos-commit FOLDER=COMMIT]``
 Run it with ``src`` of a checkout on PYTHONPATH to read with that code; otherwise it imports the
-installed aragog. No table writer emits a commit line yet, so give the commit with the flag.
+installed aragog. The tool reads the commit from a ``# PALEOS commit:`` header line if a table has
+one; P-S tables have none, so give the commit with the flag.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ DELTA_S_LOW_P = (150.0, 600.0)  # J/kg/K, a factor 2 around the published 300, c
 GAP_COTECTIC_K = {50.0: 900.0, 100.0: 700.0}
 PHI0_BAND_GPA = (3.0, 8.0)  # around the published 5 GPa, chosen here
 TABLE_PROPERTY = 'none: a property of the table'
+ALPHA_MELT, ALPHA_SOLID = 4.6e-5, 3.0e-5  # [1/K], prescribed by MK22A p23
 NEAR_SURFACE_GPA = 5.0  # the density rows with a same-quantity band reach this pressure
 MIX_STEPS = (0.25, 0.01)  # steps of the mixed gradient, as fractions of the pressure
 
@@ -52,12 +54,18 @@ class Row(NamedTuple):
 
 
 def _reaches(eos: EntropyEOS, p: float) -> bool:
-    """Whether every table holds pressure ``p`` and each phase table holds its boundary entropy."""
-    if not all(table['P'][0] <= p <= table['P'][-1] for table in eos._tables.values()):
+    """Whether every table and melting curve holds ``p``, and each phase table its boundary entropy.
+
+    A lookup clamps to the range of its own table without a word, so each range counts.
+    """
+    curves = (eos._solidus, eos._liquidus)
+    if not all(c['P'][0] <= p <= c['P'][-1] for c in (*eos._tables.values(), *curves)):
         return False
-    s_sol, s_liq = float(eos.solidus_entropy(p)), float(eos.liquidus_entropy(p))
-    solid, melt = eos._tables['temperature_solid']['S'], eos._tables['temperature_melt']['S']
-    return bool(solid[0] <= s_sol <= solid[-1] and melt[0] <= s_liq <= melt[-1])
+    boundary = {'solid': float(eos.solidus_entropy(p)), 'melt': float(eos.liquidus_entropy(p))}
+    return all(
+        table['S'][0] <= boundary[name.rpartition('_')[2]] <= table['S'][-1]
+        for name, table in eos._tables.items()
+    )
 
 
 def _boundary(eos: EntropyEOS, prop: str, p: float, phase: str) -> float:
@@ -164,8 +172,11 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     """
     rows: list[Row] = []
 
-    def add(check, value, band, source, ok):
-        rows.append(Row(check, value, band, source, 'pass' if ok else 'outside'))
+    def add(check, value, band, source, ok, *measured):
+        status = 'pass' if ok else 'outside'
+        rows.append(
+            Row(check, value, band, source, status if np.all(np.isfinite(measured)) else 'n/a')
+        )
 
     def report(check, value, band, source):
         rows.append(Row(check, value, band, source, 'report'))
@@ -188,26 +199,32 @@ def sheet(eos: EntropyEOS) -> list[Row]:
             continue
         d = _boundary(eos, 'density', p, 'melt') - _boundary(eos, 'density', p, 'solid')
         if near_surface:
-            add(check, f'{d:.1f}', band, source, d < 0.0)
+            add(check, f'{d:.1f}', band, source, d < 0.0, d)
         else:
             report(check, f'{d:.1f}', band, source)
 
     for p_gpa in UPPER_MANTLE_GPA:
         p = p_gpa * GPA
         check = f'alpha_melt and alpha_solid, ordering at {p_gpa:g} GPa [1/K]'
-        band = 'melt above solid above 0; magnitudes not compared (4.6e-5, 3.0e-5 prescribed)'
-        source = 'MK22A p23'
+        near_surface = p_gpa <= NEAR_SURFACE_GPA
+        band = (
+            'melt above solid above 0, ordering only; magnitudes not compared'
+            if near_surface
+            else 'none: the prescribed values hold to about 5 GPa'
+        )
+        source = 'MK22A p5, p23'
         if not _reaches(eos, p):
             absent(check, band, source)
             continue
         a_m, a_s = _alpha(eos, p, 'melt'), _alpha(eos, p, 'solid')
-        add(
-            check,
-            f'{a_m:.3g}, {a_s:.3g}',
-            band,
-            source,
-            bool(np.isfinite(a_m) and a_m > a_s > 0.0),
+        value = (
+            f'{a_m:.3g}, {a_s:.3g} ({a_m / ALPHA_MELT:.1f} and {a_s / ALPHA_SOLID:.1f} times '
+            'the prescribed 4.6e-5, 3.0e-5)'
         )
+        if near_surface:
+            add(check, value, band, source, a_m > a_s > 0.0, a_m, a_s)
+        else:
+            report(check, value, band, source)
 
     for p_gpa in UPPER_MANTLE_GPA:
         p = p_gpa * GPA
@@ -228,6 +245,9 @@ def sheet(eos: EntropyEOS) -> list[Row]:
             band,
             source,
             mix[0] > max(melt, solid),
+            mix[0],
+            melt,
+            solid,
         )
 
     p_low = float(eos.P_min)
@@ -235,15 +255,19 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     add(
         f'Delta S at the lowest pressure {p_low / GPA:.3g} GPa [J/kg/K]',
         f'{d_low:.1f}',
-        f'300 prescribed; band chosen here {DELTA_S_LOW_P[0]:g}-{DELTA_S_LOW_P[1]:g}',
+        f'300 prescribed for a pyrolite; band chosen here {DELTA_S_LOW_P[0]:g}-{DELTA_S_LOW_P[1]:g}',
         'MK22A p23',
         DELTA_S_LOW_P[0] <= d_low <= DELTA_S_LOW_P[1],
+        d_low,
     )
     check = 'Delta S at 100 GPa / lowest pressure'
-    band, source = '< 1 in their model; other studies find little change', 'MK19a p3 Eq 3, p15'
+    band = (
+        '< 1 in their MgO model, a similar trend for MgSiO3; other studies find little change'
+    )
+    source = 'MK19a p3 Eq 3, p15'
     if _reaches(eos, 100.0 * GPA) and d_low > 0.0:
         ratio = _delta_s(eos, 100.0 * GPA) / d_low
-        add(check, f'{ratio:.3f}', band, source, 0.0 < ratio < 1.0)
+        add(check, f'{ratio:.3f}', band, source, 0.0 < ratio < 1.0, ratio)
     else:
         absent(check, band, source)
 
@@ -264,16 +288,14 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         report(check, f'{gap:.0f}', band, source)
 
     check = 'pressure where the isentrope with phi 0.4 at the surface reaches phi 0 [GPa]'
-    band = (
-        f'about 5 (Katz 2003 model); band chosen here {PHI0_BAND_GPA[0]:g}-{PHI0_BAND_GPA[1]:g}'
-    )
+    band = f'about 5 for a pyrolite (Katz 2003 model); band chosen here {PHI0_BAND_GPA[0]:g}-{PHI0_BAND_GPA[1]:g}'
     source = 'MK22A p5'
     p_phi0 = _phi0_pressure(eos)
     if p_phi0 is None:
         absent(check, band, source)
     else:
         ok = PHI0_BAND_GPA[0] * GPA <= p_phi0 <= PHI0_BAND_GPA[1] * GPA
-        add(check, f'{p_phi0 / GPA:.2f}', band, source, ok)
+        add(check, f'{p_phi0 / GPA:.2f}', band, source, ok, p_phi0)
 
     table = eos._tables['temperature_solid']
     spans = np.array([_padded_span(table, i) for i in range(len(table['P']))])
@@ -361,12 +383,15 @@ def main(argv: list[str] | None = None) -> int:
         folder, sep, commit = item.rpartition('=')
         if not (sep and folder and commit):
             parser.error(f'--paleos-commit takes FOLDER=COMMIT, got {item!r}')
-        commits[Path(folder)] = commit
-    unused = set(commits) - set(args.folders)
+        key = Path(folder).resolve()
+        if key in commits:
+            parser.error(f'--paleos-commit names {folder} twice')
+        commits[key] = commit
+    unused = set(commits) - {folder.resolve() for folder in args.folders}
     if unused:
         parser.error(f'--paleos-commit names a folder not given: {sorted(map(str, unused))}')
     for folder in args.folders:
-        print(describe(folder, commits.get(folder)))
+        print(describe(folder, commits.get(folder.resolve())))
     return 0
 
 
