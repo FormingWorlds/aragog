@@ -444,7 +444,7 @@ def test_the_eos_floor_ignores_the_linear_top_node_bc5_replaces(method):
 def test_the_eos_floor_stops_a_draining_top_cell_at_its_level_under_bc5(method):
     """A heat sink in the top cell under BC 5 drains it toward the table minimum; the floor ends
     the call when the top cell reaches S_min + 50 J/kg/K, not earlier when the linear node does,
-    and without the floor the top cell leaves the table."""
+    and without the floor the EOS table guard fails the call when the top cell leaves the table."""
     sink = np.zeros(9)
     sink[-1] = -1.0e-3  # [W/kg]
     for margin in (50.0, 0.0):
@@ -459,4 +459,4 @@ def test_the_eos_floor_stops_a_draining_top_cell_at_its_level_under_bc5(method):
             assert top[-1] == pytest.approx(s_min + 50.0, abs=1.0e-6)
             assert top.min() >= s_min + 50.0 - 1.0e-6
         else:
-            assert top[-1] < s_min
+            assert s._solution.status == -1 and f'cell {s._n_stag - 1} ' in s._solution.message
