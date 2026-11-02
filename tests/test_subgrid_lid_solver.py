@@ -377,6 +377,7 @@ def test_early_stop_reports_no_lid_excess(eos, monkeypatch):
     monkeypatch.setattr(es, '_status_failed', lambda status: True)
     s = _solver(eos)
     s.solve()
+    assert s.stop_early
     assert np.isnan(s._solution.lid_cap_excess)
 
 

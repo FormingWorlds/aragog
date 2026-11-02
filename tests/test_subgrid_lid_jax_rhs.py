@@ -612,35 +612,34 @@ def test_jax_base_flux_is_never_negative(monkeypatch):
     assert not np.array_equal(lid(50.0), lid(0.0))
 
 
-def test_intermediate_lid_above_the_slack_fails_the_jax_batch_path():
-    """The JAX batch path checks the lid thickness of every accepted state against the growth
-    stop and its slack, not only the last one: one state in the middle of the trace past the
-    slack fails the lid invariant, as on the NumPy loop."""
+@pytest.mark.parametrize('case', ['growth', 'melt_back', 'start_below'])
+def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
+    """The JAX batch path checks every accepted state, not only the last: one state in the
+    middle of the trace past the growth stop with its slack, or thinner than the melt-back
+    stop, fails the lid invariant at its step. A lid that starts the call below ``delta_lo``
+    passes, and the lower bound is then its start thickness."""
     s = _jax_cvode_lid_solver()
     s.solve()
     sol = s._solution
     t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
     k = t.size // 2
     assert y[-2, k] > 0.0
-    y[-2, k] = sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 2e-3)
-    sol.energy_trace = (t, y)
-    with pytest.raises(RuntimeError, match='thickness'):
+    if case == 'growth':
+        y[-2, k] = sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 2e-3)
+    elif case == 'melt_back':
+        y[-2, k] = 0.5 * min(s._lid_delta_lo, y[-2, 0])
+    else:
+        y[-2] *= 0.8 * s._lid_delta_lo / y[-2, 0]
+        sol.energy_trace = (t, y)
+        calls = s._batch_powers_calls
         s._compute_step_energy_integrals()
-
-
-def test_intermediate_lid_below_the_melt_back_stop_fails_the_jax_batch_path():
-    """One state in the middle of the trace thinner than the melt-back stop fails the lid
-    invariant on the JAX batch path, as on the NumPy loop."""
-    s = _jax_cvode_lid_solver()
-    s.solve()
-    sol = s._solution
-    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
-    k = t.size // 2
-    assert y[-2, k] > 0.0
-    y[-2, k] = 0.5 * min(s._lid_delta_lo, y[-2, 0])
+        assert s._batch_powers_calls == calls + 1
+        y[-2, k] = y[-2, 0] * (1.0 - 2e-6)
     sol.energy_trace = (t, y)
+    calls = s._batch_powers_calls
     with pytest.raises(RuntimeError, match=f'at step {k},.*thickness'):
         s._compute_step_energy_integrals()
+    assert s._batch_powers_calls == calls + 1
 
 
 def test_jax_path_records_the_largest_lid_excess_of_the_call():
@@ -659,3 +658,4 @@ def test_jax_path_records_the_largest_lid_excess_of_the_call():
     d = np.asarray(y, dtype=float)[-2]
     assert s._batch_powers_calls >= 1
     assert sol.lid_cap_excess == np.max(d[d > 0.0]) / cap - 1.0
+    assert sol.lid_cap_excess == pytest.approx(5e-4, rel=1e-9)
