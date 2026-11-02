@@ -105,6 +105,22 @@ def test_the_mixed_gradient_row_reports_both_states(tmp_path):
     steep = _tables(tmp_path / 'a', sol_slope=-40.0, ds_slope=-1.0, gap=500.0)
     assert set(_status(steep, '(dT/dP)_S mixed')) == {'pass'}
     assert 'outside' in _status(_tables(tmp_path / 'b'), '(dT/dP)_S mixed')
+    (tmp_path / 'c').mkdir()
+    between = _tables(
+        tmp_path / 'c',
+        sol_slope=-40.0,
+        ds_slope=-1.0,
+        gap=500.0,
+        grad_melt=5.0e-6,
+        grad_solid=1.0e-10,
+    )
+    assert 'outside' in _status(between, '(dT/dP)_S mixed')  # above the solid, below the melt
+
+
+def test_a_zero_solid_expansivity_gives_a_row_and_no_crash(tmp_path):
+    """A solid gradient of 0 in a table reads as an infinite ratio, which passes the sign test."""
+    eos = _tables(tmp_path, grad_solid=0.0)
+    assert set(_status(eos, 'alpha_melt')) == {'pass'}
 
 
 def test_the_canary_row_fails_on_a_planted_sign_flip(tmp_path):
