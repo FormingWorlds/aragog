@@ -10,6 +10,8 @@ import pytest
 
 from aragog.eos.entropy import EntropyEOS
 
+from .conftest import returns
+
 pytestmark = pytest.mark.unit
 
 _spec = importlib.util.spec_from_file_location(
@@ -76,7 +78,7 @@ def _tables(folder: Path, **change) -> EntropyEOS:
 
 
 def _rows(eos, start):
-    found = [r for r in sheet_tool.sheet(eos) if r.check.startswith(start)]
+    found = [r for r in returns(sheet_tool.sheet, eos) if r.check.startswith(start)]
     assert found, f'no row starts with {start!r}'
     return found
 
