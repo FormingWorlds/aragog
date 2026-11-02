@@ -102,9 +102,9 @@ def good(tmp_path_factory):
     [
         ('rho_melt - rho_solid at 1 GPa', {'rho_melt': 3500.0}),
         ('rho_melt - rho_solid at 5 GPa', {'rho_melt': 3500.0}),
-        ('alpha_melt', {'grad_melt': 0.1e-8}),
-        ('alpha_melt', {'grad_solid': 0.0}),
-        ('alpha_melt', {'grad_solid': -1.0e-8}),
+        ('alpha_melt and alpha_solid, ordering at 1 GPa', {'grad_melt': 0.1e-8}),
+        ('alpha_melt and alpha_solid, ordering at 5 GPa', {'grad_solid': 0.0}),
+        ('alpha_melt and alpha_solid, ordering at 5 GPa', {'grad_solid': -1.0e-8}),
         ('Delta S at the lowest', {'ds0': 1000.0, 'ds_slope': 0.0}),
         ('Delta S at the lowest', {'ds0': 100.0, 'ds_slope': 0.0}),
         ('Delta S at 100 GPa', {'ds_slope': 1.0}),
@@ -130,9 +130,8 @@ def test_the_values_are_the_measured_ones(good):
     # rho cp (dT/dP)_S / T: solidus 2024 and liquidus 2323 J/kg/K at 1 GPa, T of the tables linear
     t_solid = 1000.0 + 0.5 * 24.0 + 10.0
     t_melt = 1000.0 + 0.5 * 323.0 + 10.0 + 750.0 - 150.0
-    melt, solid = _rows(good, 'alpha_melt and alpha_solid, ordering at 1 GPa')[0].value.split(
-        ', '
-    )
+    value = _rows(good, 'alpha_melt and alpha_solid, ordering at 1 GPa')[0].value
+    melt, solid = value.split(' (')[0].split(', ')
     assert float(melt) == pytest.approx(3000.0 * 1000.0 * 2.0e-8 / t_melt, rel=1.0e-2)
     assert float(solid) == pytest.approx(3300.0 * 1000.0 * 1.0e-8 / t_solid, rel=1.0e-2)
     assert float(_rows(good, 'Delta S at 100 GPa')[0].value) == pytest.approx(
@@ -307,3 +306,131 @@ def test_the_melt_rows_copied_above_the_liquidus_are_measured(tmp_path):
     assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == pytest.approx(
         float(table['S'][j]) - s_liq
     )
+
+
+def _cut_entropy(table, top):
+    """Cut a table to its entropy nodes at or below ``top``."""
+    keep = table['S'] <= top
+    table['S'], table['values'] = table['S'][keep], table['values'][:, keep]
+
+
+@pytest.mark.parametrize('name', ['density_melt', 'heat_capacity_melt', 'dTdPs_melt'])
+def test_a_phase_table_with_a_narrower_entropy_range_reads_na(tmp_path, name):
+    """A lookup clamps in entropy too: the liquidus at 20 GPa (2760) above the table top reads n/a,
+    the 1 GPa liquidus (2324) below it still reads."""
+    eos = _tables(tmp_path)
+    assert sheet_tool._reaches(eos, 20.0 * GPA) and sheet_tool._reaches(eos, GPA)
+    _cut_entropy(eos._tables[name], 2500.0)
+    assert not sheet_tool._reaches(eos, 20.0 * GPA)
+    assert sheet_tool._reaches(eos, GPA)
+    assert _status(eos, 'rho_melt - rho_solid at 20 GPa') == ['n/a']
+
+
+def test_a_solid_table_is_held_against_the_solidus_entropy(tmp_path):
+    """A solid table that stops above the solidus reaches; one that stops below it does not."""
+    eos = _tables(tmp_path)
+    _cut_entropy(eos._tables['density_solid'], 2600.0)
+    assert sheet_tool._reaches(eos, 20.0 * GPA)
+    _cut_entropy(eos._tables['density_solid'], 2400.0)
+    assert not sheet_tool._reaches(eos, 20.0 * GPA)
+
+
+def test_a_liquidus_above_the_table_top_reads_na(tmp_path):
+    """A liquidus above every melt table is not a value at the table edge."""
+    eos = _tables(tmp_path, ds0=7000.0, ds_slope=0.0)
+    assert not sheet_tool._reaches(eos, 20.0 * GPA)
+    assert _status(eos, 'rho_melt - rho_solid at 20 GPa') == ['n/a']
+
+
+@pytest.mark.parametrize('curve', ['_solidus', '_liquidus'])
+def test_a_melting_curve_with_a_narrower_pressure_range_reads_na(tmp_path, curve):
+    """A melting curve clamps at its last pressure, so it must hold the pressure of the check."""
+    eos = _tables(tmp_path)
+    table = getattr(eos, curve)
+    setattr(eos, curve, {**table, 'P': table['P'][table['P'] <= 15.0 * GPA]})
+    assert not sheet_tool._reaches(eos, 20.0 * GPA)
+    assert sheet_tool._reaches(eos, GPA)
+
+
+@pytest.mark.parametrize(
+    ('start', 'change'),
+    [
+        ('rho_melt - rho_solid at 1 GPa', {'rho_melt': np.nan}),
+        ('alpha_melt and alpha_solid, ordering at 1 GPa', {'grad_melt': np.nan}),
+        ('(dT/dP)_S mixed vs pure phases at 5 GPa', {'grad_melt': np.nan}),
+    ],
+)
+def test_a_measurement_that_is_not_finite_reads_na(tmp_path, start, change):
+    """A NaN is not a comparison with a band."""
+    assert _status(_tables(tmp_path, **change), start) == ['n/a']
+
+
+def test_a_delta_s_that_is_not_finite_reads_na(tmp_path):
+    """A NaN entropy of fusion reads n/a at the lowest pressure, not outside."""
+    eos = _tables(tmp_path, ds0=np.nan)
+    assert _status(eos, 'Delta S at the lowest') == ['n/a']
+
+
+@pytest.mark.parametrize('temperature', [0.0, -1.0])
+def test_a_temperature_at_or_below_zero_gives_no_expansivity(tmp_path, temperature):
+    """No expansivity exists at T <= 0: the row prints nan and reads n/a."""
+    eos = _tables(tmp_path)
+    eos._tables['temperature_melt']['values'][:] = temperature
+    row = _rows(eos, 'alpha_melt and alpha_solid, ordering at 1 GPa')[0]
+    assert row.status == 'n/a' and row.value.startswith('nan')
+
+
+def test_the_alpha_rows_compare_near_the_surface_only_and_print_the_prescribed_ratio(good):
+    """The prescribed values hold to about 5 GPa: above it a row reports. Every row prints the ratio
+    of the measured alpha to the prescribed values."""
+    assert _status(good, 'alpha_melt and alpha_solid, ordering at 1 GPa') == ['pass']
+    assert _status(good, 'alpha_melt and alpha_solid, ordering at 5 GPa') == ['pass']
+    assert _status(good, 'alpha_melt and alpha_solid, ordering at 10 GPa') == ['report']
+    assert _status(good, 'alpha_melt and alpha_solid, ordering at 20 GPa') == ['report']
+    for p_gpa in (1, 20):
+        row = _rows(good, f'alpha_melt and alpha_solid, ordering at {p_gpa} GPa')[0]
+        melt = sheet_tool._alpha(good, p_gpa * GPA, 'melt')
+        solid = sheet_tool._alpha(good, p_gpa * GPA, 'solid')
+        assert f'{melt / 4.6e-5:.1f} and {solid / 3.0e-5:.1f} times' in row.value
+
+
+def test_the_mixed_gradient_status_follows_the_wide_step(tmp_path, monkeypatch):
+    """The band reads at the wide step; a narrow step on the other side does not change the status."""
+    steep = _tables(tmp_path, sol_slope=-40.0, ds_slope=-1.0, gap=500.0)
+    wide = sheet_tool.MIX_STEPS[0]
+    high, low = 1.0, -1.0
+    start = '(dT/dP)_S mixed vs pure phases at 5 GPa'
+    monkeypatch.setattr(
+        sheet_tool, '_mix_gradient', lambda e, p, st: high if st == wide else low
+    )
+    assert _status(steep, start) == ['pass']
+    monkeypatch.setattr(
+        sheet_tool, '_mix_gradient', lambda e, p, st: low if st == wide else high
+    )
+    assert _status(steep, start) == ['outside']
+
+
+def test_a_column_that_is_not_finite_does_not_hide_the_largest_padded_span(tmp_path):
+    """A NaN column does not count as padded and does not turn the largest span into NaN."""
+    eos = _tables(tmp_path, pad_solid=4)
+    table = eos._tables['temperature_solid']
+    table['values'][1:] = table['values'][1:] + np.linspace(0.0, 1.0, table['S'].size)
+    table['values'][1, 0] = np.nan
+    row = _rows(eos, 'pressure columns with solid temperature rows copied')[0]
+    assert row.value.startswith('1 of 41')
+    assert f'largest span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
+
+
+def test_the_commit_flag_names_a_folder_by_its_path_in_any_spelling(
+    tmp_path, capsys, monkeypatch
+):
+    """A relative folder and an absolute flag name one folder; two flags for one folder stop."""
+    _tables(tmp_path / 'a')
+    monkeypatch.chdir(tmp_path)
+    for flag in (f'{tmp_path / "a"}=abc', 'a/../a=abc', './a=abc'):
+        assert sheet_tool.main(['a', '--paleos-commit', flag]) == 0
+        assert 'PALEOS commit: abc (given)' in capsys.readouterr().out
+    with pytest.raises(SystemExit) as stop:
+        sheet_tool.main(['a', '--paleos-commit', 'a=abc', '--paleos-commit', './a=def'])
+    assert stop.value.code == 2
+    assert 'twice' in capsys.readouterr().err
