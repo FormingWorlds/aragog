@@ -36,6 +36,7 @@ TOL = 1e-2
 MELT_TOL, FLOOR = 2e-2, 1e-5  # melt start: tolerance, round-off floor of the mesh run
 C3_TOL = 3e-2  # molten start
 C3_BOUND = 1e-4  # top-refined 400-node run against the 800-node reference
+C3_HANDOVER_TOL = 3e-4  # hand-over time on the extended table: round-off spread 7.5e-5
 
 
 def _stored(name, times=TIMES_YR):
@@ -145,7 +146,7 @@ def test_v2_melt_lid_matches_the_resolved_mesh(validation_plot):
         ax.set_ylim(0.96, 1.04)
         ax.set_xlabel('time (yr)')
         ax.set_ylabel('lid / resolved')
-        opaque_legend(ax)
+        opaque_legend(ax, loc='upper right', ncol=3)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
@@ -185,10 +186,10 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     table = _lowt_table()
     if table:
         live, t_ho = molten_column(10, True, MOLTEN_TIMES_YR, entropy_eos_copy(table))
-        np.testing.assert_allclose(live, d['lid'], rtol=1e-6)
-        assert t_ho == pytest.approx(float(d['handover_yr']), rel=1e-6)
+        np.testing.assert_allclose(live, d['lid'], rtol=FLOOR)
+        assert t_ho == pytest.approx(float(d['handover_yr']), rel=C3_HANDOVER_TOL)
         coarse, _ = molten_column(10, False, MOLTEN_TIMES_YR, entropy_eos_copy(table))
-        np.testing.assert_allclose(coarse, d['coarse'], rtol=1e-6)
+        np.testing.assert_allclose(coarse, d['coarse'], rtol=FLOOR)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -217,9 +218,11 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
 def test_c3_molten_lid_run_on_the_test_tables():
     """The molten-start lid run on the SPIDER test tables equals its stored pin and hands
     over. From 1635 yr its top cell sits at the floor of the test tables (320.4 K), so the
-    last three fluxes are equal; the pin checks only that the run repeats."""
+    last three fluxes are equal; the pin checks only that the run repeats. A solidus shifted by
+    10 J/kg/K moves these fluxes by 2e-6, below their round-off floor, so a shifted hand-over
+    fails only the time check, which sees a shift of 0.1 J/kg/K."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     np.testing.assert_array_equal(d['pin_times_yr'], MELT_TIMES_YR)
     live, t_ho = molten_column(10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR))
-    np.testing.assert_allclose(live, d['pin'], rtol=1e-6)
-    assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=1e-6)
+    np.testing.assert_allclose(live, d['pin'], rtol=FLOOR)
+    assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)

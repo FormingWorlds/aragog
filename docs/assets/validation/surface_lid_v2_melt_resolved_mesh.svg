@@ -951,29 +951,29 @@ L 336.205909 176.412727
    </g>
    <g id="legend_1">
     <g id="patch_6">
-     <path d="M 274.007159 53.02 
-L 330.605909 53.02 
-Q 332.205909 53.02 332.205909 51.42 
+     <path d="M 164.558409 30.22 
+L 330.605909 30.22 
+Q 332.205909 30.22 332.205909 28.62 
 L 332.205909 18.02 
 Q 332.205909 16.42 330.605909 16.42 
-L 274.007159 16.42 
-Q 272.407159 16.42 272.407159 18.02 
-L 272.407159 51.42 
-Q 272.407159 53.02 274.007159 53.02 
+L 164.558409 16.42 
+Q 162.958409 16.42 162.958409 18.02 
+L 162.958409 28.62 
+Q 162.958409 30.22 164.558409 30.22 
 z
 " style="fill: #f2f5f7"/>
     </g>
     <g id="patch_7">
-     <path d="M 275.607159 25.38 
-L 291.607159 25.38 
-L 291.607159 19.78 
-L 275.607159 19.78 
+     <path d="M 166.158409 25.38 
+L 182.158409 25.38 
+L 182.158409 19.78 
+L 166.158409 19.78 
 z
 " style="fill: #10151b; opacity: 0.15; stroke: #10151b; stroke-linejoin: miter"/>
     </g>
     <g id="text_10">
      <!-- 2% band -->
-     <g style="fill: #10151b" transform="translate(298.007159 25.38) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(188.558409 25.38) scale(0.08 -0.08)">
       <defs>
        <path id="InstrumentSans-Regular-25" d="M 544 0 
 L 3987 4608 
@@ -1134,12 +1134,12 @@ z
     </g>
     <g id="line2d_32">
      <g>
-      <use xlink:href="#m86276f1368" x="283.607159" y="33.98" style="fill: #e23d28; stroke: #e23d28"/>
+      <use xlink:href="#m86276f1368" x="243.557159" y="22.58" style="fill: #e23d28; stroke: #e23d28"/>
      </g>
     </g>
     <g id="text_11">
      <!-- flux -->
-     <g style="fill: #10151b" transform="translate(298.007159 36.78) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(257.957159 25.38) scale(0.08 -0.08)">
       <defs>
        <path id="InstrumentSans-Regular-66" d="M 781 0 
 L 781 3725 
@@ -1217,12 +1217,12 @@ z
     </g>
     <g id="line2d_33">
      <g>
-      <use xlink:href="#m3ed3eed861" x="283.607159" y="45.38" style="fill: #e0a32e; stroke: #e0a32e; stroke-linejoin: miter"/>
+      <use xlink:href="#m3ed3eed861" x="295.829659" y="22.58" style="fill: #e0a32e; stroke: #e0a32e; stroke-linejoin: miter"/>
      </g>
     </g>
     <g id="text_12">
      <!-- crust -->
-     <g style="fill: #10151b" transform="translate(298.007159 48.18) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(310.229659 25.38) scale(0.08 -0.08)">
       <defs>
        <path id="InstrumentSans-Regular-63" d="M 1805 -64 
 Q 1357 -64 1008 157 
