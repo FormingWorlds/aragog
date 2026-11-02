@@ -195,6 +195,39 @@ Before the hand-over the Stefan jump of the lid lies below its floor of 10³ J/k
     - Test id: `tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` (stored runs); `::test_row_keeps_its_values_with_the_lid` runs E230a and f60_H4 again with and without the lid, and `::test_deschamps_vilella_row_with_the_lid_at_the_growth_stop_completes` runs f70_15p8_1e7_H3 (nightly).
     - Command: `pytest tests/test_surface_lid_v5_rows.py -m unit` (add `--validation-plots` to write the plot pair; `-m slow` runs the rows again)
 
+## A hand-over with its gate open
+
+**Why this check exists.** The lid must hand over to the mesh when the crust is thick enough, and the mesh must then carry the crust. In the other cases with the `'lid'` closure the hand-over never fires. This case opens its gate, so the time after the hand-over can be compared with a run that needs no lid.
+
+**What it tests.** A mantle shell 1000 km thick (radius 5371 to 6371 km) starts at an entropy of 2437.5 J/kg/K, 50 J/kg/K below the lowest solidus entropy on 100 nodes, with a viscosity of the solid of 10¹⁸ Pa s and internal heating of 10⁻¹⁰ W/kg, on the extended PALEOS table, up to 10⁹ years. The solid rheology is on with the `'lid'` closure, and the surface radiates as a black body. Three runs use the lid, on 100, 200 and 400 nodes. They hand over at 1.12, 1.10 and 1.10 × 10⁸ years, with the lid at its growth stop of 8693, 4326 and 2158 m. The interior then warms. Between 4 × 10⁸ and 5 × 10⁸ years the surface flux rises by a factor of about 3.6 and the interior cools by about 500 K. After that the flux swings, by up to 10 % on 400 nodes and 3 % in the reference, so the comparison uses means over 2 × 10⁷ years.
+
+**How we know the right answer.** Two runs without the lid on 400 nodes, with top cells of 500 and 1000 m, are the reference. They resolve the crust at the hand-over depths of 8 to 33 km. Their surface fluxes differ by 3.8 % at 10⁵ years, 0.75 % at 10⁶ years, 0.12 % at 10⁷ years and less than 10⁻⁴ from 10⁸ to 4 × 10⁸ years, so this page uses them only from 10⁶ years on. Between 4 × 10⁸ and 5 × 10⁸ years the 1000 m run uses 4 shorter parts; their solver restarts differ from the 500 m run. In the mean after 5 × 10⁸ years the 2 runs agree to 3 × 10⁻⁴ in the flux and 1.1 % in the depth of the lid-base isotherm.
+
+The approved measure of convergence takes the step between meshes, $s_c = |X_{100}/X_{200} - 1|$ and $s_f = |X_{200}/X_{400} - 1|$, for $X$ the surface flux and the depth of the lid-base isotherm, and asks $r = \max s_f / \max s_c \le 0.75$ after the last hand-over. At the part ends $r$ is 0.41 for the flux and 0.11 for the depth, so the case passes that measure. The measure uses 100 nodes only as its coarse level. Against the reference the case passes on 200 and 400 nodes only:
+
+| run | flux / reference, mean after 5 × 10⁸ yr | depth / reference, mean after 5 × 10⁸ yr |
+|---|---|---|
+| 100 nodes with the lid | 0.776 | 1.55 |
+| 200 nodes with the lid | 1.007 | 1.09 |
+| 400 nodes with the lid | 1.001 | 1.05 |
+| reference, 1000 m cell | 1.000 | 1.01 |
+
+**The step at the hand-over is a limit of the lid.** At the merge the surface flux rises by 27, 15 and 20 % on 100, 200 and 400 nodes, from 0.066 to 0.084 W/m² on 100 nodes, and then falls back over about 10⁶ to 10⁷ years. The reference has no such step: its largest change over the same time is about 100 times smaller. The limit set for this case was 5 %, and the lid misses it. The energy is kept at the merge (see the checks below); the flux is not continuous. Read the surface flux in the first 10⁷ years after a hand-over with this in mind. Before the hand-over the flux of the lid is 0.4 to 2 % below the reference.
+
+**Why it matters.** A coupled run reads the surface flux at every step. In this case the long-term heat loss of a run with the lid is right on 200 and 400 nodes, and the flux is wrong for a while after the hand-over.
+
+![Surface flux and depth of the lid-base isotherm of the runs with the lid divided by the 500 m reference, against time after the last hand-over, in means over 20 million years](../assets/validation/surface_lid_v8_after_the_hand_over.svg#only-light){ width="70%" }
+![Surface flux and depth of the lid-base isotherm of the runs with the lid divided by the 500 m reference, against time after the last hand-over, in means over 20 million years](../assets/validation/surface_lid_v8_after_the_hand_over_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The horizontal axis is time in units of 10⁸ years, from just after the last hand-over. Each line is a mean over 2 × 10⁷ years divided by the mean of the 500 m reference. The top panel is the surface flux, the bottom panel the depth of the lid-base isotherm. The dotted line is the 1000 m reference, so its distance from 1 shows how far the reference itself moves. The run on 100 nodes stays low in the flux and deep in the isotherm after that transition; the runs on 200 and 400 nodes swing around 1.
+
+??? info "Test details"
+    - Reference: 2 runs without the lid, stored from their series with the runs with the lid in `tests/reference/surface_lid_v8.npz` by `tests/reference/build_surface_lid_v8.py`; each series comes from `tools/verification/run_surface_lid_series.py` on the part files of `tools/verification/run_surface_lid_case.py`.
+    - Tolerance: $r \le 0.75$ for the flux and the depth (measured 0.41 and 0.11); late mean of the flux within 10⁻² of the reference on 200 and 400 nodes (measured 7.4 × 10⁻³ and 1.1 × 10⁻³), and more than 20 % below it on 100 nodes (measured 22 %); the depth within 10 and 5 % (measured 8.6 and 4.5 %); the 2 references within 10⁻³ in the flux.
+    - Limit that is missed: flux step at the hand-over 5 % (measured 27, 15 and 20 %). The test asserts the measured range, so a change of the merge fails it and this text must change.
+    - Test id: `tests/test_surface_lid_v8.py::test_v8_the_mesh_converges_after_the_hand_over`, `::test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes`, `::test_v8_the_flux_step_at_the_hand_over_misses_its_limit`. The test reads stored runs and does not run the code again.
+    - Command: `pytest tests/test_surface_lid_v8.py` (add `--validation-plots` to write the plot pair)
+
 ## Where the lid is not validated
 
 **Why this section exists.** The cases above compare the lid with a fine mesh for a solid shell with a fixed lid base and for a shell freezing from the mush without the solid rheology. For a molten shell without the solid rheology they compare only the hand-over and the coarse mesh after it. These configurations have no comparison with a fine mesh:
@@ -212,7 +245,7 @@ Before the hand-over the Stefan jump of the lid lies below its floor of 10³ J/k
 
 **No buoyancy.** The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)).
 
-**Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md) rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The lid also needs the entropy EOS tables: a run with constant properties or with an outer boundary other than the grey body (`outer_boundary_condition = 1`) stops at setup with an error. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). Its convergence with mesh refinement after the hand-over is not validated in this release.
+**Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md) rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The lid also needs the entropy EOS tables: a run with constant properties or with an outer boundary other than the grey body (`outer_boundary_condition = 1`) stops at setup with an error. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). [A hand-over with its gate open](#a-hand-over-with-its-gate-open) measures its convergence after the hand-over in one case.
 
 ## A crust in steady state
 
