@@ -21,8 +21,10 @@ from tests.conftest import assert_legend_clear, entropy_eos_copy
 from tests.reference.surface_lid_v2_column import (
     LOWT_EOS_MD5,
     MELT_TIMES_YR,
+    MOLTEN_TIMES_YR,
     TIMES_YR,
     melt_column,
+    molten_column,
     surface_flux,
 )
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, needs_eos
@@ -32,6 +34,8 @@ pytestmark = [pytest.mark.smoke, pytest.mark.timeout(900), needs_eos]
 REF = Path(__file__).resolve().parent / 'reference'
 TOL = 1e-2
 MELT_TOL, FLOOR = 2e-2, 1e-5  # melt start: tolerance, round-off floor of the mesh run
+C3_TOL = 3e-2  # molten start
+C3_BOUND = 1e-4  # top-refined 400-node run against the 800-node reference
 
 
 def _stored(name, times=TIMES_YR):
@@ -156,3 +160,65 @@ def test_v2_melt_lid_run_on_the_test_tables():
     np.testing.assert_array_equal(pin['melt_times_yr'], MELT_TIMES_YR)
     live = melt_column(10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR))
     np.testing.assert_allclose(live, (pin['melt_flux'], pin['melt_crust']), rtol=1e-6)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
+def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
+    """Started molten and convecting, without rheology, a 10-node shell with the lid hands the
+    lid over when its top cell cools through the solidus, within the first 100 yr, and then
+    gives the surface flux of the 10-node shell without the lid within FLOOR and of the
+    reference, an 800-node shell without the lid with a top cell of 0.125 m, within C3_TOL from
+    100 to 5000 yr. The 400-node shell with a top cell of 0.25 m agrees with the reference
+    within C3_BOUND. With the hand-over root held at -1 the lid misses the reference flux by
+    more than 50 % at some time. With ``ARAGOG_LOWT_EOS_DIR`` set to the extended table, the
+    lid run is repeated."""
+    d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
+    assert str(d['md5']) == LOWT_EOS_MD5
+    grid = d['grid_ref']
+    assert int(d['n_ref']) == 800
+    np.testing.assert_array_equal(grid, d['refined_800'])
+    np.testing.assert_allclose(d['refined_400'], grid, rtol=C3_BOUND)
+    assert 0.0 < float(d['handover_yr']) < MOLTEN_TIMES_YR[0]
+    np.testing.assert_allclose(d['lid'], d['coarse'], rtol=FLOOR)
+    np.testing.assert_allclose(d['lid'], grid, rtol=C3_TOL)
+    assert np.max(np.abs(d['lid_kept'] / grid - 1)) > 0.5
+    table = _lowt_table()
+    if table:
+        live, t_ho = molten_column(10, True, MOLTEN_TIMES_YR, entropy_eos_copy(table))
+        np.testing.assert_allclose(live, d['lid'], rtol=1e-6)
+        assert t_ho == pytest.approx(float(d['handover_yr']), rel=1e-6)
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.0, 3.4))
+        ax.axhspan(1 - C3_TOL, 1 + C3_TOL, color='C0', alpha=0.15, label=f'{C3_TOL:.0%} band')
+        ax.axhline(1.0, color=plt.rcParams['text.color'], lw=0.8)
+        ax.plot(
+            MOLTEN_TIMES_YR, d['lid'] / grid, 'o', color='C1', ms=4, label='10 nodes with lid'
+        )
+        ax.set_xscale('log')
+        ax.minorticks_off()
+        ax.set_xticks([100, 300, 1000, 3000], ['100', '300', '1000', '3000'])
+        ax.set_ylim(1 - 2 * C3_TOL, 1 + 2 * C3_TOL)
+        ax.set_xlabel('time (yr)')
+        ax.set_ylabel('lid / resolved flux')
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'surface_lid_c3_molten_resolved_mesh')
+
+
+@pytest.mark.reference_pinned
+def test_c3_molten_lid_run_on_the_test_tables():
+    """The molten-start lid run on the SPIDER test tables equals its stored pin and hands
+    over. From 1635 yr its top cell sits at the floor of the test tables (320.4 K), so the
+    last three fluxes are equal; the pin checks only that the run repeats."""
+    d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
+    np.testing.assert_array_equal(d['pin_times_yr'], MELT_TIMES_YR)
+    live, t_ho = molten_column(10, True, MELT_TIMES_YR, entropy_eos_copy(EOS_DIR))
+    np.testing.assert_allclose(live, d['pin'], rtol=1e-6)
+    assert t_ho == pytest.approx(float(d['pin_handover_yr']), rel=1e-6)
