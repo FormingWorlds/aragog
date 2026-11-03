@@ -25,8 +25,8 @@ All integrals use the trapezoidal rule on the integrator's accepted sub-steps an
 
 The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are area-weighted only and have no mass-weighting variant. The volumetric source integrals come in two flavours, distinguished by the mass weighting on $Q_\text{radio} = \rho\,h_\text{radio}\,V$ and $Q_\text{tidal} = \rho\,h_\text{tidal}\,V$:
 
-- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics.
-- **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
+- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics. With a live [sub-grid lid](surface_lid.md) the top cell counts its fluid volume plus the mass of the lid, the mass that the solver heats.
+- **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. It does not change with a lid. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
 
 ## Reported CMB flux column
 

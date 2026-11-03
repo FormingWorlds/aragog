@@ -1114,14 +1114,14 @@ class SolverOutput:
     # Q_*_total) to numerical precision; the residual against this is
     # the true conservation check. Set to NaN when no entropy_eos.
     Cp_eff: float  # effective heat capacity [J/kg/K]
-    F_heat_total: float  # total heating flux [W/m^2]
+    F_heat_total: float  # total heating flux [W/m^2]; the source masses as Q_radio_total
     F_cmb: float  # step-average heat flux at CMB (basic node 0) [W/m^2], signed
     # positive-out-of-core; the trapezoidal time-mean over the solver call. With
     # the call duration in seconds (dt_actual is [yr], times the Julian year),
     # F_cmb * A_cmb * dt equals step_dE_F_cmb_J and the closed-mantle balance
     # holds in step-integrated form. ``heat_flux[0]`` keeps the end-of-step value.
-    Q_radio_total: float  # mantle-integrated radiogenic power [W]
-    Q_tidal_total: float  # mantle-integrated tidal power [W]
+    Q_radio_total: float  # mantle-integrated radiogenic power [W], lid mass heated included
+    Q_tidal_total: float  # mantle-integrated tidal power [W], lid mass heated included
 
     # Per-call energy contributions [J], integrated over the call's quadrature nodes; the
     # caller sums them across calls. Positive adds energy to the mantle (step_dE_F_int_J
@@ -6185,6 +6185,17 @@ class EntropySolver:
         )
         return np.asarray(batch_fn(t_pts, y_pts, aux=aux))
 
+    def _heated_mass(self, mass: npt.NDArray) -> npt.NDArray:
+        """``mass`` [kg] per cell as the RHS just evaluated heats it: with a live lid the top
+        cell holds its fluid part plus the lid mass. Without one it returns ``mass`` itself."""
+        if not (self._n_lid and self._lid_active):
+            return mass
+        lid = self._lid_last
+        out = mass.copy()
+        out[-1] = out[-1] * lid.V_fluid / float(self._volume_flat[-1])
+        out[-1] += self._lid_area * lid.m_lid
+        return out
+
     def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
         """Powers [W] at one solver state, for the per-call energy integrals.
 
@@ -6202,10 +6213,10 @@ class EntropySolver:
         -------
         ndarray, shape (7,)
             ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal, Q_radio_cons, Q_tidal_cons,
-            solver residual]``: the boundary heat flows, the source powers with live and
-            frozen (structural) cell mass, and the entropy-equation residual (LHS - RHS),
-            which is machine-zero at every state; a non-zero value flags a
-            flux-divergence assembly bug.
+            solver residual]``: the boundary heat flows, the source powers with live
+            (``_heated_mass``) and frozen (structural) cell mass, and the entropy-equation
+            residual (LHS - RHS), which is machine-zero at every state; a non-zero value
+            flags a flux-divergence assembly bug.
         """
         vol, r_basic = self._volume_flat, self._r_basic_flat
         A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
@@ -6222,7 +6233,9 @@ class EntropySolver:
         p_cmb = float(self.state._heat_flux[0]) * A_cmb
 
         S_i = self._stag_entropy(y_col)
-        mass_i = np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
+        mass_i = self._heated_mass(
+            np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
+        )
         heating_radio_i = np.asarray(self.state.heating_radio).ravel()
         heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
         Q_radio_i = float(np.dot(heating_radio_i, mass_i))
@@ -6745,8 +6758,9 @@ class EntropySolver:
         # energy balance dE/dt = -F_int*A_int + F_cmb*A_cmb + Q_radio +
         # Q_tidal. Each per-source heating array is in W/kg at staggered
         # nodes; mass-weighting recovers the total power.
-        Q_radio_total = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_stag))
-        Q_tidal_total = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_stag))
+        mass_heated = self._heated_mass(mass_stag)
+        Q_radio_total = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_heated))
+        Q_tidal_total = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_heated))
 
         # Volumetric melt fraction (porosity-based)
         if eos is not None:
@@ -6769,7 +6783,7 @@ class EntropySolver:
 
         # Heating flux
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
-        F_heat_total = float(np.dot(heating, mass_stag)) / area_surf
+        F_heat_total = float(np.dot(heating, mass_heated)) / area_surf
 
         shell = self._core_shell()
         if shell is not None:

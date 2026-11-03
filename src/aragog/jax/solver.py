@@ -886,9 +886,6 @@ def step_powers(
     p_cmb = parts.heat_flux[0] * aux.A_cmb
 
     H_radio = H_radio_fn(t)
-    mass_i = eos.density(aux.P_stag, S_stag) * aux.volume
-    Q_radio_i = H_radio * jnp.sum(mass_i)
-    Q_tidal_i = jnp.dot(heating_static, mass_i)
 
     Q_radio_cons_i = H_radio * jnp.sum(aux.mass_struct)
     Q_tidal_cons_i = jnp.dot(heating_static, aux.mass_struct)
@@ -905,6 +902,9 @@ def step_powers(
         vol = vol.at[-1].set(V)
         lid_power = aux.A_int * (dE - H_f * ddelta)
         lid_mass = aux.A_int * m_lid
+    mass_i = eos.density(aux.P_stag, S_stag) * vol
+    Q_radio_i = H_radio * (jnp.sum(mass_i) + lid_mass)
+    Q_tidal_i = jnp.dot(heating_static, mass_i) + heating_static[-1] * lid_mass
     heat_mass = rho_phase * vol * (T_phase / jnp.maximum(T_phase, 1.0))
     lhs = jnp.sum(cap * dSdt_stag * vol) + lid_power
     Q_radio_resid = H_radio * (jnp.sum(heat_mass) + lid_mass)

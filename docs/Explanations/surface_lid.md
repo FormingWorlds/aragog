@@ -50,7 +50,7 @@ $S_f$ is the entropy of the melt and $S_b$ that of the crust at its base. The le
 
 The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
 
-The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call.
+The top cell keeps its melt part: its volume shrinks by the crust volume, area times $\delta$, and the heat $W(S_f)$ of each unit of that volume passes to the crust. The flux out of the melt follows from the energy of the melt and the crust together, so the energy of the mantle changes only by the heat that crosses the surface and the core boundary. The energy diagnostics count the crust, and their solver residual reports this balance for every call. Radiogenic and tidal heat act on the melt part of the top cell and on the crust mass, and the reported source powers state that heating.
 
 ## When the crust exists, and when it goes
 
