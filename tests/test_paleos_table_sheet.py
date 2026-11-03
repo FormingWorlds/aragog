@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -690,3 +691,22 @@ def test_the_padded_range_does_not_claim_contiguous_columns(tmp_path):
     value = _rows(eos, 'pressure columns with solid temperature rows copied')[0].value
     first, last = (float(table['P'][i]) / GPA for i in (0, 2))
     assert value.startswith(f'2 of 41, between {first:.3g} and {last:.3g} GPa')
+
+
+def test_the_mixture_must_stay_mixed_at_both_ends_of_the_step(monkeypatch):
+    """Solidus 200 below ``p``, else 0, and a gap of 100: the entropy halfway is 50 at ``p``, inside
+    above it and below the solidus under it. Mirrored, the upper end leaves."""
+    monkeypatch.setattr(sheet_tool, '_reaches', lambda eos, x: True)
+
+    def curves(solidus):
+        return SimpleNamespace(
+            solidus_entropy=solidus, liquidus_entropy=lambda x, f=solidus: f(x) + 100.0
+        )
+
+    p = 10.0
+    falling = curves(lambda x: 200.0 if x < p else 0.0)
+    rising = curves(lambda x: 200.0 if x > p else 0.0)
+    flat = curves(lambda x: 0.0)
+    assert not sheet_tool._mix_stays_mixed(falling, p, 0.25)
+    assert not sheet_tool._mix_stays_mixed(rising, p, 0.25)
+    assert sheet_tool._mix_stays_mixed(flat, p, 0.25)
