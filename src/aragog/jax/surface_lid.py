@@ -85,8 +85,7 @@ def shape(s: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
 
 
 def grey_flux(T_s: jax.Array, emissivity: jax.Array, T_eq: jax.Array) -> jax.Array:
-    """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against the equilibrium ``T_eq``
-    [K]."""
+    """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against ``T_eq`` [K]."""
     from scipy.constants import Stefan_Boltzmann
 
     return emissivity * Stefan_Boltzmann * (jnp.maximum(T_s, 0.0) ** 4 - T_eq**4)
@@ -165,8 +164,7 @@ def _H_end(e: Enthalpy):
 
 
 def profile_heat(e: Enthalpy, s, T_s, T_b):
-    """Mean heat content per volume [J/m^3] of a lid profile, as
-    ``LidEnthalpy.profile_heat``."""
+    """Mean heat content [J/m^3] of a lid profile, as ``LidEnthalpy.profile_heat``."""
     x, w = profile_nodes(s)
     return jnp.dot(w, enthalpy_H(e, T_s + (T_b - T_s) * profile(s, x)))
 
