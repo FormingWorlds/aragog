@@ -1114,14 +1114,16 @@ class SolverOutput:
     # Q_*_total) to numerical precision; the residual against this is
     # the true conservation check. Set to NaN when no entropy_eos.
     Cp_eff: float  # effective heat capacity [J/kg/K]
-    F_heat_total: float  # total heating flux [W/m^2]; the source masses as Q_radio_total
+    F_heat_total: float  # total heating flux [W/m^2]; the source mass of Q_radio_total
     F_cmb: float  # step-average heat flux at CMB (basic node 0) [W/m^2], signed
     # positive-out-of-core; the trapezoidal time-mean over the solver call. With
     # the call duration in seconds (dt_actual is [yr], times the Julian year),
     # F_cmb * A_cmb * dt equals step_dE_F_cmb_J and the closed-mantle balance
     # holds in step-integrated form. ``heat_flux[0]`` keeps the end-of-step value.
-    Q_radio_total: float  # mantle-integrated radiogenic power [W], lid mass heated included
-    Q_tidal_total: float  # mantle-integrated tidal power [W], lid mass heated included
+    Q_radio_total: float  # mantle-integrated radiogenic power [W]
+    Q_tidal_total: float  # mantle-integrated tidal power [W]
+    # Q_radio_total, Q_tidal_total, F_heat_total: lid mass included; equal to the heating in the
+    # residual where the table density equals the phase density, so not in the mush.
 
     # Per-call energy contributions [J], integrated over the call's quadrature nodes; the
     # caller sums them across calls. Positive adds energy to the mantle (step_dE_F_int_J
@@ -6187,7 +6189,9 @@ class EntropySolver:
 
     def _heated_mass(self, mass: npt.NDArray) -> npt.NDArray:
         """``mass`` [kg] per cell as the RHS just evaluated heats it: with a live lid the top
-        cell holds its fluid part plus the lid mass. Without one it returns ``mass`` itself."""
+        cell holds its fluid part plus the lid mass. Without one it returns ``mass`` itself.
+        With ``mass`` at the table density, this equals the mass of the residual only where the
+        table density equals the phase density; in the mush the two differ."""
         if not (self._n_lid and self._lid_active):
             return mass
         lid = self._lid_last

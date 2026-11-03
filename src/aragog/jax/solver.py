@@ -504,8 +504,8 @@ def _lid_split(state: jax.Array, bc: BoundaryParams) -> tuple:
 def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out):
     """The lid at the top cell, as the NumPy RHS: the surface loss in ``heat_flux[-1]``, and
     the top-face energy flux [W] and top-cell capacitance volume [m^3] of the fluid under the
-    lid. A handed-over lid (thickness 0) leaves the mesh as it is, has zero rates and does not
-    evaluate ``lid_top``.
+    lid. A handed-over lid (thickness 0) leaves the mesh as it is and has zero rates. For one column it
+    does not evaluate ``lid_top``; under ``vmap`` the cond is a select and both branches run.
 
     Returns ``(heat_flux, top_energy_flux, top_volume, lid_terms)``.
     """
