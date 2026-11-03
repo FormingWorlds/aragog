@@ -446,6 +446,50 @@ def test_jax_step_powers_match_the_numpy_ledger_with_the_lid(core_bc, rheology, 
     assert np.all(np.abs(got[:, 6]) <= 1e-12 * scale)
 
 
+def test_a_handed_over_lid_skips_the_lid_and_equals_the_rhs_without_it(monkeypatch):
+    """A zero lid does not evaluate ``lid_top``, a live lid does once. The RHS and the Jacobian
+    of the mantle equal those without the lid, the lid rows and columns are zero and the
+    derivatives stay finite on both sides of the hand-over."""
+    from aragog.jax import surface_lid as jl
+
+    s, free = _lid_solver(), _lid_solver(lid=False)
+    (rhs, jac, _), (rhs_free, jac_free, _) = (
+        _factory_rhs(s, s.jax_lid_params()),
+        _factory_rhs(free, None),
+    )
+    sc, sc_free, n = s._build_nondim_scales(), free._build_nondim_scales(), s._S0.size - 2
+
+    def evaluate(rhs_fn, jac_fn, y, scales):
+        x = (y - scales.state_offset) / scales.state_scale
+        f, J = np.empty(y.size), np.empty((y.size, y.size))
+        assert rhs_fn(0.0, x, f) == 0 and jac_fn(0.0, x, f, J) == 0
+        return f, J
+
+    y = s._S0.copy()
+    y[-2:] = 0.0
+    f, J = evaluate(rhs, jac, y, sc)
+    f_free, J_free = evaluate(rhs_free, jac_free, y[:n], sc_free)
+    np.testing.assert_allclose(f[:n], f_free, rtol=1e-13)
+    np.testing.assert_allclose(J[:n, :n], J_free, rtol=1e-13, atol=1e-13 * np.abs(J_free).max())
+    assert np.all(f[n:] == 0.0) and np.all(J[n:] == 0.0) and np.all(J[:, n:] == 0.0)
+    live = y.copy()
+    live[n - 1] = float(s._lid_S_sol) + 1e-9
+    live[-2:] = 0.5, 0.5 * float(s._lid_hv.H(1000.0))
+    assert np.all(np.isfinite(evaluate(rhs, jac, live, sc)[1]))
+
+    calls, top = [0], jl.lid_top
+
+    def counted(*a):
+        calls[0] += 1
+        return top(*a)
+
+    monkeypatch.setattr(jl, 'lid_top', counted)
+    out = np.empty(y.size)
+    with jax.disable_jit():
+        assert rhs(0.0, (y - sc.state_offset) / sc.state_scale, out) == 0 and calls[0] == 0
+        assert rhs(0.0, (live - sc.state_offset) / sc.state_scale, out) == 0 and calls[0] == 1
+
+
 def _heat_of_the_residual(s, source, entropy):
     """Power [W] of a heating array as the entropy residual has it after an RHS of ``s``."""
     rho = np.asarray(s.state.phase_staggered.density()).ravel()

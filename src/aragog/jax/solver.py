@@ -504,35 +504,41 @@ def _lid_split(state: jax.Array, bc: BoundaryParams) -> tuple:
 def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out):
     """The lid at the top cell, as the NumPy RHS: the surface loss in ``heat_flux[-1]``, and
     the top-face energy flux [W] and top-cell capacitance volume [m^3] of the fluid under the
-    lid. A handed-over lid (thickness 0) leaves the mesh as it is and has zero rates.
+    lid. A handed-over lid (thickness 0) leaves the mesh as it is, has zero rates and does not
+    evaluate ``lid_top``.
 
     Returns ``(heat_flux, top_energy_flux, top_volume, lid_terms)``.
     """
     from aragog.jax import surface_lid as jl
 
-    T_iso = flux_out.T_lid_iso if flux_out.T_lid_iso is not None else jnp.nan
-    top = dict(
-        T=phase_stag.temperature[-1],
-        rho=phase_stag.density[-1],
-        cp=phase_stag.heat_capacity[-1],
-        k=phase_stag.thermal_conductivity[-1],
-        alpha=phase_stag.thermal_expansivity[-1],
-        g=mesh.gravity_stag[-1],
-        eta=phase_stag.viscosity[-1],
-        phi=phase_stag.melt_fraction[-1],
-    )
-    if params.rheology.enabled:  # the creep-law viscosity, as the NumPy staggered phase
-        top['eta'] = evaluate_phase(eos, params, mesh.P_stag[-1:], S[-1:]).viscosity[0]
     F_grid = heat_flux[-1]
-    F_top, F_fluid, V_fluid, ddelta, dE, (H_f, m_lid) = jl.lid_top(
-        bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
-    )
-    on = y_lid[0] != 0.0
-    heat_flux = heat_flux.at[-1].set(jnp.where(on, F_top, F_grid))
-    top_energy_flux = jnp.where(on, F_fluid, F_grid) * mesh.area[-1]
-    V = jnp.where(on, V_fluid, mesh.volume[-1])
-    terms = tuple(jnp.where(on, v, 0.0) for v in (ddelta, dE, H_f, m_lid))
-    return heat_flux, top_energy_flux, V, (V, *terms)
+
+    def live():
+        top = dict(
+            T=phase_stag.temperature[-1],
+            rho=phase_stag.density[-1],
+            cp=phase_stag.heat_capacity[-1],
+            k=phase_stag.thermal_conductivity[-1],
+            alpha=phase_stag.thermal_expansivity[-1],
+            g=mesh.gravity_stag[-1],
+            eta=phase_stag.viscosity[-1],
+            phi=phase_stag.melt_fraction[-1],
+        )
+        if params.rheology.enabled:  # the creep-law viscosity, as the NumPy staggered phase
+            top['eta'] = evaluate_phase(eos, params, mesh.P_stag[-1:], S[-1:]).viscosity[0]
+        T_iso = flux_out.T_lid_iso if flux_out.T_lid_iso is not None else jnp.nan
+        F_top, F_fluid, V, ddelta, dE, (H_f, m_lid) = jl.lid_top(
+            bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
+        )
+        return F_top, F_fluid, V, ddelta, dE, H_f, m_lid
+
+    def handed_over():
+        zero = jnp.zeros_like(F_grid)
+        return F_grid, F_grid, mesh.volume[-1], zero, zero, zero, zero
+
+    F_top, F_fluid, V, *terms = jax.lax.cond(y_lid[0] != 0.0, live, handed_over)
+    heat_flux = heat_flux.at[-1].set(F_top)
+    return heat_flux, F_fluid * mesh.area[-1], V, (V, *terms)
 
 
 def _lid_divergence(heat_flux, mesh, cap, lid_fix):
