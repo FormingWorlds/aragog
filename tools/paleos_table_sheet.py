@@ -164,16 +164,17 @@ def _melt_copied_above_liquidus(eos: EntropyEOS, p: float) -> float:
     """Entropy span [J/kg/K] above the liquidus where the melt temperature keeps its value there.
 
     Read on the column at ``_nearest_column``, with the liquidus at the pressure of that column.
+    NaN when the value at the liquidus or the row that ends the span is not finite.
     """
     table = eos._tables['temperature_melt']
     i = _nearest_column(table, p)
     column, s_grid = np.asarray(table['values'])[i], np.asarray(table['S'])
     s_liq = float(eos.liquidus_entropy(float(table['P'][i])))
-    first_above = int(np.searchsorted(s_grid, s_liq))
-    if first_above == s_grid.size:
-        return 0.0
+    first_above = int(np.searchsorted(s_grid, s_liq, side='right'))
     at_liquidus = column[max(first_above - 1, 0)]
-    changed = np.flatnonzero((s_grid >= s_grid[first_above]) & (column != at_liquidus))
+    changed = first_above + np.flatnonzero(column[first_above:] != at_liquidus)
+    if not np.isfinite([at_liquidus, *column[changed[:1]]]).all():
+        return float('nan')
     last_kept = changed[0] - 1 if changed.size else s_grid.size - 1
     return max(float(s_grid[last_kept] - s_liq), 0.0)
 
@@ -258,7 +259,7 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         band = f'mixed above both, at the wide step where the steps agree within {MIX_STEP_AGREE:g}'
         source = 'MK19b p5'
         wide = MIX_STEPS[0]
-        if not _mix_stays_mixed(eos, p, wide):
+        if not (_reaches(eos, p) and all(_mix_stays_mixed(eos, p, step) for step in MIX_STEPS)):
             absent(check, band, source)
             continue
         mix = [GPA * _mix_gradient(eos, p, step) for step in MIX_STEPS]
@@ -337,13 +338,14 @@ def sheet(eos: EntropyEOS) -> list[Row]:
     for p_gpa in (1.0, 20.0):
         p = p_gpa * GPA
         check = f'melt temperature rows copied above the liquidus at {p_gpa:g} GPa [J/kg/K]'
-        if not _reaches(eos, p):
-            absent(check, TABLE_PROPERTY, 'the table')
-            continue
         melt_table = eos._tables['temperature_melt']
         at = float(melt_table['P'][_nearest_column(melt_table, p)])
-        value = f'{_melt_copied_above_liquidus(eos, p):.1f} in the column at {at / GPA:.4g} GPa'
-        report(check, value, TABLE_PROPERTY, 'the table')
+        if not (_reaches(eos, p) and _reaches(eos, at)):
+            absent(check, TABLE_PROPERTY, 'the table')
+            continue
+        span = _melt_copied_above_liquidus(eos, p)
+        value = f'{span:.1f} in the column at {at / GPA:.4g} GPa'
+        report(check, value, TABLE_PROPERTY, 'the table', span)
     return rows
 
 
