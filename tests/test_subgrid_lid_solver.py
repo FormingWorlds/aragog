@@ -176,7 +176,7 @@ def test_set_initial_lid_and_hot_start(eos):
     ids=['utbl', 'bower2018'],
 )
 def test_solver_setup_refuses_a_setting_made_after_parsing(eos, field, value):
-    """The check at solver setup sees a setting the lid refuses when made after the parser ran."""
+    """The check at solver setup sees a setting the lid refuses if made after the parser ran."""
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
@@ -528,8 +528,7 @@ def test_a_carried_lid_above_the_growth_stop_is_refused_before_any_change(eos):
 
 
 def test_reset_onto_a_thinner_top_cell_refuses_the_carried_lid(eos):
-    """A real reset of the mesh: a lid near the old growth stop does not fit the new top
-    cell."""
+    """A real reset of the mesh: a lid near the old growth stop does not fit the new cell."""
     s = _solver(eos)
     d = 0.999 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
@@ -562,8 +561,7 @@ def test_a_lid_at_the_growth_stop_is_carried_to_a_new_start(eos):
 )
 def test_heat_table_check_has_the_band_of_the_eos_guard(eos, past_top, refused):
     """A top cell above the table top passes within the tolerance of the EOS table guard, where
-    the lid continues its heat content linearly; above it the guard fails the call, as without
-    the lid."""
+    the lid continues its heat linearly; above it the guard fails the call, as with no lid."""
     s = _solver(eos, lid=True)
     S = np.full(s._n_stag, 3050.0)
     S[-1] = float(eos.S_max) + past_top
@@ -1498,8 +1496,7 @@ def test_top_cell_at_or_below_the_solidus_hands_over_at_the_start(eos, dS, hands
 @pytest.mark.parametrize('mode', ['fixed', 'rheological'])
 def test_no_solidus_handover_with_the_rheology(eos, mode):
     """With the solid rheology and a closure other than 'lid' the lid base lies below the
-    solidus: the hand-over root is -1 and the lid stays, also on a top cell below the
-    solidus."""
+    solidus: the hand-over root is -1 and the lid stays, also on a top cell below it."""
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
