@@ -15,8 +15,8 @@ Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/ap
 |---|---|---|
 | `step_dE_F_int_J` | $-\int F_\text{int}\,A_\text{int}\,dt$ | Negative when the mantle loses heat to the atmosphere |
 | `step_dE_F_cmb_J` | $+\int F_\text{cmb}\,A_\text{cmb}\,dt$ | Positive when the core delivers heat to the mantle |
-| `step_dE_Q_radio_J` | $+\int Q_\text{radio}\,dt$ (state-mass) | Non-negative; uses time-varying $\rho(P,S)\,V$ |
-| `step_dE_Q_tidal_J` | $+\int Q_\text{tidal}\,dt$ (state-mass) | Non-negative; uses time-varying $\rho(P,S)\,V$ |
+| `step_dE_Q_radio_J` | $+\int Q_\text{radio}\,dt$ (state-mass) | Non-negative; uses time-varying $\rho(P,S)\,V$; with a live lid, the fluid part of the top cell at the fluid density, plus the lid mass |
+| `step_dE_Q_tidal_J` | $+\int Q_\text{tidal}\,dt$ (state-mass) | Non-negative; uses time-varying $\rho(P,S)\,V$; with a live lid, the fluid part of the top cell at the fluid density, plus the lid mass |
 | `step_dE_Q_radio_cons_J` | $+\int Q_\text{radio}\,dt$ (frozen mass) | Non-negative; uses fixed $\rho_\text{struct}\,V$ |
 | `step_dE_Q_tidal_cons_J` | $+\int Q_\text{tidal}\,dt$ (frozen mass) | Non-negative; uses fixed $\rho_\text{struct}\,V$ |
 | `step_solver_residual_J` | $\int (\text{LHS} - \text{RHS})\,dt$ | $\sim 0$ at machine precision |
@@ -25,7 +25,7 @@ All integrals use the trapezoidal rule on the integrator's accepted sub-steps an
 
 The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are area-weighted only and have no mass-weighting variant. The volumetric source integrals come in two flavours, distinguished by the mass weighting on $Q_\text{radio} = \rho\,h_\text{radio}\,V$ and $Q_\text{tidal} = \rho\,h_\text{tidal}\,V$:
 
-- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics. With a live [sub-grid lid](surface_lid.md) the top cell counts its fluid volume plus the mass of the lid, the mass that the solver heats.
+- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics. With a live [sub-grid lid](surface_lid.md) the top cell counts the mass of its fluid part, at the fluid density, plus the mass of the lid. This is the mass that the solver heats where the table density equals the phase density; in the mush the two densities differ.
 - **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. It does not change with a lid. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
 
 ## Reported CMB flux column

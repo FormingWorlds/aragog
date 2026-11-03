@@ -6,7 +6,11 @@ How does Aragog follow a crust that is much thinner than the top cell of the mes
 
 ## Why the mesh alone cannot do it
 
-Most magma ocean models freeze from the bottom up: the mantle starts to freeze at depth, where the adiabat first meets the melting curve. A crust can still form at the surface when the surface loses heat faster than the melt below delivers it, for example under a thin atmosphere. The lid follows such a crust once it exists; it does not decide whether one forms. That crust starts metres thick, while the top cell of a 100-node mantle is 29 to 35 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
+A magma ocean need not freeze from its surface. The adiabat is steeper than the solidus, so the two meet first at depth and solidification is expected to begin at the bottom, the more so the larger the pressure range of the planet. An insulating atmosphere can keep the surface above its solidus for much of the solidification, and a quench crust on a planet-sized body is then unlikely (Elkins-Tanton 2012, Annu. Rev. Earth Planet. Sci. 40:113, section 4.1, https://doi.org/10.1146/annurev-earth-042711-105503).
+
+A crust can still form at the surface when the surface loses heat faster than the melt below delivers it, for example under a thin atmosphere. The lid treats that crust; it does not decide where in the mantle freezing starts.
+
+That crust starts metres thick, while the top cell of a 100-node mantle is 29 to 35 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
 
 ## The two states and the profile
 
