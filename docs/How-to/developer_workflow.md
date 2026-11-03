@@ -31,8 +31,10 @@ The checks cover the density and expansivity contrast of melt and solid, the ise
 
 | Status | Meaning |
 |---|---|
-| `pass`, `outside` | A comparison with a band that holds a published value of the same quantity. This is a reading, not a verdict: the bands come from other melting models. |
+| `pass`, `outside` | A sign or ordering reading against a published value or a prescribed constant of the same quantity. This is a reading, not a verdict: the values come from other melting models. |
 | `report` | A value with no reading. A published number of the same name can stand next to it for another composition, no source gives the quantity, the row is a property of the table, or the 2 steps of the mixed gradient differ by more than a factor 1.5. An isentrope that stays mixed up to the top of the range prints `> P_max`. |
-| `n/a` | A table the sheet reads or a melting curve does not hold the pressure or the entropy of the check, a difference step leaves the mixed region, or a measured value is not finite. |
+| `n/a` | A table the sheet reads or a melting curve does not hold the pressure or the entropy of the check, a difference step leaves the mixed region, the melting curves give no entropy of fusion at the lowest pressure, or a measured value is not finite. |
+
+The mixed temperature changes slope at the nodes of the table grid, so the gradient depends on the step. Agreement of the 2 steps is a condition for a reading and does not show convergence.
 
 Grid and edges come from the loaded tables, so a new table set needs no edit.

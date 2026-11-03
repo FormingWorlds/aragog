@@ -2,12 +2,13 @@
 """Print a sheet that reads a P-S table set next to published magma ocean values.
 
 One row per check: the measured value, the band, the source, and a status. ``pass`` and ``outside``
-compare with a band that holds a published value of the same quantity, as a reading and not a
-verdict: the bands come from other melting models. ``report`` gives a value with no reading: a
-published number of the same name stands next to it for another composition, or no source gives the
-quantity, or the row is a property of the table, or the 2 steps of a difference disagree. ``n/a``
-means a table or melting curve does not hold the check, a difference step leaves the mixed region,
-or a measured value is not finite. Grid and edges come from the loaded tables only.
+are sign or ordering readings against a published value or a prescribed constant of the same
+quantity, as a reading and not a verdict: the values come from other melting models. ``report``
+gives a value with no reading: a published number of the same name stands next to it for another
+composition, or no source gives the quantity, or the row is a property of the table, or the 2 steps
+of a difference disagree. ``n/a`` means a table or melting curve does not hold the check, a
+difference step leaves the mixed region, the curves give no entropy of fusion at the lowest
+pressure, or a measured value is not finite. Grid and edges come from the loaded tables only.
 
 Usage: ``python tools/paleos_table_sheet.py <table folder> [...] [--paleos-commit FOLDER=COMMIT]``
 Run it with ``src`` of a checkout on PYTHONPATH to read with that code; otherwise it imports the
@@ -96,10 +97,14 @@ def _mix_entropy(eos: EntropyEOS, p: float) -> float:
 
 
 def _mix_stays_mixed(eos: EntropyEOS, p: float, step: float) -> bool:
-    """Whether the entropy halfway at ``p`` stays between solidus and liquidus over the step."""
+    """Whether the tables hold both ends of the step, and the entropy halfway at ``p`` stays between
+    solidus and liquidus there."""
     s = _mix_entropy(eos, p)
     ends = (p * (1.0 - step), p * (1.0 + step))
-    return all(float(eos.solidus_entropy(x)) < s < float(eos.liquidus_entropy(x)) for x in ends)
+    return all(
+        _reaches(eos, x) and float(eos.solidus_entropy(x)) < s < float(eos.liquidus_entropy(x))
+        for x in ends
+    )
 
 
 def _mix_gradient(eos: EntropyEOS, p: float, step: float) -> float:
@@ -209,7 +214,10 @@ def sheet(eos: EntropyEOS) -> list[Row]:
             band = '< 0 from the prescribed 2900 and 3300, cut at the 5 GPa melt layer depth'
             source = 'MK22A p23, p5'
         else:
-            band = 'none: the MK19b model has melt heavier here, with a crossover near 75 GPa'
+            band = (
+                'none: without crystal accumulation melt is heavier in the upper mantle; '
+                'the contrast reverses near 75 GPa'
+            )
             source = 'MK19b p9'
         if not _reaches(eos, p):
             absent(check, band, source)
@@ -250,8 +258,7 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         band = f'mixed above both, at the wide step where the steps agree within {MIX_STEP_AGREE:g}'
         source = 'MK19b p5'
         wide = MIX_STEPS[0]
-        ends = (p * (1.0 - wide), p * (1.0 + wide))
-        if not (all(_reaches(eos, x) for x in ends) and _mix_stays_mixed(eos, p, wide)):
+        if not _mix_stays_mixed(eos, p, wide):
             absent(check, band, source)
             continue
         mix = [GPA * _mix_gradient(eos, p, step) for step in MIX_STEPS]
@@ -300,7 +307,7 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         report(check, f'{gap:.0f}', band, source, gap)
 
     check = 'pressure where the isentrope with phi 0.4 at the surface reaches phi 0 [GPa]'
-    band, source = 'none: about 5 for a pyrolite (Katz 2003 model)', 'MK22A p5'
+    band, source = 'none: about 5 for a pyrolite (Katz 2003 model)', 'MK22A p5, p23'
     if low_held and d_low > 0.0:
         p_phi0, top = _phi0_pressure(eos)
         shown = f'> {top / GPA:.3g}' if p_phi0 is None else f'{p_phi0 / GPA:.2f}'
@@ -315,7 +322,8 @@ def sheet(eos: EntropyEOS) -> list[Row]:
         report(check, f'{span:.1f}', TABLE_PROPERTY, 'the table', span)
     padded = np.flatnonzero(spans > 0.0)
     where = (
-        f', {table["P"][padded[0]] / GPA:.3g}-{table["P"][padded[-1]] / GPA:.3g} GPa, '
+        f', between {table["P"][padded[0]] / GPA:.3g} and '
+        f'{table["P"][padded[-1]] / GPA:.3g} GPa, '
         f'largest span {np.nanmax(spans):.1f} J/kg/K'
         if padded.size
         else ''
@@ -369,7 +377,7 @@ def describe(folder: Path, commit: str | None = None) -> str:
     ]
     lines += [
         f'{counts["pass"]} pass, {counts["outside"]} outside, {counts["report"]} report, '
-        f'{counts["n/a"]} n/a. Pass and outside are readings against published values of other '
+        f'{counts["n/a"]} n/a. Pass and outside are sign or ordering readings against values of other '
         'melting models, not verdicts; report gives a value with no reading.',
         '',
         '| check | value | band | source | status |',
