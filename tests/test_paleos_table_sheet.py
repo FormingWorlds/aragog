@@ -210,7 +210,8 @@ def test_the_padded_row_counts_give_the_columns_and_their_pressure_range(good, t
     table['values'][1:] = table['values'][1:] + np.linspace(0.0, 1.0, table['S'].size)
     row = _rows(eos, 'pressure columns with solid temperature rows copied')[0]
     assert row.status == 'report' and row.value.startswith('1 of 41')
-    assert f'{float(table["P"][0]) / GPA:.3g}-{float(table["P"][0]) / GPA:.3g} GPa' in row.value
+    first = float(table['P'][0]) / GPA
+    assert f'between {first:.3g} and {first:.3g} GPa' in row.value
     assert f'largest span {float(table["S"][4] - table["S"][0]):.1f}' in row.value
 
 
@@ -342,12 +343,15 @@ def test_a_liquidus_above_the_table_top_reads_na(tmp_path):
 
 @pytest.mark.parametrize('curve', ['_solidus', '_liquidus'])
 def test_a_melting_curve_with_a_narrower_pressure_range_reads_na(tmp_path, curve):
-    """A melting curve clamps at its last pressure, so it must hold the pressure of the check."""
+    """A melting curve clamps at its edges, so it must hold the pressure of the check."""
     eos = _tables(tmp_path)
     table = getattr(eos, curve)
     setattr(eos, curve, {**table, 'P': table['P'][table['P'] <= 15.0 * GPA]})
     assert not sheet_tool._reaches(eos, 20.0 * GPA)
     assert sheet_tool._reaches(eos, GPA)
+    setattr(eos, curve, {**table, 'P': table['P'][table['P'] >= 2.0 * GPA]})
+    assert not sheet_tool._reaches(eos, GPA)
+    assert sheet_tool._reaches(eos, 20.0 * GPA)
 
 
 @pytest.mark.parametrize(
@@ -392,14 +396,6 @@ def test_the_alpha_rows_compare_near_the_surface_only_and_print_the_prescribed_r
         assert f'{melt / 4.6e-5:.1f} and {solid / 3.0e-5:.1f} times' in row.value
 
 
-def _steps(monkeypatch, wide_value, narrow_value):
-    """Make the mixed gradient return ``wide_value`` at the wide step, else ``narrow_value``."""
-    wide = sheet_tool.MIX_STEPS[0]
-    monkeypatch.setattr(
-        sheet_tool, '_mix_gradient', lambda e, p, st: wide_value if st == wide else narrow_value
-    )
-
-
 MIXED_5 = '(dT/dP)_S mixed vs pure phases at 5 GPa'
 
 
@@ -423,7 +419,10 @@ def test_the_mixed_gradient_reads_at_the_wide_step_only_where_the_2_steps_agree(
 ):
     """Melt is the steeper phase at 20 K/GPa. The reading follows the wide step within a factor 1.5
     of the narrow one; beyond it the row reports, and a value that is not finite reads n/a."""
-    _steps(monkeypatch, wide, narrow)
+    wide_step = sheet_tool.MIX_STEPS[0]
+    monkeypatch.setattr(
+        sheet_tool, '_mix_gradient', lambda e, p, st: wide if st == wide_step else narrow
+    )
     assert _status(good, MIXED_5) == [status]
 
 
@@ -532,26 +531,13 @@ def test_the_published_numbers_stand_next_to_the_reported_values(good):
     assert 'about 5' in _rows(good, 'pressure where the isentrope')[0].band
 
 
-@pytest.mark.parametrize(
-    ('name', 'p_gpa'),
-    [('density_melt', 1.0), ('temperature_solid', 1.0), ('dTdPs_solid', 1.0)],
-)
-def test_the_lower_pressure_edge_of_a_table_counts(tmp_path, name, p_gpa):
+@pytest.mark.parametrize('name', ['density_melt', 'temperature_solid', 'dTdPs_solid'])
+def test_the_lower_pressure_edge_of_a_table_counts(tmp_path, name):
     """A table that starts above the pressure of a check does not reach it."""
     eos = _tables(tmp_path)
     table = eos._tables[name]
     keep = table['P'] >= 2.0 * GPA
     table['P'], table['values'] = table['P'][keep], table['values'][keep]
-    assert not sheet_tool._reaches(eos, p_gpa * GPA)
-    assert sheet_tool._reaches(eos, 20.0 * GPA)
-
-
-@pytest.mark.parametrize('curve', ['_solidus', '_liquidus'])
-def test_the_lower_pressure_edge_of_a_curve_counts(tmp_path, curve):
-    """A melting curve that starts above the pressure of a check does not reach it."""
-    eos = _tables(tmp_path)
-    table = getattr(eos, curve)
-    setattr(eos, curve, {**table, 'P': table['P'][table['P'] >= 2.0 * GPA]})
     assert not sheet_tool._reaches(eos, GPA)
     assert sheet_tool._reaches(eos, 20.0 * GPA)
 
@@ -658,3 +644,49 @@ def test_the_band_texts_name_the_source_of_each_limit(good):
     for p_gpa in (1, 10):
         row = _rows(good, f'alpha_melt and alpha_solid, ordering at {p_gpa} GPa')[0]
         assert 'not a statement of the paper' in row.band
+
+
+def test_the_count_line_counts_the_printed_rows(tmp_path):
+    """Pass, outside, report and n/a all occur, with counts read from the printed table here."""
+    _tables(tmp_path, rho_melt=3500.0, p_max=60.0 * GPA)
+    lines = sheet_tool.describe(tmp_path).splitlines()
+    head = lines.index('| check | value | band | source | status |')
+    statuses = [
+        line.rsplit('|', 2)[1].strip() for line in lines[head + 2 :] if line.startswith('|')
+    ]
+    found = {status: statuses.count(status) for status in ('pass', 'outside', 'report', 'n/a')}
+    assert sum(found.values()) == len(statuses) and all(found.values())
+    want = (
+        f'{found["pass"]} pass, {found["outside"]} outside, '
+        f'{found["report"]} report, {found["n/a"]} n/a.'
+    )
+    assert any(line.startswith(want) for line in lines)
+
+
+def test_the_range_line_gives_the_range_of_the_tables(tmp_path):
+    """Entropy and pressure edges of the loaded temperature tables, each in its place."""
+    eos = _tables(tmp_path)
+    solid = eos._tables['temperature_solid']
+    want = (
+        f'S {float(solid["S"][0]):.3f} to {float(solid["S"][-1]):.3f} J/kg/K, '
+        f'P {float(solid["P"][0]):.3g} to {float(solid["P"][-1]):.3g} Pa'
+    )
+    assert want in sheet_tool.describe(tmp_path).splitlines()
+
+
+def test_the_isentrope_row_names_both_pages_and_the_mk19b_band_its_case(good):
+    """The depth is on MK22A p5 and the Katz model on p23; MK19b p9 holds for no accumulation."""
+    assert _rows(good, 'pressure where the isentrope')[0].source == 'MK22A p5, p23'
+    band = _rows(good, 'rho_melt - rho_solid at 20 GPa')[0].band
+    assert 'without crystal accumulation' in band and 'reverses near 75 GPa' in band
+
+
+def test_the_padded_range_does_not_claim_contiguous_columns(tmp_path):
+    """Columns 0 and 2 are copied and column 1 is not: the range reads between them."""
+    eos = _tables(tmp_path, pad_solid=4)
+    table = eos._tables['temperature_solid']
+    table['values'][3:] = table['values'][3:] + np.linspace(0.0, 1.0, table['S'].size)
+    table['values'][1] = table['values'][1] + np.linspace(0.0, 1.0, table['S'].size)
+    value = _rows(eos, 'pressure columns with solid temperature rows copied')[0].value
+    first, last = (float(table['P'][i]) / GPA for i in (0, 2))
+    assert value.startswith(f'2 of 41, between {first:.3g} and {last:.3g} GPa')
