@@ -124,7 +124,7 @@ def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, c
     return s
 
 
-def _factory_rhs(s, lid_params):
+def _factory_rhs(s, lid_params, bc_lid=None):
     """The JAX CVODE callbacks of ``s`` from the factory, as PROTEUS builds them."""
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams
@@ -154,6 +154,7 @@ def _factory_rhs(s, lid_params):
             cmb_area=float(s._cmb_area),
             core_M=float(s._core_M),
             cmb_dr_cmb=float(s._cmb_dr_cmb),
+            lid=bc_lid,
         ),
         heating_array=np.array(tidal),
         radio_isotope_params=tuple(np.array([getattr(r, k) for r in radio]) for k in keys)
@@ -325,6 +326,28 @@ def test_lid_solve_refuses_a_factory_without_lid_params():
         ValueError, match=r'^JAX CVODE factory: .*pass lid_params=solver\.jax_lid_params\(\)'
     ):
         s.solve()
+
+
+def test_factory_without_lid_params_drops_a_lid_of_the_boundary_params():
+    """``lid_params`` decides the lid of the factory: with None, a lid left in the boundary
+    parameters gives the RHS and the Jacobian of the factory built without it."""
+    lp = _lid_solver().jax_lid_params()
+    s = _lid_solver(lid=False)
+    r0, j0, _ = _factory_rhs(s, None)
+    r1, j1, _ = _factory_rhs(s, None, bc_lid=lp)
+    assert r1.lid is False
+    sc = s._build_nondim_scales()
+    y = (s._S0 - sc.state_offset) / sc.state_scale
+    a, b, Ja, Jb = (
+        np.empty(y.size),
+        np.empty(y.size),
+        np.empty((y.size,) * 2),
+        np.empty((y.size,) * 2),
+    )
+    assert r0(0.0, y, a) == 0 and j0(0.0, y, a, Ja) == 0
+    assert r1(0.0, y, b) == 0 and j1(0.0, y, b, Jb) == 0
+    np.testing.assert_array_equal(b, a)
+    np.testing.assert_array_equal(Jb, Ja)
 
 
 def test_solve_without_the_lid_refuses_a_factory_with_lid_params():
