@@ -536,14 +536,16 @@ def test_source_powers_with_a_live_lid_are_the_heating_of_the_residual(heating, 
     np.testing.assert_allclose(jax_powers[column + 2], frozen, rtol=1e-12)
 
 
+@pytest.mark.parametrize('heating', ['tidal', 'radio'])
 @pytest.mark.parametrize('method', ['radau', 'jax'])
-def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(method):
-    """``Q_tidal_total`` and ``F_heat_total`` of the output of a solve that ends with a live lid
-    count the fluid part of the top cell plus the lid mass, on the NumPy and JAX paths."""
+def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(method, heating):
+    """``Q_radio_total``, ``Q_tidal_total`` and ``F_heat_total`` of the output of a solve that
+    ends with a live lid count the fluid part of the top cell plus the lid mass, on the NumPy
+    and JAX paths."""
     if method == 'jax':
-        s = _jax_cvode_lid_solver(end=1.0e-3, heating='tidal')
+        s = _jax_cvode_lid_solver(end=1.0e-3, heating=heating)
     else:
-        s = _lid_solver('quasi_steady', None, 'tidal')
+        s = _lid_solver('quasi_steady', None, heating)
         s.parameters.solver.end_time = 1.0e-3
     s.set_initial_lid(300.0, 300.0 * float(s._lid_hv.H(1000.0)))
     s.set_initial_entropy(3050.0)
@@ -551,10 +553,10 @@ def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(me
     assert s._solution.status == 0
     out = s.get_state()
     assert out.lid_delta > 0.0
-    source = np.asarray(s.state.heating_tidal).ravel()
+    source = np.asarray(getattr(s.state, f'heating_{heating}')).ravel()
     want = _heat_of_the_residual(s, source, s._solution.y[: s._n_stag, -1])
-    np.testing.assert_allclose(out.Q_tidal_total, want, rtol=1e-13)
-    assert out.Q_radio_total == 0.0
+    np.testing.assert_allclose(getattr(out, f'Q_{heating}_total'), want, rtol=1e-13)
+    assert getattr(out, 'Q_tidal_total' if heating == 'radio' else 'Q_radio_total') == 0.0
     area = 4.0 * np.pi * float(s._r_basic_flat[-1]) ** 2
     np.testing.assert_allclose(out.F_heat_total * area, want, rtol=1e-13)
 
