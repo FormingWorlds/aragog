@@ -124,6 +124,14 @@ def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, c
     return s
 
 
+def _evaluate(rhs_fn, jac_fn, y, scales):
+    """The RHS and the Jacobian of a callback pair at the physical state ``y``."""
+    x = (y - scales.state_offset) / scales.state_scale
+    f, J = np.empty(y.size), np.empty((y.size, y.size))
+    assert rhs_fn(0.0, x, f) == 0 and jac_fn(0.0, x, f, J) == 0
+    return f, J
+
+
 def _factory_rhs(s, lid_params, bc_lid=None):
     """The JAX CVODE callbacks of ``s`` from the factory, as PROTEUS builds them."""
     from aragog.jax.phase import MeshArrays, PhaseParams
@@ -337,15 +345,21 @@ def test_factory_without_lid_params_drops_a_lid_of_the_boundary_params():
     r1, j1, _ = _factory_rhs(s, None, bc_lid=lp)
     assert r1.lid is False
     sc = s._build_nondim_scales()
-    y = (s._S0 - sc.state_offset) / sc.state_scale
-    a, b, Ja, Jb = (
-        np.empty(y.size),
-        np.empty(y.size),
-        np.empty((y.size,) * 2),
-        np.empty((y.size,) * 2),
-    )
-    assert r0(0.0, y, a) == 0 and j0(0.0, y, a, Ja) == 0
-    assert r1(0.0, y, b) == 0 and j1(0.0, y, b, Jb) == 0
+    (a, Ja), (b, Jb) = (_evaluate(r, j, s._S0, sc) for r, j in ((r0, j0), (r1, j1)))
+    np.testing.assert_array_equal(b, a)
+    np.testing.assert_array_equal(Jb, Ja)
+
+
+def test_factory_with_the_lid_already_in_the_boundary_params_gives_the_same_rhs():
+    """A ``lid_params`` that is the lid of the boundary parameters gives the RHS and the
+    Jacobian of the factory built with it alone."""
+    s = _lid_solver()
+    lp = s.jax_lid_params()
+    r0, j0, _ = _factory_rhs(s, lp)
+    r1, j1, _ = _factory_rhs(s, lp, bc_lid=lp)
+    assert r1.lid is True
+    sc = s._build_nondim_scales()
+    (a, Ja), (b, Jb) = (_evaluate(r, j, s._S0, sc) for r, j in ((r0, j0), (r1, j1)))
     np.testing.assert_array_equal(b, a)
     np.testing.assert_array_equal(Jb, Ja)
 
@@ -459,23 +473,17 @@ def test_a_handed_over_lid_skips_the_lid_and_equals_the_rhs_without_it(monkeypat
     )
     sc, sc_free, n = s._build_nondim_scales(), free._build_nondim_scales(), s._S0.size - 2
 
-    def evaluate(rhs_fn, jac_fn, y, scales):
-        x = (y - scales.state_offset) / scales.state_scale
-        f, J = np.empty(y.size), np.empty((y.size, y.size))
-        assert rhs_fn(0.0, x, f) == 0 and jac_fn(0.0, x, f, J) == 0
-        return f, J
-
     y = s._S0.copy()
     y[-2:] = 0.0
-    f, J = evaluate(rhs, jac, y, sc)
-    f_free, J_free = evaluate(rhs_free, jac_free, y[:n], sc_free)
+    f, J = _evaluate(rhs, jac, y, sc)
+    f_free, J_free = _evaluate(rhs_free, jac_free, y[:n], sc_free)
     np.testing.assert_allclose(f[:n], f_free, rtol=1e-13)
     np.testing.assert_allclose(J[:n, :n], J_free, rtol=1e-13, atol=1e-13 * np.abs(J_free).max())
     assert np.all(f[n:] == 0.0) and np.all(J[n:] == 0.0) and np.all(J[:, n:] == 0.0)
     live = y.copy()
     live[n - 1] = float(s._lid_S_sol) + 1e-9
     live[-2:] = 0.5, 0.5 * float(s._lid_hv.H(1000.0))
-    assert np.all(np.isfinite(evaluate(rhs, jac, live, sc)[1]))
+    assert np.all(np.isfinite(_evaluate(rhs, jac, live, sc)[1]))
 
     calls, top = [0], jl.lid_top
 
@@ -490,8 +498,13 @@ def test_a_handed_over_lid_skips_the_lid_and_equals_the_rhs_without_it(monkeypat
         assert rhs(0.0, (live - sc.state_offset) / sc.state_scale, out) == 0 and calls[0] == 1
 
 
+CLOSURE_BOUND = 1.0e-9  # measured 5.9e-12 on Radau, 6.2e-11 on the JAX path
+
+
 def _heat_of_the_residual(s, source, entropy):
-    """Power [W] of a heating array as the entropy residual has it after an RHS of ``s``."""
+    """Power [W] of a heating array as the entropy residual has it after an RHS of ``s``. It
+    holds a state where the table density equals the phase density; in the mush the output
+    totals differ from it."""
     rho = np.asarray(s.state.phase_staggered.density()).ravel()
     table = np.asarray(s.entropy_eos.density(s._P_stag_flat, entropy)).ravel()
     np.testing.assert_allclose(rho, table, rtol=1e-12)
@@ -536,7 +549,7 @@ def test_source_powers_with_a_live_lid_are_the_heating_of_the_residual(heating, 
     np.testing.assert_allclose(jax_powers[column + 2], frozen, rtol=1e-12)
 
 
-@pytest.mark.parametrize('heating', ['tidal', 'radio'])
+@pytest.mark.parametrize('heating', ['tidal', 'radio', 'radio_and_tidal'])
 @pytest.mark.parametrize('method', ['radau', 'jax'])
 def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(method, heating):
     """``Q_radio_total``, ``Q_tidal_total`` and ``F_heat_total`` of the output of a solve that
@@ -553,12 +566,33 @@ def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(me
     assert s._solution.status == 0
     out = s.get_state()
     assert out.lid_delta > 0.0
-    source = np.asarray(getattr(s.state, f'heating_{heating}')).ravel()
-    want = _heat_of_the_residual(s, source, s._solution.y[: s._n_stag, -1])
-    np.testing.assert_allclose(getattr(out, f'Q_{heating}_total'), want, rtol=1e-13)
-    assert getattr(out, 'Q_tidal_total' if heating == 'radio' else 'Q_radio_total') == 0.0
+    entropy = s._solution.y[: s._n_stag, -1]
+    radio = _heat_of_the_residual(s, np.asarray(s.state.heating_radio).ravel(), entropy)
+    tidal = _heat_of_the_residual(s, np.asarray(s.state.heating_tidal).ravel(), entropy)
+    assert (radio > 0.0) == ('radio' in heating) and (tidal > 0.0) == ('tidal' in heating)
+    np.testing.assert_allclose(out.Q_radio_total, radio, rtol=1e-13)
+    np.testing.assert_allclose(out.Q_tidal_total, tidal, rtol=1e-13)
     area = 4.0 * np.pi * float(s._r_basic_flat[-1]) ** 2
-    np.testing.assert_allclose(out.F_heat_total * area, want, rtol=1e-13)
+    np.testing.assert_allclose(out.F_heat_total * area, radio + tidal, rtol=1e-13)
+
+
+@pytest.mark.parametrize('method', ['radau', 'jax'])
+def test_energy_integrals_of_a_live_lid_call_close_with_large_tidal_heat(method):
+    """The state heat of a call with a live lid equals the integrated surface, core and source
+    powers. The source powers are read from the output and do not repeat the residual formula."""
+    if method == 'jax':
+        s = _jax_cvode_lid_solver(end=0.05, heating='tidal')
+    else:
+        s = _lid_solver(heating='tidal')
+        s.parameters.solver.end_time = 0.05
+    s.parameters.energy.tidal_array = s.state._tidal_array = np.array([3.0e-4])
+    s.set_initial_lid(300.0, 300.0 * float(s._lid_hv.H(1000.0)))
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s._solution.status == 0 and s._solution.y[-2, -1] > 0.0
+    ei = s._solution.energy_integrals
+    gap = ei['state_heat'] - (ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal'])
+    assert abs(gap) <= CLOSURE_BOUND * abs(ei['Q_tidal'])
 
 
 def _jax_cvode_lid_solver(end=1.0, heating=None):

@@ -35,6 +35,9 @@ def _heat(p, heating):
     elif heating == 'radio':
         p.energy.radionuclides = True
         p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
+    elif heating == 'radio_and_tidal':
+        _heat(p, 'radio')
+        _heat(p, 'tidal')
     elif heating == 'bottom_cell':  # strong, and with no transport between the cells
         p.energy.tidal = True
         p.energy.tidal_array = np.eye(1, 9).ravel() * 1.0e-2
@@ -1424,13 +1427,32 @@ def test_handover_fires_where_the_solid_regime_begins(eos):
     assert s.get_state().lid_handover_time == pytest.approx(t_star, rel=1e-6)
 
 
-def _top_at(eos, dS, end=1.0):
+def _top_at(eos, dS, end=1.0, heating=None):
     """A 10-node column without the solid rheology, the top cell ``dS`` above its solidus."""
-    s = _solver(eos, end=end)
+    s = _solver(eos, end=end, heating=heating)
     S = s._S0[: s._n_stag].copy()
     S[-1] = s._lid_S_sol + dS
     s.set_initial_entropy(S)
     return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_source_total_after_a_hand_over_in_the_call_counts_the_whole_top_cell(eos, method):
+    """After a hand-over inside the call the output tidal power is the heat of the whole cells
+    at the table density, with no lid mass and no fluid fraction of the top cell left."""
+    s = _top_at(eos, 0.2, heating='tidal')
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    s.solve()
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0 and st.lid_delta == 0.0
+    mass = eos.density(s._P_stag_flat, s._solution.y[: s._n_stag, -1]).ravel() * s._volume_flat
+    want = float(np.dot(np.asarray(s.state.heating_tidal).ravel(), mass))
+    assert want > 0.0
+    np.testing.assert_allclose(st.Q_tidal_total, want, rtol=1e-13)
 
 
 @pytest.mark.physics_invariant
