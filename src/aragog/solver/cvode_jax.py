@@ -273,7 +273,8 @@ def build_jax_rhs_and_jacobian(
     lid_params : aragog.jax.surface_lid.LidParams, optional
         The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
         ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
-        True; None, the default, builds the RHS without the lid.
+        True; None, the default, builds the RHS without the lid. It decides the lid of the
+        factory, also over a ``lid`` in ``boundary_params``.
     start_time : float, optional
         Time [yr] at which the radiogenic heating of each isotope of ``radio_isotope_params``
         must be finite (``aragog.parser.validate_radionuclide``); None skips the check.
@@ -357,12 +358,11 @@ def build_jax_rhs_and_jacobian(
     )
     n_extra += 0 if shell is None else shell.n_cells
     n_extra += 0 if lid_params is None else 2
-    if lid_params is not None:
-        import equinox as eqx
+    import equinox as eqx
 
-        boundary_params = eqx.tree_at(
-            lambda b: b.lid, boundary_params, lid_params, is_leaf=lambda x: x is None
-        )
+    boundary_params = eqx.tree_at(
+        lambda b: b.lid, boundary_params, lid_params, is_leaf=lambda x: x is None
+    )
     expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
         msg = (
