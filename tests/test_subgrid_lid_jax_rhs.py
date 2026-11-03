@@ -446,13 +446,82 @@ def test_jax_step_powers_match_the_numpy_ledger_with_the_lid(core_bc, rheology, 
     assert np.all(np.abs(got[:, 6]) <= 1e-12 * scale)
 
 
-def _jax_cvode_lid_solver(end=1.0):
+def _heat_of_the_residual(s, source, entropy):
+    """Power [W] of a heating array as the entropy residual has it after an RHS of ``s``."""
+    rho = np.asarray(s.state.phase_staggered.density()).ravel()
+    table = np.asarray(s.entropy_eos.density(s._P_stag_flat, entropy)).ravel()
+    np.testing.assert_allclose(rho, table, rtol=1e-12)
+    vol = s._volume_flat.copy()
+    vol[-1] = s._lid_last.V_fluid
+    return float(np.dot(source, rho * vol)) + source[-1] * s._lid_area * s._lid_last.m_lid
+
+
+@pytest.mark.parametrize(('heating', 'column'), [('radio', 2), ('tidal', 3)])
+def test_source_powers_with_a_live_lid_are_the_heating_of_the_residual(heating, column):
+    """With a live lid the top cell is heated through its fluid volume plus the lid mass. The
+    NumPy and JAX source powers report that heating, not the whole top cell at the fluid
+    density, and the frozen-mass powers stay the structural mass."""
+    from aragog.jax.solver import StepPowersAux
+
+    s = _lid_solver('quasi_steady', None, heating)
+    rhs_fn, _, _ = _factory_rhs(s, s.jax_lid_params())
+    vol = s._volume_flat
+    mass_struct = np.asarray(s.evaluator.mesh.staggered_effective_density).ravel() * vol
+    aux = StepPowersAux(
+        A_int=4.0 * np.pi * float(s._r_basic_flat[-1]) ** 2,
+        A_cmb=4.0 * np.pi * float(s._r_basic_flat[0]) ** 2,
+        volume=vol,
+        mass_struct=mass_struct,
+        P_stag=s._P_stag_flat,
+    )
+    y = s._S0.copy()
+    y[-2:] = 300.0, 300.0 * float(s._lid_hv.H(1000.0))
+    numpy_powers = s._step_powers(0.0, y)
+    name = 'heating_radio' if heating == 'radio' else 'heating_tidal'
+    source = np.asarray(getattr(s.state, name)).ravel()
+    want = _heat_of_the_residual(s, source, y[: s._n_stag])
+    whole_cell = float(
+        np.dot(source, np.asarray(s.state.phase_staggered.density()).ravel() * vol)
+    )
+    assert abs(want / whole_cell - 1.0) > 1e-7
+    np.testing.assert_allclose(numpy_powers[column], want, rtol=1e-13)
+    jax_powers = np.asarray(rhs_fn.step_powers(np.zeros(1), y[:, None], aux))[0]
+    np.testing.assert_allclose(jax_powers[column], want, rtol=1e-10)
+    frozen = float(np.dot(source, mass_struct))
+    assert numpy_powers[column + 2] == frozen
+    np.testing.assert_allclose(jax_powers[column + 2], frozen, rtol=1e-12)
+
+
+@pytest.mark.parametrize('method', ['radau', 'jax'])
+def test_output_source_totals_with_a_live_lid_are_the_heating_of_the_residual(method):
+    """``Q_tidal_total`` and ``F_heat_total`` of the output of a solve that ends with a live lid
+    count the fluid part of the top cell plus the lid mass, on the NumPy and JAX paths."""
+    if method == 'jax':
+        s = _jax_cvode_lid_solver(end=1.0e-3, heating='tidal')
+    else:
+        s = _lid_solver('quasi_steady', None, 'tidal')
+        s.parameters.solver.end_time = 1.0e-3
+    s.set_initial_lid(300.0, 300.0 * float(s._lid_hv.H(1000.0)))
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s._solution.status == 0
+    out = s.get_state()
+    assert out.lid_delta > 0.0
+    source = np.asarray(s.state.heating_tidal).ravel()
+    want = _heat_of_the_residual(s, source, s._solution.y[: s._n_stag, -1])
+    np.testing.assert_allclose(out.Q_tidal_total, want, rtol=1e-13)
+    assert out.Q_radio_total == 0.0
+    area = 4.0 * np.pi * float(s._r_basic_flat[-1]) ** 2
+    np.testing.assert_allclose(out.F_heat_total * area, want, rtol=1e-13)
+
+
+def _jax_cvode_lid_solver(end=1.0, heating=None):
     """A lid solver on CVODE with the JAX factory built with the lid."""
     from aragog.solver import entropy_solver as es
 
     if not es._CVODE_AVAILABLE:
         pytest.skip('scikits.odes is not installed')
-    s = _lid_solver()
+    s = _lid_solver(heating=heating)
     s.parameters.energy.solver_method = 'cvode'
     s.parameters.energy.use_jax_jacobian = True
     s.parameters.solver.end_time = end
