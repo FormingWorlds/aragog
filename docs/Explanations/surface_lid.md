@@ -6,7 +6,7 @@ How does Aragog follow a crust that is much thinner than the top cell of the mes
 
 ## Why the mesh alone cannot do it
 
-A magma ocean freezes from its surface down. The first crust is metres thick, while the top cell of a 100-node mantle is 29 to 35 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
+Most magma ocean models freeze from the bottom up: the mantle starts to freeze at depth, where the adiabat first meets the melting curve. A crust can still form at the surface when the surface loses heat faster than the melt below delivers it, for example under a thin atmosphere. The lid follows such a crust once it exists; it does not decide whether one forms. That crust starts metres thick, while the top cell of a 100-node mantle is 29 to 35 km thick. A cell that thick has one temperature: it is either all melt or all solid. While the crust is thin, neither choice is right. As melt, the cell radiates from a hot surface; as solid, it blocks the heat of the whole cell. The heat the planet loses then jumps between two wrong values as the top cell freezes and thaws. A mesh fine enough to resolve a metre-thick crust needs metre-thick cells, which makes the solver steps tiny.
 
 ## The two states and the profile
 

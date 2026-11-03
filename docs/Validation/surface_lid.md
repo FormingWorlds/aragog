@@ -127,7 +127,7 @@ One run uses 10 nodes (cells of 2.8 km) with the lid; the other uses 4000 nodes 
 | 2859 | 674 | 0.9982 | 0.9963 | 0.34 % | 0.02 % |
 | 5000 | 890 | 0.9973 | 0.9978 | 0.23 % | 0.20 % |
 
-**Why it matters.** A magma ocean that freezes from its surface forms its first crust this way. In a run on a coarse mesh, the crust thickness and the heat the planet loses through it depend on the Stefan jump of the lid. Without the lid, the 10-node shell misses the flux of the fine mesh by 28 % or more and makes its crust 4.4 to 30 times too thick.
+**Why it matters.** Where a crust forms at the surface of a magma ocean, it grows this way. In a run on a coarse mesh, the crust thickness and the heat the planet loses through it depend on the Stefan jump of the lid. Without the lid, the 10-node shell misses the flux of the fine mesh by 28 % or more and makes its crust 4.4 to 30 times too thick.
 
 ![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh.svg#only-light){ width="70%" }
 ![Surface flux and crust thickness of the 10-node shell with the lid divided by those of the 4000-node shell, against time, inside a band of plus or minus 2 percent](../assets/validation/surface_lid_v2_melt_resolved_mesh_dark.svg#only-dark){ width="70%" }
@@ -143,7 +143,7 @@ One run uses 10 nodes (cells of 2.8 km) with the lid; the other uses 4000 nodes 
 
 ## A molten shell freezing through on a fine mesh
 
-**Why this check exists.** A magma ocean that starts fully molten cools fast at its surface. On a coarse mesh the top cell freezes through within a few years, long before a resolved crust would be thick. Without the solid rheology the lid base is the solidus, so once the top cell is at the solidus no melt is left below the lid to freeze. A lid kept past that point keeps a crust the mesh no longer has: with the hand-over held off, the lid gives between 0.26 and 50 times the surface flux of the fine mesh. The test runs the 10-node shell again, with and without the lid, only with the extended table.
+**Why this check exists.** A shell that starts fully molten cools fast at its surface. On a coarse mesh the top cell freezes through within a few years, long before a resolved crust would be thick. Without the solid rheology the lid base is the solidus, so once the top cell is at the solidus no melt is left below the lid to freeze. A lid kept past that point keeps a crust the mesh no longer has: with the hand-over held off, the lid gives between 0.26 and 50 times the surface flux of the fine mesh. The test runs the 10-node shell again, with and without the lid, only with the extended table.
 
 **What it tests.** The shell of the cases above, 25 km thick, starts molten: at every node the entropy lies 1.1 times the way from the solidus to the liquidus. It convects, the solid rheology is off, and it cools through a black-body surface that radiates to 255 K, on the extended PALEOS table. One run uses 10 nodes (top cell 2.8 km) with the lid; the reference uses 800 nodes without the lid, with a top cell of 0.125 m. The test compares their surface fluxes at 29 times from 100 to 5000 years.
 
@@ -155,7 +155,7 @@ The criterion of the hand-over is tested in `tests/test_subgrid_lid_solver.py::t
 
 The 10-node lid lies within 3 % of the reference at every time: 0.95 % above it at 100 years, and 2.1 % below it at 5000 years. With the solid rheology off, the floor of the eddy diffusivity sets $\kappa_h$ = 0.048 m²/s at every node of the 10-node shell at 5000 years, so the floor carries its heat flux.
 
-**Why it matters.** A run of a magma ocean from a molten start passes through this stage. The lid must step aside once the coarse mesh can carry the cold top cell; otherwise it keeps a crust that is no longer there, and in this case the surface flux at 5000 years is 50 times that of the fine mesh.
+**Why it matters.** A run from a molten start whose surface freezes on a coarse mesh passes through this stage. The lid must step aside once the coarse mesh can carry the cold top cell; otherwise it keeps a crust that is no longer there, and in this case the surface flux at 5000 years is 50 times that of the fine mesh.
 
 ![Surface flux of the 10-node shell with the lid divided by that of the 800-node reference against time from 100 to 5000 years, on a log time axis, with a band of 3 %](../assets/validation/surface_lid_c3_molten_resolved_mesh.svg#only-light){ width="70%" }
 ![Surface flux of the 10-node shell with the lid divided by that of the 800-node reference against time from 100 to 5000 years, on a log time axis, with a band of 3 %](../assets/validation/surface_lid_c3_molten_resolved_mesh_dark.svg#only-dark){ width="70%" }
