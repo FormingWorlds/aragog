@@ -44,7 +44,8 @@ from scipy.constants import Stefan_Boltzmann
 from scipy.optimize import brentq
 from scipy.special import dawsn, erf
 
-# Growth stop: the lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell width.
+# Growth stop: the lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell
+# width.
 LID_CAP_FRAC: float = 0.8
 LID_CAP_WIDTH: float = 0.02
 # A lid weight below this value is set to 0 (the lid is hidden).
@@ -164,7 +165,8 @@ class LidEnthalpy:
 
     @classmethod
     def table(cls, T: npt.ArrayLike, H: npt.ArrayLike, rho: npt.ArrayLike) -> LidEnthalpy:
-        """From a table on increasing ``T``: monotone cubic ``H``, linear ``rho``, both continued
+        """From a table on increasing ``T``: monotone cubic ``H``, linear ``rho``, both
+        continued
         linearly outside the table with the end slopes of ``H`` and constant ``rho``."""
         from scipy.interpolate import PchipInterpolator
 
@@ -185,7 +187,8 @@ class LidEnthalpy:
         return cls(H=H_of, rho=lambda t: np.interp(t, T, rho), data=('table', T, H, rho))
 
     def profile_heat(self, s: float, T_s: float, T_b: float) -> float:
-        """Mean heat content per volume [J/m^3] of a lid with shape ``s`` from ``T_s`` to ``T_b``."""
+        """Mean heat content per volume [J/m^3] of a lid with shape ``s`` from ``T_s`` to
+        ``T_b``."""
         x, w = profile_nodes(s)
         return float(np.dot(w, self.H(T_s + (T_b - T_s) * profile(s, x))))
 
@@ -224,7 +227,8 @@ def grey_surface_temperature(
 
 
 def grey_flux(T_s: float, emissivity: float, T_eq: float) -> float:
-    """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against the equilibrium ``T_eq`` [K]."""
+    """Grey-body flux [W/m^2] of a surface at ``T_s`` [K] against the equilibrium ``T_eq``
+    [K]."""
     return emissivity * Stefan_Boltzmann * (max(T_s, 0.0) ** 4 - T_eq**4)
 
 
@@ -244,7 +248,8 @@ class LidSurface:
         Shape parameter of the profile [-].
     clipped : int
         0 when the root lies inside the shape bounds; +1 when the lid energy is too high for
-        any profile (``s`` at its upper bound), -1 when it is too low (``s`` at its lower bound).
+        any profile (``s`` at its upper bound), -1 when it is too low (``s`` at its lower
+        bound).
     T_m : float
         Mean temperature of the profile [K].
     """
@@ -353,7 +358,8 @@ def fixed_surface_state(
 def linear_lid_surface(
     delta: float, T_b: float, k: float, emissivity: float, T_eq: float
 ) -> float:
-    """Surface temperature [K] of a linear (steady) lid: ``grey(T_s) = k (T_b - T_s) / delta``."""
+    """Surface temperature [K] of a linear (steady) lid:
+    ``grey(T_s) = k (T_b - T_s) / delta``."""
     if T_b <= T_eq:
         return T_b
     return brentq(
@@ -414,7 +420,8 @@ def existence_weight(
     A crust in steady state carries ``F_b`` by conduction, ``delta_eq = k (T_b - T_s) / F_b``,
     with ``grey(T_s) = F_b``. The lid acts where ``delta_eq`` exceeds ``delta_on``:
     ``w = (1 + tanh(log10(delta_eq / delta_on) / LID_EXIST_WIDTH)) / 2``, set to 0 below
-    ``LID_WEIGHT_FLOOR``. A fluid that delivers more than the grey flux at ``T_b`` carries no lid.
+    ``LID_WEIGHT_FLOOR``. A fluid that delivers more than the grey flux at ``T_b`` carries no
+    lid.
     """
     F_rad = grey_flux(T_b, emissivity, T_eq)
     if F_b <= 0.0:

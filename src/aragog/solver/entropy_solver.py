@@ -1571,7 +1571,8 @@ def _real_or_none(value) -> float | None:
 
 def _lid_slots(solver) -> int:
     """Number of lid states at the end of the state vector of ``solver``: 2 with the lid on,
-    else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works too."""
+    else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works
+    too."""
     return 2 if getattr(solver, '_lid_on', False) else 0
 
 
@@ -2481,7 +2482,8 @@ class EntropySolver:
 
         The lid length scales read the mesh: the top-cell width is the radial step of the top
         two basic nodes, and the hand-over depth is the depth of the face below the top
-        ``lid_handover_cells`` cells. Refuses the lid settings ``check_subgrid_lid`` refuses (also
+        ``lid_handover_cells`` cells. Refuses the lid settings ``check_subgrid_lid`` refuses
+        (also
         when the lid is set after parsing) and a ``lid_delta_on`` the top cell cannot hold.
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
@@ -3027,7 +3029,8 @@ class EntropySolver:
         It holds in either order with ``set_initial_entropy``, apart from a start that refuses
         the lid of the previous solution; every start uses it until the next ``solve``, which
         consumes it. A lid above the growth stop fails the step check at step 0. ``None`` clears
-        the stored value: a later start then takes the lid of the previous solution, or the phantom lid (``lid_delta_lo``, linear
+        the stored value: a later start then takes the lid of the previous solution, or the
+        phantom lid (``lid_delta_lo``, linear
         profile). ``(0, 0)`` is a lid handed over to the mesh, which does not grow again;
         ``handover_time`` [yr] is then the ``lid_handover_time`` of the output, NaN if not
         known. A live lid has no hand-over time and clears the stored one.
@@ -3274,7 +3277,8 @@ class EntropySolver:
             When a lid state or rate is not finite, the thickness leaves
             ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
             ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy
-            lies more than ``_EOS_TABLE_TOL`` outside the heat table. With the solid rheology on,
+            lies more than ``_EOS_TABLE_TOL`` outside the heat table. With the solid rheology
+            on,
             its own check refuses any state outside the table before this one runs.
         """
         ev = self._lid_last
@@ -3327,10 +3331,12 @@ class EntropySolver:
 
     def _lid_root_value(self, t_yr: float, y: npt.NDArray) -> float:
         """Hand-over root of a physical state: the smallest of the margin
-        ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_solid_regime`. It is positive once
+        ``(z_lid - depth) / depth`` and the two terms of :meth:`_lid_solid_regime`. It is
+        positive once
         the lid-base isotherm lies below the face of ``lid_handover_cells`` top cells in the
         solid regime; -1 for a handed-over lid or without the stagnant-lid state. It updates
-        only the column, the lid base and, when the crossing can lie in the lid, the lid surface;
+        only the column, the lid base and, when the crossing can lie in the lid, the lid
+        surface;
         its value equals the root after a full right-hand side evaluation. Without the
         'lid' closure the root is :meth:`_lid_solidus_root`."""
         if float(y[-2]) == 0.0:
@@ -5028,7 +5034,8 @@ class EntropySolver:
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. With the rheology off, a call that leaves the EOS tables fails with status -1 (see
         ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that warning:
-        a call whose floor root returns a state below the EOS table, or stops at the call start, is solved
+        a call whose floor root returns a state below the EOS table, or stops at the call start,
+        is solved
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()

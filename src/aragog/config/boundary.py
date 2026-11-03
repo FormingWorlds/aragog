@@ -51,7 +51,8 @@ def check_subgrid_lid(
     core_bc: str,
     param_utbl: bool,
 ) -> None:
-    """Refuse invalid sub-grid lid settings, and the lid on a boundary setup it does not support.
+    """Refuse invalid sub-grid lid settings, and the lid on a boundary setup it does not
+    support.
 
     ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
     positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
