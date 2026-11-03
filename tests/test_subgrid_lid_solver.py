@@ -176,8 +176,7 @@ def test_set_initial_lid_and_hot_start(eos):
     ids=['utbl', 'bower2018'],
 )
 def test_solver_setup_refuses_a_setting_made_after_parsing(eos, field, value):
-    """The check at solver setup sees a setting the lid refuses when it is made after the parser
-    ran."""
+    """The check at solver setup sees a setting the lid refuses when made after the parser ran."""
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)

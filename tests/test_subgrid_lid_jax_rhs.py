@@ -213,8 +213,8 @@ def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
     """With ``energy.convection`` off neither right-hand side gives the lid base the
     boundary-layer flux: the lid rates agree to relative 1e-12. The top-cell rate is then the
-    small difference of two fluxes of about 1.6e-3 W/m^2 and agrees to 1e-8 (measured
-    1.1e-9)."""
+    small difference of two fluxes of about 1.6e-3 W/m^2
+    and agrees to 1e-8 (measured 1.1e-9)."""
     _assert_rhs_parity(_lid_solver(convection=False), rtol_top=1e-8)
 
 
@@ -487,8 +487,7 @@ def test_growth_stop_warns_once_on_the_jax_batch_path(caplog):
 
 def test_enthalpy_floor_warns_on_the_jax_batch_path(caplog):
     """A top cell just above the solidus, the lid-base entropy without the rheology, puts the
-    Stefan enthalpy jump under its floor; the JAX batch path warns once, as the NumPy loop
-    does."""
+    Stefan enthalpy jump under its floor; the JAX batch path warns once, like the NumPy loop."""
     import logging
 
     s = _jax_cvode_lid_solver()

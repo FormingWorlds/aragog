@@ -414,8 +414,7 @@ def existence_weight(
     A crust in steady state carries ``F_b`` by conduction, ``delta_eq = k (T_b - T_s) / F_b``,
     with ``grey(T_s) = F_b``. The lid acts where ``delta_eq`` exceeds ``delta_on``:
     ``w = (1 + tanh(log10(delta_eq / delta_on) / LID_EXIST_WIDTH)) / 2``, set to 0 below
-    ``LID_WEIGHT_FLOOR``. A fluid that delivers more than the grey flux at ``T_b`` carries no
-    lid.
+    ``LID_WEIGHT_FLOOR``. A fluid that delivers over the grey flux at ``T_b`` carries no lid.
     """
     F_rad = grey_flux(T_b, emissivity, T_eq)
     if F_b <= 0.0:

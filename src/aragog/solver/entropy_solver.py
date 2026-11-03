@@ -1571,8 +1571,7 @@ def _real_or_none(value) -> float | None:
 
 def _lid_slots(solver) -> int:
     """Number of lid states at the end of the state vector of ``solver``: 2 with the lid on,
-    else 0. It reads ``_lid_on`` only, so an object that borrows the solver methods works
-    too."""
+    else 0. It reads only ``_lid_on``, so an object with the solver methods works too."""
     return 2 if getattr(solver, '_lid_on', False) else 0
 
 
@@ -3144,8 +3143,7 @@ class EntropySolver:
         table, on 2048, 512 and 2048 entropy intervals (4-point Gauss-Legendre each) from the
         table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W``
         in entropy, and returns ``W`` and the density of the solid in temperature between the
-        flat floor of the table and the band below the solidus where the temperature stays at
-        the solidus.
+        flat floor of the table and the band below the solidus at the solidus temperature.
 
         Raises
         ------
