@@ -213,7 +213,8 @@ def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
     """With ``energy.convection`` off neither right-hand side gives the lid base the
     boundary-layer flux: the lid rates agree to relative 1e-12. The top-cell rate is then the
-    small difference of two fluxes of about 1.6e-3 W/m^2 and agrees to 1e-8 (measured 1.1e-9)."""
+    small difference of two fluxes of about 1.6e-3 W/m^2 and agrees to 1e-8 (measured
+    1.1e-9)."""
     _assert_rhs_parity(_lid_solver(convection=False), rtol_top=1e-8)
 
 
@@ -434,6 +435,20 @@ def _jax_cvode_lid_solver(end=1.0):
     s.parameters.solver.end_time = end
     s.set_jax_cvode_factory(lambda scales, mode: _factory_rhs(s, s.jax_lid_params())[:2])
     return s
+
+
+def test_a_guard_cut_removes_the_hand_over_time_on_the_jax_path():
+    """A table exit on the JAX CVODE path whose kept states end with a live lid fails the call
+    without the time of the hand-over it cut away."""
+    s = _jax_cvode_lid_solver(end=10.0)
+    S = np.full(s._n_stag, 3050.0)
+    S[-1], S[0] = s._lid_S_sol + 1e-4, float(s.entropy_eos.S_max) + 2e-3
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == -1 and 'EOS table guard' in str(s._solution.message)
+    out = s.get_state()
+    assert out.lid_delta > 0.0
+    assert np.isnan(out.lid_handover_time)
 
 
 def test_lid_step_check_runs_on_the_jax_batch_path():

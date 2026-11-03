@@ -4,9 +4,9 @@
 or without the solid rheology (the 'lid' stress closure), on CVODE with the finite-difference
 Jacobian or with a JAX factory, and returns the mesh, one right-hand side at the start state and
 a 2-yr solve. ``mode_probe(core_bc)`` runs a 12-node NumPy column on a core mode for 5 yr and
-returns the end state and every energy integral, with tidal and radiogenic heating. ``build_subgrid_lid_v0_reference.py`` stores
-both for the commit the lid branches from; ``tests/test_subgrid_lid_off_path.py`` compares the
-current code with it.
+returns the end state and every energy integral, with tidal and radiogenic heating.
+``build_subgrid_lid_v0_reference.py`` stores both for the commit the lid branches from;
+``tests/test_subgrid_lid_off_path.py`` compares the current code with it.
 """
 
 from __future__ import annotations

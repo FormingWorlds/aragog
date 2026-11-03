@@ -5,7 +5,7 @@ lid on 10, 1000 and 4000 nodes, plus a 1000-node member with the start entropy c
 by ``ARAGOG_LOWT_EOS_DIR``. About 17 min on one core.
 
 Run from the repository root:
-``ARAGOG_LOWT_EOS_DIR=<table> PYTHONPATH=src:. python tests/reference/build_surface_lid_v2_melt.py``.
+``ARAGOG_LOWT_EOS_DIR=<table> PYTHONPATH=src:. python <this file>``.
 """
 
 from __future__ import annotations

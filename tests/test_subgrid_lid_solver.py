@@ -35,6 +35,10 @@ def _heat(p, heating):
     elif heating == 'radio':
         p.energy.radionuclides = True
         p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
+    elif heating == 'bottom_cell':  # strong, and with no transport between the cells
+        p.energy.tidal = True
+        p.energy.tidal_array = np.eye(1, 9).ravel() * 1.0e-2
+        p.energy.convection = p.energy.mixing = p.energy.gravitational_separation = False
 
 
 def _lid_depth(s):
@@ -287,6 +291,8 @@ def test_set_initial_lid_takes_a_zero_dimensional_real_value(eos, wrap):
     s = _solver(eos)
     s.set_initial_lid(wrap(0.5), wrap(-1.875e9))
     assert s._lid_init == (0.5, -1.875e9)
+    s.set_initial_lid(0.0, 0.0, handover_time=wrap(7.5))
+    assert s._lid_init == (0.0, 0.0) and s._lid_handover_time == 7.5
 
 
 @pytest.mark.parametrize(
@@ -298,6 +304,9 @@ def test_set_initial_lid_refuses_an_array_that_is_not_one_real_value(eos, value)
     """Only a 0-d real value with data counts as a number."""
     with pytest.raises(ValueError, match='set_initial_lid needs numbers'):
         _solver(eos).set_initial_lid(value, -1.875e9)
+    if np.ma.is_masked(value):
+        with pytest.raises(ValueError, match='hand-over time'):
+            _solver(eos).set_initial_lid(0.0, 0.0, handover_time=value)
 
 
 def test_a_chained_solve_on_the_stratified_core_carries_the_shell(eos):
@@ -520,7 +529,8 @@ def test_a_carried_lid_above_the_growth_stop_is_refused_before_any_change(eos):
 
 
 def test_reset_onto_a_thinner_top_cell_refuses_the_carried_lid(eos):
-    """A real reset of the mesh: a lid near the old growth stop does not fit the new top cell."""
+    """A real reset of the mesh: a lid near the old growth stop does not fit the new top
+    cell."""
     s = _solver(eos)
     d = 0.999 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
@@ -583,7 +593,7 @@ def test_a_lid_over_a_state_held_at_the_table_top_runs_as_without_it(eos):
     np.testing.assert_allclose(end[True], end[False], rtol=0.0, atol=1e-3)
 
 
-def test_the_band_of_the_heat_table_holds_with_the_rheology_off_only(eos):
+def test_the_rheology_check_refuses_a_state_past_the_table_top(eos):
     """With the solid rheology on, its own check refuses a state past the table top at step 0,
     inside the band that the lid and the EOS guard accept with the rheology off."""
     s = _cold_top_solver(eos)
@@ -608,9 +618,9 @@ def test_a_guard_cut_before_the_hand_over_removes_its_time(eos):
     s.set_initial_entropy(S)
     s.solve()
     assert s._solution.status == -1 and 'EOS table guard' in str(s._solution.message)
-    out = s.get_state()
-    assert out.lid_delta > 0.0
-    assert math.isnan(out.lid_handover_time)
+    for out in (s.get_state(), s.get_state()):
+        assert out.lid_delta > 0.0
+        assert math.isnan(out.lid_handover_time)
 
 
 def _table_floor_run(eos, caplog, T_s_above_the_floor):
@@ -1168,6 +1178,33 @@ def _methods():
     return ['radau', *cv]
 
 
+@pytest.mark.parametrize('method', _methods())
+def test_a_guard_cut_between_the_start_and_the_hand_over_removes_its_time(eos, method):
+    """The heated bottom cell leaves the table after about 1.5e-3 yr, and the top cell reaches
+    the solidus after about 0.013 yr. The guard keeps the live states before the exit, so the
+    time of the merge after them leaves the output, on every integrator path."""
+    s = _solver(eos, end=0.05, heating='bottom_cell')
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    S = np.full(s._n_stag, 3050.0)
+    S[-1], S[0] = s._lid_S_sol + 3e-6, float(eos.S_max) - 0.02
+    s.set_initial_entropy(S)
+    merges, merge = [], s._lid_merge
+    s._lid_merge = lambda y: (merges.append(1), merge(y))[1]
+    s.solve()
+    sol = s._solution
+    assert merges == [1]
+    assert sol.status == -1 and 'EOS table guard' in str(sol.message)
+    assert sol.t.size >= 10 and sol.t[-1] < 2e-3 and np.all(sol.y[-2] > 0.0)
+    if method == 'cvode-rate':
+        assert sol.segments
+    for out in (s.get_state(), s.get_state()):
+        assert out.lid_delta > 0.0
+        assert math.isnan(out.lid_handover_time)
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('method', _methods())
 def test_handover_in_the_call(eos, method):
@@ -1374,8 +1411,8 @@ def test_handover_root_in_the_solid_regime(eos):
 
 
 def test_handover_fires_where_the_solid_regime_begins(eos):
-    """With the isotherm already below the face, the hand-over fires where the solid-regime
-    solid regime begins, located by the root search."""
+    """With the isotherm already below the face, the hand-over fires where the solid regime
+    begins, located by the root search."""
     t_star = 0.4
     s = _cold_top_solver(eos)
     root, clock = s._lid_root_value, {}
@@ -1462,7 +1499,8 @@ def test_top_cell_at_or_below_the_solidus_hands_over_at_the_start(eos, dS, hands
 @pytest.mark.parametrize('mode', ['fixed', 'rheological'])
 def test_no_solidus_handover_with_the_rheology(eos, mode):
     """With the solid rheology and a closure other than 'lid' the lid base lies below the
-    solidus: the hand-over root is -1 and the lid stays, also on a top cell below the solidus."""
+    solidus: the hand-over root is -1 and the lid stays, also on a top cell below the
+    solidus."""
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -1486,8 +1524,8 @@ def test_no_solidus_handover_with_the_rheology(eos, mode):
 @pytest.mark.physics_invariant
 def test_hidden_lid_on_a_hot_top_cell(eos):
     """A hot convecting top cell carries more heat than a crust at T_b can radiate: the lid is
-    hidden (w = 0), the surface loses the grid flux, the lid relaxes to the phantom thickness and
-    the per-call ledger closes."""
+    hidden (w = 0), the surface loses the grid flux, the lid relaxes to the phantom thickness
+    and the per-call ledger closes."""
     s = _solver(eos)
     y = s._S0.copy()
     y[: s._n_stag] = np.linspace(3300.0, 4500.0, s._n_stag)

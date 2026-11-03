@@ -195,7 +195,7 @@ def test_surface_state_clips_at_both_ends():
 
 @pytest.mark.physics_invariant
 def test_surface_state_floor_bounds_flux():
-    """At zero thickness the conduction floor keeps the fluxes finite and the surface below T_b."""
+    """At zero thickness the conduction floor keeps fluxes finite and the surface below T_b."""
     out = _surf(0.0, 1000.0, 1400.0, 4.0, 1.0, 255.0, 1e-3)
     assert np.isfinite(out.F_s) and out.F_s < 1e12
     assert 255.0 < out.T_s < 1400.0
@@ -241,7 +241,7 @@ def test_stefan_rate_stops():
 
 @pytest.mark.physics_invariant
 def test_existence_weight_limits():
-    """No lid where the fluid outruns radiation at T_b, a full lid without base flux, 1/2 at delta_on."""
+    """No lid where fluid outruns radiation, a full lid without base flux, 1/2 at delta_on."""
     k, eps, T_eq, T_b = 4.0, 1.0, 255.0, 1400.0
     F_rad = sl.grey_flux(T_b, eps, T_eq)
     assert sl.existence_weight(1.01 * F_rad, T_b, k, eps, T_eq, 1.0) == pytest.approx(
@@ -293,7 +293,7 @@ def test_lid_rates_full_lid_delivers_base_flux():
 
 @pytest.mark.physics_invariant
 def test_lid_rates_hidden_lid_relaxes_to_phantom():
-    """A hidden lid (w = 0) shows the grid flux and relaxes to delta_lo; the energy balance holds."""
+    """A hidden lid (w = 0) shows the grid flux, relaxes to delta_lo; energy balance holds."""
     surf = _surf(5.0, 900.0, 1400.0, 4.0, 1.0, 255.0, 0.0)
     rates = sl.lid_rates(
         delta=5.0,
@@ -339,7 +339,7 @@ def test_fixed_surface_recovers_the_neumann_shape(St):
 
 @pytest.mark.physics_invariant
 def test_fixed_surface_reports_a_mean_outside_the_family():
-    """A mean at the base or at the surface temperature uses the bound of the family and says so."""
+    """A mean at the base or surface temperature uses the bound of the family and says so."""
     hot = _fixed(10.0, 1399.9999, 1400.0, 4.0, 300.0, 0.0)
     cold = _fixed(10.0, 300.0001, 1400.0, 4.0, 300.0, 0.0)
     assert (hot.clipped, cold.clipped) == (1, -1)

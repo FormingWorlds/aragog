@@ -3,7 +3,8 @@ the lid on 10 nodes on the SPIDER test tables (``ARAGOG_TEST_EOS_DIR``), at ``TI
 the surface flux and lid thickness of its melt variant at ``MELT_TIMES_YR``. The lid keeps
 every node above the 300 K floor of those tables, so CI reruns both cases.
 
-Run from the repository root: ``PYTHONPATH=src:. python tests/reference/build_surface_lid_v2_ci_pin.py``.
+Run from the repository root:
+``PYTHONPATH=src:. python tests/reference/build_surface_lid_v2_ci_pin.py``.
 """
 
 from __future__ import annotations

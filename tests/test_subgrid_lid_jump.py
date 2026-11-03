@@ -88,7 +88,7 @@ def _numpy_jump(s, y, monkeypatch, same=False):
 
 
 def _jax_jump(s, y, monkeypatch, same=False):
-    """``(rho dh, S_b, S_f)`` the JAX lid passes to the Stefan rate at the NumPy top-cell state."""
+    """``(rho dh, S_b, S_f)`` the JAX lid passes to the Stefan rate at the NumPy top cell."""
     pytest.importorskip('jax')
     from aragog.jax import surface_lid as jl
 

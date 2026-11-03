@@ -3,7 +3,7 @@ lid on 10 nodes and without the lid on 10, 500, 1000 and 4000 nodes, at ``TIMES_
 PALEOS low-temperature table named by ``ARAGOG_LOWT_EOS_DIR``. About 25 min on one core.
 
 Run from the repository root:
-``ARAGOG_LOWT_EOS_DIR=<table> PYTHONPATH=src:. python tests/reference/build_surface_lid_v2_grid.py``.
+``ARAGOG_LOWT_EOS_DIR=<table> PYTHONPATH=src:. python <this file>``.
 """
 
 from __future__ import annotations

@@ -1,15 +1,15 @@
 """With the sub-grid lid off, the solve path equals the stored run of the code without the lid.
 
 The reference (``tests/reference/subgrid_lid_v0_reference.npz``) is the off-path probe of
-``tests/reference/subgrid_lid_v0_probe.py`` on the commit in its ``base_commit`` key: the mesh, one right-hand side and
-a 2-yr solve, without and with the solid rheology ('lid' closure), on CVODE with the
-finite-difference Jacobian and with a JAX factory (here built with ``lid_params=None``). The
-mesh and the right-hand side must match to rtol 1e-10 and the solve to rtol 1e-9, above the
-round-off between the macOS and Linux builds; a JAX case must have called the JAX right-hand
-side. On each core mode a 5-yr NumPy solve also matches its end state and its energy integrals
-to rtol 1e-8, with tidal and radiogenic heating. The solver residual and the core energy are
-differences of large terms, so they match to 1e-15 and 1e-12 of the surface energy (measured
-between macOS and Linux: 8.2e-17 and 2.2e-14); these limits act only across platforms.
+``tests/reference/subgrid_lid_v0_probe.py`` on the commit in its ``base_commit`` key: the mesh,
+one right-hand side and a 2-yr solve, without and with the solid rheology ('lid' closure), on
+CVODE with the finite-difference Jacobian and with a JAX factory (built with
+``lid_params=None``). The mesh and the right-hand side must match to rtol 1e-10 and the solve to
+rtol 1e-9, above the round-off between the macOS and Linux builds; a JAX case must have called
+the JAX right-hand side. On each core mode a 5-yr NumPy solve also matches its end state and its
+energy integrals to rtol 1e-8, with tidal and radiogenic heating. The solver residual and the
+core energy are differences of large terms, so they match to 1e-15 and 1e-12 of the surface
+energy (measured between macOS and Linux: 8.2e-17 and 2.2e-14); they act only across platforms.
 """
 
 from __future__ import annotations

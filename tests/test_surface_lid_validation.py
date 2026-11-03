@@ -2,7 +2,8 @@
 
 The cases drive the lid functions of ``aragog.surface_lid`` (the closure the solver calls each
 right-hand side) through time with fixed material properties: half-space cooling of a solid and
-the quasi-steady crust under a fixed flux. The Neumann case is in ``test_surface_lid_neumann.py``.
+the quasi-steady crust under a fixed flux. The Neumann case is in
+``test_surface_lid_neumann.py``.
 """
 
 from __future__ import annotations

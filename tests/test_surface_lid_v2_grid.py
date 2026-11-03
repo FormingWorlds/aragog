@@ -11,6 +11,7 @@ lid run stays above the floor and is rerun against a stored pin
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -41,9 +42,9 @@ MELT_TOL, FLOOR = 2e-2, 1e-5  # melt start: tolerance, round-off floor of the me
 C3_TOL = 3e-2  # molten start
 C3_BOUND = 1e-4  # top-refined 400-node run against the 800-node reference
 C3_HANDOVER_TOL = 3e-4  # hand-over time on the extended table: spread up to 8e-5 at 1e-13
-C3_PIN_FLUX_TOL = (
-    3e-5  # flux pin of the molten shell on the test tables: spread 2.3e-6 at 1e-13
-)
+# Flux pin of the molten shell on the test tables: 7 starts spread it by 2.3e-6 and 2.1e-6 on
+# 2 CPUs, and the rest is room for a CPU not measured.
+C3_PIN_FLUX_TOL = 3e-5
 C3_CROSSING_TOL = 5e-4  # hand-over against the crossing without the lid: gap at most 3.5e-5
 
 
@@ -184,9 +185,9 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
     FLOOR, so this checks the hand-over and the coarse mesh after it (the hand-over criterion
     itself is tested in test_subgrid_lid_solver.py): both stay within C3_TOL of the reference,
     an 800-node shell without the lid with a top cell of 0.125 m, from 100 to 5000 yr. The
-    400-node shell with a top cell of 0.25 m agrees with the reference within C3_BOUND. With
-    the hand-over held off the lid misses the reference flux by more than 50 % at some time.
-    The hand-over time lies within C3_CROSSING_TOL of the time at which the top cell of the stored
+    400-node shell with a top cell of 0.25 m agrees with the reference within C3_BOUND. With the
+    hand-over held off the lid misses the reference flux by more than 50 % at some time. The
+    hand-over time lies within C3_CROSSING_TOL of the time at which the top cell of the stored
     10-node run without the lid cools through the solidus, a run the lid code does not touch.
     With ``ARAGOG_LOWT_EOS_DIR`` set to the extended table, the 10-node runs are repeated."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
@@ -235,12 +236,12 @@ def test_c3_molten_lid_matches_the_resolved_mesh(validation_plot):
 def test_c3_molten_lid_run_on_the_test_tables():
     """The molten-start lid run on the SPIDER test tables equals its stored pin and hands over,
     up to 935 yr. Later the top of this shell leaves real table entries: from before 1635 yr its
-    surface lies on the padded rows of the table at about 320.23 K, and from about 2334 yr a cell
-    lies below the table, which the EOS guard refuses. The pin checks only that the run repeats.
-    A solidus shifted by 10 J/kg/K moves these fluxes by at most 2.2e-6, inside their round-off, so a
-    shifted hand-over fails only the time checks: the crossing of the solidus by the stored run
-    without the lid sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K. The pin does not see
-    the heat content of the merge; test_merge_is_energy_exact checks that."""
+    surface lies on the padded rows of the table at about 320.23 K, and from about 2334 yr a
+    cell lies below the table, which the EOS guard refuses. The pin checks only that the run
+    repeats. A solidus shifted by 10 J/kg/K moves these fluxes by at most 2.2e-6, inside their
+    round-off, so a shifted hand-over fails only the time checks: the crossing of the solidus by
+    the stored run without the lid sees a shift of 1 J/kg/K, the stored time 0.1 J/kg/K. The pin
+    does not see the heat content of the merge; test_merge_is_energy_exact checks that."""
     d = _stored('surface_lid_c3_molten.npz', MOLTEN_TIMES_YR)
     np.testing.assert_array_equal(d['pin_times_yr'], PIN_TIMES_YR)
     assert np.all(np.diff(d['pin']) < -100.0)  # every row off the padded table rows
@@ -296,9 +297,11 @@ def _spread(times):
 )
 def test_c3_handover_spread_at_two_solver_tolerances(name, end_yr, bounds):
     """Start shifts of 1e-13 stay within the time pin of the rerun at the default tolerance and
-    within a tighter bound at rtol = atol = 1e-8. The spread is a noisy sample that depends on the
-    machine, so the test does not hold the order of the 2 spreads. A tolerance without effect gives
-    the same times; a start shift without effect gives 0. The printed numbers are the page's."""
+    within a tighter bound at rtol = atol = 1e-8. The spread is a noisy sample that depends on
+    the machine, so the test does not hold the order of the 2 spreads. A start shift without
+    effect gives 0 at the default tolerance (measured 2.6e-7 to 7.9e-5). The 2 tolerances differ
+    in at least 1 of the 3 times by more than 1e-10 (measured above 1.6e-8 for each of them on 2
+    CPUs), so a tolerance without effect fails. The printed numbers are the page's."""
     table = EOS_DIR if name == 'test' else _lowt_table()
     if not table:
         pytest.skip('ARAGOG_LOWT_EOS_DIR is not set')
@@ -307,8 +310,32 @@ def test_c3_handover_spread_at_two_solver_tolerances(name, end_yr, bounds):
         f'{name}: default {_spread(default[:2]):.2e} {_spread(default):.2e}, '
         f'1e-8 {_spread(fine[:2]):.2e} {_spread(fine):.2e}'
     )
-    assert _spread(default) <= bounds[0] and 0.0 < _spread(fine) <= bounds[1]
-    assert default != fine
+    assert 0.0 < _spread(default) <= bounds[0] and _spread(fine) <= bounds[1]
+    assert np.max(np.abs(np.divide(default, fine) - 1.0)) > 1e-10
+
+
+def test_the_page_quotes_the_stored_hand_over_spreads():
+    """The table of the page and the file of stored runs give the same spreads."""
+    root = Path(__file__).resolve().parents[1]
+    runs = json.loads(
+        (root / 'tests/reference/surface_lid_c3_handover_spread.json').read_text()
+    )
+    page = (root / 'docs/Validation/surface_lid.md').read_text()
+
+    def cell(x):
+        mant, exp = f'{x:.1e}'.split('e')
+        digits = str(abs(int(exp))).translate(str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹'))
+        return f'{mant} × 10⁻{digits}'
+
+    rows = {}
+    for r in runs['runs']:
+        t = r['times_yr']
+        spread = {k: (max(t[:k]) - min(t[:k])) / t[0] for k in (2, 3, 8)}
+        assert [r['spread_2'], r['spread_3'], r['spread_8']] == list(spread.values())
+        rows.setdefault((r['tables'], r['cpu']), []).append(cell(spread[3]))
+    assert len(rows) == 4
+    for (tables, cpu), (default, fine) in rows.items():
+        assert f'| {tables} | {cpu} | {default} | {fine} |' in page
 
 
 @pytest.mark.parametrize(

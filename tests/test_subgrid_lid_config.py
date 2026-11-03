@@ -39,7 +39,7 @@ def _both(**fields):
 
 
 def test_defaults_keep_the_lid_off():
-    """The lid is off by default on both config layers, so existing configs do not pick it up."""
+    """The lid is off by default on both config layers, so existing configs are unchanged."""
     a = BoundaryConfig(**BASE)
     b = _BoundaryConditionsParameters(**BASE)
     b.normalize()
@@ -69,28 +69,28 @@ def test_subgrid_lid_must_be_bool(value):
 @pytest.mark.parametrize('field', ['lid_delta_on', 'lid_ra_crit'])
 @pytest.mark.parametrize('value', BAD_NUMBERS)
 def test_positive_fields_refuse_bad_values(field, value):
-    """lid_delta_on and lid_ra_crit refuse zero, negatives, NaN, inf, bools, strings and None."""
+    """lid_delta_on and lid_ra_crit refuse 0, negatives, NaN, inf, bools, strings and None."""
     with pytest.raises(ValueError, match=f'{field} must be a finite number > 0'):
         _both(**{**GOOD, field: value})
 
 
 @pytest.mark.parametrize('value', [0, 0.0, -0.5, 1.0, 2.0, math.nan, math.inf, True, '0.5'])
 def test_delta_lo_must_lie_below_delta_on(value):
-    """lid_delta_lo refuses values outside (0, lid_delta_on), the edges included, and non-numbers."""
+    """lid_delta_lo refuses all outside (0, lid_delta_on), edges included, and non-numbers."""
     with pytest.raises(ValueError, match='lid_delta_lo must be a finite number in'):
         _both(**{**GOOD, 'lid_delta_lo': value})
 
 
 @pytest.mark.parametrize('value', [0, -3, 2.0, 3.0, True, '3', None, math.nan])
 def test_handover_cells_must_be_integer_at_least_one(value):
-    """lid_handover_cells refuses 0, negatives, floats (also integral ones), bools and strings."""
+    """lid_handover_cells refuses 0, negatives, floats (also integral), bools and strings."""
     with pytest.raises(ValueError, match='lid_handover_cells must be'):
         _both(**{**GOOD, 'lid_handover_cells': value})
 
 
 @pytest.mark.parametrize('outer', [2, 4, 5])
 def test_lid_refused_without_grey_body(outer):
-    """With the lid on, an outer boundary other than the grey body is refused; off, it passes."""
+    """With the lid on, an outer boundary other than grey body is refused; off, it passes."""
     with pytest.raises(ValueError, match='needs the grey-body outer boundary'):
         BoundaryConfig(**{**BASE, 'outer_boundary_condition': outer}, **GOOD)
     BoundaryConfig(

@@ -1,11 +1,11 @@
 """Build ``tests/reference/surface_lid_c3_molten.npz``: the surface flux of the V2 shell started
 molten and convecting, without rheology (``molten_column``), at ``MOLTEN_TIMES_YR`` on the
-PALEOS low-temperature table named by ``ARAGOG_LOWT_EOS_DIR``: with the lid on 10 nodes, with the
-lid and its hand-over root held at -1, and without the lid on 10 nodes; the stored runs without
-the lid on 400 and 800 nodes with top cells of 0.25 and 0.125 m in radius coordinates (the
-800-node run is the reference); the lid run on the SPIDER test tables at ``PIN_TIMES_YR`` as
-the pin of CI; and, on both tables, the top-cell entropy of the 10-node run without the lid at
-each step (``molten_top_cell``), whose crossing of the solidus checks the hand-over time.
+PALEOS low-temperature table named by ``ARAGOG_LOWT_EOS_DIR``: with the lid on 10 nodes, with
+the lid and its hand-over root held at -1, and without the lid on 10 nodes; the stored runs
+without the lid on 400 and 800 nodes with top cells of 0.25 and 0.125 m in radius coordinates
+(the 800-node run is the reference); the lid run on the SPIDER test tables at ``PIN_TIMES_YR``
+as the pin of CI; and, on both tables, the top-cell entropy of the 10-node run without the lid
+at each step (``molten_top_cell``), whose crossing of the solidus checks the hand-over time.
 
 The mesh runs take hours, so they are read from their row files (JSON with a list ``rows`` of
 ``t`` and ``F_s``): ``python tests/reference/build_surface_lid_c3_molten.py <n400.json>

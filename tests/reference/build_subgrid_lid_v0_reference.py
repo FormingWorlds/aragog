@@ -2,7 +2,7 @@
 the sub-grid lid branches from.
 
 Run from the repository root with that commit's ``src`` first on the path, for example
-``PYTHONPATH=<checkout of the base>/src:. python tests/reference/build_subgrid_lid_v0_reference.py``.
+``PYTHONPATH=<checkout of the base>/src:. python <this file>``.
 """
 
 from __future__ import annotations

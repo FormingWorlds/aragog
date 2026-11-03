@@ -1,4 +1,4 @@
-"""Validation of the sub-grid lid closure against the Neumann solution of crust growth over melt.
+"""Validation of the sub-grid lid closure against the Neumann solution of crust growth.
 
 The case drives the lid functions of ``aragog.surface_lid`` through time with the fixed material
 properties and helpers of ``tests/test_surface_lid_validation.py``.
@@ -32,11 +32,11 @@ T_V1 = np.array([1e8, 1e10, 1e12])
 @pytest.mark.reference_pinned
 def test_v1_crust_growth_follows_neumann(validation_plot):
     """V1: a lid over melt at its base temperature, no base flux and a fixed surface temperature
-    grows as the Neumann solution delta = 2 lambda sqrt(kappa t), lambda exp(lambda^2) erf(lambda)
-    = St / sqrt(pi) (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141, pp. 197-198),
-    within 1 % at 1e8, 1e10 and 1e12 s for St = 0.1, 1 and 3.381. A lid started at 1 m on the
-    linear profile approaches the same law. The linear-profile growth law sqrt(2 St kappa t)
-    misses by more than the tolerance at each St (by 1.6, 14 and 37 %)."""
+    grows as the Neumann solution delta = 2 lambda sqrt(kappa t), lambda exp(lambda^2)
+    erf(lambda) = St / sqrt(pi) (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141,
+    pp. 197-198), within 1 % at 1e8, 1e10 and 1e12 s for St = 0.1, 1 and 3.381. A lid started at
+    1 m on the linear profile approaches the same law. The linear-profile growth law sqrt(2 St
+    kappa t) misses by more than the tolerance at each St (by 1.6, 14 and 37 %)."""
     results = {}
     for St in (0.1, 1.0, 3.381):
         lam = _neumann_lambda(St)
