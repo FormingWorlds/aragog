@@ -710,3 +710,125 @@ def test_the_mixture_must_stay_mixed_at_both_ends_of_the_step(monkeypatch):
     assert not sheet_tool._mix_stays_mixed(falling, p, 0.25)
     assert not sheet_tool._mix_stays_mixed(rising, p, 0.25)
     assert sheet_tool._mix_stays_mixed(flat, p, 0.25)
+
+
+def _one_column(column, s_liq):
+    """A fake melt table of 1 column on the entropy nodes 100 to 500, with a constant liquidus."""
+    table = {
+        'P': np.array([GPA]),
+        'S': np.linspace(100.0, 500.0, len(column)),
+        'values': np.array([column], dtype=float),
+    }
+    return SimpleNamespace(
+        _tables={'temperature_melt': table}, liquidus_entropy=lambda p, s=s_liq: s
+    )
+
+
+@pytest.mark.parametrize(
+    ('column', 's_liq', 'span'),
+    [
+        ([1000, 1100, 1200, 1200, 1200], 300.0, 200.0),  # liquidus on a node, flat to the top
+        ([1000, 1100, 1200, 1200, 1300], 300.0, 100.0),  # on a node, the flat part ends
+        ([1000, 1100, 1200, 1300, 1400], 300.0, 0.0),  # on a node, no flat part
+        ([1000, 1100, 1200, 1200, 1200], 500.0, 0.0),  # on the top node
+        ([1000, 1100, 1200, 1200, 1200], 350.0, 150.0),  # off a node, inside the flat part
+        ([1000, 1100, 1200, 1200, 1200], 250.0, 0.0),  # off a node, the column still rises
+    ],
+)
+def test_the_span_above_the_liquidus_holds_on_a_node_and_off_a_node(column, s_liq, span):
+    """A liquidus exactly on a node keeps the value of that node."""
+    eos = _one_column(column, s_liq)
+    assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == pytest.approx(span)
+
+
+@pytest.mark.parametrize(
+    ('column', 's_liq'),
+    [
+        ([np.nan] * 5, 300.0),
+        ([1000, 1100, np.nan, 1200, 1200], 300.0),  # the value at the liquidus
+        ([1000, 1100, np.inf, np.inf, np.inf], 300.0),
+        ([1000, 1100, 1200, np.nan, 1200], 300.0),  # the row that ends the flat part
+        ([1000, 1100, 1200, 1200, np.inf], 300.0),
+        ([1000, 1100, 1200, 1300, np.nan], 500.0),  # the top node holds the liquidus
+    ],
+)
+def test_a_temperature_the_span_needs_that_is_not_finite_gives_no_span(column, s_liq):
+    assert np.isnan(sheet_tool._melt_copied_above_liquidus(_one_column(column, s_liq), GPA))
+
+
+def test_a_temperature_the_span_does_not_need_may_be_not_finite():
+    """The column rises above the liquidus, so a NaN below it or above the next row is not read."""
+    eos = _one_column([np.nan, 1100, 1200, 1300, np.nan], 300.0)
+    assert sheet_tool._melt_copied_above_liquidus(eos, GPA) == 0.0
+
+
+def test_a_melt_column_that_is_not_finite_reads_na(tmp_path):
+    """The other column of the row at 20 GPa stays a number."""
+    eos = _tables(tmp_path)
+    table = eos._tables['temperature_melt']
+    table['values'][sheet_tool._nearest_column(table, GPA)] = np.nan
+    start = 'melt temperature rows copied above the liquidus at'
+    assert _status(eos, f'{start} 1 GPa') == ['n/a']
+    assert _status(eos, f'{start} 20 GPa') == ['report']
+
+
+def _spike_curves(folder, at, height=500.0):
+    """Raise both melting curves by ``height`` at ``at`` only, with new nodes 0.1 GPa to each side."""
+    for name in ('solidus_P-S.dat', 'liquidus_P-S.dat'):
+        data = np.loadtxt(folder / name)
+        new = np.array([at - 0.1 * GPA, at, at + 0.1 * GPA])
+        i = np.searchsorted(data[:, 0], new)
+        p = np.insert(data[:, 0], i, new)
+        s = np.insert(
+            data[:, 1], i, np.interp(new, data[:, 0], data[:, 1]) + [0.0, height, 0.0]
+        )
+        head = f'5 {p.size}\nPressure, Entropy\nx\ny\n1.0 1.0'
+        np.savetxt(folder / name, np.column_stack([p, s]), header=head, fmt='%.12e')
+    return EntropyEOS(folder)
+
+
+@pytest.mark.parametrize('end', [0.99, 1.01])
+def test_only_the_narrow_step_leaves_the_mixture_reads_na(tmp_path, end):
+    """A curve with a spike at 1 end of the narrow step leaves the wide step inside the mixture."""
+    p = 20.0 * GPA
+    start = '(dT/dP)_S mixed vs pure phases at 20 GPa'
+    _tables(tmp_path)
+    assert _rows(EntropyEOS(tmp_path), start)[0].value != '-'
+    eos = _spike_curves(tmp_path, end * p)
+    assert sheet_tool._mix_stays_mixed(eos, p, sheet_tool.MIX_STEPS[0])
+    assert not sheet_tool._mix_stays_mixed(eos, p, sheet_tool.MIX_STEPS[1])
+    row = _rows(eos, start)[0]
+    assert (row.value, row.status) == ('-', 'n/a')
+
+
+def test_the_mixed_gradient_needs_the_tables_at_its_own_pressure(tmp_path, monkeypatch):
+    """Both steps hold while the pressure of the check does not."""
+    eos, p = _tables(tmp_path), 20.0 * GPA
+    real = sheet_tool._reaches
+    monkeypatch.setattr(sheet_tool, '_reaches', lambda e, x: x != p and real(e, x))
+    row = _rows(eos, '(dT/dP)_S mixed vs pure phases at 20 GPa')[0]
+    assert (row.value, row.status) == ('-', 'n/a')
+
+
+def _coarse_melt_table(eos, *keep):
+    """Keep only the columns ``keep`` of the melt temperature table."""
+    table, keep = eos._tables['temperature_melt'], list(keep)
+    table['P'], table['values'] = table['P'][keep], table['values'][keep]
+
+
+def test_the_melt_row_needs_the_tables_at_the_column_it_reads(tmp_path):
+    """With columns at the lowest pressure, 30 and 150 GPa, the row at 20 GPa reads at 30 GPa, above
+    a melting curve that stops at 22.5 GPa. The liquidus clamps there, so the row reads n/a."""
+    start = 'melt temperature rows copied above the liquidus at'
+    _tables(tmp_path)
+    eos = EntropyEOS(tmp_path)
+    _coarse_melt_table(eos, 0, 8, 40)
+    assert _rows(eos, f'{start} 20 GPa')[0].value.endswith('in the column at 30 GPa')
+    assert _status(eos, f'{start} 20 GPa') == ['report']
+    cut = _cut_curve_files(tmp_path, top=23.0 * GPA)
+    _coarse_melt_table(cut, 0, 8, 40)
+    assert sheet_tool._reaches(cut, 20.0 * GPA)
+    assert not sheet_tool._reaches(cut, 30.0 * GPA)
+    row = _rows(cut, f'{start} 20 GPa')[0]
+    assert (row.value, row.status) == ('-', 'n/a')
+    assert _status(cut, f'{start} 1 GPa') == ['report']
