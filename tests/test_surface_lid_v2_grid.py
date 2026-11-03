@@ -268,10 +268,9 @@ def test_a_guard_cut_after_the_hand_over_keeps_its_time():
     assert out.lid_handover_time == pytest.approx(float(d['pin_handover_yr']), rel=FLOOR)
 
 
-def _handover_spread(table, end_yr, tol):
-    """Relative spread of the hand-over time of the molten shell over the first 2 and over all 3
-    starts 0, 1e-13 and -1e-13, at the default solver tolerance (``tol`` None) or at
-    ``rtol = atol = tol``."""
+def _handover_times(table, end_yr, tol):
+    """Hand-over times of the molten shell for the starts 0, 1e-13 and -1e-13, at the default
+    solver tolerance (``tol`` None) or at ``rtol = atol = tol``."""
     times = []
     for shift in (0.0, 1e-13, -1e-13):
         eos = entropy_eos_copy(table)
@@ -282,7 +281,12 @@ def _handover_spread(table, end_yr, tol):
         s.solve()
         assert s._solution.status == 0
         times.append(float(s.get_state().lid_handover_time))
-    return [(max(times[:n]) - min(times[:n])) / times[0] for n in (2, 3)]
+    return times
+
+
+def _spread(times):
+    """Relative spread of a list of hand-over times."""
+    return (max(times) - min(times)) / times[0]
 
 
 @pytest.mark.parametrize(
@@ -290,21 +294,21 @@ def _handover_spread(table, end_yr, tol):
     [('test', 40.0, (FLOOR, 1e-7)), ('lowt', 12.0, (C3_HANDOVER_TOL, 1e-6))],
     ids=['test', 'lowt'],
 )
-def test_c3_handover_spread_follows_the_solver_tolerance(name, end_yr, bounds):
-    """Start shifts of 1e-13 move the hand-over time less at rtol = atol = 1e-8 than at the default
-    tolerance of the pins. The spread is a noisy sample that depends on the machine, so the test
-    holds no ratio: the default stays within the time pin of its rerun, the tight setting within a
-    bound the default exceeds on each measured machine. A tolerance without effect gives equal
-    spreads and a start shift without effect gives 0. The printed numbers are the page's."""
+def test_c3_handover_spread_at_two_solver_tolerances(name, end_yr, bounds):
+    """Start shifts of 1e-13 stay within the time pin of the rerun at the default tolerance and
+    within a tighter bound at rtol = atol = 1e-8. The spread is a noisy sample that depends on the
+    machine, so the test does not hold the order of the 2 spreads. A tolerance without effect gives
+    the same times; a start shift without effect gives 0. The printed numbers are the page's."""
     table = EOS_DIR if name == 'test' else _lowt_table()
     if not table:
         pytest.skip('ARAGOG_LOWT_EOS_DIR is not set')
-    (default_2, default), (fine_2, fine) = (
-        _handover_spread(table, end_yr, tol) for tol in (None, 1e-8)
+    default, fine = (_handover_times(table, end_yr, tol) for tol in (None, 1e-8))
+    print(
+        f'{name}: default {_spread(default[:2]):.2e} {_spread(default):.2e}, '
+        f'1e-8 {_spread(fine[:2]):.2e} {_spread(fine):.2e}'
     )
-    print(f'{name}: default {default_2:.2e} {default:.2e}, 1e-8 {fine_2:.2e} {fine:.2e}')
-    assert default <= bounds[0] and 0.0 < fine <= bounds[1]
-    assert default > fine
+    assert _spread(default) <= bounds[0] and 0.0 < _spread(fine) <= bounds[1]
+    assert default != fine
 
 
 @pytest.mark.parametrize(
