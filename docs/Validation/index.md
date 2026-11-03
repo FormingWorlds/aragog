@@ -53,7 +53,9 @@ The command of a case is `pytest <test>`; the young-layer case, the surface-boun
 
 `pytest -m reference_pinned` runs every case. The core-page tests need the SPIDER P-S tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](../How-to/build_tests.md)); the stable-layer and Earth-budget cases take minutes.
 
-**Checks on stored runs.** `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor` is a sensitivity study with no reference: it reads stored runs of the lid base at the melt temperature on 100, 200 and 400 nodes and with floors of 1e2, 1e3 and 1e4 J/kg. It does not run the code again, so it is not in the table and carries no `reference_pinned` marker; at 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py --validation-plots` writes its plot pair.
+**Checks on stored runs.** `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor` is a sensitivity study with no reference: it reads stored runs of the lid base at the melt temperature on 100, 200 and 400 nodes and with floors of 1e2, 1e3 and 1e4 J/kg.
+
+It does not run the code again, so it is not in the table and carries no `reference_pinned` marker; at 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py --validation-plots` writes its plot pair.
 
 ## Plots written by the tests
 
