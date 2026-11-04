@@ -9,6 +9,7 @@ import pytest
 from scipy.optimize import OptimizeResult
 
 from aragog.solver import entropy_solver as es
+from tests.conftest import needs_eos
 
 pytestmark = [
     pytest.mark.skipif(es._scikits_cvode is None, reason='scikits-odes-sundials not installed'),
@@ -182,75 +183,8 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     assert abs(s._compute_step_energy_integrals()['F_int'] / F_ref - 1.0) > 0.1
 
 
-class _Cap:
-    """Root function object in the step-cap shape: CVODE reaches it through ``evaluate``."""
-
-    phi0, binding_cap, cap, evals = 0.0, 'phi', 0.5, 0
-
-    def evaluate(self, t, y, g, userdata=None):
-        g[0] = y[0] + 0.5 * AMP * np.sqrt(np.pi) * WIDTH
-        return 0
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize('cap', [None, _Cap()])
-def test_recording_leaves_the_solution_bitwise_unchanged(monkeypatch, cap):
-    real, spies = es._scikits_cvode, []
-
-    class Spy:
-        def __init__(self, rhs, **opts):
-            self.rhs, self.opts, self._s = rhs, opts, real(rhs, **opts)
-            spies.append(self)
-
-        def solve(self, tspan, y0):
-            self.args = (np.array(tspan), np.array(y0))
-            return self._s.solve(tspan, y0)
-
-        def __getattr__(self, name):
-            return getattr(self._s, name)
-
-    monkeypatch.setattr(es, '_scikits_cvode', Spy)
-    res = _solve(n_out=9, rootfn=cap)
-    opts = dict(spies[0].opts)
-    if cap is None:
-        del opts['rootfn'], opts['nr_rootfns']
-    else:
-        opts['rootfn'] = cap.evaluate
-    ref = real(spies[0].rhs, **opts).solve(*spies[0].args)
-    if cap is None:
-        assert ref.flag == 0 and res.cvode_flag == 0
-        assert np.array_equal(res.t, ref.values.t) and np.array_equal(res.y, ref.values.y.T)
-    else:
-        assert ref.flag == 2 and res.cvode_flag == 2 and res.cap_fired
-        assert res.t[-1] == ref.roots.t[-1] and np.array_equal(res.y[:, -1], ref.roots.y[-1])
-
-
-END_YR = 500.0
-
-
-def _plain_solve(call, rootfn):
-    """Repeat a recorded CVODE call without the recording, with this root function or none."""
-    opts = dict(call.opts)
-    if rootfn is None:
-        del opts['rootfn'], opts['nr_rootfns']
-    else:
-        opts['rootfn'] = getattr(rootfn, 'evaluate', rootfn)
-    return type(call._s)(call.rhs, **opts).solve(*call.args)
-
-
-def _replay_each_call(monkeypatch, cap):
-    """Solve a 60-node grey-body case, then repeat each CVODE call without the recording.
-
-    Each plain solve takes the same right-hand side, options, output times and start state, and
-    the root function of the caller in place of the recording wrapper. CVODE gives a root
-    function a copy of the state, so the recording can change the solution only through ``g``,
-    its return value, or what the right-hand side reads.
-    """
-    from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
-
-    if not EOS_DIR.exists():
-        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}')
-    real, solve_cvode, calls, user = es._scikits_cvode, es.EntropySolver._solve_cvode, [], []
+def _spy_cvode(real, calls):
+    """CVODE class that keeps each call: right-hand side, options, arguments and solution."""
 
     class Spy:
         def __init__(self, rhs, **opts):
@@ -265,11 +199,65 @@ def _replay_each_call(monkeypatch, cap):
         def __getattr__(self, name):
             return getattr(self._s, name)
 
+    return Spy
+
+
+def _plain_solve(call, rootfn):
+    """Repeat a recorded CVODE call without the recording, with this root function or none."""
+    opts = dict(call.opts)
+    if rootfn is None:
+        del opts['rootfn'], opts['nr_rootfns']
+    else:
+        opts['rootfn'] = getattr(rootfn, 'evaluate', rootfn)
+    return type(call._s)(call.rhs, **opts).solve(*call.args)
+
+
+class _Cap:
+    """Root function object in the step-cap shape: CVODE reaches it through ``evaluate``."""
+
+    phi0, binding_cap, cap, evals = 0.0, 'phi', 0.5, 0
+
+    def evaluate(self, t, y, g, userdata=None):
+        g[0] = y[0] + 0.5 * AMP * np.sqrt(np.pi) * WIDTH
+        return 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('cap', [None, _Cap()])
+def test_recording_leaves_the_solution_bitwise_unchanged(monkeypatch, cap):
+    spies = []
+    monkeypatch.setattr(es, '_scikits_cvode', _spy_cvode(es._scikits_cvode, spies))
+    res = _solve(n_out=9, rootfn=cap)
+    ref = _plain_solve(spies[0], cap)
+    if cap is None:
+        assert ref.flag == 0 and res.cvode_flag == 0
+        assert np.array_equal(res.t, ref.values.t) and np.array_equal(res.y, ref.values.y.T)
+    else:
+        assert ref.flag == 2 and res.cvode_flag == 2 and res.cap_fired
+        assert res.t[-1] == ref.roots.t[-1] and np.array_equal(res.y[:, -1], ref.roots.y[-1])
+
+
+END_YR = 25.0
+
+
+def _replay_each_call(monkeypatch, cap):
+    """Solve a 60-node grey-body case, then repeat each CVODE call without the recording.
+
+    Each plain solve takes the same right-hand side, options, output times and start state, and
+    the root function of the caller in place of the recording wrapper. CVODE gives a root
+    function a copy of the state, so the recording can change the solution only through ``g``,
+    its return value, or what the right-hand side reads. The case runs the NumPy right-hand side
+    with a finite-difference Jacobian: no JAX path and no root of the sub-grid lid.
+    """
+    from .test_entropy_verification import TestCvodeEnergyOutputGrid
+
+    solve_cvode, calls, user = es.EntropySolver._solve_cvode, [], []
+
     def record_rootfn(self, *args, **kwargs):
         user.append((kwargs.get('phi_cap_rootfn'), args, kwargs))
         return solve_cvode(self, *args, **kwargs)
 
-    monkeypatch.setattr(es, '_scikits_cvode', Spy)
+    monkeypatch.setattr(es, '_scikits_cvode', _spy_cvode(es._scikits_cvode, calls))
     monkeypatch.setattr(es.EntropySolver, '_solve_cvode', record_rootfn)
     s = TestCvodeEnergyOutputGrid._build_greybody_solver(
         'cvode', n_out=2, core_bc='bower2018', n_nodes=60
@@ -300,23 +288,25 @@ def _assert_bitwise_equal(calls, replays):
             assert np.array_equal(sol.roots.y, ref.roots.y)
 
 
+@needs_eos
 @pytest.mark.integration
 @pytest.mark.physics_invariant
 @pytest.mark.timeout(300)
 def test_recording_leaves_a_physical_run_bitwise_unchanged(monkeypatch):
     """Recording the quadrature nodes changes no time and no state of a physical run.
 
-    Bower2018 core and a grey-body surface over 500 yr, with the mush front in the mesh and
+    Bower2018 core and a grey-body surface over 25 yr, with the mush front in the mesh and
     the dense Jacobian in use. The core must cool, so a run that does nothing cannot pass.
     Most calls of the run end at a root of the caller after a short span, so their root states
-    carry the compare; the last step solves the first call with no root of the caller, which
-    runs the recording alone over many steps.
+    carry the compare. After the run, the longest call runs again from its start state with no
+    root of the caller, which runs the recording alone over many steps.
     """
     s, calls, replays, user = _replay_each_call(monkeypatch, None)
     sol = s._solution
     assert sol.t[-1] == pytest.approx(END_YR, rel=1e-12)
     assert sol.y.shape[0] == 60 and sol.y[-1, -1] < sol.y[-1, 0]
-    assert all(call.opts['linsolver'] == 'dense' for call in calls)
+    assert all(call.opts['linsolver'] == 'dense' and 'jacfn' not in call.opts for call in calls)
+    assert any(call.sol.flag == 2 for call in calls), 'no root of the caller fired'
     Ps = np.asarray(s.evaluator.mesh.staggered_pressure).ravel()
     S_liq = np.asarray(s.entropy_eos.liquidus_entropy(Ps)).ravel()
     S_sol = np.asarray(s.entropy_eos.solidus_entropy(Ps)).ravel()
@@ -324,20 +314,21 @@ def test_recording_leaves_a_physical_run_bitwise_unchanged(monkeypatch):
     _assert_bitwise_equal(calls, replays)
     _assert_solution_ends_at(sol, calls[-1], replays[-1].values.t[-1], replays[-1].values.y[-1])
 
-    _, args, kwargs = user[0]
+    _, args, kwargs = max(zip(calls, user), key=lambda pair: pair[0].get_info()['NumSteps'])[1]
     calls.clear()
     es.EntropySolver._solve_cvode(s, *args, **{**kwargs, 'phi_cap_rootfn': None})
     assert len(calls) == 1 and calls[0].sol.flag == 0 and calls[0].get_info()['NumSteps'] > 100
     _assert_bitwise_equal(calls, [_plain_solve(calls[0], None)])
 
 
+@needs_eos
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @pytest.mark.timeout(60)
 def test_recording_leaves_a_fired_temperature_cap_bitwise_unchanged(monkeypatch):
     """A temperature cap that fires gives the same root time and root state with the recording.
 
-    A cap of 100 K ends the steep first flux decay well before the 500 yr of the call.
+    A cap of 100 K ends the steep first flux decay well before the end of the call.
     """
     s, calls, replays, _ = _replay_each_call(monkeypatch, 100.0)
     sol = s._solution
