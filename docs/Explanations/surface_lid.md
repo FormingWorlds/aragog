@@ -68,6 +68,20 @@ with $A_\mathrm{in}$ and $A$ the areas of the lower and upper faces of the cell.
 
 **Why it matters.** $F_K$ scales with $\kappa_\mathrm{floor}$, and the fine mesh it reproduces scales with it too. The lid therefore follows a mesh solution that depends on the floor. This does not test the floor as physics: the floor is a numerical setting in the mush, not a measured transport law. A run with a molten start and the solid rheology without this setting keeps the base of the previous section, so set it for such a run.
 
+### The lid under an atmosphere
+
+**Why.** A coupled run gives the interior a flux that holds for a whole coupling step. A crust at the solidus takes up a flux difference with a small heat jump, so under a held flux a thin crust grows far past its steady thickness in one step. The atmosphere then returns a much smaller flux, the crust melts back, and the flux jumps from step to step.
+
+**What.** With `outer_boundary_condition = 4` and `lid_mush_base`, the caller sets `lid_surface_temperature` to the surface temperature of the atmosphere before each call. The lid holds that surface through the call and loses
+
+$$F_s = k\, (T_b - T_\mathrm{surf})\, \frac{f_s'(0)}{\delta},$$
+
+so its flux falls as it thickens within the step. The part $1 - w$ of the surface without a lid keeps the flux value of the boundary. The weight $w$ is the grey-body weight of [the crust section](#when-the-crust-exists-and-when-it-goes), which does not read the atmosphere; it is 0 when the atmosphere surface lies at or above $T_b$. The surface of the lid stays at least 1 K below $T_b$, because a profile without a temperature drop has no shape. Without `lid_surface_temperature` the lid takes the flux value itself.
+
+For its next solve the atmosphere needs the conductance from the melt to its surface. The output `lid_conductance` gives $k f_s'(0) / \delta$, with the slope at least 0.1; PROTEUS adds it in series with its skin. The output `T_magma` is the melt temperature at the crust base where the lid acts: $w T_b + (1 - w) T_\mathrm{node}$, with $T_\mathrm{node}$ the top basic node. Outgassing reads this value, so it runs at the melt below a crust and takes no account of the crust as a barrier to gas.
+
+**Why it matters.** The surface flux of a call is not the flux of the atmosphere: it starts from it and follows the crust. The planet loses the integrated flux of the call, and PROTEUS books that as `F_int`, with the difference from `F_atm` in `lid_F_diff`.
+
 ## Energy
 
 The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
@@ -104,18 +118,19 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 
 ## Settings and limits
 
-- `subgrid_lid` (bool, default false): the switch. Only with the grey-body surface, `outer_boundary_condition = 1`. It is refused at setup with `core_bc = 'gradient'` or `'bower2018'`, and with `param_utbl = true`, because the lid replaces the surface flux that the correction acts on.
+- `subgrid_lid` (bool, default false): the switch. Only with the grey-body surface, `outer_boundary_condition = 1`, or with `outer_boundary_condition = 4` and `lid_mush_base`. It is refused at setup with `core_bc = 'gradient'` or `'bower2018'`, and with `param_utbl = true`, because the lid replaces the surface flux that the correction acts on.
 - `lid_delta_on` \[m\] (default 1): must be finite, positive and below 0.8 of the top-cell width; a larger value is refused at solver setup with the width named.
 - `lid_delta_lo` \[m\] (default `lid_delta_on / 2`): must lie in (0, `lid_delta_on`).
 - `lid_handover_cells` (integer ≥ 1, default 3): must leave at least one cell below the hand-over face.
 - `lid_ra_crit` (default 450): positive and finite.
 - `lid_mush_base` (bool, default false): the base at the solidus, with the floor flux. It needs `subgrid_lid` and the solid rheology. A start with a live lid below $S_\mathrm{sol} + 1$ J/kg/K is refused, so a run that starts solid keeps the other base.
+- `lid_surface_temperature` \[K\] (default none): the held surface of the lid. Finite and positive; only with `outer_boundary_condition = 4` and `lid_mush_base`.
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`. The integrator can leave a crust at the growth stop slightly above it; the step check accepts up to 10⁻³ above the stop and records the largest excess of each call as `lid_cap_excess` on the solution.
 - The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times.
 - The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over. A molten start with the solid rheology is not validated (see [Where the lid is valid](#where-the-lid-is-valid)).
 - The lid takes its base temperature, its heat content and its density at the pressure of the top-cell centre, not at the pressure of its base. On a coarse mesh the two differ: on the 10-node mantle of the [tutorial](../Tutorials/surface_lid.md) the top-cell centre lies at 7.8 GPa, where the solidus is 2149 K, against 1439 K at the surface. Use a mesh whose top cell is thin enough that the solidus changes little across it.
-- A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) cannot use the lid: the lid sets the surface flux itself through the grey-body balance. PROTEUS does not pass the lid settings to Aragog, so a PROTEUS run cannot turn the lid on without a change in PROTEUS.
+- A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) can use the lid only with `lid_mush_base`; see [The lid under an atmosphere](#the-lid-under-an-atmosphere). Without it the lid sets the surface flux itself through the grey-body balance, and the setting is refused.
 - The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below. A crust denser than the melt below it is gravitationally unstable if the two have a similar composition (Miyazaki and Stevenson (2024)[^cite-miyazaki2024] p. 1). That study finds that on small bodies the foundering of the whole crust is often improbable, but this is not modelled here, and a crust that founders in a run is not followed.
 
     On the tables of the [Validation page](../Validation/surface_lid.md), at its top-cell pressure of 55.7 MPa, the sign is the opposite: the melt at the liquidus is denser than the solid at the solidus (3603 against 3041 kg/m³ on the extended PALEOS table, a ratio of 1.185). This sign is a property of those tables and the opposite of what that study takes for silicates of one composition, so do not read it as a measured result. The density sign in a run comes from the table, not from a check in the lid.
