@@ -593,7 +593,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         )
 
     # Fixed internal heating ratios: Pass-1 isotherm thickens (1.5257 / 1.7395 / 1.9116);
-    # post-hoc conductive diagnostic thins weakly (0.9282 / 0.9022 / 0.8809) as interior cools
+    # conductive diagnostic thins weakly (0.9282 / 0.9022 / 0.8809) as interior cools
     for key, exp_p1, exp_cond, exp_ti in (
         ('unyielded_500MPa', 1.0, 1.0, 1666.4344006309975),
         ('above_2p0x_tau_d_lid', 1.0000000844282797, 1.0000000729366905, 1666.4343780651852),
@@ -607,7 +607,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         assert float(row['T_i_lid_K']) == pytest.approx(exp_ti, rel=rel_pin)
 
     # Matched T_i = 1666.43 K ratios: Pass-1 isotherm stays flat (1.0465 / 1.0549 / 1.0578);
-    # post-hoc conductive diagnostic thins (0.6102 / 0.4988 / 0.4207)
+    # conductive diagnostic thins (0.6102 / 0.4988 / 0.4207)
     for key, exp_p1_m, exp_cond_m, exp_ftop_m in (
         ('unyielded_500MPa', 1.0, 1.0, 2078.911776806167),
         ('above_2p0x_tau_d_lid', 1.0000000844282797, 1.0000000729366905, 2078.9115946415836),
@@ -689,6 +689,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         r_p1_mt = np.array([float(matched_ti_cases[k]['R_thin_pass1']) for k in order])
         r_cd_mt = np.array([float(matched_ti_cases[k]['R_thin_cond_lid']) for k in order])
         r_0d = np.array([float(matched_ti_cases[k]['r_thin_0d_fixed_Ti']) for k in order])
+        r_0d_fh = np.array([float(fixed_h_cases[k]['r_thin_dlid_0d_fixed_H']) for k in order])
 
         plt.rcParams.update(
             {
@@ -733,9 +734,10 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
 
         ax2.plot(log_mult, r_p1_fh, '-', label='isotherm lid, fixed heating')
         ax2.plot(log_mult, r_p1_mt, '--', label='isotherm lid, matched T_i')
-        ax2.plot(log_mult, r_cd_fh, '-.', label='conductive lid*, fixed heating')
-        ax2.plot(log_mult, r_cd_mt, ':', label='conductive lid*, matched T_i')
-        ax2.plot(log_mult, r_0d, '-', label='0D cube-root law')
+        ax2.plot(log_mult, r_cd_fh, '-.', label='conductive*, fixed heating')
+        ax2.plot(log_mult, r_cd_mt, ':', label='conductive*, matched T_i')
+        ax2.plot(log_mult, r_0d, '-', label='0D law, matched T_i')
+        ax2.plot(log_mult, r_0d_fh, ls=(0, (5, 1, 1, 1)), label='0D law, fixed heating')
         ax2.set(
             xlabel='(b) log10(tau_y/tau_d)',
             ylabel='R_thin',
@@ -746,7 +748,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         ax2.legend(
             loc='upper center',
             bbox_to_anchor=(0.5, -0.24),
-            title='* diagnostic chosen after the result',
+            title='* not solver d_lid',
         )
 
         fig.subplots_adjust(left=0.09, right=0.97, top=0.95, bottom=0.42, wspace=0.42)
