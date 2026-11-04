@@ -304,18 +304,13 @@ class TestFluxSolver:
         ev = s._lid_last
         T_node = float(np.asarray(s.state.top_temperature).ravel()[0])
         want = ev.rates.w * ev.surf.T_s + (1.0 - ev.rates.w) * T_node
-        assert (
-            s.final_state().T_magma == pytest.approx(want, rel=1e-9)
-            if hasattr(s, 'final_state')
-            else st is not None
-        )
+        assert st.T_magma == pytest.approx(want, rel=1e-9)
 
     def test_jax_flux_mode_matches_numpy(self, eos):
         from aragog.jax import surface_lid as jl
-        from tests.test_subgrid_lid_jax_rhs import entropy_eos_jax
 
         s = self._s(eos)
-        lp, ej = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
+        lp = s.jax_lid_params()
         assert float(lp.flux) == 1.0
         T_b = s._lid_T_sol
         y = np.array([3.0, 3.0 * float(s._lid_hv.profile_heat(0.0, 1300.0, T_b))])

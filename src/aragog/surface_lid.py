@@ -49,6 +49,7 @@ LID_CAP_FRAC: float = 0.8
 LID_HANDOVER_FRAC: float = 0.7
 LID_FLOOR_GAP: float = 1.0
 LID_FLOOR_WIDTH: float = 5.0
+LID_T_S_MIN: float = 1.0
 LID_CAP_WIDTH: float = 0.02
 # A lid weight below this value is set to 0 (the lid is hidden).
 LID_WEIGHT_FLOOR: float = 1.0e-10
@@ -333,6 +334,32 @@ def surface_state(
     return _surface(s, T_s_of(s), T_b, k, d, clipped)
 
 
+def flux_surface_state(
+    delta: float,
+    E: float,
+    T_b: float,
+    k: float,
+    F_atm: float,
+    delta_floor: float,
+    hv: LidEnthalpy,
+) -> LidSurface:
+    """Lid under a prescribed surface flux ``F_atm`` [W/m^2]: for a shape ``s`` the conduction
+    ``k (T_b - T_s) f'(0) / d = F_atm`` fixes the surface temperature, at least 1 K, and with it
+    the lid heat content, so ``Q(s) = E / delta`` gives the shape. At 1 K the lid carries less
+    than ``F_atm``.
+
+    Parameters and the result as :func:`surface_state`, with ``F_atm`` for the grey body.
+    """
+    d = float(np.hypot(delta, delta_floor))
+    q = E / max(delta, delta_floor)
+
+    def T_s_of(v):
+        return max(T_b - F_atm * d / (k * max(shape(v)[0], 1.0e-30)), LID_T_S_MIN)
+
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
+    return _surface(s, T_s_of(s), T_b, k, d, clipped)
+
+
 def fixed_surface_state(
     delta: float,
     E: float,
@@ -457,6 +484,22 @@ def existence_weight(
     d_eq = k * (T_b - T_s) / F_b
     w = 0.5 * (1.0 + np.tanh(np.log10(d_eq / delta_on) / LID_EXIST_WIDTH))
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0
+
+
+def flux_weight(F_b: float, F_atm: float) -> float:
+    """Weight [0, 1] of the lid under a prescribed surface flux ``F_atm`` [W/m^2].
+
+    A crust grows only where the surface loses more than the mush delivers:
+    ``w = (1 + tanh(log10(F_atm / F_b) / LID_EXIST_WIDTH)) / 2``, set to 0 below
+    ``LID_WEIGHT_FLOOR`` and to 1 above ``1 - LID_WEIGHT_FLOOR``; 1 for ``F_b <= 0`` and 0 for
+    ``F_atm <= 0`` otherwise.
+    """
+    if F_b <= 0.0:
+        return 1.0
+    if F_atm <= 0.0:
+        return 0.0
+    w = 0.5 * (1.0 + np.tanh(np.log10(F_atm / F_b) / LID_EXIST_WIDTH))
+    return 0.0 if w <= LID_WEIGHT_FLOOR else 1.0 if w >= 1.0 - LID_WEIGHT_FLOOR else float(w)
 
 
 @dataclass(frozen=True)

@@ -2500,6 +2500,7 @@ class EntropySolver:
             self._outer_bc_kind,
             self._core_bc,
             bc.param_utbl,
+            lid_mush_base=bc.lid_mush_base,
         )
         self._lid_convection = bool(self.parameters.energy.convection)  # as the mesh state
         if self.entropy_eos is None or getattr(
@@ -3146,9 +3147,12 @@ class EntropySolver:
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
         base = self._lid_base_state(T_f, phi_f, S_top)
         d = self._lid_delta_lo
-        T_s = _lid.linear_lid_surface(
-            d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
-        )
+        if self._outer_bc_kind == 4:
+            T_s = max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN)
+        else:
+            T_s = _lid.linear_lid_surface(
+                d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
+            )
         return np.array([d, d * self._lid_hv.profile_heat(0.0, T_s, base['T_b'])])
 
     def _lid_handover_armed(self) -> bool:
@@ -3234,6 +3238,7 @@ class EntropySolver:
             rheo=float(on),
             closure_lid=float(self._lid_handover_armed()),
             mush=float(self._lid_mush),
+            flux=float(self._outer_bc_kind == 4),
             phi_k=jl.enthalpy(self._lid_Phi_table) if self._lid_mush else jl.enthalpy(hs),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
             T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
@@ -3545,7 +3550,7 @@ class EntropySolver:
             top(ph.viscosity()),
             self._lid_ra_crit,
         )
-        F_in = float(self.state._heat_flux[-2])
+        F_in, F_grid = float(self.state._heat_flux[-2]), float(self.state._heat_flux[-1])
         eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
         if self._lid_mush:
             g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)
@@ -3553,19 +3558,28 @@ class EntropySolver:
             F_b = _lid.mush_base_flux(Phi, self._lid_h_top, delta, F_in, g, q_conv)
         else:
             F_b = max(q_conv, F_in, 0.0)
-        w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
+        floor = _lid.LID_DELTA_FLOOR
+        if self._outer_bc_kind == 4:
+            w = _lid.flux_weight(F_b, F_grid)
+            surf = _lid.flux_surface_state(
+                delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
+            )
+        else:
+            w = _lid.existence_weight(
+                F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on
+            )
+            surf = _lid.surface_state(
+                delta, E, base['T_b'], self._lid_k, eps, T_eq, floor, self._lid_hv
+            )
         if self._lid_mush:
             w = 1.0 - g * (1.0 - w)
-        surf = _lid.surface_state(
-            delta, E, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR, self._lid_hv
-        )
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
             E_lid=E,
             surf=surf,
             F_b=F_b,
-            F_grid=float(self.state._heat_flux[-1]),
+            F_grid=F_grid,
             w=w,
             rho=base['rho'],
             H_f=H_f,
@@ -6740,6 +6754,10 @@ class EntropySolver:
         # interior-side surface boundary condition.
         T_basic_final = np.asarray(self.state.phase_basic.temperature()).ravel()
         T_magma = float(T_basic_final[-1])
+        if self._n_lid and self._lid_active and self._outer_bc_kind == 4:
+            # the atmosphere sees the crust surface where the lid acts
+            w_lid = self._lid_last.rates.w
+            T_magma = w_lid * self._lid_last.surf.T_s + (1.0 - w_lid) * T_magma
         # Core temperature: bottom staggered cell (T_stag[0]).
         # SPIDER reports T_core = interior_o.temp[-1], the last
         # staggered node in its surface-to-CMB ordering. Aragog

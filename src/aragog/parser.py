@@ -161,6 +161,7 @@ class _BoundaryConditionsParameters:
             self.outer_boundary_condition,
             self.core_bc,
             self.param_utbl,
+            lid_mush_base=self.lid_mush_base,
         )
 
     def _normalize_inner_boundary_condition(self) -> None:

@@ -23,6 +23,7 @@ from aragog.surface_lid import (
     LID_FLOOR_WIDTH,
     LID_SHAPE_MAX,
     LID_SHAPE_MIN,
+    LID_T_S_MIN,
     LID_TAU_HIDDEN,
     LID_WEIGHT_FLOOR,
     PROFILE_PANELS,
@@ -240,10 +241,14 @@ def _bracket_root(f, lo, hi, f_lo, f_hi):
     return secant(*c[:4])
 
 
-def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
+def surface_state(
+    delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy, flux=0.0, F_atm=0.0
+):
     """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
 
+    With ``flux`` above 0.5 the surface carries the prescribed ``F_atm``, as
+    :func:`aragog.surface_lid.flux_surface_state`.
     The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
@@ -256,7 +261,12 @@ def surface_state(delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy):
     q = E / jnp.maximum(delta, delta_floor)
 
     def T_s_of(s):
-        return grey_surface_temperature(shape(s)[0], d, T_b, k, emissivity, T_eq)
+        f0 = shape(s)[0]
+        return jnp.where(
+            flux > 0.5,
+            jnp.maximum(T_b - F_atm * d / (k * jnp.maximum(f0, 1.0e-30)), LID_T_S_MIN),
+            grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq),
+        )
 
     def residual(s):
         return profile_heat(e, s, T_s_of(s), T_b) - q
@@ -355,6 +365,7 @@ class LidParams(NamedTuple):
     rheo: float
     closure_lid: float
     mush: float
+    flux: float
     phi_k: Enthalpy
     fixed: float
     T_fixed: float
@@ -374,6 +385,15 @@ def mush_base_flux(lp: LidParams, S_f, delta, F_in, q_conv):
     """The flux of :func:`aragog.surface_lid.mush_base_flux` from the table of ``Phi``."""
     F_k = enthalpy_H(lp.phi_k, S_f) / (0.5 * jnp.maximum(lp.h_top - delta, 1.0e-3))
     return F_in + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_in)
+
+
+def flux_weight(F_b, F_atm):
+    """Weight [0, 1] of the lid, as :func:`aragog.surface_lid.flux_weight`."""
+    inside = (F_b > 0.0) & (F_atm > 0.0)
+    ratio = jnp.where(inside, F_atm / jnp.where(inside, F_b, 1.0), 1.0)
+    w = 0.5 * (1.0 + jnp.tanh(jnp.log10(ratio) / LID_EXIST_WIDTH))
+    w = jnp.where(w <= LID_WEIGHT_FLOOR, 0.0, jnp.where(w >= 1.0 - LID_WEIGHT_FLOOR, 1.0, w))
+    return jnp.where(F_b <= 0.0, 1.0, jnp.where(F_atm <= 0.0, 0.0, w))
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
@@ -438,10 +458,23 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         mush_base_flux(lp, S_f, delta, F_in, q_conv),
         jnp.maximum(jnp.maximum(q_conv, F_in), 0.0),
     )
-    w = existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on)
+    w = jnp.where(
+        lp.flux > 0.5,
+        flux_weight(F_b, F_grid),
+        existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
+    )
     w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
     surf = surface_state(
-        delta, E, base['T_b'], lp.k, lp.emissivity, lp.T_eq, LID_DELTA_FLOOR, lp.e
+        delta,
+        E,
+        base['T_b'],
+        lp.k,
+        lp.emissivity,
+        lp.T_eq,
+        LID_DELTA_FLOOR,
+        lp.e,
+        lp.flux,
+        F_grid,
     )
     ddelta, dE, F_top, F_fluid, *_ = lid_rates(
         delta=delta,

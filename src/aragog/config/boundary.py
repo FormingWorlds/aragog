@@ -64,6 +64,7 @@ def check_subgrid_lid(
     outer_boundary_condition: int,
     core_bc: str,
     param_utbl: bool,
+    lid_mush_base: bool = False,
 ) -> None:
     """Refuse invalid sub-grid lid settings, and the lid on an unsupported boundary setup.
 
@@ -99,7 +100,11 @@ def check_subgrid_lid(
         raise ValueError(f'lid_handover_cells must be an integer, got {lid_handover_cells!r}')
     if lid_handover_cells < 1:
         raise ValueError(f'lid_handover_cells must be >= 1, got {lid_handover_cells!r}')
-    if subgrid_lid and outer_boundary_condition != 1:
+    if (
+        subgrid_lid
+        and outer_boundary_condition != 1
+        and not (lid_mush_base and outer_boundary_condition == 4)
+    ):
         raise ValueError(
             'subgrid_lid needs the grey-body outer boundary (outer_boundary_condition = 1), '
             f'got {outer_boundary_condition}'
@@ -238,4 +243,5 @@ class BoundaryConfig:
             self.outer_boundary_condition,
             self.core_bc,
             self.param_utbl,
+            lid_mush_base=self.lid_mush_base,
         )
