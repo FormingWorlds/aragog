@@ -28,7 +28,6 @@ SAME = 1e-5  # lid on against lid off under the 'lid' closure, each observable
 GUARD = 1e-4  # gross ledger guard per call: time quadrature of the start transient
 SUB = 1e-2  # lid sub-ledger per call that starts with the lid
 FIRST_OUTPUT_YR = 5e9  # first output of both runners: 4e10 yr in 8 parts, 2e11 yr in 40
-FLOOR = 1e-16  # plot position of a difference that is exactly 0
 TABLES = {'K': 'korenaga_2009_rows', 'D': 'deschamps_vilella_2021_rows'}
 
 
@@ -92,17 +91,7 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
             rows = sorted(r for tt, r in change if tt == t)
             x = pos + np.arange(1, len(rows) + 1)
             y = np.array([change[(t, r)] for r in rows])
-            zero = y == 0.0
-            ax.semilogy(x[~zero], y[~zero], 'o', color='C1', ms=4, label='lid on vs off')
-            if zero.any():
-                ax.semilogy(
-                    x[zero],
-                    np.full(zero.sum(), FLOOR),
-                    'v',
-                    color='C2',
-                    ms=5,
-                    label=f'equal (at {FLOOR:g})',
-                )
+            ax.semilogy(x, y, 'o', color='C1', ms=4, label='lid on vs off')
             ax.text(x.mean(), 1e-4, head, ha='center', va='center', fontsize=8)
             ticks += [x[0], x[-1]]
             labels += ['1', str(len(rows))]
@@ -111,7 +100,7 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
                 ax.axvline(pos - 0.5, color=ink, ls=':', lw=0.8)
         ax.axhline(SAME, color='C3', ls='--', lw=1.0, label='tolerance')
         ax.set_xticks(ticks, labels)
-        ax.set_ylim(FLOOR / 10, 1e-3)
+        ax.set_ylim(1e-17, 1e-3)
         ax.set_yticks([1e-15, 1e-10, 1e-5])
         ax.minorticks_off()
         ax.set_xlabel('row in the table')

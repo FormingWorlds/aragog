@@ -90,7 +90,7 @@ def main(argv=None) -> None:
             flux.append(float(s.state.heat_flux[-1]))
             depth.append(isotherm_depth(T, z, T_iso))
             delta.append(0.0 if a.no_lid else float(y[-2]))
-    handover = [r['handover_time'] for r in rows if r.get('handover_time')]
+    handover = [r['handover_time'] for r in rows if r.get('handover_time') is not None]
     np.savez_compressed(
         a.out,
         t=np.array(t_all),
@@ -100,8 +100,13 @@ def main(argv=None) -> None:
         handover_yr=np.array(max(handover) if handover else np.nan),
         part_yr=np.array([r['t_target'] for r in rows]),
         part_F_top=np.array([r['F_top'] for r in rows]),
-        f_int_max=np.array([r.get('f_int_max') or np.nan for r in rows], dtype=float),
-        w_active=np.array([r.get('w_active') or np.nan for r in rows], dtype=float),
+        f_int_max=np.array(
+            [np.nan if r.get('f_int_max') is None else r['f_int_max'] for r in rows],
+            dtype=float,
+        ),
+        w_active=np.array(
+            [np.nan if r.get('w_active') is None else r['w_active'] for r in rows], dtype=float
+        ),
         sha=np.array(rows[-1]['sha']),
     )
 

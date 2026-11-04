@@ -78,7 +78,7 @@ def main(argv=None) -> None:
     ap.add_argument('--heating', type=float, required=True)
     a = ap.parse_args(argv)
     rows = json.loads((a.run / f'{STEM}.json').read_text())
-    t_ho = max(r['handover_time'] for r in rows if r.get('handover_time'))
+    t_ho = max(r['handover_time'] for r in rows if r.get('handover_time') is not None)
     part = next(k for k, r in enumerate(rows) if r['t_target'] > t_ho)
     z = np.load(a.run / f'{STEM}_part{part}.npz')
     before = np.flatnonzero(z['t'] < t_ho * (1.0 - 1.0e-6))[-1]

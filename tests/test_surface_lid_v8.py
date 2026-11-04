@@ -21,8 +21,8 @@ MESHES = ('n100', 'n200', 'n400')
 PART_ENDS = np.arange(2, 11) * 1.0e8
 WINDOW = 2.0e7  # years: longer than the swings of the flux after the transition
 LATE = 5.0e8  # years: the transition of the interior lies before this
-R_MAX = 0.75  # approved: finest mesh step over the coarser step after the last hand-over
-EVENT_LIMIT = 0.05  # approved limit on the flux step at a hand-over, missed by all 3 meshes
+R_MAX = 0.75  # finest mesh step over the coarser step after the last hand-over
+EVENT_LIMIT = 0.05  # limit on the flux step at a hand-over, missed by all 3 meshes
 
 
 @pytest.fixture(scope='module')
@@ -154,7 +154,7 @@ def test_v8_the_flux_before_the_hand_over_lies_below_the_reference(d):
 
 @pytest.mark.reference_pinned
 def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
-    """The approved limit of EVENT_LIMIT on the flux step at a hand-over is missed: from the stored
+    """The limit of EVENT_LIMIT on the flux step at a hand-over is missed: from the stored
     state at the hand-over to the next one the flux rises by 15 to 27 %, at least 80 times the step
     of the reference over the same time. The excess falls below 5 % sooner on a finer mesh."""
     for m, low, high in zip(MESHES, (0.25, 0.13, 0.18), (0.30, 0.17, 0.22)):

@@ -72,28 +72,24 @@ def _options(**kw):
     return argparse.Namespace(**{'eta': None, 'heating': None, 'surface_cell': None, **kw})
 
 
+@pytest.mark.parametrize(
+    ('name', 'accept', 'message'),
+    [
+        ('eta', lambda v: v > 0.0, '--eta must be finite and positive'),
+        ('heating', lambda v: v >= 0.0, '--heating must be finite and non-negative'),
+        ('surface_cell', lambda v: v >= 2.0, '--surface-cell must be finite and at least 2 m'),
+    ],
+)
 @given(st.floats(allow_nan=True, allow_infinity=True))
 @settings(max_examples=200, deadline=None)
-def test_eta_option_accepts_only_finite_positive_values(eta):
-    """--eta passes when finite and positive and stops the run otherwise."""
+def test_options_accept_only_their_range(name, accept, message, value):
+    """Each option passes inside its finite range, and stops the run outside it."""
     check = _driver()._check_options
-    if np.isfinite(eta) and eta > 0.0:
-        check(_options(eta=eta))
+    if np.isfinite(value) and accept(value):
+        check(_options(**{name: value}))
     else:
-        with pytest.raises(SystemExit, match='--eta must be finite and positive'):
-            check(_options(eta=eta))
-
-
-@given(st.floats(allow_nan=True, allow_infinity=True))
-@settings(max_examples=200, deadline=None)
-def test_heating_option_accepts_only_finite_non_negative_values(heating):
-    """--heating passes when finite and non-negative and stops the run otherwise."""
-    check = _driver()._check_options
-    if np.isfinite(heating) and heating >= 0.0:
-        check(_options(heating=heating))
-    else:
-        with pytest.raises(SystemExit, match='--heating must be finite and non-negative'):
-            check(_options(heating=heating))
+        with pytest.raises(SystemExit, match=message):
+            check(_options(**{name: value}))
 
 
 @pytest.mark.parametrize('flag', ['--eta', '--heating', '--surface-cell'])
@@ -104,19 +100,6 @@ def test_options_refuse_a_value_that_is_not_a_number(flag):
     with pytest.raises(SystemExit):
         d.parse(['out', flag, 'true'])
     assert getattr(d.parse(['out']), flag[2:].replace('-', '_')) is None
-
-
-@given(st.floats(allow_nan=True, allow_infinity=True))
-@settings(max_examples=200, deadline=None)
-def test_surface_cell_option_accepts_only_finite_values_of_at_least_2_m(cell):
-    """--surface-cell [m] passes when finite and at least 2 m, the mesh limit, and stops the run
-    otherwise."""
-    check = _driver()._check_options
-    if np.isfinite(cell) and cell >= 2.0:
-        check(_options(surface_cell=cell))
-    else:
-        with pytest.raises(SystemExit, match='--surface-cell must be finite and at least 2 m'):
-            check(_options(surface_cell=cell))
 
 
 def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):

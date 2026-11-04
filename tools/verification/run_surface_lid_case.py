@@ -36,6 +36,8 @@ import numpy as np
 
 STEM = 'za'
 SAMPLES = '1e2,1e3,3e3,1e4,3e4,1e5,2e5,3e5,4e5'
+OPTIONS = ('eta', 'heating', 'surface_cell')  # in the config hash when given
+PRINTED = 'part t_yr status delta w_active f_int_max cvode_nst max_step_max_yr'.split()
 RHEOLOGY = dict(
     enabled=True,
     stress_closure_mode='lid',
@@ -221,15 +223,7 @@ def main(argv=None) -> int:
                     nodes=a.nodes,
                     s_init=repr(a.s_init),
                     dh_min=sl.LID_DH_MIN,
-                    **{
-                        k: repr(v)
-                        for k, v in (
-                            ('eta', a.eta),
-                            ('heating', a.heating),
-                            ('surface_cell', a.surface_cell),
-                        )
-                        if v is not None
-                    },
+                    **{k: repr(getattr(a, k)) for k in OPTIONS if getattr(a, k) is not None},
                 )
             )
         ).encode()
@@ -255,10 +249,7 @@ def main(argv=None) -> int:
     for k, t_end in enumerate(samples[len(rows) :], start=len(rows)):
         c = Config.from_file(str(cfg))
         c.solver.end_time, c.solver.max_steps = t_end, 800_000
-        c.energy.kappah_floor, c.phase_solid.viscosity = (
-            10.0,
-            1.0e21 if a.eta is None else a.eta,
-        )
+        c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, a.eta or 1.0e21
         if a.heating:
             c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
         c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
@@ -292,6 +283,7 @@ def main(argv=None) -> int:
         t_got, y_end = float(tt[-1]), yy[:, -1].copy()
         s.dSdt(t_got, y_end)
         lid = s.state._lid_state or {}
+        F_top = float(np.ravel(s.state._heat_flux)[-1])  # the root below rewrites this slot
         root = None if a.no_lid else float(s._lid_root_value(t_got, y_end))
         t_ho = float(getattr(s, '_lid_handover_time', float('nan')))
         nst = int(s._solution.get('cvode_nst', 0) or 0)
@@ -305,7 +297,7 @@ def main(argv=None) -> int:
                 status=int(s._solution.status),
                 delta=None if a.no_lid else float(y_end[-2]),
                 E=None if a.no_lid else float(y_end[-1]),
-                F_top=float(np.ravel(s.state._heat_flux)[-1]),
+                F_top=F_top,
                 T_i=float(np.asarray(lid['T_i'])) if 'T_i' in lid else None,
                 w_active=float(np.asarray(lid['w_active'])) if 'w_active' in lid else None,
                 f_int_max=float(np.asarray(lid['f_int_max'])) if 'f_int_max' in lid else None,
@@ -332,24 +324,7 @@ def main(argv=None) -> int:
         r_basic = np.asarray(s.evaluator.mesh.basic.radii, float).ravel()
         np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end, r_basic=r_basic)
         out_json.write_text('[\n' + ',\n'.join(json.dumps(r) for r in rows) + '\n]\n')
-        print(
-            json.dumps(
-                {
-                    x: rows[-1][x]
-                    for x in (
-                        'part',
-                        't_yr',
-                        'status',
-                        'delta',
-                        'w_active',
-                        'f_int_max',
-                        'cvode_nst',
-                        'max_step_max_yr',
-                    )
-                }
-            ),
-            flush=True,
-        )
+        print(json.dumps({x: rows[-1][x] for x in PRINTED}), flush=True)
         if not rows[-1]['reached'] or rows[-1]['status'] < 0:
             return 3
         t_prev, y_prev = t_got, y_end
