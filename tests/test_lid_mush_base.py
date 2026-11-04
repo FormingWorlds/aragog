@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from aragog import surface_lid as sl
@@ -346,3 +346,139 @@ class TestFluxSolver:
             assert float(jl.flux_weight(F_b, F_atm)) == pytest.approx(
                 sl.flux_weight(F_b, F_atm), rel=1e-12
             )
+
+
+NOT_BOOL = st.one_of(
+    st.integers(),
+    st.floats(allow_nan=True),
+    st.text(max_size=5),
+    st.none(),
+    st.lists(st.booleans(), max_size=2),
+)
+GOOD_LID = dict(
+    lid_delta_on=1.0,
+    lid_delta_lo=0.5,
+    lid_handover_cells=1,
+    lid_ra_crit=1000.0,
+    core_bc='quasi_steady',
+    param_utbl=False,
+)
+
+
+@settings(max_examples=80, deadline=None)
+@given(NOT_BOOL, st.booleans())
+def test_lid_mush_base_refuses_every_other_type(value, subgrid):
+    from aragog.config.boundary import check_lid_mush_base
+
+    with pytest.raises(ValueError, match='lid_mush_base must be true or false'):
+        check_lid_mush_base(value, subgrid)
+
+
+@settings(max_examples=40, deadline=None)
+@given(st.booleans(), st.booleans())
+def test_lid_mush_base_needs_the_lid(mush, subgrid):
+    from aragog.config.boundary import check_lid_mush_base
+
+    if mush and not subgrid:
+        with pytest.raises(ValueError, match='needs subgrid_lid'):
+            check_lid_mush_base(mush, subgrid)
+    else:
+        assert check_lid_mush_base(mush, subgrid) is None
+
+
+@settings(max_examples=120, deadline=None)
+@given(st.booleans(), st.booleans(), st.integers(min_value=0, max_value=6))
+def test_outer_boundary_rule_of_the_lid(subgrid, mush, bc):
+    """The lid runs on the grey body, and on the prescribed flux only with the mush base."""
+    from aragog.config.boundary import check_subgrid_lid
+
+    allowed = not subgrid or bc == 1 or (bc == 4 and mush)
+    args = dict(GOOD_LID, outer_boundary_condition=bc, lid_mush_base=mush)
+    if allowed:
+        assert check_subgrid_lid(subgrid, **args) is None
+    else:
+        with pytest.raises(ValueError, match='outer_boundary_condition'):
+            check_subgrid_lid(subgrid, **args)
+
+
+FLUX = st.floats(min_value=-1e7, max_value=1e7, allow_nan=False)
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    st.floats(min_value=-1e4, max_value=1e4, allow_nan=False),
+    st.floats(min_value=0.0, max_value=1e4, allow_nan=False),
+)
+def test_floor_weight_does_not_fall_with_entropy(S, dS):
+    assert sl.floor_weight(S + dS, 0.0) >= sl.floor_weight(S, 0.0)
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    st.floats(min_value=0.0, max_value=1e12, allow_nan=False),
+    st.floats(min_value=1.0, max_value=1e5, allow_nan=False),
+    st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    FLUX,
+    st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    st.floats(min_value=0.0, max_value=1e7, allow_nan=False),
+)
+def test_base_flux_lies_between_its_two_limits(Phi, h, frac, F_lo, g, q_conv):
+    delta = frac * h
+    F_k = sl.floor_flux(Phi, h, delta)
+    assert F_k >= 0.0
+    F_b = sl.mush_base_flux(Phi, h, delta, F_lo, g, q_conv)
+    lo, hi = sorted((F_lo, F_k + q_conv))
+    assert lo - 1e-9 * (abs(lo) + 1.0) <= F_b <= hi + 1e-9 * (abs(hi) + 1.0)
+    assert sl.mush_base_flux(Phi, h, delta, F_lo, 0.0, q_conv) == F_lo
+    assert sl.mush_base_flux(Phi, h, delta, F_lo, 1.0, q_conv) == pytest.approx(
+        F_k + q_conv, rel=1e-12, abs=1e-6
+    )
+
+
+@needs_eos
+class TestRestore:
+    @pytest.fixture(scope='class')
+    def solver(self):
+        return _solver(entropy_eos_copy(EOS_DIR))
+
+    @settings(
+        max_examples=30,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    @given(
+        st.floats(min_value=1.0, max_value=1e4),
+        st.floats(min_value=1.0e3, max_value=1e12),
+        st.floats(min_value=0.0, max_value=2000.0),
+    )
+    def test_a_resume_above_the_floor_keeps_the_lid_bitwise(self, solver, delta, E, dS):
+        S_top = solver._lid_S_sol + sl.LID_FLOOR_GAP + dS
+        solver.set_initial_lid(delta, E)
+        try:
+            assert np.array_equal(solver._lid_start(S_top), [delta, E])
+        finally:
+            solver.set_initial_lid(None)
+
+    @settings(
+        max_examples=30,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    @given(
+        st.floats(min_value=1.0e-6, max_value=500.0), st.floats(min_value=1.0, max_value=1e4)
+    )
+    def test_a_resume_with_a_live_lid_below_the_floor_is_refused(self, solver, dS, delta):
+        solver.set_initial_lid(delta, 1.0e6)
+        try:
+            with pytest.raises(ValueError, match='below the floor'):
+                solver._lid_start(solver._lid_S_sol + sl.LID_FLOOR_GAP - dS)
+        finally:
+            solver.set_initial_lid(None)
+
+    def test_a_handed_over_state_may_resume_below_the_floor(self, solver):
+        solver.set_initial_lid(0.0, 0.0)
+        try:
+            start = solver._lid_start(solver._lid_S_sol - 50.0)
+        finally:
+            solver.set_initial_lid(None)
+        assert np.array_equal(start, [0.0, 0.0])
