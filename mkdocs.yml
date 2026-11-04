@@ -74,6 +74,7 @@ nav:
       - Phase transitions: Validation/phase_transitions.md
       - Numerics: Validation/numerics.md
       - Mesh refinement: Validation/mesh_refinement.md
+      - Solid-state convection: Validation/solid_state_convection.md
 
   - Reference:
       - API reference:
