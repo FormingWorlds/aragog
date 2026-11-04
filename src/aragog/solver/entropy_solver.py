@@ -2512,9 +2512,9 @@ class EntropySolver:
             raise ValueError(
                 "the constant-property lid needs the solid rheology with the stress closure 'lid'"
             )
-        if self._lid_const and bc.core_bc != 'quasi_steady':
+        if self._lid_const and self._core_bc != 'quasi_steady':
             raise ValueError(
-                f"the constant-property lid needs core_bc = 'quasi_steady', got {bc.core_bc!r}"
+                f"the constant-property lid needs core_bc = 'quasi_steady', got {self._core_bc!r}"
             )
         if self.entropy_eos is None and not self._lid_const:
             raise ValueError('subgrid_lid needs the entropy EOS tables')
@@ -3556,11 +3556,21 @@ class EntropySolver:
         w = _lid.existence_weight(
             F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on, T_surf=T_surf
         )
-        head, tail = (delta, E, base['T_b'], self._lid_k), (_lid.LID_DELTA_FLOOR, self._lid_hv)
         if T_surf is None:
-            surf = _lid.surface_state(*head, eps, T_eq, *tail)
+            surf = _lid.surface_state(
+                delta,
+                E,
+                base['T_b'],
+                self._lid_k,
+                eps,
+                T_eq,
+                _lid.LID_DELTA_FLOOR,
+                self._lid_hv,
+            )
         else:
-            surf = _lid.fixed_surface_state(*head, T_surf, *tail)
+            surf = _lid.fixed_surface_state(
+                delta, E, base['T_b'], self._lid_k, T_surf, _lid.LID_DELTA_FLOOR, self._lid_hv
+            )
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,

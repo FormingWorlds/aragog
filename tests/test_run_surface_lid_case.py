@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from tests.conftest import entropy_eos_copy
@@ -16,7 +17,7 @@ from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_e
 
 jax = pytest.importorskip('jax')
 
-pytestmark = [pytest.mark.timeout(600), needs_eos]
+pytestmark = [pytest.mark.timeout(600)]
 
 DRIVER = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_surface_lid_case.py'
 
@@ -55,6 +56,8 @@ def _rates(eos, heating, jax_rhs):
     return (yd * np.asarray(sc.state_scale) / float(sc.t_ref))[: s._n_stag]
 
 
+@pytest.mark.slow
+@needs_eos
 def test_driver_jax_rhs_carries_the_internal_heating():
     """The heating set in the config reaches the JAX right-hand side of the driver: its heated
     minus unheated rate equals that of the NumPy right-hand side in every cell."""
@@ -72,6 +75,7 @@ def _options(**kw):
     return argparse.Namespace(**{'eta': None, 'heating': None, 'surface_cell': None, **kw})
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('name', 'accept', 'message'),
     [
@@ -81,17 +85,20 @@ def _options(**kw):
     ],
 )
 @given(st.floats(allow_nan=True, allow_infinity=True))
+@example(0.0)
+@example(2.0)
 @settings(max_examples=200, deadline=None)
 def test_options_accept_only_their_range(name, accept, message, value):
     """Each option passes inside its finite range, and stops the run outside it."""
-    check = _driver()._check_options
+    check, options = _driver()._check_options, _options(**{name: value})
     if np.isfinite(value) and accept(value):
-        check(_options(**{name: value}))
+        check(options)
     else:
         with pytest.raises(SystemExit, match=message):
-            check(_options(**{name: value}))
+            check(options)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize('flag', ['--eta', '--heating', '--surface-cell'])
 def test_options_refuse_a_value_that_is_not_a_number(flag):
     """A value that is not a number (as a TOML true) stops the parser; no value keeps the
@@ -102,11 +109,11 @@ def test_options_refuse_a_value_that_is_not_a_number(flag):
     assert getattr(d.parse(['out']), flag[2:].replace('-', '_')) is None
 
 
+@pytest.mark.slow
+@needs_eos
 def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
     """--no-lid with --surface-cell runs the column without the lid on a mesh whose top cell has
     the set thickness; the part rows hold no lid states and record both options."""
-    import json
-
     d = _driver()
     assert (
         d.main(
@@ -133,11 +140,11 @@ def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
 
 
 @needs_eos
+@pytest.mark.slow
+@needs_eos
 def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
     """The part row holds the surface flux of the lid, not the flux of the grid face that the
     hand-over root leaves in the state."""
-    import json
-
     from aragog.solver.entropy_solver import EntropySolver
 
     seen = []

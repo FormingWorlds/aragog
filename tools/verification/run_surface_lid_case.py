@@ -249,7 +249,10 @@ def main(argv=None) -> int:
     for k, t_end in enumerate(samples[len(rows) :], start=len(rows)):
         c = Config.from_file(str(cfg))
         c.solver.end_time, c.solver.max_steps = t_end, 800_000
-        c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, a.eta or 1.0e21
+        c.energy.kappah_floor, c.phase_solid.viscosity = (
+            10.0,
+            1.0e21 if a.eta is None else a.eta,
+        )
         if a.heating:
             c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
         c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)

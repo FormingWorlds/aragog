@@ -136,13 +136,21 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
 
 @pytest.mark.reference_pinned
 def test_v8_the_flux_before_the_hand_over_lies_below_the_reference(d):
-    """From 1e6 yr to the last stored state with the lid the flux lies below the reference, by up
-    to 13 % on 100 and 200 nodes and 4.8 % on 400 nodes, by 2, 0.9 and 0.4 % at that last state."""
-    ratio = {}
+    """From 1e6 yr, the first stored state, to the last stored state with the lid the flux lies
+    below both references. Against 500 m by up to 13 % on 100 and 200 nodes and 4.8 % on 400 nodes,
+    against 1000 m by 13, 12 and 4.1 %; by 2, 0.9 and 0.4 % at that last state."""
+    ratio, coarse = {}, {}
     for m in MESHES:
         i = int(np.flatnonzero(d[f'{m}_delta'] == 0.0)[0])
         t, F = d[f'{m}_t'][:i], d[f'{m}_F_top'][:i].astype(float)
+        assert t[0] == 1.0e6
         ratio[m] = F / np.interp(t, d['s500_t'], d['s500_F_top'].astype(float))
+        coarse[m] = F / np.interp(t, d['s1000_t'], d['s1000_F_top'].astype(float))
+    assert all(r.max() < 1.0 for r in coarse.values())
+    np.testing.assert_allclose(
+        [r.min() for r in coarse.values()], (0.872, 0.881, 0.959), atol=1e-3
+    )
+    assert ratio['n200'].argmin() == ratio['n400'].argmin() == 0
     assert all(r.max() < 1.0 for r in ratio.values())
     np.testing.assert_allclose(
         [r.min() for r in ratio.values()], (0.870, 0.874, 0.952), atol=1e-3

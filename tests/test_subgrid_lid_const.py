@@ -268,12 +268,14 @@ def test_fixed_surface_lid_refuses_the_jax_rhs(eos):
         s.jax_lid_params()
 
 
-def test_constant_property_lid_is_refused_on_the_energy_balance_core():
-    """A trial state of this core mode gives the lid a NaN base; refused at setup by name."""
+@pytest.mark.parametrize('core_bc', ['energy_balance', 'core_module'])
+def test_constant_property_lid_is_refused_on_another_core(core_bc):
+    """A trial state of the energy-balance core gives the lid a NaN base; a core mode other than
+    quasi_steady stops at setup by name."""
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _params()
-    p.boundary_conditions.core_bc = 'energy_balance'
+    p.boundary_conditions.core_bc = core_bc
     with pytest.raises(
         ValueError, match="constant-property lid needs core_bc = 'quasi_steady'"
     ):
@@ -281,7 +283,9 @@ def test_constant_property_lid_is_refused_on_the_energy_balance_core():
 
 
 def test_constant_property_heated_mass_is_rho_v():
-    """Internal heating enters the ledger with the mass rho V of the constant density."""
+    """Internal heating enters the ledger with the mass rho V of the constant density; the lid
+    holds about 1e-5 of the volume, so a mass without it misses the tolerance."""
+    from aragog.solver import SECS_PER_YEAR
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _params()
@@ -295,9 +299,7 @@ def test_constant_property_heated_mass_is_rho_v():
         RHO * float(np.sum(s._volume_flat)) * 1.0e-10
     )
     assert t > 0.0
-    assert seconds == pytest.approx(
-        t * s._year_s if hasattr(s, '_year_s') else t * 31557600.0, rel=1e-3
-    )
+    assert seconds == pytest.approx(t * SECS_PER_YEAR, rel=1e-12)
 
 
 def test_constant_property_lid_temperature_is_the_column_temperature():

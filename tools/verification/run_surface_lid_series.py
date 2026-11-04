@@ -100,13 +100,8 @@ def main(argv=None) -> None:
         handover_yr=np.array(max(handover) if handover else np.nan),
         part_yr=np.array([r['t_target'] for r in rows]),
         part_F_top=np.array([r['F_top'] for r in rows]),
-        f_int_max=np.array(
-            [np.nan if r.get('f_int_max') is None else r['f_int_max'] for r in rows],
-            dtype=float,
-        ),
-        w_active=np.array(
-            [np.nan if r.get('w_active') is None else r['w_active'] for r in rows], dtype=float
-        ),
+        f_int_max=np.array([r.get('f_int_max') for r in rows], dtype=float),
+        w_active=np.array([r.get('w_active') for r in rows], dtype=float),
         sha=np.array(rows[-1]['sha']),
     )
 

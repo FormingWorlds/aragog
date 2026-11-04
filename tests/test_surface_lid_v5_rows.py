@@ -75,7 +75,7 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
                 assert r['off:local'][k] == cal[name][row][k], (row, k)
             on = r['on:lid']
             change[(t, row)] = _change(on, r['off:lid'], t)
-            assert change[(t, row)] <= SAME, row
+            assert 0.0 < change[(t, row)] <= SAME, row
             assert on['handover_t'] is not None and on['handover_t'] < FIRST_OUTPUT_YR, row
             assert on['guard_max'] <= GUARD, row
             assert on['sub'] and max(abs(x) for x in on['sub']) <= SUB, row
