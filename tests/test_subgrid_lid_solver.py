@@ -1,0 +1,1809 @@
+"""Tests of the sub-grid lid in the NumPy path of ``EntropySolver``."""
+
+from __future__ import annotations
+
+import functools
+import math
+
+import numpy as np
+import pytest
+from hypothesis import HealthCheck, assume, example, given, settings
+from hypothesis import strategies as st
+
+from aragog import surface_lid as sl
+from tests.conftest import entropy_eos_copy
+from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
+
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(300), needs_eos]
+
+
+@pytest.fixture(scope='module')
+def eos():
+    return entropy_eos_copy(EOS_DIR)
+
+
+HEATING = [None, 'tidal', 'radio']
+
+
+def _heat(p, heating):
+    """Internal heating of about 3e-7 W/kg: tidal, or one radionuclide."""
+    from aragog.parser import _Radionuclide
+
+    if heating == 'tidal':
+        p.energy.tidal = True
+        p.energy.tidal_array = np.array([3.0e-7])
+    elif heating == 'radio':
+        p.energy.radionuclides = True
+        p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 3.0e-4, 1.0e-3, 1.0e9)]
+    elif heating == 'radio_and_tidal':
+        _heat(p, 'radio')
+        _heat(p, 'tidal')
+    elif heating == 'bottom_cell':  # strong, and with no transport between the cells
+        p.energy.tidal = True
+        p.energy.tidal_array = np.eye(1, 9).ravel() * 1.0e-2
+        p.energy.convection = p.energy.mixing = p.energy.gravitational_separation = False
+
+
+def _lid_depth(s):
+    """The lid-base isotherm depth [m] of the last right-hand side of ``s``, by the function of
+    the hand-over root. None without a stagnant-lid state or with the lid handed over."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    ls = getattr(s.state, 'lid_state', None)
+    if ls is None or not s._lid_active:
+        return None
+    ev = s._lid_last
+    T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
+    T_iso = float(np.asarray(ls['T_lid_iso']))
+    return _isotherm_depth(T_iso, ev.delta, ev.T_b, lambda: ev.surf.T_s, s._lid_z_stag, T)
+
+
+def _solver(eos, lid=True, end=1.0, core_bc='quasi_steady', S0=3050.0, heating=None, **lidkw):
+    from aragog.solver.entropy_solver import EntropySolver
+
+    inner = 2 if core_bc == 'quasi_steady' else 1
+    p = _build(core_bc=core_bc, outer_bc=1, inner_bc=inner, n_nodes=10, end_time=end)
+    _heat(p, heating)
+    p.boundary_conditions.subgrid_lid = lid
+    for k, v in lidkw.items():
+        setattr(p.boundary_conditions, k, v)
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(S0)
+    return s
+
+
+_SETTER: dict = {}
+
+
+def _setter_solver(eos):
+    """The one solver of the setter domain, back at its start state for each example."""
+    if not _SETTER:
+        _SETTER['solver'] = _solver(eos)
+        _SETTER['S0'] = _SETTER['solver']._S0.copy()
+    s = _SETTER['solver']
+    s._S0 = _SETTER['S0'].copy()
+    s._lid_init = None
+    s._lid_handover_time = 3.0
+    return s
+
+
+def test_state_helpers_run_on_a_carrier_without_the_lid_property(eos):
+    """A carrier object that borrows the state helpers and holds the solver attributes, as a
+    test double of a coupling code does, works with the lid off although it has no
+    ``_n_lid`` property."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    s = _solver(eos, lid=False, core_bc='energy_balance')
+
+    class Carrier:
+        set_initial_entropy = EntropySolver.set_initial_entropy
+        get_current_dSdr_cmb = EntropySolver.get_current_dSdr_cmb
+        _final_extra_state = EntropySolver._final_extra_state
+        _resolve_dSdr_cmb_init = EntropySolver._resolve_dSdr_cmb_init
+        _n_shell = EntropySolver._n_shell
+        _core_shell = EntropySolver._core_shell
+        _remap_entropy_to_current_mesh = EntropySolver._remap_entropy_to_current_mesh
+        staggered_mass_coordinates = EntropySolver.staggered_mass_coordinates
+        entropy_staggered = EntropySolver.entropy_staggered
+
+    c = Carrier()
+    c.__dict__.update(vars(s))
+    c._solution = SimpleNamespace(y=np.full((s._n_stag + 1, 2), 7.0e-4))
+    assert c.get_current_dSdr_cmb() == 7.0e-4
+    c.set_initial_entropy(3000.0)
+    assert c._S0.size == s._n_stag + 1
+    c._lid_on = True  # a carrier of a lid solver: the 2 lid rows follow the extra state
+    c._solution = SimpleNamespace(y=np.full((s._n_stag + 3, 2), 7.0e-4))
+    assert c.get_current_dSdr_cmb() == 7.0e-4
+
+
+def test_lid_off_keeps_the_state_layout(eos):
+    """With the default (lid off) the state has no lid entries and no lid is evaluated."""
+    s = _solver(eos, lid=False)
+    assert s._n_lid == 0
+    assert s._S0.size == s._n_stag
+    s._dSdt_single(0.0, s._S0)
+    assert getattr(s, '_lid_last', None) is None
+
+
+@pytest.mark.physics_invariant
+def test_lid_starts_as_the_phantom_lid(eos):
+    """The lid states sit at the end of the state; the start is the phantom lid (delta_lo,
+    linear profile), with the mean between the base and the surface temperature."""
+    s = _solver(eos)
+    assert s._S0.size == s._n_stag + 2
+    delta, E = s._S0[-2:]
+    assert delta == pytest.approx(0.5, abs=0)
+    s._dSdt_single(0.0, s._S0)
+    ev = s._lid_last
+    T_s = sl.linear_lid_surface(0.5, ev.T_b, s._lid_k, 1.0, 255.0)
+    assert ev.surf.T_m == pytest.approx(0.5 * (ev.T_b + T_s), rel=1e-9)
+    assert T_s < ev.surf.T_m < ev.T_b
+
+
+def test_set_initial_lid_and_hot_start(eos):
+    """A set lid holds for every start until the next solve, also across a reset, as a resume
+    with a structure update starts twice; that solve consumes it, so the start of the solve
+    after it takes the lid at the end of the first. None clears a set lid before it is used."""
+    s = _solver(eos)
+    s.set_initial_lid(2.0, -1.0e9)
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+    s.reset()
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+    s.solve()
+    end = s._solution.y[-2:, -1].copy()
+    assert not np.array_equal(end, [2.0, -1.0e9])
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], end)
+    s.solve()
+    np.testing.assert_array_equal(s._solution.y[-2:, 0], end)
+    s.set_initial_lid(3.0, -2.0e9)
+    s.set_initial_lid(None)
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], s._solution.y[-2:, -1])
+    with pytest.raises(ValueError, match='finite delta > 0'):
+        s.set_initial_lid(-1.0, 0.0)
+    with pytest.raises(ValueError, match='finite delta > 0'):
+        s.set_initial_lid(1.0, float('nan'))
+
+
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [('param_utbl', True), ('core_bc', 'bower2018')],
+    ids=['utbl', 'bower2018'],
+)
+def test_solver_setup_refuses_a_setting_made_after_parsing(eos, field, value):
+    """The check at solver setup sees a setting the lid refuses if made after the parser ran."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    setattr(p.boundary_conditions, field, value)
+    with pytest.raises(ValueError, match=str(value) if field == 'core_bc' else field):
+        EntropySolver(p, entropy_eos=eos).initialize()
+
+
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance'])
+def test_set_initial_lid_after_the_entropy_starts_that_lid(eos, core_bc):
+    """The order of the 2 setters does not matter: a lid set after the entropy is the lid of the
+    next solve, with the core states of the mode in place."""
+    s = _solver(eos, core_bc=core_bc)
+    core = s._S0[:-2].copy()
+    s.set_initial_lid(2.0, -1.0e9)
+    np.testing.assert_array_equal(s._S0[:-2], core)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+    s.solve()
+    np.testing.assert_array_equal(s._solution.y[-2:, 0], [2.0, -1.0e9])
+
+
+@pytest.mark.parametrize('stratified', [False, True], ids=['plain', 'stratified'])
+def test_set_initial_lid_after_the_entropy_on_the_core_module(stratified):
+    """On the core module the tail write leaves the core temperature, the gradient slot and the
+    shell temperatures of a stratified core in place."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+
+    params = {**CORE_MODULE_PARAMS, 'stratification': True, 'k_core': 130.0}
+    p = _build(core_bc='core_module', outer_bc=1, inner_bc=1, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.core_module_params = params if stratified else CORE_MODULE_PARAMS
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR, identity_alpha=True))
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    core = s._S0[:-2].copy()
+    assert core.size == s._n_core_state()
+    s.set_initial_lid(2.0, -1.0e9)
+    np.testing.assert_array_equal(s._S0[:-2], core)
+    np.testing.assert_array_equal(s._S0[-2:], [2.0, -1.0e9])
+
+
+def test_set_initial_lid_holds_across_a_reset_with_a_new_node_count(eos):
+    """A lid set while the old state and solution have another size reaches the next start."""
+    s = _solver(eos)
+    s.solve()
+    old = s._S0.size
+    s.parameters.mesh.number_of_nodes = 14
+    s.reset()
+    s.set_initial_lid(1.5, -2.0e9)
+    assert s._S0.size == old
+    s.set_initial_entropy(3050.0)
+    assert s._S0.size == s._n_core_state() + 2 == old + 4
+    np.testing.assert_array_equal(s._S0[-2:], [1.5, -2.0e9])
+
+
+def test_a_new_node_count_says_that_the_previous_lid_is_not_carried(eos, caplog):
+    """After a reset with a new node count the start is the phantom lid, also for a lid that
+    has handed over, and a warning says so; a set lid or an unchanged mesh gives no warning."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+        s.set_initial_entropy(3050.0)
+        assert not any('not carried' in r.getMessage() for r in caplog.records)
+        s.parameters.mesh.number_of_nodes = 14
+        s.reset()
+        s.set_initial_lid(1.5, -2.0e9)
+        s.set_initial_entropy(3050.0)
+        assert not any('not carried' in r.getMessage() for r in caplog.records)
+        s.set_initial_lid(None)
+        s.set_initial_entropy(3050.0)
+    assert s._S0[-2] == pytest.approx(0.5, abs=0)
+    assert sum('not carried' in r.getMessage() for r in caplog.records) == 1
+
+
+def test_clearing_a_lid_after_the_entropy_keeps_the_state(eos):
+    """``None`` clears only the stored value; the state tail is written by the setters."""
+    s = _solver(eos)
+    tail = s._S0[-2:].copy()
+    s.set_initial_lid(None)
+    np.testing.assert_array_equal(s._S0[-2:], tail)
+
+
+def test_resume_after_a_hand_over_reports_the_given_time(eos):
+    """A resume of a handed-over lid reports the hand-over time it is given, and NaN (time not
+    known) without one, also after its solve; only a handed-over lid takes a time."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s.get_state().lid_handover_time == pytest.approx(7.5, abs=0)
+    r = _solver(eos)
+    r.set_initial_lid(0.0, 0.0)
+    r.set_initial_entropy(3050.0)
+    r.solve()
+    assert np.isnan(r.get_state().lid_handover_time)
+    with pytest.raises(ValueError, match='handed-over'):
+        r.set_initial_lid(2.0, -1.0e9, handover_time=7.5)
+
+
+@pytest.mark.parametrize(
+    'wrap', [np.array, np.ma.masked_array, np.float64], ids=['array', 'masked', 'scalar']
+)
+def test_set_initial_lid_takes_a_zero_dimensional_real_value(eos, wrap):
+    """A scalar read from a NetCDF file arrives as a 0-d array and starts the lid as a float."""
+    s = _solver(eos)
+    s.set_initial_lid(wrap(0.5), wrap(-1.875e9))
+    assert s._lid_init == (0.5, -1.875e9)
+    s.set_initial_lid(0.0, 0.0, handover_time=wrap(7.5))
+    assert s._lid_init == (0.0, 0.0) and s._lid_handover_time == 7.5
+
+
+@pytest.mark.parametrize(
+    'value',
+    [np.array([0.5]), np.array(True), np.array('0.5'), np.ma.masked_array(0.5, mask=True)],
+    ids=['1d', 'bool', 'string', 'masked_out'],
+)
+def test_set_initial_lid_refuses_an_array_that_is_not_one_real_value(eos, value):
+    """Only a 0-d real value with data counts as a number."""
+    with pytest.raises(ValueError, match='set_initial_lid needs numbers'):
+        _solver(eos).set_initial_lid(value, -1.875e9)
+    if np.ma.is_masked(value):
+        with pytest.raises(ValueError, match='hand-over time'):
+            _solver(eos).set_initial_lid(0.0, 0.0, handover_time=value)
+
+
+def test_a_chained_solve_on_the_stratified_core_carries_the_shell(eos):
+    """A second solve takes the shell temperatures of a stratified core from the previous
+    solution with the lid in the state, and ends where one solve over both spans ends."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+
+    def make(end):
+        p = _build(core_bc='core_module', outer_bc=1, inner_bc=1, n_nodes=10, end_time=end)
+        p.energy.solver_method = 'cvode'
+        p.energy.use_jax_jacobian = False
+        p.boundary_conditions.core_module_params = {
+            **CORE_MODULE_PARAMS,
+            'stratification': True,
+            'k_core': 130.0,
+        }
+        p.boundary_conditions.subgrid_lid = True
+        p.boundary_conditions.normalize()
+        s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR, identity_alpha=True))
+        s.initialize()
+        s.set_initial_entropy(3050.0)
+        s.solve()
+        return s
+
+    chained, single = make(0.5), make(1.0)
+    prev = np.array(chained._solution.y[:, -1])
+    chained.parameters.solver.start_time, chained.parameters.solver.end_time = 0.5, 1.0
+    chained.set_initial_entropy(prev[: chained._n_stag])
+    n_core = chained._n_core_state()
+    assert n_core > chained._n_stag + 2
+    np.testing.assert_array_equal(
+        chained._S0[chained._n_stag + 2 : n_core], prev[chained._n_stag + 2 : n_core]
+    )
+    chained.solve()
+    np.testing.assert_allclose(
+        chained._solution.y[:n_core, -1], single._solution.y[:n_core, -1], rtol=1e-10
+    )
+
+
+def test_a_time_set_after_the_entropy_reaches_the_output(eos):
+    """The order of the setters does not matter for the hand-over time either."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.solve()
+    state = s.get_state()
+    assert state.lid_delta == 0.0
+    assert state.lid_handover_time == pytest.approx(7.5, abs=0)
+
+
+def test_a_new_live_lid_clears_the_hand_over_time(eos):
+    """A live lid set on a solver that has handed over has no hand-over yet."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    s.set_initial_lid(2.0, -1.0e9)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+def test_a_cleared_lid_that_starts_live_has_no_hand_over_time(eos):
+    """Clearing a handed-over start leaves the phantom lid, a live lid without a hand-over."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_lid(None)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s.get_state().lid_delta > 0.0
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+def test_a_handed_over_lid_keeps_its_time_across_a_new_start_of_the_same_solver(eos):
+    """A solver used again continues its handed-over lid, whose hand-over time stays."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=7.5)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s.get_state().lid_handover_time == pytest.approx(7.5, abs=0)
+
+
+def test_a_repeated_solve_from_one_start_does_not_keep_a_later_hand_over(eos):
+    """The hand-over time belongs to the start: a second call from the start of a call that
+    merged, ending before the merge, has a live lid and no hand-over time."""
+    s = _top_at(eos, 0.2)
+    s.solve()
+    t_merge = s.get_state().lid_handover_time
+    assert t_merge > 0.0
+    s.parameters.solver.end_time = 0.5 * t_merge
+    s.solve()
+    state = s.get_state()
+    assert state.lid_delta > 0.0
+    assert np.isnan(state.lid_handover_time)
+
+
+def test_a_discarded_call_restores_the_hand_over_time(eos):
+    """A call refused for the EOS floor returns its start state, so a hand-over time set during
+    that call goes away with it."""
+    s = _solver(eos)
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+    s._lid_handover_time = 0.5  # as the merge of the discarded attempt leaves it
+    s.solve(_floor_discard='refused for the test')
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+_FINITE = st.floats(allow_nan=False, allow_infinity=False)
+_SETTINGS = dict(deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+
+
+def _accepted(delta, E, t):
+    """The inputs ``set_initial_lid`` takes: a time NaN or finite and >= 0, with a finite lid
+    > 0 only for a NaN time, or (0, 0)."""
+    values = (delta, E, t)
+    if not all(isinstance(v, (float, int)) and not isinstance(v, bool) for v in values):
+        return False
+    if any(isinstance(v, int) and abs(v) > 1e308 for v in values):
+        return False
+    time_ok = math.isnan(t) or (math.isfinite(t) and t >= 0.0)
+    live = math.isfinite(delta) and math.isfinite(E) and delta > 0.0 and math.isnan(t)
+    return time_ok and (live or (delta == 0 and E == 0))
+
+
+@given(delta=_FINITE.filter(lambda d: d > 0.0), E=_FINITE)
+@settings(max_examples=60, **_SETTINGS)
+def test_setter_takes_a_live_lid_and_clears_the_time(eos, delta, E):
+    """Every finite lid > 0 starts with its values and clears a stored hand-over time."""
+    s = _setter_solver(eos)
+    s.set_initial_lid(delta, E)
+    assert s._lid_init == (delta, E)
+    np.testing.assert_array_equal(s._S0[-2:], [delta, E])
+    assert np.isnan(s._lid_handover_time)
+
+
+@given(t=st.one_of(st.just(float('nan')), _FINITE.filter(lambda v: v >= 0.0)))
+@settings(max_examples=60, **_SETTINGS)
+def test_setter_takes_a_handed_over_lid_with_its_time(eos, t):
+    """(0, 0) takes a time that is NaN or finite and >= 0."""
+    s = _setter_solver(eos)
+    s.set_initial_lid(0.0, 0.0, handover_time=t)
+    assert s._lid_init == (0.0, 0.0)
+    np.testing.assert_array_equal(s._S0[-2:], [0.0, 0.0])
+    assert s._lid_handover_time == t or (math.isnan(t) and math.isnan(s._lid_handover_time))
+
+
+_ANY = st.one_of(
+    st.floats(allow_nan=True, allow_infinity=True),
+    st.integers(),
+    st.sampled_from([None, True, False, 'x', 10**400, -(10**400), np.float64(2.0)]),
+)
+
+
+@given(delta=_ANY, E=_ANY, t=_ANY)
+@example(delta=10**400, E=1.0, t=float('nan'))
+@example(delta=1.0, E=1.0, t=10**400)
+@example(delta=None, E=None, t=10**400)
+@example(delta=None, E=None, t=3.0)
+@settings(max_examples=300, **_SETTINGS)
+def test_setter_refuses_every_other_input(eos, delta, E, t):
+    """Any other input raises a ValueError and leaves the stored lid, the state and the time."""
+    assume(not (delta is None and isinstance(t, float) and math.isnan(t)))
+    assume(
+        not _accepted(*(v.item() if isinstance(v, np.floating) else v for v in (delta, E, t)))
+    )
+    s = _setter_solver(eos)
+    S0 = s._S0.copy()
+    with pytest.raises(ValueError, match='set_initial_lid'):
+        s.set_initial_lid(delta, E, handover_time=t)
+    assert s._lid_init is None
+    np.testing.assert_array_equal(s._S0, S0)
+    assert s._lid_handover_time == 3.0
+
+
+def test_a_time_with_a_cleared_lid_is_refused(eos):
+    """``None`` clears the stored lid and has no hand-over to give a time to."""
+    s = _solver(eos)
+    with pytest.raises(ValueError, match='set_initial_lid'):
+        s.set_initial_lid(None, handover_time=3.0)
+
+
+def test_effective_thickness_at_the_shape_bound_is_nan():
+    """At the lower shape bound the surface slope of the profile is 0; the thickness in the
+    output is NaN there, without a floating-point warning, and delta / f'(0) elsewhere."""
+    import warnings
+
+    assert sl.shape(sl.LID_SHAPE_MIN)[0] == 0.0
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert np.isnan(sl.effective_thickness(2.0, sl.LID_SHAPE_MIN))
+    assert sl.effective_thickness(2.0, 0.0) == pytest.approx(2.0 / sl.shape(0.0)[0], rel=1e-14)
+    assert sl.effective_thickness(2.0, -1.0) == pytest.approx(
+        2.0 / sl.shape(-1.0)[0], rel=1e-14
+    )
+
+
+def test_a_carried_lid_above_the_growth_stop_is_refused_before_any_change(eos):
+    """A previous solution's lid above the growth stop of the new top cell fails at the new
+    start, naming both thicknesses and the way out, and leaves the solver as it was, so the way
+    out in the message runs."""
+    s = _solver(eos)
+    s.solve()
+    good = s._solution.y[-2:, -1].copy()
+    s._solution.y[-2, -1] = sl.LID_CAP_FRAC * s._lid_h_top * (1.0 + 2e-3)
+    s._xi_pre_resolve = s.staggered_mass_coordinates.copy()
+    S0, xi = s._S0.copy(), s._xi_pre_resolve
+    with pytest.raises(ValueError, match='growth stop') as err:
+        s.set_initial_entropy(3050.0)
+    assert 'set_initial_lid' in str(err.value)
+    np.testing.assert_array_equal(s._S0, S0)
+    assert s._xi_pre_resolve is xi
+    s.set_initial_lid(float(good[0]), float(good[1]))
+    s.set_initial_entropy(3050.0)
+    np.testing.assert_array_equal(s._S0[-2:], good)
+    s.solve()
+    assert s._solution.status == 0
+    assert s._solution.y[-2, 0] == float(good[0])
+
+
+def test_reset_onto_a_thinner_top_cell_refuses_the_carried_lid(eos):
+    """A real reset of the mesh: a lid near the old growth stop does not fit the new cell."""
+    s = _solver(eos)
+    d = 0.999 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert s._solution.y[-2, -1] > 0.9 * d
+    mesh = s.parameters.mesh
+    mesh.inner_radius += 0.2 * (mesh.outer_radius - mesh.inner_radius)
+    s.reset()
+    with pytest.raises(ValueError, match='growth stop'):
+        s.set_initial_entropy(3050.0)
+
+
+def test_a_lid_at_the_growth_stop_is_carried_to_a_new_start(eos):
+    """A previous lid below the stop, or within the slack of the step check, starts as it is."""
+    s = _solver(eos)
+    s.solve()
+    cap = sl.LID_CAP_FRAC * s._lid_h_top
+    for d in (0.999 * cap, cap * (1.0 + 5e-4)):
+        s._solution.y[-2, -1] = d
+        s.set_initial_entropy(3050.0)
+        assert s._S0[-2] == d
+
+
+@pytest.mark.parametrize(
+    ('past_top', 'refused'),
+    [(5e-4, False), (2e-3, True)],
+    ids=['in_the_band', 'above_the_band'],
+)
+def test_heat_table_check_has_the_band_of_the_eos_guard(eos, past_top, refused):
+    """A top cell above the table top passes within the tolerance of the EOS table guard, where
+    the lid continues its heat linearly; above it the guard fails the call, as with no lid."""
+    s = _solver(eos, lid=True)
+    S = np.full(s._n_stag, 3050.0)
+    S[-1] = float(eos.S_max) + past_top
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == (-1 if refused else 0)
+    assert ('EOS table guard' in str(s._solution.message)) is refused
+
+
+def test_a_lid_over_a_state_held_at_the_table_top_runs_as_without_it(eos):
+    """A column held at the table top enters the band of the EOS guard: the run passes with the
+    lid on, its column stays within the band of the run with the lid off."""
+    S_max = float(eos.S_max)
+    T_top = float(np.asarray(eos.temperature(5.0e7, S_max)).item())
+    end = {}
+    for lid in (False, True):
+        s = _solver(eos, lid=lid, end=10.0, equilibrium_temperature=T_top)
+        s.set_initial_entropy(np.full(s._n_stag, S_max))
+        s.solve()
+        sol = s._solution
+        assert sol.status == 0
+        trace = sol.get('energy_trace')
+        y = trace[1] if trace is not None else sol.y
+        assert 0.0 < np.max(y[: s._n_stag]) - S_max <= 1e-3
+        end[lid] = sol.y[: s._n_stag, -1]
+    np.testing.assert_allclose(end[True], end[False], rtol=0.0, atol=1e-3)
+
+
+def test_the_rheology_check_refuses_a_state_past_the_table_top(eos):
+    """With the solid rheology on, its own check refuses a state past the table top at step 0,
+    inside the band that the lid and the EOS guard accept with the rheology off."""
+    s = _cold_top_solver(eos)
+    S = np.array(s._S0[: s._n_stag])
+    S[-1] = float(eos.S_max) - 5e-4
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == 0
+    s = _cold_top_solver(eos)
+    S[-1] = float(eos.S_max) + 5e-4
+    s.set_initial_entropy(S)
+    with pytest.raises(RuntimeError, match='rheology invariant violated'):
+        s.solve()
+
+
+def test_a_guard_cut_before_the_hand_over_removes_its_time(eos):
+    """A table exit whose kept states end with a live lid fails the call without the time of the
+    hand-over it cut away, in the output and in a second read of it."""
+    s = _solver(eos, end=10.0)
+    S = np.full(s._n_stag, 3050.0)
+    S[-1], S[0] = s._lid_S_sol + 1e-4, float(eos.S_max) + 2e-3
+    s.set_initial_entropy(S)
+    s.solve()
+    assert s._solution.status == -1 and 'EOS table guard' in str(s._solution.message)
+    for out in (s.get_state(), s.get_state()):
+        assert out.lid_delta > 0.0
+        assert math.isnan(out.lid_handover_time)
+
+
+def _table_floor_run(eos, caplog, T_s_above_the_floor):
+    """A solve whose lid surface lies above or below the first knot of the lid heat table."""
+    s = _solver(eos, S0=3050.0)
+    T_floor = float(s._lid_hv.data[1][0])
+    T_eq = T_floor + 30.0 if T_s_above_the_floor else T_floor - 60.0
+    s._outer_bc_T_eq = T_eq
+    d = 0.5 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, T_eq + 5.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    return s, T_floor
+
+
+@pytest.mark.parametrize('above', [False, True], ids=['below', 'above'])
+def test_lid_surface_against_the_heat_table_floor(eos, caplog, above):
+    """Below its first knot the heat table continues with its end slope, and the lid says so
+    once; the warning stays off while the lid surface lies inside the table."""
+    s, T_floor = _table_floor_run(eos, caplog, above)
+    assert bool(s.get_state().lid_T_surface > T_floor) is above
+    n = sum('below the first knot' in r.getMessage() for r in caplog.records)
+    assert n == (0 if above else 1)
+
+
+@pytest.mark.parametrize('heating', HEATING)
+@pytest.mark.physics_invariant
+@settings(
+    max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(
+    frac=st.floats(1e-5, 0.8),
+    dT=st.floats(-300.0, 300.0),
+    S_top=st.floats(2700.0, 3300.0),
+    S_bot=st.floats(2700.0, 3300.0),
+)
+def test_ledger_per_call_closes(eos, heating, frac, dT, S_top, S_bot):
+    """The per-call energy identity closes on random valid states: the lid at any thickness up
+    to the growth stop, its mean off the steady value, any entropy profile (so the lid hidden,
+    partly hidden or full), with and without internal heating; residual within 1e-10 of the
+    largest power."""
+    s = _solver(eos, heating=heating)
+    delta = max(frac * s._lid_h_top, s._lid_delta_lo)
+    y = s._S0.copy()
+    y[: s._n_stag] = np.linspace(S_bot, S_top, s._n_stag)
+    s._dSdt_single(0.0, y)
+    ev = s._lid_last
+    T_m = float(np.clip(ev.surf.T_m + dT, 300.0, ev.T_b - 1.0))
+    y[-2:] = (delta, delta * float(s._lid_hv.H(T_m)))
+    pw = s._step_powers(0.0, y)
+    scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(s._lid_last.rates.dE), 1.0)
+    assert abs(pw[-1]) <= 1e-10 * scale
+    assert 0.0 <= s._lid_last.rates.w <= 1.0
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('heating', ['tidal', 'radio'])
+def test_ledger_per_call_closes_with_internal_heating(eos, heating):
+    """With internal heating the per-call energy identity closes too: the lid heats the mass
+    of its profile, delta times the mean density over the profile, in the ledger as in the
+    lid energy rate."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    _heat(p, heating)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    y = s._S0.copy()
+    y[-2:] = (300.0, 300.0 * float(s._lid_hv.H(900.0)))
+    pw = s._step_powers(0.0, y)
+    ev = s._lid_last
+    assert ev.rates.H_lid > 0.0
+    scale = max(abs(pw[0]), abs(pw[1]), s._lid_area * abs(ev.rates.dE), 1.0)
+    assert abs(pw[-1]) <= 1e-10 * scale
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('heating', HEATING)
+def test_ledger_over_a_solve(eos, heating):
+    """Over a solve the step ledger closes to 1e-10 of the surface power and the state heat to
+    1e-2 of the budget (its quadrature accuracy), with and without internal heating, and the lid
+    grows well past its phantom start."""
+    s = _solver(eos, heating=heating)
+    s.solve()
+    ei = s._solution.energy_integrals
+    budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
+    assert s._lid_last.delta > 5.0 * s._lid_delta_lo
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('n_nodes', [10, 20, 40])
+def test_lid_growth_sanity_against_quasi_static_neumann(eos, n_nodes, monkeypatch):
+    """Sanity check: with no heat from the melt (F_b forced to 0), the lid over a molten column
+    grows as the Neumann law taken step by step along the run, delta^2 = 4 int kappa
+    lambda^2(St) dt, with St and kappa from the run's own states (the secant heat capacity of
+    the crust), within 1 % at 10, 20 and 40 nodes (measured -0.45, -0.30, -0.03 %). The grey
+    surface cools during the run, so a law with one surface temperature does not apply. The
+    reference takes its heat capacity from the run, so it cannot tell a heat content at the
+    base or mean temperature from the EOS one; the resolved-mesh check of V2 does."""
+    from scipy.optimize import brentq
+    from scipy.special import erf
+
+    from aragog.solver import entropy_solver as es
+    from aragog.solver.entropy_solver import EntropySolver
+
+    rates = es._lid.lid_rates
+    monkeypatch.setattr(es._lid, 'lid_rates', lambda **kw: rates(**{**kw, 'F_b': 0.0}))
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=n_nodes, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    sol = s._solution
+    t_nd, y = (np.asarray(v) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    kappa_lam2 = []
+    for k in range(t_nd.size):
+        s._dSdt_single(t_nd[k], y[:, k])
+        ev = s._lid_last
+        cp = (ev.H_b - float(s._lid_hv.H(ev.surf.T_s))) / (ev.rho * (ev.T_b - ev.surf.T_s))
+        St = cp * (ev.T_b - ev.surf.T_s) / ((ev.H_f - ev.H_b) / ev.rho)
+        lam = brentq(lambda x: x * np.exp(x * x) * erf(x) - St / np.sqrt(np.pi), 1e-9, 10.0)
+        kappa_lam2.append(s._lid_k / (ev.rho * cp) * lam**2)
+    span = (s._solution.t[-1] - s._solution.t[0]) * 3.15576e7
+    t = (t_nd - t_nd[0]) / (t_nd[-1] - t_nd[0]) * span
+    assert y[-2, -1] == pytest.approx(np.sqrt(4.0 * np.trapezoid(kappa_lam2, t)), rel=1e-2)
+
+
+def test_delta_on_must_fit_the_top_cell(eos):
+    """lid_delta_on at or above the growth stop of the top cell is refused, naming the width."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    s0 = EntropySolver(p, entropy_eos=eos)
+    s0.initialize()
+    h_top = float(s0._r_basic_flat[-1] - s0._r_basic_flat[-2])
+    with pytest.raises(ValueError, match='top-cell width'):
+        _solver(eos, lid_delta_on=sl.LID_CAP_FRAC * h_top)
+    _solver(eos, lid_delta_on=0.99 * sl.LID_CAP_FRAC * h_top)
+
+
+@pytest.mark.parametrize('attach_eos', [True, False])
+def test_lid_is_refused_with_constant_properties(eos, attach_eos):
+    """The lid reads the entropy EOS, so a constant-property column is refused at setup, also
+    when an EOS is attached; the same column without the lid sets up."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def build(lid):
+        p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+        p.boundary_conditions.subgrid_lid = lid
+        p.boundary_conditions.normalize()
+        p.phase_mixed.const_properties = True
+        p.phase_mixed.const_T_ref, p.phase_mixed.const_S_ref = 1600.0, 3000.0
+        s = EntropySolver(p, entropy_eos=eos if attach_eos else None)
+        s.initialize()
+        return s
+
+    with pytest.raises(ValueError, match='no const_properties'):
+        build(True)
+    assert not build(False)._lid_on
+
+
+@pytest.mark.parametrize(
+    ('kw', 'match'),
+    [
+        ({'outer_bc': 4}, 'grey-body outer boundary'),
+        ({'outer_bc': 5}, 'grey-body outer boundary'),
+        ({'core_bc': 'gradient'}, "core_bc = 'gradient'"),
+    ],
+    ids=['flux', 'surface_temperature', 'gradient'],
+)
+def test_lid_set_after_parsing_is_refused_on_an_unsupported_boundary(eos, kw, match):
+    """The solver setup refuses the lid on a boundary it does not support also when the lid is
+    switched on after the parameters were parsed; the same setup without the lid sets up."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def build(lid):
+        args = {'core_bc': 'quasi_steady', 'outer_bc': 1, 'inner_bc': 2, 'n_nodes': 10}
+        p = _build(**{**args, **kw}, end_time=1.0)
+        p.boundary_conditions.subgrid_lid = lid
+        s = EntropySolver(p, entropy_eos=eos)
+        s.initialize()
+        return s
+
+    with pytest.raises(ValueError, match=match):
+        build(True)
+    assert not build(False)._lid_on
+
+
+def test_handover_cells_must_fit_the_mesh(eos):
+    """A hand-over face must leave one cell below it: on 9 cells, 8 top cells pass and 9 are
+    refused at setup with the cell count it needs."""
+    assert _solver(eos, lid_handover_cells=8)._lid_handover_depth > 0.0
+    with pytest.raises(ValueError, match='needs more than 9 mesh cells, got 9'):
+        _solver(eos, lid_handover_cells=9)
+
+
+def _phantom_energy(s, delta, T_m):
+    s._dSdt_single(0.0, s._S0)
+    ev = s._lid_last
+    return delta * float(s._lid_hv.H(T_m)), ev
+
+
+def test_lid_above_the_growth_stop_fails_the_step_check(eos):
+    """An accepted state with the lid past the growth stop raises the lid invariant."""
+    s = _solver(eos)
+    d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with pytest.raises(RuntimeError, match='lid invariant violated at step 0') as err:
+        s.solve()
+    assert 'outside' in str(err.value)
+
+
+def test_lid_just_above_the_growth_stop_passes_the_step_check(eos):
+    """A lid that settles a little above the growth stop, as the integrator leaves it there,
+    passes the step check below the slack of 1e-3 and the call records its excess."""
+    s = _solver(eos)
+    cap = sl.LID_CAP_FRAC * s._lid_h_top
+    E, _ = _phantom_energy(s, cap * (1.0 + 5e-4), 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(cap * (1.0 + 5e-4), E)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    assert 4.9e-4 < s._solution.lid_cap_excess < 1e-3
+
+
+@pytest.mark.parametrize('stop', ['kept', 'removed'])
+def test_growth_stop_holds_a_driven_lid_inside_the_step_check(eos, stop, monkeypatch):
+    """A lid driven to grow at 600 m/yr from the middle of the stop ramp closes on the growth
+    stop and holds below it; without the stop it grows past the slack of the step check and
+    fails the check after step 0."""
+    rate = sl.stefan_rate
+
+    def driven(q_b, F_b, rho, dh, delta, h_top, delta_lo):
+        f = rate(1.0, 0.0, 1.0, 1.0, delta, h_top, delta_lo)[1] if stop == 'kept' else 1.0
+        return 600.0 / 3.15576e7 * f, f
+
+    monkeypatch.setattr(sl, 'stefan_rate', driven)
+    s = _solver(eos, end=100.0)
+    d = (sl.LID_CAP_FRAC - 0.5 * sl.LID_CAP_WIDTH) * s._lid_h_top
+    E, _ = _phantom_energy(s, d, 257.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    if stop == 'removed':
+        with pytest.raises(RuntimeError, match='thickness') as err:
+            s.solve()
+        assert 'at step 0,' not in str(err.value)
+    else:
+        s.solve()
+        assert -1e-5 < s._solution.lid_cap_excess < 1e-6  # starts at -1.25e-2
+
+
+def test_early_stop_reports_no_lid_excess(eos, monkeypatch):
+    """A solve that stops early has lid_cap_excess NaN: no lid check ran."""
+    from aragog.solver import entropy_solver as es
+
+    monkeypatch.setattr(es, '_status_failed', lambda status: True)
+    s = _solver(eos)
+    s.solve()
+    assert s.stop_early
+    assert np.isnan(getattr(s._solution, 'lid_cap_excess', 0.0))
+
+
+def test_call_after_the_hand_over_reports_no_lid_excess(eos):
+    """A call whose lid states are all 0, as after a hand-over, has lid_cap_excess NaN."""
+    s = _solver(eos)
+    s.solve()
+    assert s._solution.lid_cap_excess > -1.0
+    s._solution.y[-2:] = 0.0
+    s._lid_active = False
+    s._compute_step_energy_integrals()
+    assert np.isnan(s._solution.lid_cap_excess)
+
+
+def test_growth_stop_warns_once(eos, caplog):
+    """A growing lid at the growth stop holds below LID_CAP_FRAC h_top and warns once."""
+    import logging
+
+    s = _solver(eos, end=10.0)
+    d = (sl.LID_CAP_FRAC - 0.5 * sl.LID_CAP_WIDTH) * s._lid_h_top
+    # a lid mean just above T_eq gives the steep base gradient of a lid that grows here
+    E, ev = _phantom_energy(s, d, 257.0)
+    s.set_initial_lid(d, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    msgs = [r.getMessage() for r in caplog.records if 'growth stop holds' in r.getMessage()]
+    assert len(msgs) == 1
+    assert s._solution.y[-2].max() <= sl.LID_CAP_FRAC * s._lid_h_top * (1 + 1e-6)
+    assert s._solution.y[-2].max() > d
+
+
+def test_outputs_and_netcdf(eos, tmp_path):
+    """get_state reports the lid with the lid on and NaN with it off; the netCDF snapshot
+    carries the lid scalars only with the lid on."""
+    import netCDF4
+
+    on = _solver(eos)
+    on.solve()
+    out = on.get_state()
+    ev = on._lid_last
+    assert out.lid_delta == pytest.approx(on._solution.y[-2, -1], rel=1e-15)
+    assert out.lid_T_surface < out.lid_T_mean < out.lid_T_base
+    assert out.lid_delta_eff == pytest.approx(ev.delta / sl.shape(ev.surf.s)[0], rel=1e-15)
+    assert (
+        out.lid_delta_eff < out.lid_delta
+    )  # a growing lid (s > 0) conducts better than linear
+    assert 0.0 <= out.lid_weight <= 1.0
+    off = _solver(eos, lid=False)
+    off.solve()
+    out_off = off.get_state()
+    assert np.isnan(out_off.lid_delta) and np.isnan(out_off.lid_T_base)
+    for o, name in ((out, 'on.nc'), (out_off, 'off.nc')):
+        o.to_netcdf(tmp_path / name, time=1.0)
+    with netCDF4.Dataset(tmp_path / 'on.nc') as ds:
+        assert float(ds['lid_delta'][...]) == pytest.approx(out.lid_delta, rel=1e-12)
+    with netCDF4.Dataset(tmp_path / 'off.nc') as ds:
+        assert 'lid_delta' not in ds.variables
+
+
+def _cold_top_solver(eos, end=1.0, cells=1):
+    """A 20-node column with the solid rheology ('lid' closure) and two cold top cells, where
+    the lid-base isotherm lies below the face of the top cell at the start."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=end)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = cells
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.linspace(3150.0, 3000.0, s._n_stag)
+    S[-2:] = 1500.0
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+def test_lid_depth_is_the_isotherm_depth(eos):
+    """The hand-over depth is where the column with the lid reaches T_lid_iso: the profile
+    interpolated at that depth gives T_lid_iso, below the top-cell face here."""
+    s = _cold_top_solver(eos)
+    g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    z = _lid_depth(s)
+    T_iso = float(np.asarray(s.state.lid_state['T_lid_iso']))
+    T = np.asarray(s.state.phase_staggered.temperature()).ravel()[::-1]
+    ev = s._lid_last
+    zs = np.r_[0.0, ev.delta, s._lid_z_stag]
+    Ts = np.r_[ev.surf.T_s, ev.T_b, T]
+    assert np.interp(z, zs, Ts) == pytest.approx(T_iso, rel=1e-12)
+    assert z > s._lid_handover_depth
+    assert g == pytest.approx((z - s._lid_handover_depth) / s._lid_handover_depth, rel=1e-12)
+
+
+def test_lid_depth_of_a_handed_over_start_is_none(eos):
+    """A solver that starts with the handed-over lid (0, 0) has no lid, so no lid depth."""
+    s = _cold_top_solver(eos)
+    s.set_initial_lid(0.0, 0.0)
+    s.set_initial_entropy(s._S0[: s._n_stag].copy())
+    assert np.array_equal(s._S0[-2:], [0.0, 0.0])
+    s._dSdt_single(0.0, s._S0)
+    assert s.state.lid_state is not None
+    assert _lid_depth(s) is None
+
+
+def _depth_on_profile(T_cells, T_b, z_cells, T_iso=1331.3940372709967, T_s=578.8638394321628):
+    """The depth of a stand-in with a 0.5 m lid and the given cell profile (top first)."""
+    from types import SimpleNamespace
+
+    T = np.asarray(T_cells, dtype=float)
+    c = SimpleNamespace(
+        state=SimpleNamespace(
+            lid_state={'T_lid_iso': T_iso},
+            phase_staggered=SimpleNamespace(temperature=lambda: T[::-1].copy()),
+        ),
+        _lid_last=SimpleNamespace(delta=0.5, T_b=T_b, surf=SimpleNamespace(T_s=T_s)),
+        _lid_active=True,
+        _lid_z_stag=np.asarray(z_cells, dtype=float),
+    )
+    return _lid_depth(c)
+
+
+V4_Z = (5435.244756473228, 16294.031285804696, 27137.215143142268, 37964.79998192191)
+
+
+def _crossing(z, T, i, T_iso=1331.3940372709967):
+    return z[i] + (T_iso - T[i]) * (z[i + 1] - z[i]) / (T[i + 1] - T[i])
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('T_cells', 'T_b', 'i'),
+    [
+        (
+            (1161.9146656681962, 1669.6789976162477, 1683.0972310119064, 1681.7076358411152),
+            1331.394037270997,
+            0,
+        ),
+        ((1100.0, 1500.0, 1200.0, 1700.0), 1331.394037270997, 2),
+        ((1200.0, 1600.0, 1700.0, 1750.0), 1100.0, 0),
+    ],
+    ids=['v4_state_3e3_yr', 'two_cold_regions', 'monotone'],
+)
+def test_lid_depth_is_the_base_of_the_cold_region(T_cells, T_b, i):
+    """The hand-over depth is the deepest point where the column rises through T_lid_iso, the
+    base of the cold region. In the solid regime the lid base sits at T_lid_iso, so the profile
+    only touches the isotherm there and the crossing lies in the cells: 9.07 km in the V4
+    state at 3e3 yr, not the 0.5 m lid base. Of two cold regions the deeper base counts."""
+    got = _depth_on_profile(T_cells, T_b, V4_Z)
+    assert got == pytest.approx(_crossing(V4_Z, T_cells, i), rel=1e-12)
+    assert got > V4_Z[0]
+
+
+@pytest.mark.parametrize(
+    ('T_b', 'T_cells', 'want', 'surface_calls'),
+    [
+        (1400.0, (1500.0, 1600.0), 2.0 * (1331.0 - 600.0) / (1400.0 - 600.0), 1),
+        (1200.0, (1500.0, 1600.0), 2.0 + (1331.0 - 1200.0) / 300.0 * (5000.0 - 2.0), 0),
+    ],
+    ids=['in_the_lid', 'below_the_lid_base'],
+)
+def test_isotherm_depth_reads_the_surface_only_for_a_crossing_in_the_lid(
+    T_b, T_cells, want, surface_calls
+):
+    """A crossing inside the lid interpolates between the surface and the lid base and needs
+    the surface temperature; a crossing below the lid base does not call for it."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    calls = []
+
+    def T_s_of():
+        calls.append(1)
+        return 600.0
+
+    z = _isotherm_depth(1331.0, 2.0, T_b, T_s_of, (5000.0, 15000.0), T_cells)
+    assert z == pytest.approx(want, rel=1e-12)
+    assert len(calls) == surface_calls
+
+
+def test_lid_depth_without_a_crossing_is_none():
+    """A column that stays below T_lid_iso has no base of a cold region: no depth, so the
+    hand-over root is -1."""
+    assert _depth_on_profile((1000.0, 1100.0, 1200.0, 1300.0), 1331.0, V4_Z) is None
+    assert _depth_on_profile((1500.0, 1600.0, 1700.0, 1800.0), 1400.0, V4_Z, T_s=1400.0) == 0.0
+
+
+def _full_rhs_root(s, t, y):
+    """The hand-over root from a full right-hand side evaluation at ``(t, y)``."""
+    if float(y[-2]) == 0.0:
+        return -1.0
+    s._dSdt_single(t, y)
+    z = _lid_depth(s)
+    if z is None:
+        return -1.0
+    return min((z - s._lid_handover_depth) / s._lid_handover_depth, *s._lid_solid_regime())
+
+
+ROOT_CASES = [
+    {'uniform': 2200.0},
+    {'S_top': 3500.0},
+    {'S_top': 2000.0},
+    {'uniform': 3500.0, 'S_top': 2600.0},
+    {},
+]
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('kw', ROOT_CASES, ids=[str(k) for k in ROOT_CASES])
+def test_root_equals_the_full_rhs_root(eos, kw):
+    """The hand-over root evaluates only what it reads and equals the root of a full
+    right-hand side evaluation to relative 1e-12 and in sign, on lids from the phantom
+    thickness to 0.8 of the top cell; it runs the lid evaluation only when the crossing can
+    lie in the lid."""
+    s = _solid_regime_column(eos, **kw)
+    calls, evaluate = [0], s._lid_evaluate
+
+    def counted(entropy):
+        calls[0] += 1
+        return evaluate(entropy)
+
+    rng = np.random.default_rng(5)
+    for delta in (s._lid_delta_lo, 1.0, 40.0, 0.8 * s._lid_h_top):
+        y = s._S0.copy()
+        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(400.0, 1300.0))))
+        want = _full_rhs_root(s, 0.0, y)
+        s._lid_evaluate, calls[0] = counted, 0
+        got = s._lid_root_value(0.0, y)
+        s._lid_evaluate = evaluate
+        assert got == pytest.approx(want, rel=1e-12, abs=1e-15)
+        assert np.sign(got) == np.sign(want)
+        if _lid_depth(s) is None or _lid_depth(s) > delta:
+            assert calls[0] == 0
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('hot', [False, True])
+def test_merge_is_energy_exact(eos, hot):
+    """The merge keeps the heat content: V_N H(S') = V_N H(S_f) + A (E_lid - H(S_f) delta),
+    with H checked by an independent adaptive quadrature of rho T dS; ``hot`` puts the top
+    cell high above the liquidus, in the upper half of the table."""
+    from tests.test_subgrid_lid_jump import _reference
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    if hot:
+        y[s._n_stag - 1] = s._lid_S_liq + 0.8 * (float(eos.S_max) - s._lid_S_liq)
+    y[-2:] = (20.0, 40.0 * y[-1])  # a 20 m lid with 40 times the phantom energy
+    y_new, resid = s._lid_merge(y)
+
+    def H(S):
+        return _reference(s, s._lid_S_sol, S)
+
+    i = s._n_stag - 1
+    V, A = float(s._volume_flat[-1]), s._lid_area
+    before = V * H(float(y[i])) + A * (y[-1] - H(float(y[i])) * y[-2])
+    after = V * H(float(y_new[i]))
+    assert after == pytest.approx(before, rel=1e-9)
+    assert resid <= 1e-10
+    np.testing.assert_array_equal(y_new[-2:], [0.0, 0.0])
+    np.testing.assert_array_equal(y_new[:i], y[:i])
+    assert y_new[i] != y[i]
+
+
+def test_trigger_passed_at_the_start_hands_over_at_the_start(eos, caplog):
+    """A lid whose hand-over trigger lies behind the call start hands over at the start; the
+    lid states stay zero for the whole call."""
+    import logging
+
+    s = _cold_top_solver(eos)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    out = s.get_state()
+    assert out.lid_handover_time == pytest.approx(0.0, abs=0)
+    assert out.lid_delta == pytest.approx(0.0, abs=0)
+    assert np.all(s._solution.y[-2:] == 0.0)
+    assert any('handed over to the mesh at t=0.0' in r.getMessage() for r in caplog.records)
+
+
+def _methods():
+    from aragog.solver import entropy_solver as es
+
+    cv = ['cvode-fixed', 'cvode-rate'] if es._CVODE_AVAILABLE else []
+    return ['radau', *cv]
+
+
+@pytest.mark.parametrize('method', _methods())
+def test_a_guard_cut_between_the_start_and_the_hand_over_removes_its_time(eos, method):
+    """The heated bottom cell leaves the table after about 1.5e-3 yr, and the top cell reaches
+    the solidus after about 0.013 yr. The guard keeps the live states before the exit, so the
+    time of the merge after them leaves the output, on every integrator path."""
+    s = _solver(eos, end=0.05, heating='bottom_cell')
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    S = np.full(s._n_stag, 3050.0)
+    S[-1], S[0] = s._lid_S_sol + 3e-6, float(eos.S_max) - 0.02
+    s.set_initial_entropy(S)
+    merges, merge = [], s._lid_merge
+    s._lid_merge = lambda y: (merges.append(1), merge(y))[1]
+    s.solve()
+    sol = s._solution
+    assert merges == [1]
+    assert sol.status == -1 and 'EOS table guard' in str(sol.message)
+    assert sol.t.size >= 10 and sol.t[-1] < 2e-3 and np.all(sol.y[-2] > 0.0)
+    if method == 'cvode-rate':
+        assert sol.segments
+    for out in (s.get_state(), s.get_state()):
+        assert out.lid_delta > 0.0
+        assert math.isnan(out.lid_handover_time)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_handover_in_the_call(eos, method):
+    """A hand-over at t* inside the call merges there and continues to the call end on every
+    integrator path (scipy, plain CVODE, CVODE segments); the ledger closes across it.
+
+    The trigger is replaced by g = (t - t*) / t* on this mushy column, which has no stagnant
+    lid; the physical trigger has its own test."""
+    t_star = 0.4
+    s = _solver(eos, end=1.0)
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    s._lid_handover_armed = lambda: True
+    s._lid_root_value = lambda t, y: -1.0 if y[-2] == 0.0 else (t - t_star) / t_star
+    s.solve()
+    sol, out = s._solution, s.get_state()
+    assert out.lid_handover_time == pytest.approx(t_star, rel=1e-6)
+    assert sol.t[-1] == pytest.approx(1.0, rel=1e-12)
+    assert np.all(np.diff(sol.t) > 0)
+    assert np.all(sol.y[-2:, -1] == 0.0) and sol.y[-2, 0] > 0.0
+    tr_t = sol.energy_trace[0]
+    assert np.count_nonzero(np.isclose(tr_t, out.lid_handover_time, rtol=0, atol=1e-12)) == 2
+    ei = sol.energy_integrals
+    budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
+    if method == 'cvode-rate':
+        assert any(seg[1] == 'lid' for seg in sol.segments)
+
+
+@pytest.mark.skipif(not _methods()[1:], reason='CVODE not available')
+# about 110 s alone on CI, over 300 s with coverage and 4 xdist workers
+@pytest.mark.timeout(900)
+def test_subsolidus_segment_caps_the_lid_atol(eos):
+    """A rate-mode CVODE segment that starts below the solidus caps the atol of the lid states
+    like the column entries, at min(caller atol, 1e-8 / state scale); the solve completes and
+    the ledger closes. The hand-over root is held at -1 to keep the lid."""
+    from aragog.solver import entropy_solver as es
+
+    s = _solver(eos, end=1.0)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = False
+    s.parameters.energy.phase_boundary_cap = 'rate'
+    S_sol = np.asarray(eos.solidus_entropy(np.asarray(s._P_stag_flat, float)), float).ravel()
+    s.set_initial_entropy(S_sol - 50.0)
+    s._lid_root_value = lambda t, y: -1.0
+    seen = {'caller': [], 'segment': []}
+    segments, cvode = s._solve_cvode_segments, s._solve_cvode
+
+    def segments_spy(*a, **kw):
+        seen['caller'].append(np.array(kw['atol'], dtype=float, ndmin=1))
+        return segments(*a, **kw)
+
+    def cvode_spy(*a, **kw):
+        seen['segment'].append(np.array(kw['atol'], dtype=float, ndmin=1))
+        return cvode(*a, **kw)
+
+    s._solve_cvode_segments, s._solve_cvode = segments_spy, cvode_spy
+    s.solve()
+    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
+    cap = es._SUBSOLIDUS_ATOL / np.asarray(s._build_nondim_scales().state_scale, float)
+    expected = np.minimum(seen['caller'][0], cap)
+    assert np.all(expected[-2:] < seen['caller'][0][-2:])
+    assert seen['segment'] and all(
+        np.array_equal(a[-2:], expected[-2:]) for a in seen['segment']
+    )
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+    assert s._solution.y[-2, -1] > s._lid_delta_lo
+
+
+def test_handover_leaves_exact_zero_lid_states(eos):
+    """After a hand-over the lid states of the solution and of the energy trace are exact
+    zeros, also when the energy offset of the nondimensional state does not map 0 back to 0,
+    so a resume from them is a handed-over lid."""
+    from aragog.jax.nondim import NonDimScales
+
+    s = _solver(eos, end=1.0)
+    build = s._build_nondim_scales
+
+    def scales():
+        sc = build()
+        off, ss = sc.state_offset.copy(), sc.state_scale
+        for k in range(1, 1000):
+            off[-1] = sc.state_offset[-1] * (1.0 + k * 1e-6)
+            if (0.0 - off[-1]) / ss[-1] * ss[-1] + off[-1] != 0.0:
+                return NonDimScales(state_scale=ss, t_ref=sc.t_ref, state_offset=off)
+        pytest.fail('no energy offset with an inexact round trip of 0')
+
+    s._build_nondim_scales = scales
+    s._lid_handover_armed = lambda: True
+    s._lid_root_value = lambda t, y: -1.0 if y[-2] == 0.0 else (t - 0.4) / 0.4
+    s.solve()
+    sol = s._solution
+    assert s.get_state().lid_handover_time == pytest.approx(0.4, rel=1e-6)
+    np.testing.assert_array_equal(sol.y[-2:, -1], [0.0, 0.0])
+    tr = sol.energy_trace[1]
+    off = tr[-2] == 0.0
+    assert off.any() and np.all(tr[-1, off] == 0.0)
+    r = _solver(eos, end=1.0)
+    r.set_initial_lid(float(sol.y[-2, -1]), float(sol.y[-1, -1]))
+    assert r._lid_init == (0.0, 0.0)
+
+
+@pytest.mark.physics_invariant
+def test_resume_after_handover_matches_the_lid_off_run(eos):
+    """A run resumed with the handed-over lid (0, 0) evolves as the run without the lid."""
+    s = _solver(eos)
+    s.set_initial_lid(0.0, 0.0)
+    s.set_initial_entropy(3050.0)
+    s.solve()
+    off = _solver(eos, lid=False)
+    off.solve()
+    np.testing.assert_allclose(
+        s._solution.y[: s._n_stag, -1], off._solution.y[:, -1], rtol=1e-6
+    )
+    np.testing.assert_array_equal(s._solution.y[-2:, -1], [0.0, 0.0])
+    assert s.get_state().lid_delta == pytest.approx(0.0, abs=0)
+
+
+@pytest.mark.parametrize('closure', ['local'])
+def test_no_handover_without_the_lid_closure(eos, closure):
+    """The isotherm hand-over needs the stagnant-lid state of the 'lid' stress closure: with
+    the 'local' closure the column whose isotherm trigger has passed keeps its lid."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = 1
+    p.boundary_conditions.normalize()
+    if closure is not None:
+        p.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode=closure)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.linspace(3150.0, 3000.0, s._n_stag)
+    S[-2:] = 1500.0
+    s.set_initial_entropy(S)
+    assert not s._lid_handover_armed()
+    assert s._lid_root_value(0.0, s._S0) == pytest.approx(-1.0, abs=0)
+    s.solve()
+    out = s.get_state()
+    assert np.isnan(out.lid_handover_time)
+    assert out.lid_delta > 0.0
+
+
+def _solid_regime_column(eos, S_top=None, uniform=None):
+    """A 20-node 'lid'-closure column: cold below with the top cell at ``S_top``, or uniform."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=20, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = 1
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.full(s._n_stag, uniform) if uniform else np.linspace(3150.0, 3000.0, s._n_stag)
+    if S_top is not None:
+        S[-2:] = 1500.0
+        S[-1] = S_top
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('kw', 'w_active', 'molten_top'),
+    [({'uniform': 2200.0}, 'low', False), ({'S_top': 3500.0}, 'high', True)],
+    ids=['no_stagnant_lid', 'molten_top_cell'],
+)
+def test_no_handover_outside_the_solid_regime(eos, kw, w_active, molten_top):
+    """With the isotherm below the hand-over face, the root stays negative while the
+    stagnant-lid state is inactive (w_active < 0.5) or the top cell is past the rheological
+    transition (w_phi > 0.5)."""
+    from aragog.rheology_lid import _melt_ramp
+
+    s = _solid_regime_column(eos, **kw)
+    g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    assert _lid_depth(s) > s._lid_handover_depth
+    ph, act = s.state.phase_staggered, float(s.state.lid_state['w_active'])
+    w_phi = float(_melt_ramp(np.ravel(ph.melt_fraction())[-1], ph._phi_rheo, ph._phi_width))
+    assert (act < 0.5) if w_active == 'low' else (act > 0.5)
+    assert (w_phi > 0.5) == molten_top
+    assert g < 0.0
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+
+
+@pytest.mark.physics_invariant
+def test_handover_root_in_the_solid_regime(eos):
+    """An active stagnant lid, a solid top cell and the isotherm below the face give the
+    positive root of the isotherm margin."""
+    s = _cold_top_solver(eos)
+    g = s._lid_root_value(0.0, s._S0)
+    s._dSdt_single(0.0, s._S0)  # the lid of this state for the depth
+    margin = (_lid_depth(s) - s._lid_handover_depth) / s._lid_handover_depth
+    assert 0.0 < g == pytest.approx(margin, rel=1e-12)
+    assert min(s._lid_solid_regime()) > margin
+
+
+def test_handover_fires_where_the_solid_regime_begins(eos):
+    """With the isotherm already below the face, the hand-over fires where the solid regime
+    begins, located by the root search."""
+    t_star = 0.4
+    s = _cold_top_solver(eos)
+    root, clock = s._lid_root_value, {}
+
+    def timed_root(t, y):
+        clock['t'] = t
+        return root(t, y)
+
+    s._lid_root_value = timed_root
+    s._lid_solid_regime = lambda: ((clock['t'] - t_star) / t_star,)
+    s.solve()
+    assert s.get_state().lid_handover_time == pytest.approx(t_star, rel=1e-6)
+
+
+def _top_at(eos, dS, end=1.0, heating=None):
+    """A 10-node column without the solid rheology, the top cell ``dS`` above its solidus."""
+    s = _solver(eos, end=end, heating=heating)
+    S = s._S0[: s._n_stag].copy()
+    S[-1] = s._lid_S_sol + dS
+    s.set_initial_entropy(S)
+    return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_source_total_after_a_hand_over_in_the_call_counts_the_whole_top_cell(eos, method):
+    """After a hand-over inside the call the output tidal power is the heat of the whole cells
+    at the table density, with no lid mass and no fluid fraction of the top cell left."""
+    s = _top_at(eos, 0.2, heating='tidal')
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    s.solve()
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0 and st.lid_delta == 0.0
+    mass = eos.density(s._P_stag_flat, s._solution.y[: s._n_stag, -1]).ravel() * s._volume_flat
+    want = float(np.dot(np.asarray(s.state.heating_tidal).ravel(), mass))
+    assert want > 0.0
+    np.testing.assert_allclose(st.Q_tidal_total, want, rtol=1e-13)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('method', _methods())
+def test_lid_hands_over_where_the_top_cell_freezes(eos, method):
+    """Without the solid rheology the lid hands over inside the call where the top cell cools
+    through its solidus (the lid-base state), on every integrator path; a top cell that stays
+    above the solidus keeps its lid."""
+    s = _top_at(eos, 0.2)
+    if method != 'radau':
+        s.parameters.energy.solver_method = 'cvode'
+        s.parameters.energy.use_jax_jacobian = False
+        s.parameters.energy.phase_boundary_cap = method.split('-')[1]
+    merge, seen = s._lid_merge, []
+    s._lid_merge = lambda y: (seen.append(float(y[s._n_stag - 1])), merge(y))[1]
+    s.solve()
+    st = s.get_state()
+    assert 0.0 < st.lid_handover_time < 1.0
+    assert (st.lid_delta, st.lid_E) == (0.0, 0.0)
+    assert seen[0] == pytest.approx(s._lid_S_sol, rel=1e-7)
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    warm = _top_at(eos, 2.0)
+    warm.solve()
+    assert np.isnan(warm.get_state().lid_handover_time)
+    assert warm._solution.y[-2, -1] > 0.0
+
+
+def test_handover_in_the_last_rate_cap_segment_merges_and_completes_the_call(eos, caplog):
+    """A lid root in the segment after the segment ceiling still merges the lid and the call
+    runs to its end time, as with the default ceiling; the ceiling is reported once and the
+    step ledger closes to 1e-10 of the surface power."""
+    s = _top_at(eos, 0.2)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = False
+    s.parameters.energy.phase_boundary_cap = 'rate'
+    s._solve_cvode_segments = functools.partial(s._solve_cvode_segments, max_segments=0)
+    with caplog.at_level('WARNING'):
+        s.solve()
+    assert s._solution.t[-1] == pytest.approx(1.0, rel=1e-12)
+    assert 0.0 < s.get_state().lid_handover_time < 1.0
+    assert s._solution.y[-2, 0] > 0.0 and np.all(s._solution.y[-2:, -1] == 0.0)
+    assert sum('segments in one call' in r.getMessage() for r in caplog.records) == 1
+    ei = s._solution.energy_integrals
+    assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('dS', 'hands_over'), [(-5.0, True), (0.0, True), (5.0, False)])
+def test_top_cell_at_or_below_the_solidus_hands_over_at_the_start(eos, dS, hands_over):
+    """Without the solid rheology a top cell at or below its solidus at the call start hands
+    the lid over before the run (lid states 0 from the first output); above it, it does not."""
+    s = _top_at(eos, dS, end=0.01)
+    s.solve()
+    y0 = s._solution.y[-2:, 0]
+    if hands_over:
+        assert s.get_state().lid_handover_time == pytest.approx(0.0, abs=0)
+        assert np.all(y0 == 0.0)
+    else:
+        assert np.isnan(s.get_state().lid_handover_time)
+        assert y0[0] > 0.0
+
+
+@pytest.mark.parametrize('mode', ['fixed', 'rheological'])
+def test_no_solidus_handover_with_the_rheology(eos, mode):
+    """With the solid rheology and a closure other than 'lid' the lid base lies below the
+    solidus: the hand-over root is -1 and the lid stays, also on a top cell below it."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=0.01)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, stress_closure_mode='local', lid_base_mode=mode
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S = np.full(s._n_stag, 3050.0)
+    S[-1] = s._lid_S_sol - 5.0
+    s.set_initial_entropy(S)
+    assert s._lid_root_value(0.0, s._S0) == pytest.approx(-1.0, abs=0)
+    s.solve()
+    assert np.isnan(s.get_state().lid_handover_time)
+    assert s._solution.y[-2, -1] > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_hidden_lid_on_a_hot_top_cell(eos):
+    """A hot convecting top cell carries more heat than a crust at T_b can radiate: the lid is
+    hidden (w = 0), the surface loses the grid flux, the lid relaxes to the phantom thickness
+    and the per-call ledger closes."""
+    s = _solver(eos)
+    y = s._S0.copy()
+    y[: s._n_stag] = np.linspace(3300.0, 4500.0, s._n_stag)
+    y[-2:] = (3.0, y[-1] * 6.0)
+    off = _solver(eos, lid=False)
+    off._dSdt_single(0.0, y[: s._n_stag])
+    f_grid = float(off.state._heat_flux[-1])
+    pw = s._step_powers(0.0, y)
+    ev = s._lid_last
+    assert ev.rates.w == pytest.approx(0.0, abs=0)
+    assert ev.rates.F_top == pytest.approx(f_grid, rel=1e-12)
+    assert ev.rates.ddelta == pytest.approx(
+        -(3.0 - s._lid_delta_lo) / sl.LID_TAU_HIDDEN, rel=1e-12
+    )
+    assert abs(pw[-1]) <= 1e-10 * max(abs(pw[0]), abs(pw[1]), 1.0)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('source', ['fixed', 'rheological', 'lid_state'])
+def test_solid_lid_base_is_the_rheological_temperature(eos, source, monkeypatch):
+    """Below the rheological transition the lid base lies at the rheological temperature of
+    the solid rheology on the EOS, not on a constant-cp estimate of its entropy."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import _R_GAS, EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    mode = 'fixed' if source == 'fixed' else 'rheological'
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='local',
+        lid_base_mode=mode,
+        lid_base_temperature=1300.0,
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    T_f = 1350.0
+    rh = {'fixed': 1300.0, 'lid_state': 1250.0}
+    expected = rh.get(source) or T_f - 2.2 * _R_GAS * T_f**2 / s._lid_H
+    lid_state = {'T_lid_iso': 1250.0} if source == 'lid_state' else None
+    monkeypatch.setattr(s.state, '_lid_state', lid_state, raising=False)
+    assert 600.0 < expected < s._lid_T_sol
+    base = s._lid_base_state(T_f, 0.0, float(eos.entropy_at_temperature(s._lid_P, T_f)))
+    assert base['T_b'] == pytest.approx(expected, rel=1e-9)
+
+
+def _base_solver(eos, monkeypatch, T_iso):
+    """A 10-node solver with the solid rheology whose stagnant-lid state has ``T_iso``."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode='local')
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    monkeypatch.setattr(s.state, '_lid_state', {'T_lid_iso': T_iso}, raising=False)
+    return s
+
+
+@pytest.mark.physics_invariant
+def test_lid_base_blends_in_entropy_by_the_melt_ramp(eos, monkeypatch):
+    """Inside the rheological transition the lid-base entropy is the melt-ramp blend of the
+    solidus and the rheological entropy; a molten top cell puts the base at the solidus."""
+    from aragog.rheology_lid import _melt_ramp
+
+    s = _base_solver(eos, monkeypatch, 1250.0)
+    ph = s.state.phase_staggered
+    phi = float(ph._phi_rheo)
+    w = float(_melt_ramp(phi, ph._phi_rheo, ph._phi_width))
+    assert 0.1 < w < 0.9
+    S_rh = float(eos.entropy_at_temperature(s._lid_P, 1250.0))
+    base = s._lid_base_state(1400.0, phi, s._lid_S_sol)
+    assert base['S_b'] == pytest.approx(w * s._lid_S_sol + (1.0 - w) * S_rh, rel=1e-12)
+    assert S_rh < base['S_b'] < s._lid_S_sol
+    w1 = float(_melt_ramp(1.0, ph._phi_rheo, ph._phi_width))  # below 1: a blend at phi 1 too
+    S_b1 = s._lid_base_state(1400.0, 1.0, s._lid_S_sol)['S_b']
+    assert S_b1 == pytest.approx(w1 * s._lid_S_sol + (1.0 - w1) * S_rh, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('dT', [100.0, 1.0e-6])
+def test_lid_base_is_capped_at_the_solidus(eos, monkeypatch, dT):
+    """A rheological temperature at or above the solidus puts a solid-regime lid base at the
+    solidus entropy, never above it."""
+    s = _base_solver(eos, monkeypatch, 1.0)
+    monkeypatch.setattr(s.state, '_lid_state', {'T_lid_iso': s._lid_T_sol + dT})
+    base = s._lid_base_state(1300.0, 0.0, s._lid_S_sol)
+    assert base['S_b'] == s._lid_S_sol
+
+
+def test_lid_base_temperature_floor(eos, monkeypatch):
+    """A rheological temperature below 1 K is read as 1 K on the EOS."""
+    s = _base_solver(eos, monkeypatch, -50.0)
+    base = s._lid_base_state(1300.0, 0.0, float(eos.entropy_at_temperature(s._lid_P, 1300.0)))
+    assert base['S_b'] == pytest.approx(
+        float(eos.entropy_at_temperature(s._lid_P, 1.0)), rel=1e-12
+    )
+    assert np.isfinite(base['T_b'])
+
+
+@pytest.mark.parametrize('convection', [True, False])
+def test_base_flux_takes_the_boundary_layer_flux_only_with_convection(eos, convection):
+    """With ``energy.convection`` off the mesh carries no convective flux, so the lid base gets
+    only the mesh flux into the top cell, or 0; with it on, the boundary-layer flux of the same
+    state is the larger one and sets F_b."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    p.energy.convection = convection
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    s._dSdt_single(0.0, s._S0.copy())
+    floor = max(float(s.state._heat_flux[-2]), 0.0)
+    if convection:
+        assert s._lid_last.F_b > floor + 1.0
+    else:
+        assert s._lid_last.F_b == floor
+
+
+def test_lid_reads_the_convection_flag_of_the_setup(eos):
+    """The lid takes ``energy.convection`` once at setup, as the mesh state does: a change
+    after ``initialize`` reaches neither the NumPy lid base flux nor the JAX lid parameters."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3300.0)
+    p.energy.convection = False
+    s._dSdt_single(0.0, s._S0.copy())
+    assert s._lid_last.F_b > max(float(s.state._heat_flux[-2]), 0.0) + 1.0
+    pytest.importorskip('jax')
+    assert s.jax_lid_params().convection == 1.0
+
+
+@pytest.mark.parametrize('case', ['convective', 'face', 'zero'])
+def test_base_flux_is_the_largest_of_convection_face_and_zero(eos, monkeypatch, case):
+    """F_b is the largest of the convective base flux, the mesh flux into the top cell and 0."""
+    s = _solver(eos)
+    y = s._S0.copy()
+    if case == 'zero':  # a top cell hotter than the cell below conducts down into the mesh
+        y[s._n_stag - 1] = 7000.0
+    s._dSdt_single(0.0, y)
+    F_in = float(s.state._heat_flux[-2])
+    assert (F_in < 0.0) == (case == 'zero')
+    q = {'convective': abs(F_in) + 7.0, 'face': -3.0, 'zero': F_in - 3.0}[case]
+    monkeypatch.setattr(sl, 'convective_base_flux', lambda *a: q)
+    s._dSdt_single(0.0, y)
+    assert s._lid_last.F_b == {'convective': q, 'face': F_in, 'zero': 0.0}[case]
+
+
+def test_merge_refuses_a_residual_above_its_bound(eos, monkeypatch):
+    """A merge whose root misses the target heat content raises instead of passing."""
+    import scipy.optimize
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    y[-2:] = (20.0, 40.0 * y[-1])
+    monkeypatch.setattr(scipy.optimize, 'brentq', lambda f, a, b, **kw: float(y[s._n_stag - 1]))
+    with pytest.raises(RuntimeError, match='merge residual'):
+        s._lid_merge(y)
+
+
+def _checked(s, **change):
+    """The step check of the last lid evaluation with fields of it, of its rates or of its
+    surface replaced."""
+    import dataclasses
+
+    ev = s._lid_last
+    rates = {k: change.pop(k) for k in list(change) if hasattr(ev.rates, k) and k != 'F_top'}
+    surf = {k: change.pop(k) for k in list(change) if k == 'clipped'}
+    s._lid_last = dataclasses.replace(
+        ev,
+        rates=dataclasses.replace(ev.rates, **rates),
+        surf=dataclasses.replace(ev.surf, **surf),
+        **change,
+    )
+    s._check_lid_step(s._lid_delta_lo, 3, 1.5)
+
+
+@pytest.mark.parametrize(
+    ('change', 'match'),
+    [
+        ({'E': float('nan')}, 'non-finite'),
+        ({'ddelta': float('inf')}, 'non-finite'),
+        ({'S_f': float('nan')}, 'non-finite'),
+        ({'S_b': float('inf')}, 'non-finite'),
+        ({'delta': 0.25}, 'thickness'),
+        ({'w': 1.5}, 'weight'),
+        ({'w': -0.5}, 'weight'),
+    ],
+    ids=['E_nan', 'rate_inf', 'S_f_nan', 'S_b_inf', 'below_delta_lo', 'w_above_1', 'w_below_0'],
+)
+def test_lid_step_check_refuses_bad_states(eos, change, match):
+    """The step check raises on a non-finite state or rate, a lid below its lower stop and a
+    weight outside [0, 1], naming the step and the time."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    assert s._lid_delta_lo == pytest.approx(0.5, rel=1e-12)
+    with pytest.raises(RuntimeError, match=f'step 3, t=1.500000e\\+00 yr: {match}'):
+        _checked(s, **dict(change))
+
+
+@pytest.mark.parametrize('change', [{'S_f': 1.0e9}, {'S_f': -1.0e9}, {'S_b': -1.0e9}])
+def test_lid_step_check_refuses_an_entropy_outside_the_heat_table(eos, change):
+    """An accepted state whose fluid or lid-base entropy lies outside the heat table fails
+    the step check: the right-hand side only continues the table there."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    with pytest.raises(RuntimeError, match='outside the lid heat table'):
+        _checked(s, **dict(change))
+
+
+@pytest.mark.parametrize('field', ['S_f', 'S_b'])
+@pytest.mark.parametrize('end', [0, -1], ids=['bottom', 'top'])
+def test_lid_step_check_has_the_guard_band_at_both_table_ends(eos, field, end):
+    """Within the tolerance of the EOS table guard past a table end the step check passes;
+    twice that past the end it refuses, on both ends and for both entropies."""
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    edge, sign = float(s._lid_W_of_S.x[end]), -1.0 if end == 0 else 1.0
+    _checked(s, **{field: edge + sign * 5e-4})
+    with pytest.raises(RuntimeError, match='outside the lid heat table'):
+        _checked(s, **{field: edge + sign * 2e-3})
+
+
+@pytest.mark.parametrize(
+    ('change', 'text'),
+    [({'H_f': -1.0e12}, 'below the floor'), ({'clipped': 1}, 'outside the profile family')],
+    ids=['enthalpy_floor', 'shape_bound'],
+)
+def test_lid_step_check_warns_once(eos, caplog, change, text):
+    """The enthalpy floor and the shape bound warn once per run."""
+    import logging
+
+    s = _solver(eos)
+    s._dSdt_single(0.0, s._S0)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.entropy_solver'):
+        _checked(s, **dict(change))
+        _checked(s, **dict(change))
+    assert sum(text in r.getMessage() for r in caplog.records) == 1
+
+
+def test_root_of_a_handed_over_lid_or_a_column_without_crossing(eos, monkeypatch):
+    """The hand-over root is -1 for a handed-over lid and for a column without a crossing
+    of the lid-base isotherm."""
+    from aragog.solver import entropy_solver as es
+
+    s = _cold_top_solver(eos)
+    y = s._S0.copy()
+    assert s._lid_root_value(0.0, y) > 0.0
+    y[-2:] = 0.0
+    assert s._lid_root_value(0.0, y) == -1.0
+    monkeypatch.setattr(es, '_isotherm_depth', lambda *a: None)
+    assert s._lid_root_value(0.0, s._S0) == -1.0

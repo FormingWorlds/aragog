@@ -97,6 +97,7 @@ class FluxOutput(NamedTuple):
     # can inspect the phase-mixing
     # contribution independently of whether
     # the integrator's RHS includes it.
+    T_lid_iso: jax.Array | None = None  # lid-base isotherm [K] of the 'lid' stress closure
 
 
 # ---------------------------------------------------------------------------
@@ -1180,6 +1181,7 @@ def compute_fluxes(
     jcond = params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
     jconv = params.convection * (rho * T * kappa_h * (-dSdr))
 
+    lid_state = None
     if params.rheology.enabled:
         kappa_th_b = k / (rho * Cp_safe)
         visc_solid = 10.0**params.log10_visc_solid
@@ -1369,4 +1371,5 @@ def compute_fluxes(
         eddy_diffusivity=kappa_h,
         heating=heating_rate,
         jmix_heat=jmix_heat,
+        T_lid_iso=lid_state['T_lid_iso'] if lid_state is not None else None,
     )

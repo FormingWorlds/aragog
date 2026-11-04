@@ -20,7 +20,14 @@ from aragog.eos.entropy import EntropyEOS
 from tools.verification import _ssc_helpers
 from tools.verification._ssc_helpers import _parsed
 
-__all__ = ['_parsed', 'entropy_eos_copy', 'entropy_eos_jax', 'package_logger_isolation']
+__all__ = [
+    '_parsed',
+    'assert_legend_clear',
+    'entropy_eos_copy',
+    'entropy_eos_jax',
+    'opaque_legend',
+    'package_logger_isolation',
+]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -59,6 +66,65 @@ def returns(fn, *args):
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process."""
     return _ssc_helpers.entropy_eos_jax(eos_dir)
+
+
+def opaque_legend(ax, **kwargs):
+    """Draw a legend of ``ax`` in 8 pt whose frame, in the axes colour, hides the grid."""
+    kwargs.setdefault('fontsize', 8)
+    return ax.legend(
+        frameon=True, framealpha=1.0, facecolor=ax.get_facecolor(), edgecolor='none', **kwargs
+    )
+
+
+def assert_legend_clear(fig) -> None:
+    """Assert that no legend of ``fig`` covers a marker or a line of its axes, or a text.
+
+    Each drawn line is sampled at 50 points per segment in display space, markers at their
+    points, and the legend box is padded by half the marker size. The frame must be opaque, so
+    that no gridline shows behind the text, and the box must stay off every band of the axes.
+    No visible text of the figure outside the legend may overlap the legend box.
+    """
+    from matplotlib.text import Text
+
+    fig.canvas.draw()
+    for ax in fig.axes:
+        legend = ax.get_legend()
+        if legend is None:
+            continue
+        assert legend.get_frame_on() and legend.get_frame().get_facecolor()[3] == 1.0, (
+            f'the legend frame of {ax.get_ylabel()!r} is not opaque'
+        )
+        for band in ax.patches:
+            assert not legend.get_window_extent().overlaps(band.get_window_extent()), (
+                f'the legend of {ax.get_ylabel()!r} covers a band'
+            )
+        paths = [
+            (
+                ln.get_transform().transform(ln.get_xydata()),
+                ln.get_markersize(),
+                ln.get_linestyle(),
+            )
+            for ln in ax.get_lines()
+            if ln.get_visible()
+        ]
+        for coll in ax.collections:
+            if hasattr(coll, 'get_segments'):
+                tr = coll.get_transform()
+                paths += [(tr.transform(seg), 0.0, '-') for seg in coll.get_segments()]
+        for xy, ms, ls in paths:
+            box = legend.get_window_extent().padded(0.5 * ms * fig.dpi / 72.0)
+            s = np.linspace(0.0, 1.0, 2 if ls in ('None', '', ' ') else 50)[:, None]
+            dense = np.concatenate(
+                [xy[:1]] + [a + s * (b - a) for a, b in zip(xy[:-1], xy[1:])]
+            )
+            hit = box.count_contains(dense[np.all(np.isfinite(dense), axis=1)])
+            assert hit == 0, f'the legend of {ax.get_ylabel()!r} covers {hit} plotted points'
+        box, own = legend.get_window_extent(), set(legend.findobj())
+        for text in fig.findobj(Text):
+            if text.get_visible() and text.get_text() and text not in own:
+                assert not box.overlaps(text.get_window_extent()), (
+                    f'a legend covers the text {text.get_text()!r}'
+                )
 
 
 def make_mesh(N: int = 10, scale_p: float = 1.0):

@@ -68,6 +68,7 @@ def test_contract_holds_quasi_steady():
     assert callable(rhs_fn)
     assert callable(jac_fn)
     assert info['rhs_calls'] == 0
+    assert rhs_fn.lid is False
 
 
 @pytest.mark.unit
