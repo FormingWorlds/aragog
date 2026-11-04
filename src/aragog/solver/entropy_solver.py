@@ -6318,7 +6318,9 @@ class EntropySolver:
 
         S_i = self._stag_entropy(y_col)
         dens = self.entropy_eos if self.entropy_eos is not None else self._lid_props
-        mass_i = self._heated_mass(np.asarray(dens.density(self._P_stag_flat, S_i)).ravel() * vol)
+        mass_i = self._heated_mass(
+            np.asarray(dens.density(self._P_stag_flat, S_i)).ravel() * vol
+        )
         heating_radio_i = np.asarray(self.state.heating_radio).ravel()
         heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
         Q_radio_i = float(np.dot(heating_radio_i, mass_i))
