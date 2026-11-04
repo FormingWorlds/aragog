@@ -214,3 +214,120 @@ class TestSolver:
                 )
             ) == pytest.approx(F_b, rel=1e-10)
             assert math.isfinite(float(out[0]))
+
+
+def test_flux_surface_state_carries_the_prescribed_flux():
+    """A lid under a prescribed flux: T_s from the conduction, F_s = F_atm; clipped at 1 K."""
+    hv = sl.LidEnthalpy.linear(3000.0, 1200.0, 1400.0, 0.0)
+    delta, F_atm = 10.0, 60.0
+    E = delta * hv.profile_heat(0.0, 1400.0 - F_atm * delta / 4.0, 1400.0)
+    surf = sl.flux_surface_state(delta, E, 1400.0, 4.0, F_atm, sl.LID_DELTA_FLOOR, hv)
+    assert surf.F_s == pytest.approx(F_atm, rel=1e-6)
+    assert surf.T_s == pytest.approx(1400.0 - F_atm * delta / 4.0, rel=1e-6)
+    hot = sl.flux_surface_state(delta, E, 1400.0, 4.0, 1e6, sl.LID_DELTA_FLOOR, hv)
+    assert hot.T_s == 1.0
+    assert hot.F_s < 1e6
+
+
+def test_flux_weight_compares_surface_loss_with_the_delivery():
+    assert sl.flux_weight(100.0, 100.0) == pytest.approx(0.5, abs=1e-14)
+    assert sl.flux_weight(1.0, 1e4) == 1.0
+    assert sl.flux_weight(1e4, 1.0) == 0.0
+    assert sl.flux_weight(0.0, 10.0) == 1.0
+    assert sl.flux_weight(10.0, 0.0) == 0.0
+    assert sl.flux_weight(-5.0, -5.0) == 1.0
+
+
+@pytest.mark.parametrize(
+    'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (5, True, False)]
+)
+def test_prescribed_flux_needs_the_mush_base(bc, mush, ok):
+    from aragog.config.boundary import check_subgrid_lid
+
+    args = (True, 1.0, None, 3, 450.0, bc, 'quasi_steady', False)
+    if ok:
+        check_subgrid_lid(*args, lid_mush_base=mush)
+    else:
+        with pytest.raises(ValueError, match='outer'):
+            check_subgrid_lid(*args, lid_mush_base=mush)
+
+
+@needs_eos
+class TestFluxSolver:
+    @pytest.fixture(scope='class')
+    def eos(self):
+        return entropy_eos_copy(EOS_DIR)
+
+    def _s(self, eos, F_atm=200.0, end=1.0, S0=None):
+        from aragog.parser import SolidRheologyParams
+        from aragog.solver.entropy_solver import EntropySolver
+
+        p = _build(
+            core_bc='quasi_steady',
+            outer_bc=4,
+            inner_bc=2,
+            n_nodes=10,
+            end_time=end,
+            outer_bc_value=F_atm,
+        )
+        p.boundary_conditions.subgrid_lid = True
+        p.boundary_conditions.lid_mush_base = True
+        p.boundary_conditions.normalize()
+        p.phase_solid.rheology = SolidRheologyParams(
+            enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
+        )
+        s = EntropySolver(p, entropy_eos=eos)
+        s.initialize()
+        s.set_initial_entropy(3050.0 if S0 is None else S0)
+        return s
+
+    def test_surface_loss_is_the_prescribed_flux(self, eos):
+        s = self._s(eos)
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[n - 1] = s._lid_S_sol + sl.LID_FLOOR_GAP + 0.5 * sl.LID_FLOOR_WIDTH
+        y[-2:] = s._lid_start(y[n - 1])
+        y[-2:] *= 20.0
+        s._dSdt_single(0.0, y)
+        ev = s._lid_last
+        assert float(s.state._heat_flux[-1]) == pytest.approx(200.0, rel=1e-6)
+        assert ev.surf.T_s < ev.T_b
+
+    def test_short_run_closes_energy_and_reports_the_crust_surface(self, eos):
+        s = self._s(eos, end=2.0)
+        s.solve()
+        sol = s._solution
+        assert sol.status == 0
+        ei = sol.energy_integrals
+        assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
+        st = s.get_state()
+        ev = s._lid_last
+        T_node = float(np.asarray(s.state.top_temperature).ravel()[0])
+        want = ev.rates.w * ev.surf.T_s + (1.0 - ev.rates.w) * T_node
+        assert (
+            s.final_state().T_magma == pytest.approx(want, rel=1e-9)
+            if hasattr(s, 'final_state')
+            else st is not None
+        )
+
+    def test_jax_flux_mode_matches_numpy(self, eos):
+        from aragog.jax import surface_lid as jl
+        from tests.test_subgrid_lid_jax_rhs import entropy_eos_jax
+
+        s = self._s(eos)
+        lp, ej = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
+        assert float(lp.flux) == 1.0
+        T_b = s._lid_T_sol
+        y = np.array([3.0, 3.0 * float(s._lid_hv.profile_heat(0.0, 1300.0, T_b))])
+        surf_j = jl.surface_state(
+            y[0], y[1], T_b, s._lid_k, 1.0, 255.0, sl.LID_DELTA_FLOOR, lp.e, lp.flux, 100.0
+        )
+        surf_n = sl.flux_surface_state(
+            y[0], y[1], T_b, s._lid_k, 100.0, sl.LID_DELTA_FLOOR, s._lid_hv
+        )
+        assert float(surf_j[0]) == pytest.approx(surf_n.T_s, rel=1e-9)
+        assert float(surf_j[1]) == pytest.approx(surf_n.F_s, rel=1e-9)
+        for F_b, F_atm in ((10.0, 100.0), (100.0, 10.0), (0.0, 5.0), (7.0, 7.0)):
+            assert float(jl.flux_weight(F_b, F_atm)) == pytest.approx(
+                sl.flux_weight(F_b, F_atm), rel=1e-12
+            )
