@@ -14,7 +14,7 @@ The material properties are constant: thermal conductivity $k$ = 4 W/m/K, densit
 
 **What it tests.** A lid lies over melt at its melting temperature $T_b$. The melt delivers no heat to the base of the lid, and the surface is held at $T_s$ = 300 K. The Stefan number $\mathrm{St} = c_p (T_b - T_s) / L$ compares the heat to cool the crust with $L$, the latent heat released when 1 kg of melt freezes; the test uses St = 0.1, 1 and 3.381. The lid starts at 10⁶ s on the textbook profile, and the test checks its thickness $\delta$ at 10⁸, 10¹⁰ and 10¹² s. A second lid starts at 1 m with a straight-line profile and must approach the same law.
 
-**How we know the right answer.** This is the Stefan problem of a solidifying lava layer: the crust thickness is $\delta = 2 \lambda \sqrt{\kappa t}$, with $\lambda$ the root of $\lambda\, e^{\lambda^2} \operatorname{erf}\lambda = \mathrm{St} / \sqrt{\pi}$ (Turcotte and Schubert 2014, section 4.18, eqs. 4.136 and 4.141, pp. 197-198). The roots are $\lambda$ = 0.220, 0.620 and 0.948. The lid uses the same family of profiles as this solution. It should hold the growth law to round-off.
+**How we know the right answer.** This is the Stefan problem of a solidifying lava layer: the crust thickness is $\delta = 2 \lambda \sqrt{\kappa t}$, with $\lambda$ the root of $\lambda\, e^{\lambda^2} \operatorname{erf}\lambda = \mathrm{St} / \sqrt{\pi}$ (Turcotte and Schubert (2014)[^cite-turcotte2014] section 4.18, Eqs. 4.136 and 4.141, pp. 197-198). The roots are $\lambda$ = 0.220, 0.620 and 0.948. The lid uses the same family of profiles as this solution. It should hold the growth law to round-off.
 
 **Why it matters.** When the surface of a magma ocean starts to freeze, the crust thickness sets how much heat the planet loses, and so how fast the interior cools.
 
@@ -24,7 +24,7 @@ The material properties are constant: thermal conductivity $k$ = 4 W/m/K, densit
 **How to read the plot.** The vertical axis is the crust thickness divided by $\sqrt{\kappa t}$, which is constant, $2\lambda$, on the textbook solution. The horizontal lines are $2\lambda$ for each Stefan number, and the dots are the lid at the three test times. The dots lie on the lines. The dashed curves are the lids that start at 1 m: they start too thick for their age and reach the lines within a few years.
 
 ??? info "Test details"
-    - Reference: Turcotte and Schubert (2014), section 4.18, eqs. 4.136 and 4.141 (pp. 197-198).
+    - Reference: Turcotte and Schubert (2014)[^cite-turcotte2014] section 4.18, Eqs. 4.136 and 4.141 (pp. 197-198).
     - Tolerance: relative 10⁻² at each test time (measured: 2.5 × 10⁻¹²); the test also checks 10⁻⁸. The lid that starts at 1 m is within 10⁻² after 7.6, 1.4 and 0.47 years at St = 0.1, 1 and 3.381.
     - Discrimination: the straight-line growth law $\delta = \sqrt{2\, \mathrm{St}\, \kappa t}$ misses the reference by 1.6, 14 and 37 %.
     - Test id: `tests/test_surface_lid_neumann.py::test_v1_crust_growth_follows_neumann`
@@ -36,7 +36,7 @@ The material properties are constant: thermal conductivity $k$ = 4 W/m/K, densit
 
 **What it tests.** The same lid, with the latent heat at the small floor the solver keeps (10³ J/kg), so the Stefan number is 1320. The surface is held at 300 K, the base at 1400 K. The test compares the heat flux through the surface with the textbook flux from 0.095 to 31,700 years.
 
-**How we know the right answer.** A half-space that starts at $T_b$, with its surface held at $T_s$, loses heat at the rate $F = k (T_b - T_s) / \sqrt{\pi \kappa t}$ (Turcotte and Schubert 2014, section 4.15, eq. 4.116, p. 189). At this Stefan number the lid profile is the half-space profile cut at the depth $2 \lambda \sqrt{\kappa t}$ with $\lambda$ = 2.40, so the lid flux is higher by the factor $1 / \operatorname{erf}\lambda$, a relative 7.0 × 10⁻⁴.
+**How we know the right answer.** A half-space that starts at $T_b$, with its surface held at $T_s$, loses heat at the rate $F = k (T_b - T_s) / \sqrt{\pi \kappa t}$ (Turcotte and Schubert (2014)[^cite-turcotte2014] section 4.15, Eq. 4.116, p. 189). At this Stefan number the lid profile is the half-space profile cut at the depth $2 \lambda \sqrt{\kappa t}$ with $\lambda$ = 2.40, so the lid flux is higher by the factor $1 / \operatorname{erf}\lambda$, a relative 7.0 × 10⁻⁴.
 
 **Why it matters.** Once a crust has frozen through, it cools as a solid; this sets the late heat loss of a planet with a stagnant lid.
 
@@ -46,7 +46,7 @@ The material properties are constant: thermal conductivity $k$ = 4 W/m/K, densit
 **How to read the plot.** The vertical axis is the surface flux of the lid divided by the half-space flux; the shaded band is the tolerance of ±1 %. The dots stay at 1.0007, the small offset that the depth of the lid explains, inside the band at all times.
 
 ??? info "Test details"
-    - Reference: Turcotte and Schubert (2014), section 4.15, eq. 4.116 (p. 189).
+    - Reference: Turcotte and Schubert (2014)[^cite-turcotte2014] section 4.15, Eq. 4.116 (p. 189).
     - Tolerance: relative 10⁻² at 25 times from three lid-diffusion times after the start (measured: 7.0 × 10⁻⁴).
     - Discrimination: the lid flux misses twice the half-space flux by more than 40 % at every time.
     - Test id: `tests/test_surface_lid_validation.py::test_v2_half_space_cooling`
@@ -231,7 +231,7 @@ The step factor is the larger of the two lid thicknesses divided by the smaller 
 
 **No buoyancy.** The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)).
 
-**Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md) rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The lid also needs the entropy EOS tables: a run with constant properties or with an outer boundary other than the grey body (`outer_boundary_condition = 1`) stops at setup with an error. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). Its convergence with mesh refinement after the hand-over is not validated in this release.
+**Two more limits.** The lid is not checked in a steady stagnant-lid mantle (the [Deschamps and Vilella (2021)](../Explanations/solid_state_convection.md)[^cite-deschamps2021] rows). The lid needs the grey-body surface, while those rows hold the surface at a fixed temperature. The lid also needs the entropy EOS tables: a run with constant properties or with an outer boundary other than the grey body (`outer_boundary_condition = 1`) stops at setup with an error. The hand-over of the lid to the mesh is checked inside the solver (energy-exact merge, a run after the hand-over equals the run without the lid). Its convergence with mesh refinement after the hand-over is not validated in this release.
 
 ## Checks of the lid inside the solver
 
@@ -247,3 +247,6 @@ These tests run the lid inside the full solver; they check exact properties of t
 - Without the solid rheology the lid hands over where the top cell cools through its solidus, on every integrator path, and before the call when the top cell starts at or below it: `tests/test_subgrid_lid_solver.py::test_lid_hands_over_where_the_top_cell_freezes`, `::test_top_cell_at_or_below_the_solidus_hands_over_at_the_start`.
 
 **Known limit.** With the solid rheology the lid hands over only with `stress_closure_mode = 'lid'`, whose lid-base isotherm sets the hand-over depth; with another closure the lid never hands over (`tests/test_subgrid_lid_solver.py::test_no_handover_without_the_lid_closure`, `::test_no_solidus_handover_with_the_rheology`). Outside the solid regime (no active stagnant lid, or a top cell past the rheological transition) it does not hand over either (`::test_no_handover_outside_the_solid_regime`), and a hand-over whose isotherm has passed the face fires where the solid regime begins (`::test_handover_fires_where_the_solid_regime_begins`).
+
+[^cite-deschamps2021]: F. Deschamps, K. Vilella, *[Scaling laws for mixed-heated stagnant-lid convection and application to Europa](https://doi.org/10.1029/2021JE006963)*, Journal of Geophysical Research: Planets, 126, e2021JE006963, 2021. [SciX](https://scixplorer.org/abs/2021JGRE..12606963D/abstract).
+[^cite-turcotte2014]: D. L. Turcotte, G. Schubert, *[Geodynamics](https://doi.org/10.1017/CBO9780511843877)*, 3rd edition, Cambridge University Press, 2014. [SciX](https://scixplorer.org/abs/2014geod.book.....T/abstract).
