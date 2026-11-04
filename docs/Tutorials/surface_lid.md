@@ -154,7 +154,7 @@ The thickness grows by a factor 4.08 over a 16-fold time, and $\delta / \sqrt{t}
 
 The stagnant-lid benchmarks of [Solid-state convection](../Explanations/solid_state_convection.md) use constant material properties and a fixed surface temperature. The lid runs there in one mode: no equation-of-state tables, the solid rheology on, and the `'lid'` closure, whose stagnant lid gives the base of the crust (see [On a constant-property column](../Explanations/surface_lid.md#on-a-constant-property-column)). The function below takes the configuration of step 1 and changes it to a shell 300 km thick on 20 nodes (top cell 16 km), with the surface held at 300 K, constant properties and the solid rheology. It passes `entropy_eos=None`, because the lid refuses this mode when tables are attached. The shell starts at 3200 J/kg/K at the bottom and 2800 J/kg/K at the top, 1878 K and 1363 K.
 
-`phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the stagnant lid of the closure is already about 150 km thick at the start, 9 cells of this mesh, so the lid hands over at once.
+`phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the lid-base isotherm of the closure already lies about 150 km deep at the start, 9 cells of this mesh, so the lid hands over at once.
 
 ```python
 import numpy as np
@@ -187,7 +187,7 @@ out = run_constant(2.5e5)
 powers = out.step_dE_F_int_J + out.step_dE_F_cmb_J + out.step_dE_Q_radio_J + out.step_dE_Q_tidal_J
 print(f'hand-over at {out.lid_handover_time:.4g} yr, lid thickness now {out.lid_delta:.1f} m')
 print(f'heat content change {out.step_dE_state_heat_J:.4e} J, integrated powers {powers:.4e} J')
-print(f'relative miss {out.step_dE_state_heat_J / powers - 1:.1e}, solver residual {out.step_solver_residual_J / abs(out.step_dE_F_int_J):.1e}')
+print(f'relative miss {out.step_dE_state_heat_J / powers - 1:.1e}, solver residual below 1e-12: {abs(out.step_solver_residual_J / out.step_dE_F_int_J) < 1e-12}')
 ```
 
 The output (about 50 s):
@@ -195,7 +195,7 @@ The output (about 50 s):
 ```text
 hand-over at 2.417e+05 yr, lid thickness now 0.0 m
 heat content change -5.9818e+27 J, integrated powers -5.9819e+27 J
-relative miss -1.3e-05, solver residual 5.9e-18
+relative miss -1.3e-05, solver residual below 1e-12: True
 ```
 
 What to look at. The crust grows under the cold surface until the isotherm of the stagnant lid has moved below the top cell; then, at 2.4 × 10⁵ years, the lid hands its crust to the mesh, and its thickness is 0. The energy of the shell and the lid together changes by the heat that leaves through the surface: the change of the heat content and the time integral of the surface power agree to 1.3 × 10⁻⁵, the error of the time integration over the steps, and the solver residual is at round-off. The check of the heat of the lid alone, its sub-ledger, is part of the [validation of the lid on the stagnant-lid benchmarks](../Validation/surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks).
