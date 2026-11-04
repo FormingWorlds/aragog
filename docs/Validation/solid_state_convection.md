@@ -6,9 +6,9 @@ This page covers the solid-state part of Aragog: the activation law of solid cre
 
 Validation means that we run the code on a case where another source gives the right answer: an analytical result, a published table or a second independent model. We then check that the code gives that answer. If this part of the code were wrong, a standalone Aragog run with `rheology.enabled = true` would have the wrong mantle temperature, lid thickness and surface heat flux.
 
-**Read the known limits.** The saturating activation law passes against its references. The top slope, the 0-D comparison and the internal-heating exponents do not meet all their published or derived bounds. For these cases, the tests pin the current values, so a change in the code is detected. Each **Known limit.** line states what does not match.
+**Read the known limits.** The saturating activation law passes against its references. The top slope, the 0-D comparison and the internal-heating exponents do not meet all their published or derived bounds. For these cases, the tests store the computed values and fail if a later change shifts them. Each **Known limit.** line states what does not match.
 
-Each case gives, in this order and where they apply: why the check exists, what it tests, how we know the right answer, the setup, the result, why it matters, the plot, a known limit and the test details.
+Each case gives, where they apply and in roughly this order: why the check exists, what it tests, how we know the right answer, the setup, the result, why it matters, the plot, a known limit and the test details.
 
 ## The saturating activation law gives its limits
 
@@ -23,7 +23,7 @@ Each case gives, in this order and where they apply: why the check exists, what 
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits.svg#only-light){ width="80%" }
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** A pass: in panel (b), $\mathrm{d}H$ lies on or below the bound. Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$. It compares curves for $P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$ with the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit. Panel (b) plots the enthalpy difference $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$.
+**How to read the plot.** A pass: in panel (b), $\mathrm{d}H$ lies on or below the bound. Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$. It compares curves for $P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$ with the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit. Panel (b) plots the enthalpy difference $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$. The secant curve fails this bound, and the test asserts that it does.
 
 Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over decay pressures $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$ ($E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, where $V_0 P^2 / 2 = 45562.5\text{ kJ mol}^{-1}\text{ GPa}$). The secant curve is $E_0 + P V_0 \exp(-P / P_\text{decay})$, the form of the rows of Tackley et al. (2013)[^cite-tackley2013], Table 2, with finite $P_\text{decay}$.
 
@@ -40,16 +40,9 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 **What it tests.** Aragog runs to steady state for each published case, with the slope fixed at the $\theta$ of that case. The result is compared with the published value. `tests/reference/ssc_mlt_top_slope_calibration.json` holds the results for 2 slope pairs $(s_{\text{top},\infty}, c_\theta)$:
 
 - **The model default, $(0.22, 0.15)$.** This is the pair that a run uses unless it sets another one.
-- **The second pair, $(0.25, 0.25)$.** This is a calibration on the same 12 rows of Korenaga (2009)[^cite-korenaga2009] that the table compares with, labelled `minimax_0p25_0p25` in the file. The 0-D and scaling-exponent cases below also use it. It is not the code default.
+- **The second pair, $(0.25, 0.25)$.** This pair was chosen on these benchmark rows, and the file labels it `minimax_0p25_0p25`. The 0-D and scaling-exponent cases below also use it. It is not the code default.
 
 `python tools/verification/evaluate_mlt_top_slope_calibration.py --full` generates the file, and `--check` recomputes `E340` and `f60_H4` live and verifies all stored rows and summary statistics. A label such as `E340` is a row of Korenaga (2009)[^cite-korenaga2009], Table 1, named for its activation energy in kJ/mol. A label such as `f70_1e7_H2` is a row of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, named for its radius ratio, Rayleigh number and heating.
-
-**Setup.**
-
-- `stress_closure_mode = 'local'`, with $s_\text{top}$ frozen at the nominal $\theta$ of each table through `c_theta = 0`.
-- The prescribed surface temperature of the solver (`outer_boundary_condition = 5`).
-- A half-cell conductive boundary-flux patch on inner boundary condition (BC) 3 through `_patched_state_update`.
-- A Frank-Kamenetskii viscosity override during steady-state integration on the spherical cases.
 
 **How we know the right answer.** The references are published convection experiments, and each has a tolerance on the compared quantity.
 
@@ -58,7 +51,14 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 | Planar internally heated Newtonian stagnant-lid convection: Korenaga (2009)[^cite-korenaga2009], Table 1, 12 cases | $N = 100$ uniform planar Boussinesq | Nusselt number $\mathrm{Nu}$, $10\%$ relative; $r_\text{norm} = \lvert\mathrm{Nu} - \mathrm{Nu}_\text{ref}\rvert / (0.10 \, \mathrm{Nu}_\text{ref})$ |
 | Spherical mixed-heating stagnant-lid convection: Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, 24 cases, 72 observables | $N = 100$ spherical-shell Boussinesq; $f = r_\text{in} / r_\text{out} \in \{0.60, 0.70, 0.75, 0.80, 0.85\}$ | Interior temperature $T_m$, $0.03$ absolute; top heat flow $\Phi_\text{top}$, $15\%$ relative; lid thickness $d_\text{lid}$, $20\%$ relative |
 
-**Results.** The test checks the stored file against the generator; it does not assert agreement with the published values.
+**Setup.**
+
+- `stress_closure_mode = 'local'`, with $s_\text{top}$ frozen at the nominal $\theta$ of each table through `c_theta = 0`.
+- The prescribed surface temperature of the solver (`outer_boundary_condition = 5`).
+- A half-cell conductive boundary-flux patch on inner boundary condition (BC) 3 through `_patched_state_update`.
+- A Frank-Kamenetskii viscosity override during steady-state integration on the spherical cases.
+
+**Results.** The test recomputes the file and fails if it differs. It does not assert agreement with the published values.
 
 | Result | Second pair $(0.25, 0.25)$ | Default pair $(0.22, 0.15)$ |
 |:---|:---|:---|
@@ -78,7 +78,7 @@ On the Korenaga rows, every residual has the same sign: $\mathrm{Nu}$ is too hig
 
 This case has no plot, because its tests check a stored file and hand values and write no plot pair.
 
-**Known limit.** The default pair misses all 12 planar rows of Korenaga (2009)[^cite-korenaga2009], Table 1. The second pair is within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$), with local closure and $s_\text{top}$ frozen at the tabulated $\theta$. This is a calibration result on those same rows, with all residuals of one sign, so it is not independent agreement. The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$).
+**Known limit.** The default pair misses all 12 planar rows of Korenaga (2009)[^cite-korenaga2009], Table 1. The second pair is within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$), with local closure and $s_\text{top}$ frozen at the tabulated $\theta$. This pair was chosen on the benchmark rows, with all these residuals of one sign, so this is not independent agreement. The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$). Those rows are part of the same benchmark set, so these misses are not an independent failure either.
 
 A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spherical-curvature geometry factor cannot match both planar internally heated and spherical mixed-heating stagnant-lid scaling across core-to-planet radius ratios $f \in [0.60, 0.85]$.
 
@@ -179,7 +179,7 @@ After the $\mathrm{Nu} = 1.0$ clamp activates at $3.6958\text{ Gyr}$, the 0-D li
 
 **The sign of the offset.** At all 128 post-initial samples, the 1-D interior $T_{i,\text{1D}}(t)$ is cooler than $T_{i,\text{0D}}(t)$, and the 1-D Pass-1 isotherm lid $d_{\text{lid,1D}}(t)$ is thinner than $d_{\text{lid,0D}}(t)$. The lid is $540.90\text{ km}$ against $899.94\text{ km}$ at $4.50\text{ Gyr}$, and $478.69\text{ km}$ against $898.62\text{ km}$ at $3.6958\text{ Gyr}$. The 1-D surface heat flux is higher ($F_{\text{top,1D}} / F_{\text{top,0D}} = 2.207$ at $4.50\text{ Gyr}$, $7.56\text{ mW m}^{-2}$ against $3.42\text{ mW m}^{-2}$).
 
-The offset can come from the resolved radial temperature profile across the thickening shell, or from the 1-D spherical mixing-length flux. No separate ablation test has isolated the cause, so this remains an untested hypothesis.
+The offset can come from the resolved radial temperature profile across the thickening shell, or from the 1-D spherical mixing-length flux. The cause has not been tested.
 
 ### Steady-state yield-ceiling lid thinning
 
@@ -215,7 +215,7 @@ At fixed internal heating the interior cools, because more heat leaves through t
 
 Percentages are the difference from the 0-D target of the same table.
 
-Against the $11\%$ relative bound, the Pass-1 ratio fails in both tables: the Pass-1 lid thickens, while the 0-D model predicts that it thins. The conductive diagnostic is within $5.0\%$ of the target at fixed heating. At the matched $T_i$ it fails at $0.5$ and $0.2\,\tau_{d,\text{lid}}$, and it lies within $11\%$ only at $0.1\,\tau_{d,\text{lid}}$.
+Against the $11\%$ relative bound, the Pass-1 ratio fails in both tables: the Pass-1 lid thickens, while the 0-D model predicts that it thins. At the matched $T_i$ the conductive diagnostic fails at $0.5$ and $0.2\,\tau_{d,\text{lid}}$, and it lies within $11\%$ only at $0.1\,\tau_{d,\text{lid}}$. At fixed heating, the stored conductive diagnostic lies about $5\%$ from the fixed-heating target. This is a stored value: no test holds a bound on it, and the `--check` of the generator recomputes the target. Against the cube-root target, the same values at fixed heating deviate by $+16.9\%$, $+54.3\%$ and $+89.8\%$, and they fail the $11\%$ bound.
 
 **Why it matters.** Lid thickness and plastic yielding control how fast a solid rocky mantle loses heat after magma-ocean solidification. They also decide whether lithospheric failure can move a stagnant lid toward mobile-lid cooling in standalone runs.
 
@@ -228,11 +228,11 @@ Against the $11\%$ relative bound, the Pass-1 ratio fails in both tables: the Pa
 
 Panel (b) plots the lid-thinning ratio $R_\text{thin}$ against $\log_{10}(\tau_{y,0} / \tau_{d,\text{lid}})$. The 2 lines of the 0-D law are the cube-root reference at the matched $T_i$ and the weaker target at fixed heating. Both decrease as the yield stress drops. The 1-D Pass-1 isotherm ratio stays above $1.0$, and only the conductive diagnostic thins toward these lines. The star marks the conductive diagnostic, which is not the solver `d_lid`.
 
-**Known limit.** The 1-D solver fails the derived 0-D bounds on the $4.50\text{ Gyr}$ cooling trajectory: $6.78\%$ full-run and $5.51\%$ pre-clamp against $5\%$ on $T_i$, and $46.93\%$ pre-clamp and full-run against $22\%$ on post-relaxation $d_\text{lid}$. It also fails on the steady-state Pass-1 isotherm yield-thinning ratio: at $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$, $1.5257$ against $0.9773$ at fixed heating and $1.0465$ against $0.7937$ at the matched $T_i$.
+**Known limit.** The 1-D solver fails the derived 0-D bounds on the $4.50\text{ Gyr}$ cooling trajectory: $6.78\%$ full-run and $5.51\%$ pre-clamp against $5\%$ on $T_i$, and $46.93\%$ pre-clamp and full-run against $22\%$ on post-relaxation $d_\text{lid}$. It also fails on the steady-state Pass-1 isotherm yield-thinning ratio: at $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$, $1.5257$ against the fixed-heating target $0.9773$ (and against the cube-root target $0.7937$), and $1.0465$ against $0.7937$ at the matched $T_i$.
 
 This is consistent with differences between 1-D resolved radial heat transport and the 0-D bulk energy balance, and with plastic yielding that lets convection carry heat only below the top two radial nodes ($20.20\text{ km}$ depth). The test pins the current 1-D and 0-D values to $10^{-7}$ relative.
 
-**Limit of independence.** The 0-D prefactor $a_\text{Nu} = 0.5954$ and the top-slope pair $(0.25, 0.25)$ rest on the same 12 Newtonian ($n = 1$) rows of Korenaga (2009)[^cite-korenaga2009], p. 157, Table 1. A systematic bias in those 12 rows affects both models, and this comparison does not catch it.
+**Limit of independence.** The 0-D prefactor $a_\text{Nu} = 0.5954$ is a mean over the 12 Newtonian ($n = 1$) rows of Korenaga (2009)[^cite-korenaga2009], p. 157, Table 1, and the top-slope pair $(0.25, 0.25)$ was chosen on benchmark rows that include them. A systematic bias in those 12 rows affects both models, and this comparison does not catch it.
 
 ??? info "Test details"
     - Reference: Zero-dimensional stagnant-lid energy-balance ODE (`tests/reference/stagnant_lid_0d.py`, $a_\text{Nu}$ = `0.5954345503010264`), Korenaga (2009)[^cite-korenaga2009], p. 157, Table 1; p. 158, eq. 29; p. 159, Fig. 4a, Solomatov and Moresi (2000)[^cite-solomatov2000], p. 21803, Table 6; p. 21804, eq. 23, Moresi and Solomatov (1998)[^cite-moresi1998], p. 672, eqs. 11, 13-14; p. 677, eqs. 25-26, and Foley and Bercovici (2014)[^cite-foley2014], p. 588, eqs. 26-27.
