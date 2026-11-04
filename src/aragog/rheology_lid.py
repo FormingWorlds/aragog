@@ -941,7 +941,7 @@ def _compute_stagnant_lid_state_core(
         'w_lid': w_lid,
         'w_y': w_y,
         'w_active': w_active,
-        'f_int_max': f_int_max,
+        'f_int_max': f_int_max + zero_or_nan,
         'has_lid': has_lid,
         'lid_regime': lid_regime,
         'lid_cell_count': lid_cell_count,
