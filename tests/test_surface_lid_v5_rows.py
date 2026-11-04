@@ -51,6 +51,8 @@ def _change(on: dict, off: dict, table: str) -> float:
 
 
 @pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
 def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
     """Every row with the lid equals the row without it within SAME and hands the lid to the
     mesh before the first output; each call closes the gross ledger within GUARD and each call

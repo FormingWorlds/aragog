@@ -87,10 +87,11 @@ def test_legend_check_skips_a_tick_label_outside_the_view():
     assert_legend_clear(_legend_on_tick(1.0, 1.0))
 
 
-def test_legend_check_refuses_a_covered_tick_label_inside_the_view():
-    """The same legend fails on a tick label that the axes draw."""
+@pytest.mark.parametrize('y_top', [1.2, 1.1 * (1.0 - 1.0e-9)], ids=['inside', 'at_the_limit'])
+def test_legend_check_refuses_a_covered_tick_label_inside_the_view(y_top):
+    """The same legend fails on a tick label that the axes draw, also at the limit by round-off."""
     with pytest.raises(AssertionError, match='a legend covers the text'):
-        assert_legend_clear(_legend_on_tick(1.2, 0.8))
+        assert_legend_clear(_legend_on_tick(y_top, 0.8))
 
 
 def test_legend_check_refuses_a_legend_on_a_band():
