@@ -137,6 +137,7 @@ _LID_OUTPUT_FIELDS = (
     ('lid_T_base', 'K', 'Base temperature of the sub-grid lid'),
     ('lid_weight', '1', 'Weight of the sub-grid lid'),
     ('lid_delta_eff', 'm', 'Conductive thickness of the sub-grid lid'),
+    ('lid_conductance', 'W m-2 K-1', 'Conductance of the sub-grid lid, surface to base'),
     ('lid_F_base', 'W m-2', 'Flux into the base of the sub-grid lid'),
     ('lid_handover_time', 'yr', 'Time of the hand-over of the sub-grid lid to the mesh'),
 )
@@ -1209,7 +1210,7 @@ class SolverOutput:
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
-    # [-], conductive thickness delta / f'(0) [m] and the flux into the lid base [W/m^2].
+    # [-], conductive thickness delta / f'(0) [m], conductance [W/m^2/K] and flux into the base [W/m^2].
     lid_delta: float = float('nan')
     lid_E: float = float('nan')
     lid_T_mean: float = float('nan')
@@ -1217,6 +1218,7 @@ class SolverOutput:
     lid_T_base: float = float('nan')
     lid_weight: float = float('nan')
     lid_delta_eff: float = float('nan')
+    lid_conductance: float = float('nan')
     lid_F_base: float = float('nan')
     # Time [yr] of the hand-over of the lid to the mesh; NaN before it, without it, or on a
     # resume of a handed-over lid that does not give the time.
@@ -3345,6 +3347,16 @@ class EntropySolver:
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        if (
+            self._outer_bc_kind == 4
+            and r.w > 0.5
+            and (ev.surf.clipped != 0 or ev.surf.T_s <= _lid.LID_T_S_MIN)
+        ):
+            self._warn_once(
+                'lid_flux_mismatch',
+                f'sub-grid lid: at t={time_yr:.6e} yr the lid carries {ev.surf.F_s:.6g} W/m^2, '
+                'less or more than the prescribed flux, at a limit of its profile',
+            )
         if self._lid_mush and ev.S_f < self._lid_S_sol:
             raise RuntimeError(
                 f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: top cell entropy '
@@ -3562,10 +3574,10 @@ class EntropySolver:
             F_b = max(q_conv, F_in, 0.0)
         floor = _lid.LID_DELTA_FLOOR
         if self._outer_bc_kind == 4:
-            w = _lid.flux_weight(F_b, F_grid)
             surf = _lid.flux_surface_state(
                 delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
             )
+            w = _lid.flux_weight(F_b, base['T_b'], surf.T_s, self._lid_k, self._lid_delta_on)
         else:
             w = _lid.existence_weight(
                 F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on
@@ -6703,6 +6715,7 @@ class EntropySolver:
                 lid_T_base=ev.T_b,
                 lid_weight=ev.rates.w,
                 lid_delta_eff=_lid.effective_thickness(ev.delta, ev.surf.s),
+                lid_conductance=self._lid_k * _lid.shape(ev.surf.s)[0] / ev.delta,
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
             )
@@ -6756,10 +6769,11 @@ class EntropySolver:
         # interior-side surface boundary condition.
         T_basic_final = np.asarray(self.state.phase_basic.temperature()).ravel()
         T_magma = float(T_basic_final[-1])
-        if self._n_lid and self._lid_active and self._outer_bc_kind == 4:
-            # the atmosphere sees the crust surface where the lid acts
+        if self._n_lid and self._lid_active and self._lid_mush:
+            # melt side of the crust for outgassing; lid_T_surface reports the crust surface
+            T_melt = self._lid_last.T_b
             w_lid = self._lid_last.rates.w
-            T_magma = w_lid * self._lid_last.surf.T_s + (1.0 - w_lid) * T_magma
+            T_magma = w_lid * T_melt + (1.0 - w_lid) * T_magma
         # Core temperature: bottom staggered cell (T_stag[0]).
         # SPIDER reports T_core = interior_o.temp[-1], the last
         # staggered node in its surface-to-CMB ordering. Aragog

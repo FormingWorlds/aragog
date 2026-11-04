@@ -264,7 +264,9 @@ def surface_state(
         f0 = shape(s)[0]
         return jnp.where(
             flux > 0.5,
-            jnp.maximum(T_b - F_atm * d / (k * jnp.maximum(f0, 1.0e-30)), LID_T_S_MIN),
+            jnp.maximum(
+                T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)), LID_T_S_MIN
+            ),
             grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq),
         )
 
@@ -389,13 +391,13 @@ def mush_base_flux(lp: LidParams, S_f, delta, F_in, q_conv):
     return F_lo + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_lo)
 
 
-def flux_weight(F_b, F_atm):
+def flux_weight(F_b, T_b, T_s, k, delta_on):
     """Weight [0, 1] of the lid, as :func:`aragog.surface_lid.flux_weight`."""
-    inside = (F_b > 0.0) & (F_atm > 0.0)
-    ratio = jnp.where(inside, F_atm / jnp.where(inside, F_b, 1.0), 1.0)
+    inside = (F_b > 0.0) & (T_s < T_b)
+    ratio = jnp.where(inside, k * (T_b - T_s) / (jnp.where(inside, F_b, 1.0) * delta_on), 1.0)
     w = 0.5 * (1.0 + jnp.tanh(jnp.log10(ratio) / LID_EXIST_WIDTH))
-    w = jnp.where(w <= LID_WEIGHT_FLOOR, 0.0, jnp.where(w >= 1.0 - LID_WEIGHT_FLOOR, 1.0, w))
-    return jnp.where(F_b <= 0.0, 1.0, jnp.where(F_atm <= 0.0, 0.0, w))
+    w = jnp.where(w > LID_WEIGHT_FLOOR, w, 0.0)
+    return jnp.where(T_s >= T_b, 0.0, jnp.where(F_b <= 0.0, 1.0, w))
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
@@ -460,12 +462,6 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         mush_base_flux(lp, S_f, delta, F_in, q_conv),
         jnp.maximum(jnp.maximum(q_conv, F_in), 0.0),
     )
-    w = jnp.where(
-        lp.flux > 0.5,
-        flux_weight(F_b, F_grid),
-        existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
-    )
-    w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
     surf = surface_state(
         delta,
         E,
@@ -478,6 +474,12 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         lp.flux,
         F_grid,
     )
+    w = jnp.where(
+        lp.flux > 0.5,
+        flux_weight(F_b, base['T_b'], surf[0], lp.k, lp.delta_on),
+        existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
+    )
+    w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
     ddelta, dE, F_top, F_fluid, *_ = lid_rates(
         delta=delta,
         E_lid=E,

@@ -249,15 +249,6 @@ def test_flux_surface_state_carries_the_prescribed_flux():
     assert hot.F_s < 1e6
 
 
-def test_flux_weight_compares_surface_loss_with_the_delivery():
-    assert sl.flux_weight(100.0, 100.0) == pytest.approx(0.5, abs=1e-14)
-    assert sl.flux_weight(1.0, 1e4) == 1.0
-    assert sl.flux_weight(1e4, 1.0) == 0.0
-    assert sl.flux_weight(0.0, 10.0) == 1.0
-    assert sl.flux_weight(10.0, 0.0) == 0.0
-    assert sl.flux_weight(-5.0, -5.0) == 1.0
-
-
 @pytest.mark.parametrize(
     'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (5, True, False)]
 )
@@ -322,9 +313,13 @@ class TestFluxSolver:
         assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
         st = s.get_state()
         ev = s._lid_last
-        T_node = float(np.asarray(s.state.top_temperature).ravel()[0])
-        want = ev.rates.w * ev.surf.T_s + (1.0 - ev.rates.w) * T_node
+        T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
+        want = ev.rates.w * ev.T_b + (1.0 - ev.rates.w) * T_node
         assert st.T_magma == pytest.approx(want, rel=1e-9)
+        assert st.lid_T_surface == ev.surf.T_s
+        assert st.lid_conductance == pytest.approx(
+            s._lid_k * sl.shape(ev.surf.s)[0] / ev.delta, rel=1e-12
+        )
 
     def test_jax_flux_mode_matches_numpy(self, eos):
         from aragog.jax import surface_lid as jl
@@ -342,10 +337,41 @@ class TestFluxSolver:
         )
         assert float(surf_j[0]) == pytest.approx(surf_n.T_s, rel=1e-9)
         assert float(surf_j[1]) == pytest.approx(surf_n.F_s, rel=1e-9)
-        for F_b, F_atm in ((10.0, 100.0), (100.0, 10.0), (0.0, 5.0), (7.0, 7.0)):
-            assert float(jl.flux_weight(F_b, F_atm)) == pytest.approx(
-                sl.flux_weight(F_b, F_atm), rel=1e-12
+        on = s._lid_delta_on
+        for F_b, T_s in (
+            (10.0, T_b - 100.0),
+            (1.0e4, T_b - 1.0),
+            (0.0, T_b - 5.0),
+            (-2.0, T_b - 5.0),
+            (7.0, T_b),
+            (7.0, T_b + 3.0),
+            (s._lid_k * 100.0 / on, T_b - 100.0),
+        ):
+            assert float(jl.flux_weight(F_b, T_b, T_s, s._lid_k, on)) == pytest.approx(
+                sl.flux_weight(F_b, T_b, T_s, s._lid_k, on), rel=1e-12, abs=1e-14
             )
+        for F_atm in (-5.0, 0.0):
+            surf_j = jl.surface_state(
+                y[0], y[1], T_b, s._lid_k, 1.0, 255.0, sl.LID_DELTA_FLOOR, lp.e, lp.flux, F_atm
+            )
+            assert float(surf_j[0]) == T_b
+            assert float(surf_j[1]) == 0.0
+
+    def test_a_lid_at_the_limit_of_its_profile_is_reported(self, eos, caplog):
+        s = self._s(eos, F_atm=1.0e4)
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[n - 1] = s._lid_S_sol + sl.LID_FLOOR_GAP + 0.5 * sl.LID_FLOOR_WIDTH
+        T_b = s._lid_T_sol
+        y[-2:] = [1.0e4, 1.0e4 * float(s._lid_hv.profile_heat(0.0, 300.0, T_b))]
+        s._dSdt_single(0.0, y)
+        ev = s._lid_last
+        assert ev.surf.T_s == sl.LID_T_S_MIN
+        assert ev.surf.F_s < 1.0e4
+        assert ev.rates.w > 0.5
+        with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+            s._check_lid_step(s._lid_delta_lo, 0, 0.0)
+        assert 'less or more than the prescribed flux' in caplog.text
 
 
 NOT_BOOL = st.one_of(
@@ -482,3 +508,100 @@ class TestRestore:
         finally:
             solver.set_initial_lid(None)
         assert np.array_equal(start, [0.0, 0.0])
+
+
+def _flux_lid_run(hv, T_b, k, delta0, E0, F_atm, F_b, t_yr, H=None, w_of=None):
+    """Lid states of the flux mode against time at a fixed flux from the atmosphere and a fixed
+    delivery ``F_b``: the rates of :func:`aragog.surface_lid.lid_rates` in a stiff integrator."""
+    from scipy.integrate import solve_ivp
+
+    H_f, H_b, rho = H or (3.5e9, 0.0, 3000.0)
+    floor = sl.LID_DELTA_FLOOR
+
+    def rhs(_t, y):
+        surf = sl.flux_surface_state(y[0], y[1], T_b, k, F_atm, floor, hv)
+        r = sl.lid_rates(
+            delta=y[0],
+            E_lid=y[1],
+            surf=surf,
+            F_b=F_b,
+            F_grid=F_atm,
+            w=w_of(F_b, surf),
+            rho=rho,
+            H_f=H_f,
+            T_b=T_b,
+            H_b=H_b,
+            hv=hv,
+            h_top=1.0e6,
+            delta_lo=0.5,
+            heating=0.0,
+        )
+        return [r.ddelta, r.dE]
+
+    yr = 3.15576e7
+    sol = solve_ivp(
+        rhs, (0.0, t_yr * yr), [delta0, E0], method='Radau', rtol=1e-7, atol=[1e-3, 1.0]
+    )
+    assert sol.status == 0
+    y = sol.y[:, -1]
+    return y[0], y[1], sl.flux_surface_state(y[0], y[1], T_b, k, F_atm, floor, hv)
+
+
+@needs_eos
+class TestFluxLidKnownAnswers:
+    @pytest.fixture(scope='class')
+    def s(self):
+        return _solver(entropy_eos_copy(EOS_DIR))
+
+    @staticmethod
+    def _w(s):
+        return lambda F_b, surf: sl.flux_weight(
+            F_b, s._lid_T_sol, surf.T_s, s._lid_k, s._lid_delta_on
+        )
+
+    @pytest.mark.parametrize('F, delta0', [(1.0, 1000.0), (0.3, 3000.0), (5.0, 100.0)])
+    def test_steady_crust_keeps_delta_and_the_conduction_law(self, s, F, delta0):
+        """F_atm = F_b: delta holds and ``delta = k (T_b - T_s) / F``."""
+        T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
+        T_s = T_b - F * delta0 / k
+        E0 = delta0 * float(hv.profile_heat(0.0, T_s, T_b))
+        delta, _E, surf = _flux_lid_run(hv, T_b, k, delta0, E0, F, F, 1.0e5, w_of=self._w(s))
+        assert delta == pytest.approx(delta0, rel=1e-3)
+        assert surf.T_s == pytest.approx(T_s, rel=1e-2)
+        assert k * (T_b - surf.T_s) / F == pytest.approx(delta, rel=1e-2)
+
+    def test_a_crust_off_the_linear_profile_relaxes_to_the_conduction_law(self, s):
+        T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
+        F, delta0 = 5.0, 100.0
+        E0 = delta0 * float(hv.profile_heat(1.0, T_b - 2.0 * F * delta0 / k, T_b))
+        delta, _E, surf = _flux_lid_run(hv, T_b, k, delta0, E0, F, F, 1.0e5, w_of=self._w(s))
+        assert surf.s == pytest.approx(0.0, abs=1e-2)
+        assert k * (T_b - surf.T_s) / F == pytest.approx(delta, rel=1e-2)
+
+    def test_growth_above_the_delivery_runs_at_the_stefan_rate(self, s):
+        T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
+        F, F_b, delta0 = 1.5, 1.0, 1000.0
+        H_f, H_b, rho = 3.5e9, 0.0, 3000.0
+        E0 = delta0 * float(hv.profile_heat(0.0, T_b - F * delta0 / k, T_b))
+        t = 1.0e3
+        delta, _E, surf = _flux_lid_run(hv, T_b, k, delta0, E0, F, F_b, t, w_of=self._w(s))
+        want = (surf.q_b - F_b) / (H_f - H_b) * t * 3.15576e7
+        assert want > 1.0
+        assert delta - delta0 == pytest.approx(want, rel=0.05)
+
+    @pytest.mark.parametrize('F_atm', [0.0, -5.0, -1e4])
+    def test_no_surface_flux_leaves_no_crust_above_the_base_temperature(self, s, F_atm):
+        T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
+        surf = sl.flux_surface_state(100.0, 1.0e12, T_b, k, F_atm, sl.LID_DELTA_FLOOR, hv)
+        assert surf.T_s == T_b
+        assert surf.F_s == 0.0
+        assert self._w(s)(10.0, surf) == 0.0
+
+    def test_weight_turns_on_above_the_thickness_of_the_steady_crust(self, s):
+        k, T_b, on = s._lid_k, s._lid_T_sol, s._lid_delta_on
+        F_b = k * 100.0 / on
+        assert sl.flux_weight(F_b, T_b, T_b - 100.0, k, on) == pytest.approx(0.5, abs=1e-14)
+        assert sl.flux_weight(F_b, T_b, T_b - 1000.0, k, on) > 0.99999
+        assert sl.flux_weight(F_b, T_b, T_b - 1.0, k, on) < 1.0e-6
+        assert sl.flux_weight(0.0, T_b, T_b - 1.0, k, on) == 1.0
+        assert sl.flux_weight(-3.0, T_b, T_b, k, on) == 0.0

@@ -346,7 +346,7 @@ def flux_surface_state(
     """Lid under a prescribed surface flux ``F_atm`` [W/m^2]: for a shape ``s`` the conduction
     ``k (T_b - T_s) f'(0) / d = F_atm`` fixes the surface temperature, at least 1 K, and with it
     the lid heat content, so ``Q(s) = E / delta`` gives the shape. At 1 K the lid carries less
-    than ``F_atm``.
+    than ``F_atm``. For ``F_atm <= 0`` the surface is at ``T_b`` and the lid carries no flux.
 
     Parameters and the result as :func:`surface_state`, with ``F_atm`` for the grey body.
     """
@@ -354,7 +354,7 @@ def flux_surface_state(
     q = E / max(delta, delta_floor)
 
     def T_s_of(v):
-        return max(T_b - F_atm * d / (k * max(shape(v)[0], 1.0e-30)), LID_T_S_MIN)
+        return max(T_b - max(F_atm, 0.0) * d / (k * max(shape(v)[0], 1.0e-30)), LID_T_S_MIN)
 
     s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
     return _surface(s, T_s_of(s), T_b, k, d, clipped)
@@ -487,20 +487,22 @@ def existence_weight(
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0
 
 
-def flux_weight(F_b: float, F_atm: float) -> float:
-    """Weight [0, 1] of the lid under a prescribed surface flux ``F_atm`` [W/m^2].
+def flux_weight(F_b: float, T_b: float, T_s: float, k: float, delta_on: float) -> float:
+    """Weight [0, 1] of the lid under a prescribed surface flux, from its surface temperature.
 
-    A crust grows only where the surface loses more than the mush delivers:
-    ``w = (1 + tanh(log10(F_atm / F_b) / LID_EXIST_WIDTH)) / 2``, set to 0 below
-    ``LID_WEIGHT_FLOOR`` and to 1 above ``1 - LID_WEIGHT_FLOOR``; 1 for ``F_b <= 0`` and 0 for
-    ``F_atm <= 0`` otherwise.
+    A crust with this temperature drop in steady state carries ``F_b`` by conduction,
+    ``delta_eq = k (T_b - T_s) / F_b``, and the lid acts where ``delta_eq`` exceeds ``delta_on``:
+    ``w = (1 + tanh(log10(delta_eq / delta_on) / LID_EXIST_WIDTH)) / 2``, set to 0 below
+    ``LID_WEIGHT_FLOOR``. A steady crust has ``delta_eq = delta``, so a thick one has ``w = 1``
+    at any ratio of the surface flux to ``F_b``. 0 for ``T_s >= T_b``; 1 for ``F_b <= 0``
+    otherwise.
     """
+    if T_s >= T_b:
+        return 0.0
     if F_b <= 0.0:
         return 1.0
-    if F_atm <= 0.0:
-        return 0.0
-    w = 0.5 * (1.0 + np.tanh(np.log10(F_atm / F_b) / LID_EXIST_WIDTH))
-    return 0.0 if w <= LID_WEIGHT_FLOOR else 1.0 if w >= 1.0 - LID_WEIGHT_FLOOR else float(w)
+    w = 0.5 * (1.0 + np.tanh(np.log10(k * (T_b - T_s) / (F_b * delta_on)) / LID_EXIST_WIDTH))
+    return float(w) if w > LID_WEIGHT_FLOOR else 0.0
 
 
 @dataclass(frozen=True)
