@@ -217,7 +217,7 @@ def test_exact_yield_match():
 
     References
     ----------
-    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
+    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00521.x
     Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
     """
     eta_diff = 1.0e22
