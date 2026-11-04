@@ -487,22 +487,18 @@ def existence_weight(
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0
 
 
-def flux_weight(F_b: float, T_b: float, T_s: float, k: float, delta_on: float) -> float:
-    """Weight [0, 1] of the lid under a prescribed surface flux, from its surface temperature.
-
-    A crust with this temperature drop in steady state carries ``F_b`` by conduction,
-    ``delta_eq = k (T_b - T_s) / F_b``, and the lid acts where ``delta_eq`` exceeds ``delta_on``:
-    ``w = (1 + tanh(log10(delta_eq / delta_on) / LID_EXIST_WIDTH)) / 2``, set to 0 below
-    ``LID_WEIGHT_FLOOR``. A steady crust has ``delta_eq = delta``, so a thick one has ``w = 1``
-    at any ratio of the surface flux to ``F_b``. 0 for ``T_s >= T_b``; 1 for ``F_b <= 0``
-    otherwise.
-    """
-    if T_s >= T_b:
-        return 0.0
-    if F_b <= 0.0:
-        return 1.0
-    w = 0.5 * (1.0 + np.tanh(np.log10(k * (T_b - T_s) / (F_b * delta_on)) / LID_EXIST_WIDTH))
-    return float(w) if w > LID_WEIGHT_FLOOR else 0.0
+def flux_weight(
+    F_b: float,
+    T_b: float,
+    T_s: float,
+    k: float,
+    emissivity: float,
+    T_eq: float,
+    delta_on: float,
+) -> float:
+    """Weight [0, 1] of the lid under a prescribed surface flux: :func:`existence_weight`, which
+    does not read the flux, and 0 where the surface ``T_s`` is at or above ``T_b``."""
+    return 0.0 if T_s >= T_b else existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on)
 
 
 @dataclass(frozen=True)

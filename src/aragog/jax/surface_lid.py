@@ -391,13 +391,10 @@ def mush_base_flux(lp: LidParams, S_f, delta, F_in, q_conv):
     return F_lo + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_lo)
 
 
-def flux_weight(F_b, T_b, T_s, k, delta_on):
+def flux_weight(F_b, T_b, T_s, k, emissivity, T_eq, delta_on):
     """Weight [0, 1] of the lid, as :func:`aragog.surface_lid.flux_weight`."""
-    inside = (F_b > 0.0) & (T_s < T_b)
-    ratio = jnp.where(inside, k * (T_b - T_s) / (jnp.where(inside, F_b, 1.0) * delta_on), 1.0)
-    w = 0.5 * (1.0 + jnp.tanh(jnp.log10(ratio) / LID_EXIST_WIDTH))
-    w = jnp.where(w > LID_WEIGHT_FLOOR, w, 0.0)
-    return jnp.where(T_s >= T_b, 0.0, jnp.where(F_b <= 0.0, 1.0, w))
+    w = existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on)
+    return jnp.where(T_s >= T_b, 0.0, w)
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
@@ -476,7 +473,7 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     )
     w = jnp.where(
         lp.flux > 0.5,
-        flux_weight(F_b, base['T_b'], surf[0], lp.k, lp.delta_on),
+        flux_weight(F_b, base['T_b'], surf[0], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
         existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
     )
     w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)

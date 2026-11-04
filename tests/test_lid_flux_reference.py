@@ -29,7 +29,7 @@ def _lid(d0, F_atm, F_b, T_s0, times):
             surf=surf,
             F_b=F_b,
             F_grid=F_atm,
-            w=sl.flux_weight(F_b, T_B, surf.T_s, K, 1.0),
+            w=sl.flux_weight(F_b, T_B, surf.T_s, K, 1.0, 255.0, 1.0),
             rho=RHO,
             H_f=DW,
             T_b=T_B,

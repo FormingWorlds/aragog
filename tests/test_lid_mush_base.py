@@ -318,7 +318,7 @@ class TestFluxSolver:
         assert st.T_magma == pytest.approx(want, rel=1e-9)
         assert st.lid_T_surface == ev.surf.T_s
         assert st.lid_conductance == pytest.approx(
-            s._lid_k * sl.shape(ev.surf.s)[0] / ev.delta, rel=1e-12
+            s._lid_k * max(sl.shape(ev.surf.s)[0], 0.1) / ev.delta, rel=1e-12
         )
 
     def test_jax_flux_mode_matches_numpy(self, eos):
@@ -347,8 +347,10 @@ class TestFluxSolver:
             (7.0, T_b + 3.0),
             (s._lid_k * 100.0 / on, T_b - 100.0),
         ):
-            assert float(jl.flux_weight(F_b, T_b, T_s, s._lid_k, on)) == pytest.approx(
-                sl.flux_weight(F_b, T_b, T_s, s._lid_k, on), rel=1e-12, abs=1e-14
+            assert float(
+                jl.flux_weight(F_b, T_b, T_s, s._lid_k, 1.0, 255.0, on)
+            ) == pytest.approx(
+                sl.flux_weight(F_b, T_b, T_s, s._lid_k, 1.0, 255.0, on), rel=1e-12, abs=1e-14
             )
         for F_atm in (-5.0, 0.0):
             surf_j = jl.surface_state(
@@ -556,7 +558,7 @@ class TestFluxLidKnownAnswers:
     @staticmethod
     def _w(s):
         return lambda F_b, surf: sl.flux_weight(
-            F_b, s._lid_T_sol, surf.T_s, s._lid_k, s._lid_delta_on
+            F_b, s._lid_T_sol, surf.T_s, s._lid_k, 1.0, 255.0, s._lid_delta_on
         )
 
     @pytest.mark.parametrize('F, delta0', [(1.0, 1000.0), (0.3, 3000.0), (5.0, 100.0)])
@@ -597,14 +599,17 @@ class TestFluxLidKnownAnswers:
         assert surf.F_s == 0.0
         assert self._w(s)(10.0, surf) == 0.0
 
-    def test_weight_turns_on_above_the_thickness_of_the_steady_crust(self, s):
+    def test_weight_does_not_read_the_flux_of_the_atmosphere(self, s):
+        """The surface temperature matters only at or above ``T_b``; below it the weight is the
+        grey body weight, so a steady crust has ``w = 1`` at any surface flux."""
         k, T_b, on = s._lid_k, s._lid_T_sol, s._lid_delta_on
-        F_b = k * 100.0 / on
-        assert sl.flux_weight(F_b, T_b, T_b - 100.0, k, on) == pytest.approx(0.5, abs=1e-14)
-        assert sl.flux_weight(F_b, T_b, T_b - 1000.0, k, on) > 0.99999
-        assert sl.flux_weight(F_b, T_b, T_b - 1.0, k, on) < 1.0e-6
-        assert sl.flux_weight(0.0, T_b, T_b - 1.0, k, on) == 1.0
-        assert sl.flux_weight(-3.0, T_b, T_b, k, on) == 0.0
+        grey = sl.existence_weight(50.0, T_b, k, 1.0, 255.0, on)
+        for T_s in (1.0, 300.0, T_b - 1.0e-6):
+            assert sl.flux_weight(50.0, T_b, T_s, k, 1.0, 255.0, on) == grey
+        assert grey > 0.99999
+        assert sl.flux_weight(50.0, T_b, T_b, k, 1.0, 255.0, on) == 0.0
+        assert sl.flux_weight(1.0e7, T_b, 300.0, k, 1.0, 255.0, on) == 0.0
+        assert sl.flux_weight(-3.0, T_b, T_b - 1.0, k, 1.0, 255.0, on) == 1.0
 
 
 def _mush_states(s):

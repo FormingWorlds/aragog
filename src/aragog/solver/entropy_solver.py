@@ -3577,7 +3577,9 @@ class EntropySolver:
             surf = _lid.flux_surface_state(
                 delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
             )
-            w = _lid.flux_weight(F_b, base['T_b'], surf.T_s, self._lid_k, self._lid_delta_on)
+            w = _lid.flux_weight(
+                F_b, base['T_b'], surf.T_s, self._lid_k, eps, T_eq, self._lid_delta_on
+            )
         else:
             w = _lid.existence_weight(
                 F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on
@@ -6715,7 +6717,7 @@ class EntropySolver:
                 lid_T_base=ev.T_b,
                 lid_weight=ev.rates.w,
                 lid_delta_eff=_lid.effective_thickness(ev.delta, ev.surf.s),
-                lid_conductance=self._lid_k * _lid.shape(ev.surf.s)[0] / ev.delta,
+                lid_conductance=self._lid_k * max(_lid.shape(ev.surf.s)[0], 0.1) / ev.delta,
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
             )
