@@ -237,6 +237,31 @@ def test_fixed_surface_lid_starts_and_stays_at_the_surface_temperature():
     assert s._lid_last.surf.s != pytest.approx(0.0, abs=1e-6)
 
 
+def test_fixed_surface_lid_weight_reads_the_surface_temperature(monkeypatch):
+    """The existence weight of the right-hand side takes T_surf under outer boundary 5."""
+    from aragog import surface_lid as sl
+
+    s, seen, real = _bc5(), [], sl.existence_weight
+
+    def spy(*args, **kw):
+        seen.append(kw.get('T_surf'))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(sl, 'existence_weight', spy)
+    s._dSdt_single(0.0, s._S0)
+    assert seen and set(seen) == {T_SURF}
+
+
+def test_constant_property_lid_heat_is_the_heat_of_the_column():
+    """The heat table of the lid is rho cp T, and at the temperature of an entropy it equals
+    the column heat W(S)."""
+    s = _bc5()
+    T = np.array([300.0, 1000.0, 1900.0])
+    np.testing.assert_allclose(s._lid_hv.H(T), RHO * CP * T, rtol=1e-14)
+    S = np.array([2800.0, 3000.0, 3200.0])
+    np.testing.assert_allclose(s._lid_hv.H(_T(S)), s._lid_W(S), rtol=1e-14)
+
+
 def test_fixed_surface_lid_blends_the_grid_flux_of_the_surface_face(monkeypatch):
     """F_grid of the lid is the outer boundary 5 flux of the top face, the flux of the same
     column without the lid."""
