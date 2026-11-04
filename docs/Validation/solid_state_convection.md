@@ -226,7 +226,7 @@ Against the $11\%$ relative bound, the Pass-1 ratio fails in both tables: the Pa
 
 **How to read the plot.** Panel (a) plots interior temperature $T_i$ in kelvins (left axis, solid and dashed lines) and lid thickness $d_\text{lid}$ in kilometres (right axis, dash-dotted and dotted lines) against time in gigayears over $4.50\text{ Gyr}$. The 1-D lid stays thinner and the 1-D interior cools faster than the 0-D ODE. The 0-D lid follows $(1 - 2.2/\theta)\,D$ from $898.62\text{ km}$ at $3.6958\text{ Gyr}$ to $899.94\text{ km}$ at $4.50\text{ Gyr}$ once the $\mathrm{Nu} = 1.0$ clamp engages.
 
-Panel (b) plots the lid-thinning ratio $R_\text{thin}$ against $\log_{10}(\tau_{y,0} / \tau_{d,\text{lid}})$. The 0-D cube-root reference decreases monotonically as the yield stress drops. The 1-D Pass-1 isotherm ratio stays above $1.0$, and only the conductive diagnostic thins toward the reference curve.
+Panel (b) plots the lid-thinning ratio $R_\text{thin}$ against $\log_{10}(\tau_{y,0} / \tau_{d,\text{lid}})$. The 2 lines of the 0-D law are the cube-root reference at the matched $T_i$ and the weaker target at fixed heating. Both decrease as the yield stress drops. The 1-D Pass-1 isotherm ratio stays above $1.0$, and only the conductive diagnostic thins toward these lines. The star marks the conductive diagnostic, which is not the solver `d_lid`.
 
 **Known limit.** The 1-D solver fails the derived 0-D bounds on the $4.50\text{ Gyr}$ cooling trajectory: $6.78\%$ full-run and $5.51\%$ pre-clamp against $5\%$ on $T_i$, and $46.93\%$ pre-clamp and full-run against $22\%$ on post-relaxation $d_\text{lid}$. It also fails on the steady-state Pass-1 isotherm yield-thinning ratio: at $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$, $1.5257$ against $0.9773$ at fixed heating and $1.0465$ against $0.7937$ at the matched $T_i$. This is consistent with differences between 1-D resolved radial heat transport and the 0-D bulk energy balance, and with plastic yielding that lets convection carry heat only below the top two radial nodes ($20.20\text{ km}$ depth). The test pins the current 1-D and 0-D values to $10^{-7}$ relative.
 
@@ -302,9 +302,9 @@ The single-sweep ordinary least-squares slopes are:
 
 $T_{i,\text{kor}}$ enters both the dependent variable $\mathrm{Nu} = \Delta T_H / (T_{i,\text{kor}} - T_\text{surf})$ and the realized regressors $(\mathrm{Ra}_{i,\text{realized,kor}}, \theta_\text{realized,kor})$. Variations in $T_{i,\text{kor}}$ therefore couple the response and predictor axes in the realized-state regression.
 
-Arrhenius cooling $T_{i,\text{kor}} < T_{i,\text{nom}}$ increases $\eta_\text{diff}(T_{i,\text{kor}})$ by up to $4.5$ orders of magnitude. It shifts 10 of the 12 cases below the $\mathrm{Ra}_{i,\text{realized,kor}} \ge 10^7$ asymptotic stagnant-lid regime:
+Arrhenius cooling $T_{i,\text{kor}} < T_{i,\text{nom}}$ increases $\eta_\text{diff}(T_{i,\text{kor}})$ by up to $4.5$ orders of magnitude. It shifts 10 of the 12 cases below the $\mathrm{Ra}_{i,\text{realized,kor}} \ge 10^7$ asymptotic stagnant-lid regime ($T_{i,\text{kor}}$ in K):
 
-| Case | Design $\mathrm{Ra}_i$ | Design $\theta$ | $T_{i,\text{kor}}$ (K) | Realized $\theta$ | Realized $\mathrm{Ra}_i$ | $\mathrm{Nu}_\text{kor}$ |
+| Case | Design $\mathrm{Ra}_i$ | Design $\theta$ | $T_{i,\text{kor}}$ | Realized $\theta$ | Realized $\mathrm{Ra}_i$ | $\mathrm{Nu}_\text{kor}$ |
 |:---|---:|---:|---:|---:|---:|---:|
 | `case_01` | $1.00 \times 10^6$ | $15.0$ | $1228.14$ | $19.91$ | $2.44 \times 10^2$ | $2.2500$ |
 | `case_02` | $3.16 \times 10^6$ | $15.0$ | $1501.99$ | $17.13$ | $1.06 \times 10^5$ | $2.5666$ |

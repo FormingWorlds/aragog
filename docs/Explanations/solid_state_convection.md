@@ -39,10 +39,10 @@ $$
 | $\eta_\text{solid}$ | Reference solid viscosity | `viscosity_solid` | $10^{21}\text{ Pa s}$ |
 | $f_\text{water}$ | Hydration weakening prefactor | `water_prefactor` | $1.0$ |
 | $R$ | Universal gas constant | `R_GAS` | $8.314462618\text{ J mol}^{-1}\text{ K}^{-1}$ |
-| $g_\text{hom}$ | Homologous activation parameter (no unit) | `g_homologous` | $25.0$ |
-| $T_\text{sol}(P)$ | Solidus temperature at pressure $P$ | see below | see below |
-| $H(P)$ | Activation enthalpy, $H(P) = g_\text{hom} R T_\text{sol}(P)$ | - | - |
+| $g_\text{hom}$ | Homologous activation parameter | `g_homologous` | $25.0$ |
 | $T_\text{ref}$ | Reference temperature | `arrhenius_t_ref` | $1600\text{ K}$ |
+
+Here $T_\text{sol}(P)$ is the solidus temperature at pressure $P$, given below, and $H(P) = g_\text{hom} R T_\text{sol}(P)$ is the activation enthalpy.
 
 **What the reference means.** For the straight-line solidus below, $\eta_\text{solid} f_\text{water}$ equals $\eta_\text{diff}$ at $(T_\text{ref} = 1600\text{ K}, P = 0)$. A solidus table references $\eta_\text{solid}$ to `params.t_sol_0` ($T_{\text{sol},0}$), not to the $P = 0$ value of the table. The viscosity at $P = 0$ then differs by the ratio $\exp\big(g_\text{hom}(T_\text{sol}(0) - T_{\text{sol},0}) / T\big)$. For the PALEOS solidus, $T_\text{sol}(0) = 1464.8\text{ K}$ against $T_{\text{sol},0} = 1400\text{ K}$. At $T = 1600\text{ K}$ the ratio is $2.75\times$, so $\eta_\text{diff}(1600\text{ K}, 0) = 2.75 \times 10^{21}\text{ Pa s}$.
 
