@@ -172,14 +172,14 @@ def _solved(calls=None, **kw):
 @pytest.mark.parametrize('outer_bc', [1, 5])
 def test_constant_property_lid_ledger_closes_over_a_solve(outer_bc):
     """With constant properties the step ledger runs on both outer boundaries: it closes to
-    1e-10 of the surface power and the state heat, lid included, to 1e-2 of the budget."""
+    1e-10 of the surface power and the state heat, lid included, to 2e-3 of the budget."""
     s = _solved(outer_bc=outer_bc)
     assert s._lid_last.delta > s._lid_delta_lo
     ei = s._solution.energy_integrals
     budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
     assert ei['F_int'] < 0.0
     assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
-    assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
+    assert abs(ei['state_heat'] - budget) <= 2e-3 * abs(budget)
 
 
 def test_constant_property_lid_checks_every_accepted_step():
@@ -266,3 +266,101 @@ def test_fixed_surface_lid_refuses_the_jax_rhs(eos):
     s.initialize()
     with pytest.raises(ValueError, match='fixed surface temperature'):
         s.jax_lid_params()
+
+
+def test_constant_property_lid_is_refused_on_the_energy_balance_core():
+    """A trial state of this core mode gives the lid a NaN base; refused at setup by name."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _params()
+    p.boundary_conditions.core_bc = 'energy_balance'
+    with pytest.raises(
+        ValueError, match="constant-property lid needs core_bc = 'quasi_steady'"
+    ):
+        EntropySolver(p, entropy_eos=None).initialize()
+
+
+def test_constant_property_heated_mass_is_rho_v():
+    """Internal heating enters the ledger with the mass rho V of the constant density."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _params()
+    p.energy.tidal, p.energy.tidal_array = True, np.array([1.0e-10])
+    s = EntropySolver(p, entropy_eos=None)
+    s.initialize()
+    s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
+    s.solve()
+    t = s._solution.t[-1] - s._solution.t[0]
+    seconds = float(s._solution.energy_integrals['Q_tidal']) / (
+        RHO * float(np.sum(s._volume_flat)) * 1.0e-10
+    )
+    assert t > 0.0
+    assert seconds == pytest.approx(
+        t * s._year_s if hasattr(s, '_year_s') else t * 31557600.0, rel=1e-3
+    )
+
+
+def test_constant_property_lid_temperature_is_the_column_temperature():
+    """The lid and the column read one T(S) in this mode."""
+    s = _solved()
+    S = s._solution.y[: s._n_stag, -1]
+    s.dSdt(s._solution.t[-1], s._solution.y[:, -1])
+    T = np.asarray(s.state.phase_staggered.temperature()).ravel()
+    np.testing.assert_array_equal(np.asarray(s._lid_props.temperature(None, S)).ravel(), T)
+
+
+def test_constant_property_lid_hands_over_at_once_under_a_thick_closure_lid():
+    """With a stiff solid the isotherm of the closure lies below the hand-over face at the start:
+    the lid hands over at the start and its states are zero."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _params(outer_bc=5)
+    p.mesh.inner_radius = 6071000.0  # a shell 300 km thick, as the tutorial
+    p.phase_solid.viscosity = 1.0e21
+    s = EntropySolver(p, entropy_eos=None)
+    s.initialize()
+    s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
+    s.solve()
+    assert s._lid_handover_time == pytest.approx(0.0, abs=1.0)
+    assert s._solution.y[-2, -1] == 0.0 and s._solution.y[-1, -1] == 0.0
+    assert not s._lid_active
+
+
+@pytest.mark.parametrize(
+    ('F_b', 'T_b', 'w'), [(100.0, T_SURF, 0.0), (-1.0, T_SURF, 0.0), (-1.0, T_SURF + 1.0, 1.0)]
+)
+def test_fixed_surface_existence_weight_edges(F_b, T_b, w):
+    """A base at the surface temperature carries no lid at any flux; a hotter base with no flux
+    from below carries a full one."""
+    from aragog import surface_lid as sl
+
+    assert sl.existence_weight(F_b, T_b, K, 1.0, 255.0, 500.0, T_surf=T_SURF) == w
+
+
+@needs_eos
+def test_table_lid_runs_under_a_fixed_surface_temperature(eos):
+    """On the tables under outer boundary 5 the lid surface stays at the boundary temperature and
+    the ledger closes, with the base at the solidus without the rheology."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=5,
+        inner_bc=2,
+        n_nodes=10,
+        end_time=1.0,
+        outer_bc_value=1000.0,
+    )
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_handover_cells = 1
+    p.boundary_conditions.normalize()
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(np.full(s._n_stag, 3050.0))
+    s.solve()
+    ev, ei = s._lid_last, s._solution.energy_integrals
+    assert ev.delta > s._lid_delta_lo
+    assert ev.surf.T_s == 1000.0
+    assert ev.T_b == pytest.approx(s._lid_T_sol, rel=1e-12)
+    budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
+    assert abs(ei['state_heat'] - budget) <= 2e-3 * abs(budget)

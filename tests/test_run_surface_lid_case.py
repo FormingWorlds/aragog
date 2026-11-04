@@ -147,3 +147,28 @@ def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
     assert row['delta'] is None and row['E'] is None and row['handover_root'] is None
     r = np.load(tmp_path / f'{d.STEM}_part0.npz')['r_basic']
     assert r[-1] - r[-2] == pytest.approx(1000.0, rel=1e-6)  # radii from the Newton mass grid
+
+
+@needs_eos
+def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
+    """The part row holds the surface flux of the lid, not the flux of the grid face that the
+    hand-over root leaves in the state."""
+    import json
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    seen = []
+    root = EntropySolver._lid_root_value
+
+    def spy(self, t, y):
+        last = getattr(self, '_lid_last', None)
+        seen.append(None if last is None else float(last.rates.F_top))
+        return root(self, t, y)
+
+    monkeypatch.setattr(EntropySolver, '_lid_root_value', spy)
+    d = _driver()
+    args = [str(tmp_path), '--eos-dir', str(EOS_DIR), '--samples', '1e1', '--nodes', '20']
+    assert d.main(args) == 0
+    row = json.loads((tmp_path / f'{d.STEM}.json').read_text())[-1]
+    assert row['delta'] > 0.0
+    assert row['F_top'] == pytest.approx(seen[-1], rel=1e-12)

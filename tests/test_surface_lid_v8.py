@@ -93,6 +93,10 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
     assert _late_mean(d, 's1000', 'z_lid') == pytest.approx(ref_z, rel=2e-2)
     assert _late_mean(d, 'n400', 'z_lid') == pytest.approx(ref_z, rel=5e-2)
     assert _late_mean(d, 'n200', 'z_lid') == pytest.approx(ref_z, rel=1e-1)
+    flux = [_late_mean(d, m, 'F_top') / ref for m in ('n100', 'n200', 'n400', 's1000')]
+    depth = [_late_mean(d, m, 'z_lid') / ref_z for m in ('n100', 'n200', 'n400', 's1000')]
+    np.testing.assert_allclose(flux, (0.777, 1.008, 0.999, 1.000), atol=5.0e-4)
+    np.testing.assert_allclose(depth, (1.55, 1.09, 1.05, 1.01), atol=5.0e-3)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -128,6 +132,24 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
         return fig
 
     validation_plot(figure, 'surface_lid_v8_after_the_hand_over')
+
+
+@pytest.mark.reference_pinned
+def test_v8_the_flux_before_the_hand_over_lies_below_the_reference(d):
+    """From 1e6 yr to the last stored state with the lid the flux lies below the reference, by up
+    to 13 % on 100 and 200 nodes and 4.8 % on 400 nodes, by 2, 0.9 and 0.4 % at that last state."""
+    ratio = {}
+    for m in MESHES:
+        i = int(np.flatnonzero(d[f'{m}_delta'] == 0.0)[0])
+        t, F = d[f'{m}_t'][:i], d[f'{m}_F_top'][:i].astype(float)
+        ratio[m] = F / np.interp(t, d['s500_t'], d['s500_F_top'].astype(float))
+    assert all(r.max() < 1.0 for r in ratio.values())
+    np.testing.assert_allclose(
+        [r.min() for r in ratio.values()], (0.870, 0.874, 0.952), atol=1e-3
+    )
+    np.testing.assert_allclose(
+        [r[-1] for r in ratio.values()], (0.981, 0.991, 0.996), atol=1e-3
+    )
 
 
 @pytest.mark.reference_pinned
