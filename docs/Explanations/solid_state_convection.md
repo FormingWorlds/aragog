@@ -26,7 +26,7 @@ With `enabled = False` the solver skips the rheology kernels and gives the same 
 
 ## 1. Homologous-Temperature Diffusion Creep
 
-**How does solid viscosity depend on temperature and pressure?** Solid rock flows by diffusion creep: atoms move slowly through the crystal grains. The hotter the rock is relative to its melting temperature, the faster this is. Aragog therefore writes viscosity as a function of the ratio of the solidus temperature to the temperature. This ratio is the homologous temperature, or its inverse.
+**How does solid viscosity depend on temperature and pressure?** Solid rock flows by diffusion creep: atoms move slowly through the crystal grains. The hotter the rock is relative to its melting temperature, the faster this is. Aragog therefore writes viscosity as a function of $T / T_\text{sol}$, the temperature divided by the solidus temperature. This ratio is the homologous temperature.
 
 ### The creep law
 
@@ -274,10 +274,10 @@ Item 2 has a result that a reader needs to know. A column with $\phi \ge 0.012$ 
 **The sublayer.** Deformation at the lid base takes place in a thin rheological sublayer. Its thickness is the temperature scale divided by the temperature gradient:
 
 $$
-\delta_\text{rh} = \frac{\Delta T_\text{rh}}{|dT/dr|_\text{lid\_base}}
+\delta_\text{rh} = \frac{\Delta T_\text{rh}}{|dT/dr|_\mathrm{lid\_base}}
 $$
 
-The gradient $|dT/dr|_\text{lid\_base}$ is a weighted value from nodal central differences (`xp.gradient(T, r)`). To prevent a division by zero in isothermal or near-adiabatic profiles, the code floors the nodal gradient at a small positive value: a $1\text{ K}$ difference over the minimum grid spacing.
+The gradient $|dT/dr|_\mathrm{lid\_base}$ is a weighted value from nodal central differences (`xp.gradient(T, r)`). To prevent a division by zero in isothermal or near-adiabatic profiles, the code floors the nodal gradient at a small positive value: a $1\text{ K}$ difference over the minimum grid spacing.
 
 ### Smooth Lid Mask and Resolution
 
@@ -612,7 +612,7 @@ This section is for a reader who works on the kernels. It holds the weights, flo
     |:---|:---|
     | `_boundary_weights` | Boltzmann-weighted smooth maximum (`SMOOTH_MAX_REL_WIDTH = 0.02`); $\max(W_\text{sum}, 10^{-12})$ denominator |
     | Flux fraction | Smooth softplus 5-node local interior RMS $\lvert F_\text{tot} \rvert$ floor (`F_TOT_FLOOR_FRAC = 1e-3`, smooth floor at $10^{-12}$, continuous in every $F_k$); $[0, 1]$ clip of $f_k$ |
-    | Lid presence | Boolean `has_lid` flag; smooth product weight $w_\text{lid,present} = w_d w_T w_\text{act\_gate} w_\text{sum\_gate} w_\text{weight}$ (`NO_LID_THICKNESS_WIDTH = 0.25`, `NO_LID_DT_WIDTH = 2.5e-4`, `CONV_ACTIVE_GATE_WIDTH = 0.0025`, `CONV_SUM_GATE_WIDTH = 2.5e-7`) |
+    | Lid presence | Boolean `has_lid` flag; smooth product weight $w_\text{lid,present} = w_d w_T w_\mathrm{act\_gate} w_\mathrm{sum\_gate} w_\text{weight}$ (`NO_LID_THICKNESS_WIDTH = 0.25`, `NO_LID_DT_WIDTH = 2.5e-4`, `CONV_ACTIVE_GATE_WIDTH = 0.0025`, `CONV_SUM_GATE_WIDTH = 2.5e-7`) |
     | `_melt_ramp` and $w_\text{solid,surf}$ | Compactly supported $C^2$ quintic melt-fraction ramp $(t^3)(10 - 15 t + 6 t^2)$ |
     | `scale` and `scale_mask` | Smooth softplus floors and caps (`SCALE_FLOOR_WIDTH = 0.005`, `SCALE_MASK_REL_WIDTH = 0.005`) |
     | $\delta_\text{rh}$ | Radial temperature-gradient floor $\max(\lvert dT/dr \rvert, 1 / \max(\Delta r_\text{min}, 1\text{ m}))$; mantle-thickness cap $\min(\delta_\text{rh}, r_\text{top} - r_\text{bot})$ |
@@ -687,9 +687,9 @@ This section is for a reader who works on the kernels. It holds the weights, flo
     For $\phi \le 0.008$, $w_{\text{sol},\phi} = 0$ identically, so the transition is confined to the compact interval $\phi \in [0.008, 0.012]$. The ramp bounds the raw lid thickness by $d_\text{lid,raw} \le w_\text{active} \sum_{k=0}^{N-2} (1 - w_{\text{interior},k+1}) \Delta r_k$.
 
 ??? note "Locator and capped mask"
-    The lid-base locator $\tilde{W}_{\text{base}, k}$ scans the cell-width interior indicator $w_\text{interior} = \max(w_\text{hot,iso}, w_\text{hot,sol}, w_\text{hot,phi})$ from the surface node inward. Its scale has the smooth softplus floor $\text{scale\_cell} = \text{lid\_mask\_width\_cells} \cdot \text{softmax}(|\nabla T|, 1.0\text{ K}, \text{SCALE\_FLOOR\_WIDTH})$.
+    The lid-base locator $\tilde{W}_{\text{base}, k}$ scans the cell-width interior indicator $w_\text{interior} = \max(w_\text{hot,iso}, w_\text{hot,sol}, w_\text{hot,phi})$ from the surface node inward. Its scale has the smooth softplus floor $\mathrm{scale\_cell} = \mathrm{lid\_mask\_width\_cells} \cdot \text{softmax}(|\nabla T|, 1.0\text{ K}, \mathrm{SCALE\_FLOOR\_WIDTH})$.
 
-    The nodal lid mask uses the capped-width indicator $w_\text{interior,mask} = \max(w_\text{hot,iso,mask}, w_\text{hot,sol,mask}, w_\text{hot,phi})$. Its scale has the smooth softplus cap $\text{scale\_mask} = \text{softmin}(\text{scale\_cell},\, \text{scale\_cap},\, \text{SCALE\_MASK\_REL\_WIDTH} \cdot \text{scale\_cap})$, where $\text{scale\_cap} = \text{lid\_mask\_width\_cells} \cdot \text{softmax}(\Delta T_\text{rh}, 1.0\text{ K}, \text{SCALE\_FLOOR\_WIDTH})$. The mask is:
+    The nodal lid mask uses the capped-width indicator $w_\text{interior,mask} = \max(w_\text{hot,iso,mask}, w_\text{hot,sol,mask}, w_\text{hot,phi})$. Its scale has the smooth softplus cap $\mathrm{scale\_mask} = \text{softmin}(\mathrm{scale\_cell},\, \mathrm{scale\_cap},\, \mathrm{SCALE\_MASK\_REL\_WIDTH} \cdot \mathrm{scale\_cap})$, where $\mathrm{scale\_cap} = \mathrm{lid\_mask\_width\_cells} \cdot \text{softmax}(\Delta T_\text{rh}, 1.0\text{ K}, \mathrm{SCALE\_FLOOR\_WIDTH})$. The mask is:
 
     $$
     w_\text{lid} = (1 - w_\text{interior,mask}) \cdot w_\text{active}
@@ -727,9 +727,9 @@ This section is for a reader who works on the kernels. It holds the weights, flo
     `lid_state` returns both the raw lid thickness `d_lid_raw` and the weighted `d_lid`. It takes the yield indicator `w_y` from $\tau_{d,\text{lid,raw}} / \max(\tau_{y,\text{lid}}, 10^{-6}\text{ Pa})$.
 
 ??? note "Lid-presence weight"
-    `compute_stagnant_lid_state` multiplies $d_\text{lid}$, $\mathrm{Ra}_\text{eff}$, $\mathrm{Ra}_\text{rh}$, $v_m$, $\tau_d$, $\tau_{d,\text{lid}}$, $\tau_\text{buoy}$, $\tau_d / \tau_\text{buoy}$, $w_y$ and `lid_regime` by the weight $w_\text{lid,present} = w_d w_T w_\text{act\_gate} w_\text{sum\_gate} w_\text{weight}$.
+    `compute_stagnant_lid_state` multiplies $d_\text{lid}$, $\mathrm{Ra}_\text{eff}$, $\mathrm{Ra}_\text{rh}$, $v_m$, $\tau_d$, $\tau_{d,\text{lid}}$, $\tau_\text{buoy}$, $\tau_d / \tau_\text{buoy}$, $w_y$ and `lid_regime` by the weight $w_\text{lid,present} = w_d w_T w_\mathrm{act\_gate} w_\mathrm{sum\_gate} w_\text{weight}$.
 
-    $w_d$ and $w_\text{sum\_gate}$ are $C^0$ with a one-sided slope at the domain edge $d_\text{lid,raw} \ge 0$ and $W_\text{sum} \ge 0$. $w_T$ uses the $C^1$ positive part $\mathrm{where}(\Delta T_\text{lid} > 0, \Delta T_\text{lid} \tanh(\Delta T_\text{lid} / (0.3\,\mathrm{NO\_LID\_DT\_WIDTH})), 0)$. So $w_\text{lid,present}$ vanishes identically when $d_\text{lid,raw} \le 0$, $T_i - T_\text{surf} \le 0$ or $W_\text{sum} \le 0$. This prevents numerical floor cancellation artifacts when $\Delta T \to 0$ and keeps all diagnostics continuous across lid onset.
+    $w_d$ and $w_\mathrm{sum\_gate}$ are $C^0$ with a one-sided slope at the domain edge $d_\text{lid,raw} \ge 0$ and $W_\text{sum} \ge 0$. $w_T$ uses the $C^1$ positive part $\mathrm{where}(\Delta T_\text{lid} > 0, \Delta T_\text{lid} \tanh(\Delta T_\text{lid} / (0.3\,\mathrm{NO\_LID\_DT\_WIDTH})), 0)$. So $w_\text{lid,present}$ vanishes identically when $d_\text{lid,raw} \le 0$, $T_i - T_\text{surf} \le 0$ or $W_\text{sum} \le 0$. This prevents numerical floor cancellation artifacts when $\Delta T \to 0$ and keeps all diagnostics continuous across lid onset.
 
     $T_i$, $\eta_i$, $\mu_i$ and $\theta$ serve as interior fallback diagnostics. All solver-facing outputs vary continuously across uniform convective flux fractions $f \in [0, 10^{-3}]$.
 

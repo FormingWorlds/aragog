@@ -182,7 +182,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **Result.** The 0-D scaling predicts $R_\text{thin,0D} = (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}$, which is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check. The table gives the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$.
 
-| Quantity | $0.5$ | $0.2$ | $0.1$ |
+| Quantity | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.5$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.2$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.1$ |
 |:---|:---:|:---:|:---:|
 | 0-D target $R_\text{thin,0D}$ | $0.7937$ ($0.79$) | $0.5848$ ($0.58$) | $0.4642$ ($0.46$) |
 | **Fixed internal heating** | | | |
