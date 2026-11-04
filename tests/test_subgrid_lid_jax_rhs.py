@@ -150,8 +150,8 @@ def _factory_rhs(s, lid_params, bc_lid=None):
             s.evaluator.mesh, validate_rheology=bool(s._rheology_enabled)
         ),
         boundary_params=BoundaryParams(
-            outer_bc_type=1,
-            outer_bc_value=0.0,
+            outer_bc_type=s._outer_bc_kind,
+            outer_bc_value=s._outer_bc_value if s._outer_bc_kind == 4 else 0.0,
             emissivity=float(bc.emissivity),
             T_eq=float(bc.equilibrium_temperature),
             inner_bc_type=2 if s._core_bc == 'quasi_steady' else 1,

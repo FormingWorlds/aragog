@@ -581,7 +581,7 @@ class TestFluxLidKnownAnswers:
     def test_growth_above_the_delivery_runs_at_the_stefan_rate(self, s):
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         F, F_b, delta0 = 1.5, 1.0, 1000.0
-        H_f, H_b, rho = 3.5e9, 0.0, 3000.0
+        H_f, H_b = 3.5e9, 0.0
         E0 = delta0 * float(hv.profile_heat(0.0, T_b - F * delta0 / k, T_b))
         t = 1.0e3
         delta, _E, surf = _flux_lid_run(hv, T_b, k, delta0, E0, F, F_b, t, w_of=self._w(s))
@@ -605,3 +605,63 @@ class TestFluxLidKnownAnswers:
         assert sl.flux_weight(F_b, T_b, T_b - 1.0, k, on) < 1.0e-6
         assert sl.flux_weight(0.0, T_b, T_b - 1.0, k, on) == 1.0
         assert sl.flux_weight(-3.0, T_b, T_b, k, on) == 0.0
+
+
+def _mush_states(s):
+    """Top cells across the floor band and above it, with lids of 1 m to 1 km and a hand-over."""
+    n = s._n_stag
+    T_b = s._lid_T_sol
+    for dS, d, T_s in (
+        (sl.LID_FLOOR_GAP, 3.0, 1800.0),
+        (sl.LID_FLOOR_GAP + 0.3 * sl.LID_FLOOR_WIDTH, 30.0, 1500.0),
+        (sl.LID_FLOOR_GAP + 0.8 * sl.LID_FLOOR_WIDTH, 1000.0, 900.0),
+        (40.0, 300.0, 1200.0),
+        (700.0, 1.0, 2000.0),
+        (700.0, 0.0, T_b),
+    ):
+        y = s._S0.copy()
+        y[:n] = np.linspace(3050.0, 3000.0, n)
+        y[n - 1] = s._lid_S_sol + dS
+        y[-2:] = (d, d * float(s._lid_hv.profile_heat(0.0, T_s, T_b)))
+        yield y
+
+
+@needs_eos
+@pytest.mark.parametrize('outer', [1, 4])
+def test_jax_factory_rhs_matches_on_the_mush_base(outer):
+    """The factory that PROTEUS uses against the NumPy right-hand side, grey body and flux."""
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
+
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=outer,
+        inner_bc=2,
+        n_nodes=10,
+        end_time=1.0,
+        **({'outer_bc_value': 200.0} if outer == 4 else {}),
+    )
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_mush_base = True
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
+    )
+    s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR))
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    rhs_fn, _, info = _factory_rhs(s, s.jax_lid_params())
+    assert info['lid'] and rhs_fn.lid
+    f, n = _physical(rhs_fn, s._build_nondim_scales()), 0
+    top = s._n_stag - 1
+    for y in _mush_states(s):
+        want = np.asarray(s._dSdt_single(0.0, y), dtype=float)
+        got = f(y)
+        n += 1
+        np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-9, atol=1e-300)
+        atol = 1e-12 * np.abs(want[: s._n_stag]).max()
+        assert atol > 0.0
+        np.testing.assert_allclose(got[top], want[top], rtol=1e-9, atol=atol)
+        np.testing.assert_allclose(got[:top], want[:top], rtol=1e-12, atol=atol)
+    assert info['rhs_calls'] == n
