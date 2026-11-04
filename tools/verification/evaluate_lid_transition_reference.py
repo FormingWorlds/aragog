@@ -3,7 +3,7 @@
 This script evaluates interior temperature T_i, Arrhenius viscosity eta_i, and
 mixture viscosity mu_i at the 7 sub-threshold transition points where
 0 < w_weight < 1. It implements the closed-form physical formulas for geotherm
-endpoint blending documented in Section 3 of
+endpoint blending documented in Section 11 of
 docs/Explanations/solid_state_convection.md using NumPy only, without importing
 any aragog modules for its reference computation. Physical constants and default
 parameters are parsed from the repository source via ast.parse.

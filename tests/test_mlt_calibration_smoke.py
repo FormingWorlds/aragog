@@ -34,8 +34,8 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
        floor Nu = 2.2472 (analytic Korenaga planar floor 1 + sqrt(6)/2 = 2.2247, peak Nu = 2.0):
        case_01 (design Ra_i = 1e6, realized Ra_i = 244.3, theta = 15, Nu = 2.2500) and
        case_12 (design Ra_i = 1e7, realized Ra_i = 227.9, theta = 25, Nu = 2.2509).
-    2. Even on the 7-case convecting subset (Nu_est >= 2.8, a post-hoc diagnostic chosen
-       after the result), where design-parameter beta = 0.3112 +/- 0.0026 enters
+    2. Even on the 7-case convecting subset (Nu_est >= 2.8, a diagnostic outside
+       the window test), where design-parameter beta = 0.3112 +/- 0.0026 enters
        [0.294, 0.350], the Frank-Kamenetskii exponent is alpha = 1.1698 +/- 0.0285
        (1-D sweep 1.1553 +/- 0.0117 on 3 points, 1 degree of freedom), below
        [1.294, 1.350] because s_top(theta) = 0.25 + 0.75 * exp(-0.25 * theta) converges
@@ -168,7 +168,7 @@ def test_stagnant_lid_scaling_exponents(validation_plot, tmp_path) -> None:
     assert a_sw12['slope'] == pytest.approx(1.0103893204049352, rel=rel_pin)
     assert a_sw12['std_err_slope'] == pytest.approx(0.05904753866967937, rel=rel_pin)
 
-    # 3. Recompute and verify the post-hoc 7-case convecting diagnostic subset (Nu_est >= 2.8)
+    # 3. Recompute and verify the 7-case convecting diagnostic subset (Nu_est >= 2.8)
     mask_conv7 = nu_est_all >= 2.8
     assert int(np.sum(mask_conv7)) == 7
     fit7_live = _ols(
@@ -499,7 +499,7 @@ half_life_years = 1.0e30
             loc='upper center',
             bbox_to_anchor=(0.5, -0.24),
             ncol=2,
-            title='* diagnostic chosen after the result',
+            title='* diagnostic, outside the window test',
         )
 
         fig.subplots_adjust(left=0.10, right=0.97, top=0.95, bottom=0.38, wspace=0.34)

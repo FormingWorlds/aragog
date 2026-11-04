@@ -1139,7 +1139,7 @@ def compute_effective_viscosity(
 
     References
     ----------
-    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
+    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00521.x
         (viscosity switch / minimum form eta_eff = min(eta_creep, eta_yield))
     Foley & Bercovici (2014), p. 588, eq. 28, doi:10.1093/gji/ggu275
         (convective driving shear stress tau_d = 2 * mu_i * v_m / d)
