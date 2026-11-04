@@ -78,7 +78,9 @@ On the Korenaga rows, every residual has the same sign: $\mathrm{Nu}$ is too hig
 
 This case has no plot, because its tests check a stored file and hand values and write no plot pair.
 
-**Known limit.** The default pair misses all 12 planar rows of Korenaga (2009)[^cite-korenaga2009], Table 1. The second pair is within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$), with local closure and $s_\text{top}$ frozen at the tabulated $\theta$. This pair was chosen on the benchmark rows, with all these residuals of one sign, so this is not independent agreement. The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$). Those rows are part of the same benchmark set, so these misses are not an independent failure either.
+**Known limit.** The default pair misses all 12 planar rows of Korenaga (2009)[^cite-korenaga2009], Table 1. The second pair is within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$), with local closure and $s_\text{top}$ frozen at the tabulated $\theta$. This pair was chosen on the benchmark rows, with all these residuals of one sign, so this is not independent agreement.
+
+The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$). Those rows are part of the same benchmark set, so these misses are not an independent failure either.
 
 A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spherical-curvature geometry factor cannot match both planar internally heated and spherical mixed-heating stagnant-lid scaling across core-to-planet radius ratios $f \in [0.60, 0.85]$.
 
