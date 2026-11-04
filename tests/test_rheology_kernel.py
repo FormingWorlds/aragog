@@ -2173,6 +2173,9 @@ def test_rheology_kernel_reference_grid_parity():
             np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
             np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
+        elif k == 'f_int_max':  # not in the main fixture: it sets w_active, which is
+            exp_w = 0.5 * (1.0 + np.tanh((arr - params.interior_flux_fraction) / 0.01))
+            np.testing.assert_allclose(exp_w, data['lid_w_active'], rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 
