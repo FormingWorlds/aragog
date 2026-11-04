@@ -1,4 +1,4 @@
-"""The lid hands over in a case with its gate open and the mesh carries the crust after it: the
+"""The lid hands over in one case, and the mesh carries the crust after it: the
 1000 km column on 100, 200 and 400 nodes against 2 runs without the lid on refined top cells, from
 stored runs (``tests/reference/build_surface_lid_v8.py``); they take days on a cluster.
 """
@@ -61,7 +61,7 @@ def _flux_step(d, m):
 
 @pytest.mark.reference_pinned
 def test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes(d):
-    """The gate opens on all 3 meshes, each lid sits at 0.8 of its top cell before the hand-over,
+    """The lid hands over on all 3 meshes; each lid sits at 0.8 of its top cell before the hand-over,
     and the hand-over times agree within 3 %."""
     times = [float(d[f'{m}_handover_yr']) for m in MESHES]
     assert max(times) / min(times) < 1.03
