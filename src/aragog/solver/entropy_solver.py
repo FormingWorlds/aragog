@@ -3159,7 +3159,7 @@ class EntropySolver:
             T_s = (
                 max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN)
                 if T_held is None
-                else min(T_held, base['T_b'])
+                else min(T_held, base['T_b'] - _lid.LID_DT_MIN)
             )
         else:
             T_s = _lid.linear_lid_surface(
@@ -3600,13 +3600,14 @@ class EntropySolver:
                     E,
                     base['T_b'],
                     self._lid_k,
-                    min(T_held, base['T_b']),
+                    min(T_held, base['T_b'] - _lid.LID_DT_MIN),
                     floor,
                     self._lid_hv,
                 )
             )
+            T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else base['T_b']
             w = _lid.flux_weight(
-                F_b, base['T_b'], surf.T_s, self._lid_k, eps, T_eq, self._lid_delta_on
+                F_b, base['T_b'], T_top, self._lid_k, eps, T_eq, self._lid_delta_on
             )
         else:
             w = _lid.existence_weight(

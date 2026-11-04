@@ -366,8 +366,7 @@ class TestFluxSolver:
             surf_j = jl.surface_state(
                 y[0], y[1], T_b, s._lid_k, 1.0, 255.0, sl.LID_DELTA_FLOOR, lp.e, lp.flux, F_atm
             )
-            assert float(surf_j[0]) == T_b
-            assert float(surf_j[1]) == 0.0
+            assert float(surf_j[0]) == T_b - sl.LID_DT_MIN
 
     def test_a_lid_at_the_limit_of_its_profile_is_reported(self, eos, caplog):
         s = self._s(eos, F_atm=1.0e4)
@@ -605,9 +604,8 @@ class TestFluxLidKnownAnswers:
     def test_no_surface_flux_leaves_no_crust_above_the_base_temperature(self, s, F_atm):
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         surf = sl.flux_surface_state(100.0, 1.0e12, T_b, k, F_atm, sl.LID_DELTA_FLOOR, hv)
-        assert surf.T_s == T_b
-        assert surf.F_s == 0.0
-        assert self._w(s)(10.0, surf) == 0.0
+        assert surf.T_s == T_b - sl.LID_DT_MIN
+        assert sl.flux_weight(10.0, T_b, T_b, k, 1.0, 255.0, s._lid_delta_on) == 0.0
 
     def test_weight_does_not_read_the_flux_of_the_atmosphere(self, s):
         """The surface temperature matters only at or above ``T_b``; below it the weight is the
@@ -768,7 +766,7 @@ class TestHeldSurface:
         s = _held_solver(eos, 1.0e4, F_atm=123.0)
         s._dSdt_single(0.0, self._state(s, 100.0, 500.0, dS=sl.LID_FLOOR_WIDTH * 3.0))
         ev = s._lid_last
-        assert ev.surf.T_s == s._lid_T_sol
+        assert ev.surf.T_s == s._lid_T_sol - sl.LID_DT_MIN
         assert ev.rates.w == 0.0
         assert float(s.state._heat_flux[-1]) == 123.0
 
@@ -799,6 +797,23 @@ class TestHeldSurface:
             np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-9, atol=1e-300)
             np.testing.assert_allclose(got[top], want[top], rtol=1e-9, atol=atol)
         assert info['rhs_calls'] == 6
+
+    @pytest.mark.parametrize(
+        'T_held, F_atm',
+        [(500.0, 200.0), (1.0e4, 200.0), (None, -5.0), (None, 0.0), (None, 200.0)],
+    )
+    def test_jax_jacobian_is_finite_and_the_flux_goes_to_the_grid(self, eos, T_held, F_atm):
+        """A surface at or above the base leaves the profile with no temperature drop."""
+        from tests.test_subgrid_lid_jax_rhs import _factory_rhs
+
+        s = _held_solver(eos, T_held, F_atm=F_atm)
+        _, jac, _ = _factory_rhs(s, s.jax_lid_params())
+        sc = s._build_nondim_scales()
+        for y in _mush_states(s):
+            x = (y - sc.state_offset) / sc.state_scale
+            J = np.zeros((x.size, x.size))
+            assert jac(0.0, x, np.zeros(x.size), J) == 0
+            assert np.all(np.isfinite(J))
 
     def test_coupled_budget_closes_and_reports_the_difference_from_the_atmosphere(self, eos):
         """Steps under a grey balance: the state heat of each call equals the integrated powers,

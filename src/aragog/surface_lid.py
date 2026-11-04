@@ -50,6 +50,7 @@ LID_HANDOVER_FRAC: float = 0.7
 LID_FLOOR_GAP: float = 1.0
 LID_FLOOR_WIDTH: float = 5.0
 LID_T_S_MIN: float = 1.0
+LID_DT_MIN: float = 1.0
 LID_CAP_WIDTH: float = 0.02
 # A lid weight below this value is set to 0 (the lid is hidden).
 LID_WEIGHT_FLOOR: float = 1.0e-10
@@ -346,7 +347,8 @@ def flux_surface_state(
     """Lid under a prescribed surface flux ``F_atm`` [W/m^2]: for a shape ``s`` the conduction
     ``k (T_b - T_s) f'(0) / d = F_atm`` fixes the surface temperature, at least 1 K, and with it
     the lid heat content, so ``Q(s) = E / delta`` gives the shape. At 1 K the lid carries less
-    than ``F_atm``. For ``F_atm <= 0`` the surface is at ``T_b`` and the lid carries no flux.
+    than ``F_atm``. The surface stays ``LID_DT_MIN`` below ``T_b``, so that the profile keeps a
+    temperature drop; :func:`flux_weight` gives such a lid no weight for ``F_atm <= 0``.
 
     Parameters and the result as :func:`surface_state`, with ``F_atm`` for the grey body.
     """
@@ -354,7 +356,8 @@ def flux_surface_state(
     q = E / max(delta, delta_floor)
 
     def T_s_of(v):
-        return max(T_b - max(F_atm, 0.0) * d / (k * max(shape(v)[0], 1.0e-30)), LID_T_S_MIN)
+        T_s = T_b - max(F_atm, 0.0) * d / (k * max(shape(v)[0], 1.0e-30))
+        return min(max(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
 
     s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
     return _surface(s, T_s_of(s), T_b, k, d, clipped)
@@ -496,8 +499,8 @@ def flux_weight(
     T_eq: float,
     delta_on: float,
 ) -> float:
-    """Weight [0, 1] of the lid under a prescribed surface flux: :func:`existence_weight`, which
-    does not read the flux, and 0 where the surface ``T_s`` is at or above ``T_b``."""
+    """Weight [0, 1] of the lid under the surface of the atmosphere: :func:`existence_weight`,
+    which does not read the flux, and 0 where that surface ``T_s`` is at or above ``T_b``."""
     return 0.0 if T_s >= T_b else existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on)
 
 

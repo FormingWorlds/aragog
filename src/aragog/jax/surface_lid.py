@@ -18,6 +18,7 @@ from aragog.surface_lid import (
     LID_CAP_WIDTH,
     LID_DELTA_FLOOR,
     LID_DH_MIN,
+    LID_DT_MIN,
     LID_EXIST_WIDTH,
     LID_FLOOR_GAP,
     LID_FLOOR_WIDTH,
@@ -276,13 +277,16 @@ def surface_state(
         f0 = shape(s)[0]
         return jnp.where(
             flux > 0.5,
-            jnp.where(
-                held > 0.5,
-                jnp.minimum(T_held, T_b),
-                jnp.maximum(
-                    T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
-                    LID_T_S_MIN,
+            jnp.minimum(
+                jnp.where(
+                    held > 0.5,
+                    T_held,
+                    jnp.maximum(
+                        T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
+                        LID_T_S_MIN,
+                    ),
                 ),
+                T_b - LID_DT_MIN,
             ),
             grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq),
         )
@@ -494,7 +498,15 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     )
     w = jnp.where(
         lp.flux > 0.5,
-        flux_weight(F_b, base['T_b'], surf[0], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
+        flux_weight(
+            F_b,
+            base['T_b'],
+            jnp.where(lp.held > 0.5, lp.T_held, jnp.where(F_grid > 0.0, surf[0], base['T_b'])),
+            lp.k,
+            lp.emissivity,
+            lp.T_eq,
+            lp.delta_on,
+        ),
         existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
     )
     w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
