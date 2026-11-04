@@ -7,7 +7,7 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 - [Phase transitions](phase_transitions.md): the blend of the material properties at the solidus and the liquidus against the blend formula of SPIDER, and the NumPy and JAX right-hand sides inside the blend.
 - [Mesh refinement](mesh_refinement.md): the mesh refined towards the surface and the CMB against its set end cells, and the mesh without refinement against the stored results of the code without the option.
 - [Numerics](numerics.md): the first-principles checks of the solver, the phase-boundary rate controller, the equation of state and the NumPy and JAX right-hand sides, including the `reference_pinned` solid-rheology solver-wiring benchmarks.
-- [Solid-state convection](solid_state_convection.md): the saturating integral activation enthalpy, the viscous mixing-length top-slope benchmarks, the 0-D stagnant-lid comparison and the internal-heating scaling exponents. The Arrhenius creep, plastic yield and stagnant-lid closure have worked numbers on the [Explanation page](../Explanations/solid_state_convection.md); their `reference_pinned` tests are in the table below.
+- [Solid-state convection](solid_state_convection.md): the saturating integral activation enthalpy, the viscous mixing-length top-slope benchmarks, the 0-D stagnant-lid comparison and the internal-heating scaling exponents. The Arrhenius creep, plastic yield and stagnant-lid closure have worked numbers on the [Explanation page](../Explanations/solid_state_convection.md). The `reference_pinned` tests of the Arrhenius creep and the yield stress are in the table below; the stagnant-lid closure has unit tests only.
 
 ## Cases by process
 

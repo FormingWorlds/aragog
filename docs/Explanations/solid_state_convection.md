@@ -6,22 +6,22 @@ The modules `aragog.rheology` and `aragog.rheology_lid` hold this physics. The s
 
 ## The physics in short
 
-**Viscosity varies by many orders of magnitude.** Viscosity measures how hard it is to deform a material. In solid rock it depends strongly on temperature and pressure. For example, rock at 90 % of its solidus temperature is about 16 times more viscous than rock at its solidus temperature. The solidus is the temperature where rock starts to melt ($g_\text{hom} = 25$, section 1).
+**Viscosity varies by many orders of magnitude.** Viscosity measures how hard it is to deform a material. In solid rock it depends strongly on temperature and pressure. For example, rock at 90 % of its solidus temperature is about 16 times more viscous than rock at its solidus temperature ($g_\text{hom} = 25$, a parameter of the creep law in section 1). The solidus is the temperature where rock starts to melt.
 
 **A stagnant lid forms at the cold surface.** The coldest rock is too stiff to take part in convection. It stays in place and carries heat mainly by conduction. The warm mantle below it convects.
 
-**The lid can yield.** Convection below the lid pushes on it with a driving stress. Rock has a limited strength, the yield stress. If the driving stress is larger than the yield stress of the lid, the lid fails and joins the flow. On the 50-node Earth reference profile of section 4.4, the yield stress is about 280 times larger than the driving stress, so the lid stays in place (section 5).
+**The lid can yield.** Convection below the lid pushes on it with a driving stress. Rock has a limited strength, the yield stress. If the driving stress is larger than the yield stress of the lid, the lid fails and joins the flow. In the Earth example of sections 4.4 and 5, the yield stress is about 280 times larger than the driving stress, so the lid stays in place (section 5).
 
 **What `rheology.enabled` changes in a run:**
 
 | Part of the model | `enabled = False` (default) | `enabled = True` | Section |
 |:---|:---|:---|:---:|
 | Solid viscosity | Constant at `viscosity_solid` | Creep law: depends on temperature and pressure | 1 |
-| Melt fraction and viscosity with `const_properties = True` | $\phi = 1$ (liquid), viscosity `10**const_log10visc` | $\phi = 0$ (solid), creep viscosity | 1 |
+| Melt fraction and viscosity with `const_properties = True` | $\phi = 1$ (liquid), viscosity `10**const_log10visc` | $\phi = 0$ (solid), creep viscosity | - |
 | Viscosity in the flux calculation | Calculated once | Calculated in two passes: the second pass uses the effective viscosity from the first pass (the lid state in `'lid'` mode, the local yield viscosity in `'local'` mode) | 3, 5, 8 |
 | Top slope of the mixing length | Not changed | Reduced near the surface | 7 |
 | Eddy-diffusivity floor in a fully solid cell | Small value above zero | Exactly zero, so a conductive lid can form | 6 |
-| Check on each accepted state | The call fails if a cell entropy leaves the table | With a table equation of state, the run stops with `RuntimeError` if a cell entropy leaves the table. With any equation of state, it also stops on a non-finite or out-of-range viscosity or lid diagnostic | 6 |
+| Check on each accepted state | With a table equation of state, a call that advances fails if a cell entropy leaves the table | With a table equation of state, the run stops with `RuntimeError` if a cell entropy leaves the table in an accepted state. With any equation of state, it also stops on a non-finite or out-of-range viscosity and, in `'lid'` mode, on a bad lid diagnostic. On the JAX path these viscosity and lid checks run on the last state of each call | 6 |
 
 With `enabled = False` the solver skips the rheology kernels and reproduces the baseline trajectory without this physics.
 
@@ -267,10 +267,10 @@ If $\theta < 9$, the convective regime lies outside the asymptotic stagnant-lid 
 **Where the lid base is.** The lid base is the shallowest of these 3 depths:
 
 1. The rheological isotherm, where $T = T_{\text{lid,iso}}$.
-2. The solidus crossing: where the melt fraction is near $\phi = 0.01$ and, when a solidus profile is supplied, also where $T = T_\text{sol}$. The shallower of the two counts.
+2. The solidus crossing: the shallower of 2 places, where the melt fraction is near $\phi = 0.01$ and, when a solidus profile is supplied, where $T = T_\text{sol}$.
 3. The rheological crystallisation front, where $\phi = \phi_\text{rheo} = 0.4$.
 
-A column is the 1-D radial profile of the mantle. A column with $\phi \ge 0.012$ at every node has no lid at any mesh resolution (section 9, item 7).
+A column is the 1-D radial profile of the mantle. Item 2 has a consequence: a column with $\phi \ge 0.012$ at every node has no lid at any mesh resolution (section 9, item 7).
 
 **Special columns.** A column can be non-convecting and below the lid-base criterion at every node, so that no node is marked as interior (the indicator sum $W_\text{base,sum} \to 0$). `r_lid_base` then sits at the inner boundary radius `r[0]` (the core-mantle boundary), which gives $d_\text{lid,raw} = (r_\text{outer} - r_\text{inner}) w_\text{active}$, and $d_\text{lid} = 0$ when $w_\text{active} = 0$. In `'fixed'` mode, a column colder than $T_\text{base}$ that convects on nodes $0 \dots k$ and is conductive above places `r_lid_base` at $r_k$. If no node is non-convecting, `r_lid_base` sits at `r[-1]` with $d_\text{lid,raw} = 0$, $d_\text{lid} = 0$ and `has_lid = False`.
 
@@ -308,7 +308,7 @@ $$
 
 The factor of 2 comes from horizontal shear between the lid base ($u = v_m$) and mid-depth ($u = 0$ at $z = d/2$), as Foley and Bercovici (2014, pp. 584, 588) derive. $\tau_d$ divides by the full mantle thickness, while $\tau_{d,\text{lid}}$ divides by $d_\text{geom}$. Their ratio is $\tau_{d,\text{lid}} / \tau_d = d / d_\text{geom}$. This ratio is bounded above by $d / \max(\delta_\text{rh}, \Delta r_\text{top})$ on incipient lids, and it vanishes in non-lid columns where $w_\text{lid,present} = 0$.
 
-**The velocity.** The interior velocity follows the boundary-layer scaling for bottom-heated stagnant-lid convection (Foley and Bercovici, 2014, pp. 586-587, eq. 26). They report that Solomatov and Moresi (2000)[^cite-solomatov2000] state that it fits the bottom-heated experiments of Dumoulin et al. (1999)[^cite-dumoulin1999]:
+**The velocity.** The interior velocity follows the boundary-layer scaling for bottom-heated stagnant-lid convection (Foley and Bercovici, 2014, pp. 586-587, eq. 26). Foley and Bercovici note that Solomatov and Moresi (2000)[^cite-solomatov2000] state that this scaling also fits the bottom-heated experiments of Dumoulin et al. (1999)[^cite-dumoulin1999]:
 
 $$
 v_m = \frac{\kappa_i}{d} C_4 \left( \frac{\mathrm{Ra}_\text{eff} a_\text{rh}}{\theta} \right)^{2/3}
@@ -334,7 +334,7 @@ $$
 v_m = a_u \frac{\kappa}{d} \left( \frac{\mathrm{Ra}_i a_\text{rh}}{\theta} \right)^{1/2}
 $$
 
-Here $a_u = 0.385 \pm 0.003$ for Newtonian rheology ($n = 1$) and $a_\text{rh} = 2.4$. $\mathrm{Ra}_i$ is the internal Rayleigh number.
+Here $a_u = 0.385 \pm 0.003$ for Newtonian rheology ($n = 1$) and $a_\text{rh} = 2.4$. $\mathrm{Ra}_i$ is the internal Rayleigh number. In the worked example it has the value of $\mathrm{Ra}_\text{eff}$ of section 4.
 
 **Worked example.** Take the Earth reference state: $\rho_i = 3300\text{ kg m}^{-3}$, $g_i = 9.81\text{ m s}^{-2}$, $\alpha_i = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $T_\text{surf} = 300\text{ K}$, $d = 2.89 \times 10^6\text{ m}$, $\kappa_i = 10^{-6}\text{ m}^2\text{ s}^{-1}$, $H = 300\text{ kJ mol}^{-1}$ and $\mu_i = 10^{20}\text{ Pa s}$. This gives $\theta = 18.32$ and $\mathrm{Ra}_i = 3.05 \times 10^8$.
 
@@ -348,7 +348,7 @@ At $a_\text{rh} = 2.4$, the internally heated stress is approximately four times
 
 ### 4.2 Tested Range and Mushy Mantles
 
-**Over what range was the law tested?** Far below the values of a mushy mantle. Foley and Bercovici (2014, sec. 4.2, p. 589; Tables 2 and 3, p. 593; Figs. 8-9) calibrate and validate the scaling laws over this range of their reference Rayleigh number $\mathrm{Ra}_0$:
+**Over what range was the law tested?** Over $10^5 \le \mathrm{Ra}_0 \le 5 \times 10^7$, far below the values of a mushy mantle. Foley and Bercovici (2014, sec. 4.2, p. 589; Tables 2 and 3, p. 593; Figs. 8-9) calibrate and validate the scaling laws over this range of their reference Rayleigh number $\mathrm{Ra}_0$:
 
 $$
 \mathrm{Ra}_0 \in [10^5, \; 5 \times 10^7]
@@ -432,7 +432,7 @@ The closure is everywhere finite, $C^\infty$ smooth, and non-increasing with dri
 
 ## 6. Interaction with the Eddy-Diffusivity Floor
 
-**Why does a solid lid need the floor to vanish?** Aragog can lift $\kappa_h$, the thermal eddy diffusivity of mixing-length convection (MLT, $\text{m}^2\text{ s}^{-1}$), to a minimum value, the floor. In a solid lid, a floor above zero is artificial convective heat transport. When `rheology.enabled` is `True`, the floor is therefore exactly zero at $\phi = 0$.
+**Why does a solid lid need the floor to vanish?** Aragog can lift $\kappa_h$, the thermal eddy diffusivity of mixing-length convection (MLT) in $\text{m}^2\text{ s}^{-1}$, to a minimum value, the floor. In a solid lid, a floor above zero is artificial convective heat transport. When `rheology.enabled` is `True`, the floor is therefore exactly zero at $\phi = 0$.
 
 **The ramp.** The floor follows the melt fraction $\phi$ through a $\tanh$ ramp $f(\phi)$. $f_\text{zero}(\phi)$ is the same ramp, shifted and scaled so that it is exactly 0 at $\phi = 0$ and 1 at $\phi = 1$:
 
@@ -472,7 +472,7 @@ The direct `PhaseParams.__init__` fallback in `aragog.jax.phase` is $0.0\text{ m
 
 Without rheology, the floor exceeds the molecular thermal diffusivity ($\kappa \sim 10^{-6}\text{ m}^2\text{ s}^{-1}$) by four to five orders of magnitude. With rheology, an unstable solid cell carries heat only by mixing-length convection and conduction, and a conductive lid can form at the cold top. The molten layers keep the floor: $f_\text{zero}(1) = 1.0$ and $\kappa_{h,\text{floor,eff}}(\phi = 1) = 10.0\text{ m}^2\text{ s}^{-1}$.
 
-**The surface can cool to the lowest temperature of the table.** The zero-anchored floor removes artificial convective heat transport in solid cells, so the surface cell cools toward the radiative equilibrium temperature $T_\text{eqm}$. With `rheology.enabled = True` and a tabular entropy equation of state (`const_properties = False`), `EntropySolver._check_rheology_invariants` requires the entropy $S$ on the staggered mesh of every accepted state to stay inside the table bounds $[S_\text{min}, S_\text{max}]$. If a state leaves the table, it raises `RuntimeError` and names the node index, the time $t$ and the entropy $S$.
+**The surface can cool to the lowest temperature of the table.** The floor with $f_\text{zero}$ removes artificial convective heat transport in solid cells, so the surface cell cools toward the radiative equilibrium temperature $T_\text{eqm}$. With `rheology.enabled = True` and a tabular entropy equation of state (`const_properties = False`), `EntropySolver._check_rheology_invariants` requires the entropy $S$ on the staggered mesh of every accepted state to stay inside the table bounds $[S_\text{min}, S_\text{max}]$. If a state leaves the table, it raises `RuntimeError` and names the node index, the time $t$ and the entropy $S$.
 
 The standard test table of the continuous integration (`test-data-v1`) has $S \in [-1606.28, 19734.29]\text{ J kg}^{-1}\text{ K}^{-1}$. Its lowest temperatures are $T_\text{min}(P = 10^5\text{ Pa}) = 320.23\text{ K}$ at the surface and $T_\text{min}(P = 0.218\text{ GPa}) = 320.82\text{ K}$ at the top staggered cell of `cfg/abe_solid.toml`. The validity domain requires the surface temperature to stay above about $320\text{ K}$ and $T_\text{eqm} \ge 325\text{ K}$.
 
@@ -506,7 +506,7 @@ The decay rate is $c_\theta = 0.15$ (`c_theta`), and the stagnant-lid slope is $
 
 - The exact isoviscous limit: $s_\text{top}(\theta \le 0) = 1.0$.
 - An intermediate value: $s_\text{top}(15) = 0.22 + 0.78 \exp(-2.25) = 0.3022113951582542$.
-- The stagnant-lid limit: $s_\text{top}(\theta \to \infty) \to 0.22$. The slope reaches this value once $\theta \gg 8$.
+- The stagnant-lid limit: $s_\text{top}(\theta \to \infty) \to 0.22$. This is the limit of the strong stagnant-lid regime, $\theta \gg 8$.
 
 **How the slope acts on the flux.** The viscous eddy diffusivity scales as $l^4$ and the viscous velocity scales as $l^3$. `viscous_mixing_length_factor` therefore returns $(l_v / l)^4$. At interior nodes, the solver multiplies the viscous velocity by $(l_v / l)^3$ and the viscous eddy diffusivity by $(l_v / l)^4$. The factor stays $1.0$ at the boundary nodes, where $l = 0$.
 
@@ -555,7 +555,7 @@ Thus in `'local'` mode yielding scales the convective velocity by $\tau_{\text{b
 4. **Zero solidus pressure slope ($dT_\text{sol} / dP = 0$):** $H(P) = g_\text{hom} R T_{\text{sol},0}$. This is temperature-only Arrhenius creep with constant activation energy.
 5. **Infinite Frank-Kamenetskii contrast ($\theta \to \infty$):** the asymptotic stagnant-lid regime of Solomatov (1995), with upper slope $s_\text{top}(\theta) \to s_{\text{top},\infty}$.
 6. **Sub-threshold interior convection ($f_\text{int,max} \ll f_\text{conv,min}$) or no conductive lid ($d_\text{lid,raw} \to 0$):** when $f_\text{int,max}$ lies more than $0.01\,\mathrm{arctanh}(0.9) \approx 0.0147$ below $f_\text{conv,min}$ (for example $f_k \le 0.035$ at $f_\text{conv,min} = 0.05$), $w_\text{active} \le 0.05$. `is_convecting` and `has_lid` are `False`. The weight $w_\text{lid,present} = w_d w_T w_\mathrm{act\_gate} w_\mathrm{sum\_gate} w_\text{weight}$ smoothly takes the boundary-layer diagnostics ($\tau_d$, $v_m$, $\mathrm{Ra}_\text{eff}$, $d_\text{lid}$, $w_y$, `lid_regime`) to zero. Yielding stays inactive at any mesh resolution $N$.
-7. **No solid layer ($\phi \ge 0.012$ at every node, with or without a solidus table):** the solidus ramp $w_{\text{sol},\phi}$ of section 11 is 1, so $w_\text{hot,sol} = 1$ and $w_\text{interior} = 1$ identically through the column, however steep the temperature gradient is. The lid-base weight $\tilde{W}_\text{base}$ places $r_\text{lid,base}$ strictly at the surface node $r[-1]$. This gives $d_\text{lid,raw} = 0$, `has_lid = False`, $d_\text{lid} = 0$, $\tau_d = 0$ and `lid_regime = 0.0` at all mesh resolutions $N$, including $N \in \{3, 10, 50, 100, 200\}$ on both Earth and $9000\text{ km}$ mantle spans.
+7. **Melt at every node ($\phi \ge 0.012$ at every node, with or without a solidus table):** the solidus ramp $w_{\text{sol},\phi}$ of section 11 is 1, so $w_\text{hot,sol} = 1$ and $w_\text{interior} = 1$ identically through the column, however steep the temperature gradient is. The lid-base weight $\tilde{W}_\text{base}$ places $r_\text{lid,base}$ strictly at the surface node $r[-1]$. This gives $d_\text{lid,raw} = 0$, `has_lid = False`, $d_\text{lid} = 0$, $\tau_d = 0$ and `lid_regime = 0.0` at all mesh resolutions $N$, including $N \in \{3, 10, 50, 100, 200\}$ on both Earth and $9000\text{ km}$ mantle spans.
 8. **High driving stress ($\tau_{d,\text{lid}} / \tau_{y,\text{lid}} > 1$):** $w_y \to 1$ and $\eta_\text{eff} \to \min(\eta_\text{diff}, \mu_i \tau_{y,\text{lid}} / \tau_{d,\text{lid}}) < \mu_i$. The cold surface boundary layer moves into thin-boundary-layer convection.
 
 ## 10. Parameters
@@ -708,6 +708,8 @@ This section is for a reader who works on the kernels. It holds the weights, flo
     Convecting nodes ($f \ge 1.2 f_\text{conv,min}$) have $w_\text{nonconv} = 0$ and $w_\text{hot,iso} = 1$, so they cannot be lid ($w_\text{lid} = 0$), even when $T < T_\text{base}$. When no node is non-convecting ($w_\text{nonconv} = 0$ everywhere), $w_\text{interior} = 1$ at every node.
 
 ### Size of the Effect and Round-Off Spread
+
+The effect of the rheology on the trajectory, and the spread of 5 perturbed starts.
 
 ??? note "Numbers for 2 configurations"
     The perturbed starts are $S_0(r)(1 + k \cdot 10^{-12})$ ($k \in \{-2, -1, 0, +1, +2\}$) over $100\text{ yr}$. The case is [Round-off perturbation spread with solid rheology](../Validation/numerics.md#round-off-perturbation-spread-with-solid-rheology).

@@ -53,7 +53,7 @@ The runs have this setup:
 | Planar internally heated Newtonian stagnant-lid convection: Korenaga (2009)[^cite-korenaga2009], Table 1, 12 cases | $N = 100$ uniform planar Boussinesq | Nusselt number $\mathrm{Nu}$, $10\%$ relative; $r_\text{norm} = \lvert\mathrm{Nu} - \mathrm{Nu}_\text{ref}\rvert / (0.10 \, \mathrm{Nu}_\text{ref})$ |
 | Spherical mixed-heating stagnant-lid convection: Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, 24 cases, 72 observables | $N = 100$ spherical-shell Boussinesq; $f = r_\text{in} / r_\text{out} \in \{0.60, 0.70, 0.75, 0.80, 0.85\}$ | Interior temperature $T_m$, $0.03$ absolute; top heat flow $\Phi_\text{top}$, $15\%$ relative; lid thickness $d_\text{lid}$, $20\%$ relative |
 
-**Results.** The table compares the chosen point $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ with the default pair $(0.22, 0.15)$. The chosen point is the pair selected for this comparison, and it is not the code default.
+**Results.** The table compares the chosen point $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ with the default pair $(0.22, 0.15)$. The chosen point is the pair that the stored benchmark file evaluates beside the code default.
 
 | Result | Chosen point $(0.25, 0.25)$ | Default pair $(0.22, 0.15)$ |
 |:---|:---|:---|
@@ -69,7 +69,7 @@ The runs have this setup:
 
 **Why it matters.** In `'lid'` mode, pass 2 of the solver passes $\theta$ to the mixing-length factor, so the slope acts on the convective flux near the top boundary. These runs use `'local'` mode and test the slope at a frozen $\theta$.
 
-This case has no plot, because its test checks a stored file and writes no plot pair.
+This case has no plot, because its tests check a stored file and hand values and write no plot pair.
 
 **Known limit.** With local closure and $s_\text{top}$ frozen at the tabulated $\theta$, the chosen point reproduces all $12$ planar cases of Korenaga (2009, Table 1) within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$). It does not satisfy the spherical suite of Deschamps and Vilella (2021, Table 1), where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$).
 
@@ -77,7 +77,7 @@ A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spheric
 
 ??? info "Test details"
     - Reference: Korenaga (2009, Table 1); Deschamps and Vilella (2021, Table 1). Hand values and limits of the slope at the default pair: $s_\text{top}(\theta \le 0) = 1.0$, $s_\text{top}(15) = 0.3022113951582542$.
-    - Tolerance: `--check` of the stored file; hand values and limits 1e-15 to 1e-13 relative. The `--check` test also runs the 0-D, scaling-exponent and solver-wiring generators. It checks the stored file and does not assert agreement with the published values. The hand-value test is the `reference_pinned` test.
+    - Tolerance: `--check` of the stored file; hand values and limits 1e-15 to 1e-13 relative. The `--check` test also runs the 0-D, scaling-exponent and solver-wiring generators (the solver-wiring check is skipped without the SPIDER P-S tables). It checks the stored file and does not assert agreement with the published values. The hand-value test is the `reference_pinned` test.
     - Test id: `tests/test_mlt_calibration_smoke.py::test_benchmark_generators_check_mode_passes_on_committed_jsons` (stored file); `tests/test_mlt_calibration.py::test_theta_dependent_top_slope_hand_values_and_limits` (hand values)
     - Command: `pytest tests/test_mlt_calibration_smoke.py -k test_benchmark_generators_check_mode_passes_on_committed_jsons`; `pytest tests/test_mlt_calibration.py -k test_theta_dependent_top_slope_hand_values_and_limits`; `python tools/verification/evaluate_mlt_top_slope_calibration.py --check`
 
@@ -182,7 +182,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **How the solver yields.** In the two-pass update, the first pass locates $r_\text{lid,base}$ from the unyielded convective flux fraction and the rheological isotherm $T_\text{lid,iso} = T_i - 2.2\,\Delta T_\text{rh}$. The second pass lowers $\eta_\text{eff}$ in the lid and mobilises convective heat transport below $20.20\text{ km}$ depth ($20202.02\text{ m} = 2 \times 10^6\text{ m} / 99$, equal to $2$ radial node spacings on the $N = 100$ mesh).
 
-**Result.** The 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check. The table gives the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$.
+**Result.** The 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check at the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$, which the table gives. Those values are $\tau_{y,0} / \tau_{d,\text{lid}}$.
 
 | Quantity | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.5$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.2$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.1$ |
 |:---|:---:|:---:|:---:|
@@ -263,7 +263,7 @@ Korenaga (2009, p. 157, Table 1; p. 158, eqs. 29-30) fits the Arrhenius internal
 
 ### Design values against realized values
 
-In each run, the heating rate $H$ and the reference viscosity $\eta_{i,\text{nom}}$ come from the design parameters $(\mathrm{Ra}_i, \theta)$ at $T_{i,\text{nom}} = 1773\text{ K}$ ($\Delta T_\text{nom} = 1500\text{ K}$). As the mantle equilibrates, the steady state cools to the Korenaga (2009, p. 156, eq. 20) sub-lid interior temperature $T_{i,\text{kor}} < T_{i,\text{nom}}$. This temperature defines the realized parameters (`theta_realized_kor` and `Ra_i_realized_kor` in `tests/reference/ssc_scaling_exponents_benchmarks.json`). In this equation, $\alpha$ is the thermal expansivity, not the exponent:
+In each run, the heating rate $H$ and the reference viscosity $\eta_{i,\text{nom}}$ come from the design parameters $(\mathrm{Ra}_i, \theta)$ at $T_{i,\text{nom}} = 1773\text{ K}$ ($\Delta T_\text{nom} = 1500\text{ K}$). As the mantle equilibrates, the steady state cools to the Korenaga (2009, p. 156, eq. 20) sub-lid interior temperature $T_{i,\text{kor}} < T_{i,\text{nom}}$. This temperature defines the realized parameters (`theta_realized_kor` and `Ra_i_realized_kor` in `tests/reference/ssc_scaling_exponents_benchmarks.json`). In the second equation, $\alpha$ is the thermal expansivity, not the exponent of the regression below:
 
 $$
 \theta_\text{realized,kor} = \frac{E_\text{act}(T_{i,\text{kor}} - T_\text{surf})}{R T_{i,\text{kor}}^2}, \quad \mathrm{Ra}_{i,\text{realized,kor}} = \frac{\alpha \rho g (T_{i,\text{kor}} - T_\text{surf}) D^3}{\kappa \eta_\text{diff}(T_{i,\text{kor}})}
