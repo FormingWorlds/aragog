@@ -38,7 +38,7 @@ $$
 
 where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, and the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
 
-All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015, ch. 9.08) Table 2; the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
+All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015)[^cite-nimmo2015b] (ch. 9.08, Table 2); the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
 
 ### Inner-core growth and the melting curve
 
@@ -57,7 +57,7 @@ At freeze-out completion, latent heat release ceases abruptly once the entire co
 
 The size of the drop depends on the core geometry and $\Delta s_\text{fusion}$.
 
-The melting curve is the PALEOS iron prescription (Anzellini et al. 2013) with a light-element depression, or the Nimmo (2015, ch. 9.08, Eq. 6) quadratic. The piecewise Anzellini fit carries a ~0.73 K jump at the 98.5 GPa triple point, which is blended smoothly with a $C^2$ smootherstep over a 3.0 GPa half-width, bounding the temperature adjustment to 0.363 K and recovering exact branch values outside the range 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
+The melting curve is the PALEOS iron prescription (Anzellini et al. (2013)[^cite-anzellini2013]) with a light-element depression, or the Nimmo (2015) (ch. 9.08, Eq. 6) quadratic. The piecewise Anzellini fit carries a ~0.73 K jump at the 98.5 GPa triple point, which is blended smoothly with a $C^2$ smootherstep over a 3.0 GPa half-width, bounding the temperature adjustment to 0.363 K and recovering exact branch values outside the range 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
 
 ### Coupling to the mantle solver
 
@@ -74,7 +74,7 @@ $$
 \Delta T = T_\text{cmb} - T_m,
 $$
 
-where $T_m$ is the bottom mantle cell's entropy evaluated at the CMB pressure (the cell carried adiabatically to the boundary). Following the parameterised-convection closure of Foley & Driscoll (2016, eq. 20) with the boundary-layer thickness set by a critical Rayleigh number (Thiriet et al. 2019, eqs. 13 and 14 with exponent 1/3),
+where $T_m$ is the bottom mantle cell's entropy evaluated at the CMB pressure (the cell carried adiabatically to the boundary). Following the parameterised-convection closure of Foley and Driscoll (2016)[^cite-foley2016] (eq. 20) with the boundary-layer thickness set by a critical Rayleigh number (Thiriet et al. (2019)[^cite-thiriet2019], eqs. 13 and 14 with exponent 1/3),
 
 $$
 q_\text{conv} = \frac{k\,\Delta T}{\delta}, \qquad \delta = \left(\frac{\mathrm{Ra}_\text{crit}\, \kappa\, \eta}{\alpha \rho g\, \Delta T}\right)^{1/3}, \qquad \kappa = \frac{k}{\rho c_p},
@@ -82,7 +82,7 @@ $$
 
 with the layer's conductivity $k$, density $\rho$, heat capacity $c_p$, expansivity $\alpha$ and viscosity $\eta$, the thermal diffusivity $\kappa$ and the CMB gravity $g$.
 
-The default $\mathrm{Ra}_\text{crit} = 450$ is the theoretical value Thiriet et al. (2019, Table 2) take for the upper boundary layer; their lower-layer law (Deschamps & Sotin 2000) is not adopted.
+The default $\mathrm{Ra}_\text{crit} = 450$ is the theoretical value Thiriet et al. (2019) (Table 2) take for the upper boundary layer; their lower-layer law (Deschamps and Sotin (2000)[^cite-deschamps2000]) is not adopted.
 
 ### Properties of the boundary layer
 
@@ -92,7 +92,7 @@ $$
 \bar{T} = \frac{T_\text{cmb} + T_m}{2},
 $$
 
-the temperature at which Thiriet et al. (2019, p. 140) take the viscosity of the lower boundary layer (Foley & Driscoll 2016 leave that temperature to the model). With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
+the temperature at which Thiriet et al. (2019) (p. 140) take the viscosity of the lower boundary layer (Foley and Driscoll (2016) leave that temperature to the model). With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
 
 When solid mantle rheology is enabled (`[phase_solid.rheology]`), temperature-dependent and stress-dependent solid viscosity laws govern the mantle above the core-mantle boundary layer, and the bottom mixing-length slope factor $s_\mathrm{bottom}$ scales the lower convective boundary. See [Solid-state convection](solid_state_convection.md) for solid rheology formulations and boundary layer dynamics.
 
@@ -183,7 +183,7 @@ The default initial core temperature is $T_m$, so a run without a shell and with
 
 With `stratification = true` in the module parameters, the outer core above the radius `layer_base_fraction` $\times\, r_\text{cmb}$ is a resolved shell of finite volumes, finest at the CMB, whose temperatures are part of the solver state after `T_core`; the state indices up to `T_core` are those of the unstratified mode. With a shell the state $T_\text{cmb}$ is the convecting adiabat carried to the CMB, and the top shell cell holds the temperature at the top of the core.
 
-In the shell heat moves by conduction (Greenwood et al. 2021, eq. 20),
+In the shell heat moves by conduction (Greenwood et al. (2021)[^cite-greenwood2021], eq. 20),
 
 $$
 \rho c_p\, \frac{\partial T}{\partial t} = \nabla \cdot (k \nabla T),
@@ -197,7 +197,7 @@ $$
 
 with $a$ the gradient of the departure from the convecting adiabat $T_a$; it is zero for $a \ge 0$ and continuous with its derivative at $a = 0$. Its two constants are `layer_k_mix` ($K_\text{mix}$), the eddy diffusivity at the reference superadiabatic gradient $g_\text{mix}$, and `layer_g_mix`, that reference gradient as a fraction of the adiabatic gradient at the CMB; with the defaults a shell under a CMB flux of $10^5$ W m$^{-2}$ mixes within about 40 days.
 
-The subadiabatic part conducts only and is the stable layer. Its base, reported as `core_layer_base`, is the shell base plus the width of every cell whose lower face is not stably stratified (anomaly gradient below the reference), weighted smoothly. Onset, growth, erosion and re-formation follow from the profile without events; the scheme of Greenwood et al. (2021, eq. 25, p. 6), the `leeds_thermal` model of [thermal_history](https://github.com/sam-greenwood/thermal_history), instead moves the layer base by a stability check after each step and mixes an unstable part instantly.
+The subadiabatic part conducts only and is the stable layer. Its base, reported as `core_layer_base`, is the shell base plus the width of every cell whose lower face is not stably stratified (anomaly gradient below the reference), weighted smoothly. Onset, growth, erosion and re-formation follow from the profile without events; the scheme of Greenwood et al. (2021) (eq. 25, p. 6), the `leeds_thermal` model of [thermal_history](https://github.com/sam-greenwood/thermal_history), instead moves the layer base by a stability check after each step and mixes an unstable part instantly.
 
 The CMB flux law sees the top shell cell, so a core heated from above warms its layer first and its convecting part only when the heat reaches the layer base. The shell base sits on the convecting adiabat, and the heat crossing it is what the convecting core loses: its capacity integrals run to the shell base, the gravitational term to the layer base, and the shell carries its own sensible heat.
 
@@ -209,7 +209,7 @@ $$
 
 the convecting core keeps $h M(r_\text{sh})$, with $M(r_\text{sh})$ the mass below the shell base, and each shell cell $h\, m_j$ of its mass $m_j$, so a layer stores the heat of its own mass.
 
-The entropy margin is the sum over the convecting core and the shell of the balance of Greenwood et al. (2021, eq. 4): every source is delivered at the temperature of the top shell cell, and each part has the conduction sink of its own gradient. The CMB heat flow reaches the margin only through the state, since the top cell is the reference temperature.
+The entropy margin is the sum over the convecting core and the shell of the balance of Greenwood et al. (2021) (eq. 4): every source is delivered at the temperature of the top shell cell, and each part has the conduction sink of its own gradient. The CMB heat flow reaches the margin only through the state, since the top cell is the reference temperature.
 
 The shell must hold the layer and lie above the inner core. The solver refuses an inner core that reaches the shell base and warns once when the layer base comes within three cells of it; a lower `layer_base_fraction` gives a deeper shell. A stratified core runs on CVODE or SciPy BDF, which the solver also falls back to without CVODE; Radau is refused, since the stiff mixing of the shell takes it minutes per call.
 
@@ -295,15 +295,15 @@ The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refu
 - `length_scale`: Core Gaussian density length scale (m), used when no fit is made. Default $7.272\times 10^6$. The fit searches it in $[r_\text{cmb}/3, 100\, r_\text{cmb}]$ and does not start from this value.
 - `p_cmb`: CMB pressure (Pa) for the profile. Default: the solver's CMB pressure.
 - `pressure_mode`: How the profile's pressure is computed, `"quadrature"` (default) or `"labrosse"`.
-- `adiabat_mode`: How the core adiabat is computed, `"exact"` (default), which integrates $d \ln T / dr = -\alpha g / c_p$ with the exact gravity of the Gaussian density, or `"small_radius"`, the closed form $T_\text{cmb} \exp((r_\text{cmb}^2 - r^2)/D^2)$ of gravity linear in $r$ that Labrosse et al. (2001) and Nimmo (2015) use. The closed form gives a 2 % larger $T_\text{cen}/T_\text{cmb}$ for the Earth's core and a larger one for larger cores.
+- `adiabat_mode`: How the core adiabat is computed, `"exact"` (default), which integrates $d \ln T / dr = -\alpha g / c_p$ with the exact gravity of the Gaussian density, or `"small_radius"`, the closed form $T_\text{cmb} \exp((r_\text{cmb}^2 - r^2)/D^2)$ of gravity linear in $r$ that Labrosse et al. (2001)[^cite-labrosse2001] and Nimmo (2015) (ch. 9.08, Eq. 4) use. The closed form gives a 2 % larger $T_\text{cen}/T_\text{cmb}$ for the Earth's core and a larger one for larger cores.
 - `alpha`: Thermal expansivity (K$^{-1}$). Default $1.35\times 10^{-5}$.
 - `c_p`: Specific heat capacity (J kg$^{-1}$ K$^{-1}$). Default $840.0$.
-- `melting_curve`: Iron melting curve parameterisation, `"iron"` (PALEOS / Anzellini et al. 2013) or `"quadratic"` (Nimmo 2015, ch. 9.08, Eq. 6). Default `"iron"`; the triple-point blend of the iron curve is described above.
+- `melting_curve`: Iron melting curve parameterisation, `"iron"` (PALEOS / Anzellini et al. (2013)) or `"quadratic"` (Nimmo (2015), ch. 9.08, Eq. 6). Default `"iron"`; the triple-point blend of the iron curve is described above.
 - `light_element_fraction`: Mole fraction of light elements depressing the iron melting curve. Default $0.0$.
 - `depression`: Melting-point depression per unit mole fraction (dimensionless). Default $0.0$.
 - `t_m0`, `t_m1`, `t_m2`: Coefficients of the quadratic melting curve (K, Pa$^{-1}$, Pa$^{-2}$), all three required with `melting_curve = "quadratic"`. (PROTEUS defaults: $2677.0$, $2.95\times 10^{-12}$, $8.37\times 10^{-25}$.)
 - `ds_fusion`: Entropy of fusion at the inner-core boundary (J kg$^{-1}$ K$^{-1}$). Default $172.8$.
-- `latent_heat`: Constant latent heat of fusion (J kg$^{-1}$), in place of $T_\text{icb}\,\Delta s$ from `ds_fusion` (Nimmo 2015, ch. 8.02 and 9.08, Table 2, uses 750 kJ kg$^{-1}$).
+- `latent_heat`: Constant latent heat of fusion (J kg$^{-1}$), in place of $T_\text{icb}\,\Delta s$ from `ds_fusion` (Nimmo (2015)[^cite-nimmo2015a] ch. 8.02 and Nimmo (2015) ch. 9.08, Table 2, uses 750 kJ kg$^{-1}$).
 - `icn_width`: Temperature width of the inner-core nucleation diagnostic sigmoid (K). Diagnostic only; does not affect the effective heat capacity. Default $10.0$.
 - `alpha_c`: Compositional expansivity of the outer-core alloy (dimensionless). Default $0.0$.
 - `c_light`: Light-element mass fraction of the outer core (dimensionless). Default $0.0$.
@@ -352,13 +352,11 @@ The solver integrates the core temperature, and the shell temperatures of a stra
 
 The core heat change of a call, $\int \tilde{C}\, dT_\text{cmb}$, uses 32-point Gauss-Legendre quadrature in $T_\text{cmb}$ on each segment between the inner-core onset and freeze-out temperatures, with a square-root substitution across nucleation; with `stratification = true` the capacity also depends on the layer base, so the integral is a trapezoid rule over the call's output points, and the shell adds the change of its heat content. The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along each cell's entropy path with a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, since $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes; the other modes use 16.
 
-## References
-
-- Anzellini, S., Dewaele, A., Mezouar, M., Loubeyre, P., & Morard, G. (2013). Melting of iron at Earth's inner core boundary based on fast X-ray diffraction. *Science*, 340(6131), 464-466. https://doi.org/10.1126/science.1233514
-- Deschamps, F., & Sotin, C. (2000). Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity. *Geophysical Journal International*, 143(1), 204-218. https://doi.org/10.1046/j.1365-246x.2000.00228.x
-- Foley, B. J., & Driscoll, P. E. (2016). Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution. *Geochemistry, Geophysics, Geosystems*, 17(5), 1885-1914. https://doi.org/10.1002/2015GC006210
-- Greenwood, S., Davies, C. J., & Mound, J. E. (2021). On the evolution of thermally stratified layers at the top of Earth's core. *Physics of the Earth and Planetary Interiors*, 318, 106763. https://doi.org/10.1016/j.pepi.2021.106763
-- Labrosse, S., Poirier, J.-P., & Le Mouël, J.-L. (2001). The age of the inner core. *Earth and Planetary Science Letters*, 190(3-4), 111-123. https://doi.org/10.1016/S0012-821X(01)00387-9
-- Nimmo, F. (2015). Energetics of the Core. In G. Schubert (Ed.), *Treatise on Geophysics* (2nd ed., Vol. 8, pp. 27-55). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00139-1
-- Nimmo, F. (2015). Thermal and Compositional Evolution of the Core. In *Treatise on Geophysics* (2nd ed., Vol. 9, ch. 9.08, pp. 201-219). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00160-3
-- Thiriet, M., Breuer, D., Michaut, C., & Plesa, A.-C. (2019). Scaling laws of convection for cooling planets in a stagnant lid regime. *Physics of the Earth and Planetary Interiors*, 286, 138-153. https://doi.org/10.1016/j.pepi.2018.11.003
+[^cite-anzellini2013]: S. Anzellini, A. Dewaele, M. Mezouar, P. Loubeyre, G. Morard, *[Melting of Iron at Earth’s Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464–466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-deschamps2000]: F. Deschamps, C. Sotin, *[Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity](https://doi.org/10.1046/j.1365-246X.2000.00228.x)*, Geophysical Journal International, 143, 204–218, 2000. [SciX](https://scixplorer.org/abs/2000GeoJI.143..204D/abstract).
+[^cite-foley2016]: B. J. Foley, P. E. Driscoll, *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015GC006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885–1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
+[^cite-greenwood2021]: S. Greenwood, C. J. Davies, J. E. Mound, *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
+[^cite-labrosse2001]: S. Labrosse, J.-P. Poirier, J.-L. Le Mouël, *[The age of the inner core](https://doi.org/10.1016/S0012-821X(01)00387-9)*, Earth and Planetary Science Letters, 190, 111–123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
+[^cite-nimmo2015a]: F. Nimmo, *[Energetics of the Core](https://doi.org/10.1016/B978-0-444-53802-4.00139-1)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, 8, 27–55, Elsevier, 2015.
+[^cite-nimmo2015b]: F. Nimmo, *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/B978-0-444-53802-4.00160-3)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, 9, 201–219, Elsevier, 2015.
+[^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138–153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
