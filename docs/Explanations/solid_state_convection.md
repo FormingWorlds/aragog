@@ -10,7 +10,7 @@ The modules `aragog.rheology` and `aragog.rheology_lid` hold this physics. The s
 
 **A stagnant lid forms at the cold surface.** The coldest rock is too stiff to take part in convection. It stays in place and carries heat mainly by conduction. The warm mantle below it convects.
 
-**The lid can yield.** Convection below the lid pushes on it with a driving stress. Rock has a limited strength, the yield stress. If the driving stress is larger than the yield stress of the lid, the lid fails and joins the flow. In the Earth example of section 5, the yield stress is about 280 times larger than the driving stress, so the lid stays in place.
+**The lid can yield.** Convection below the lid pushes on it with a driving stress. Rock has a limited strength, the yield stress. If the driving stress is larger than the yield stress of the lid, the code lowers the viscosity of the lid below that of the interior. In the Earth example of section 5, the yield stress is about 280 times larger than the driving stress, so the lid stays in place.
 
 **Words used on this page.**
 
@@ -284,7 +284,7 @@ Both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the temperature d
 
 ### 4.1 Bottom Heating and Internal Heating
 
-The velocity law above is for bottom heating (Foley and Bercovici, 2014[^cite-foley2014], p. 587, who note that Solomatov and Moresi, 2000[^cite-solomatov2000] state that it fits the experiments of Dumoulin et al., 1999[^cite-dumoulin1999]). It over-estimates the stress once internal heating dominates. A cooling terrestrial planet starts with a superheated core. The large temperature difference at the core-mantle boundary drives strong basal heating during early post-magma-ocean evolution (Thiriet et al., 2019[^cite-thiriet2019], pp. 139-140, sec. 1).
+The velocity law above is for bottom heating (Foley and Bercovici, 2014[^cite-foley2014], p. 587, who note that Solomatov and Moresi, 2000[^cite-solomatov2000] state that it fits the experiments of Dumoulin et al., 1999[^cite-dumoulin1999]). A cooling terrestrial planet starts with a superheated core. The large temperature difference at the core-mantle boundary drives strong basal heating during early post-magma-ocean evolution (Thiriet et al., 2019[^cite-thiriet2019], pp. 139-140, sec. 1).
 
 As the core cools and radiogenic heating decays, the mantle moves from mainly bottom heating to mainly internal heating (Thiriet et al., 2019[^cite-thiriet2019], p. 140). For purely internally heated convection, Solomatov and Moresi (2000)[^cite-solomatov2000], p. 21801, eq. 13; p. 21804, eq. 28; p. 21805, Table 8, obtain an exponent of $1/2$:
 
@@ -302,7 +302,7 @@ Here $a_u = 0.385 \pm 0.003$ for Newtonian rheology ($n = 1$) and $a_\text{rh} =
 | Internally heated | $a_u = 0.385$, $a_\text{rh} = 2.4$ | $8.42 \times 10^{-10}\text{ m s}^{-1}$ | $\approx 0.058\text{ MPa}$ |
 | Internally heated | $a_u = 0.385$, $a_\text{rh} = 1.0$ | $5.43 \times 10^{-10}\text{ m s}^{-1}$ | $\approx 0.038\text{ MPa}$ |
 
-At $a_\text{rh} = 2.4$, the internally heated stress is approximately four times lower than the bottom-heated estimate. At $a_\text{rh} = 1.0$ it is about six times lower. The bottom-heated $2/3$ scaling is therefore an upper estimate of the convective shear stress during later, internally heated epochs.
+At $a_\text{rh} = 2.4$, the internally heated stress is approximately four times lower than the bottom-heated estimate. At $a_\text{rh} = 1.0$ it is about six times lower. For $\mathrm{Ra}_i / \theta$ above about $4 \times 10^3$ ($a_\text{rh} = 2.4$), the bottom-heated law gives the larger stress. Below that value it gives the smaller stress.
 
 ### 4.2 Tested Range and Mushy Mantles
 
@@ -323,7 +323,7 @@ The scaling in a mushy interior is therefore an extrapolation. Solomatov and Mor
 
 ### 4.3 Where the Constants Come From
 
-The constants $C_4 = 0.125$ and $a_\text{rh} = 1.3$ are empirical. Foley and Bercovici (2014)[^cite-foley2014], sec. 4.2, p. 589, fit them jointly for models with grain damage and constant healing. Every numerical model of that paper includes grain damage, and the paper gives no damage-free fit. Grain damage enters only through the effective viscosity, so `compute_stagnant_lid_state` uses the same scaling with the interior viscosity $\mu_i$ and no damage.
+The constants $C_4 = 0.125$ and $a_\text{rh} = 1.3$ are empirical. Foley and Bercovici (2014)[^cite-foley2014], sec. 4.2, p. 589, fit them jointly for models with grain damage and constant healing. Every numerical model of that paper includes grain damage, and the paper gives no damage-free fit. The value $a_\text{rh} = 1.3$ comes from their constant-healing models (Foley and Bercovici, 2014[^cite-foley2014], p. 586). `compute_stagnant_lid_state` uses these constants with the interior viscosity $\mu_i$ and no damage. This is an assumption.
 
 The sensitivity to $a_\text{rh}$ is moderate. With the standard stagnant-lid value $a_\text{rh} = 2.0$ instead of $1.3$, $v_m$ and $\tau_d$ increase by a factor of $(2.0 / 1.3)^{2/3} \approx 1.33$.
 
@@ -360,7 +360,7 @@ Above yield, the viscosity is limited to $\eta_y = \mu_i \tau_{y,\text{lid}} / \
 
 **Well below yield.** When $\tau_{d,\text{lid}} \ll \tau_{y,\text{lid}}$, $w_b \to 0$ and $\eta_\text{eff}(r) \to \eta_\text{diff}(r)$. The lid stays rigid and conductive. For example, standard Byerlee rock friction ($c = 50\text{ MPa}$, $\mu_f = 0.6$, $\tau_\text{max} = 500\text{ MPa}$) gives $\tau_{y,\text{lid}} = 500\text{ MPa}$. On the 50-node Earth reference profile of section 4.4 ($d_\text{geom} = 378.4\text{ km}$), $\tau_{d,\text{lid}} \approx 1.77\text{ MPa}$. The yield stress exceeds it by a factor of about 280, or 2.45 orders of magnitude, so the lid does not yield.
 
-**Above yield.** When $\tau_{d,\text{lid}} > \tau_{y,\text{lid}}$, $w_b \to 1$ and $\eta_\text{yield} = \mu_i (\tau_{y,\text{lid}} / \tau_{d,\text{lid}}) < \mu_i$. The yielded boundary layer is then less viscous than the convecting interior, and the surface layer joins the flow. For example, take a cold surface ($T_\text{surf} = 300\text{ K}$, $\eta_\text{diff} = 10^{40}\text{ Pa s}$, $\mu_i = 10^{21}\text{ Pa s}$) with $\tau_{d,\text{lid}} / \tau_{y,\text{lid}} = 1.2$. The yielded viscosity is $\eta_\text{eff} = 8.33 \times 10^{20}\text{ Pa s} < \mu_i$.
+**Above yield.** When $\tau_{d,\text{lid}} > \tau_{y,\text{lid}}$, $w_b \to 1$ and $\eta_\text{yield} = \mu_i (\tau_{y,\text{lid}} / \tau_{d,\text{lid}}) < \mu_i$. The yielded boundary layer is then less viscous than the convecting interior. For example, take a cold surface ($T_\text{surf} = 300\text{ K}$, $\eta_\text{diff} = 10^{40}\text{ Pa s}$, $\mu_i = 10^{21}\text{ Pa s}$) with $\tau_{d,\text{lid}} / \tau_{y,\text{lid}} = 1.2$. The yielded viscosity is $\eta_\text{eff} = 8.33 \times 10^{20}\text{ Pa s} < \mu_i$.
 
 **Only the lid yields.** The code applies the closure viscosity only in the cold boundary layer, through the smooth lid mask. The result is the solid viscosity with yielding, $\eta_\text{sol,eff}$:
 
@@ -376,7 +376,7 @@ The closure is finite and smooth everywhere, and it does not rise with driving s
 
 ## 6. Mixing Length in the Solid
 
-With the rheology on, the viscous part of the convective flux uses a shorter mixing length, $l_v$, set by a top slope that falls as the viscosity contrast $\theta$ rises. This represents a cold, stiff lid. The factor acts at every node, also in the mush and when no lid is present. The inviscid part of the flux keeps $l$.
+With the rheology on, the viscous part of the convective flux uses the mixing length $l_v$, set by a top slope that falls as the viscosity contrast $\theta$ rises. This represents a cold, stiff lid. With `'nearest_boundary'`, $l_v \le l$ at every node. With `'constant'` and $\theta$ below about 13, $l_v$ can exceed $l$. The factor acts at every node, also in the mush and when no lid is present. The inviscid part of the flux keeps $l$.
 
 ### Viscosity-Contrast-Dependent Mixing-Length Slope
 
@@ -404,7 +404,7 @@ So the slope acts over most of the depth, not only near the surface. With the pr
 
 Pass 1 uses $s_{\text{top},\infty}$ in both closure modes. In `'lid'` mode the code finds the lid state from the pass-1 fluxes. Pass 2 uses $s_\text{top}(\theta)$ in `'lid'` mode. In `'local'` mode it uses $s_{\text{top},\infty}$ again, so `c_theta` has no effect there.
 
-**Known limit.** At the default pair $(0.22, 0.15)$, the slope fits neither the planar nor the spherical benchmark set. The planar fit holds only at the pair $(0.25, 0.25)$, and a single upper slope without a spherical-curvature geometry factor does not match the spherical set as well. [Top slope against published grids](../Validation/solid_state_convection.md#the-top-slope-against-published-convection-grids) gives the conditions and the numbers.
+**Known limit.** At the default pair $(0.22, 0.15)$, the slope fits neither the planar nor the spherical benchmark set. Of the 2 stored pairs, only $(0.25, 0.25)$ meets the planar tolerance, and a single upper slope without a spherical-curvature geometry factor does not match the spherical set as well. [Top slope against published grids](../Validation/solid_state_convection.md#the-top-slope-against-published-convection-grids) gives the conditions and the numbers.
 
 ## 7. Interaction with the Eddy-Diffusivity Floor
 
@@ -456,7 +456,7 @@ The closure needs one strain rate, and Aragog has 2 ways to get it. `stress_clos
 
 ### The `lid` mode
 
-This is the boundary-layer closure of section 5. It compares $\tau_{d,\text{lid}}$ with $\tau_{y,\text{lid}}$, and above yield it lets the lid nodes flow.
+This is the boundary-layer closure of section 5. It compares $\tau_{d,\text{lid}}$ with $\tau_{y,\text{lid}}$, and above yield it lowers the viscosity of the lid nodes.
 
 ### The `local` mode
 
@@ -477,9 +477,9 @@ In this mode, yielding is not a stress cap. The two-pass update works in these s
 
 - **Weak viscosity contrast.** For $\theta < 9$, the regime lies outside the stagnant-lid window (section 3).
 - **A lid of about 2 cells or fewer.** The grid then sets the lid thickness, $T_i$ and the surface heat flux (section 3).
-- **Internal heating.** The bottom-heated velocity law gives an upper estimate of the stress once internal heating dominates (section 4.1).
+- **Internal heating.** The velocity law is for bottom heating. Section 4.1 says where its stress is larger or smaller than that of the internally heated law.
 - **A mushy mantle.** Its Rayleigh numbers lie far above the range where the scaling was tested (section 4.2).
-- **The top slope of the mixing length.** At the default pair it fits neither the planar nor the spherical benchmark set. The planar fit holds only at the pair $(0.25, 0.25)$ (section 6).
+- **The top slope of the mixing length.** At the default pair it fits neither the planar nor the spherical benchmark set. Of the 2 stored pairs, only $(0.25, 0.25)$ meets the planar tolerance (section 6).
 - **A cold surface and the table.** With the standard test table the surface must stay above about $320\text{ K}$, and a colder surface stops the run. The low-temperature table extension covers it (section 11).
 - **The comparisons that do not pass.** The 0-D comparison and the internal-heating exponents miss their bounds. See the known limits of [Validation: solid-state convection](../Validation/solid_state_convection.md).
 

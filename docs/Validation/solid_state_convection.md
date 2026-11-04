@@ -42,7 +42,7 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 - **The model default, $(0.22, 0.15)$.** This is the pair that a run uses unless it sets another one.
 - **The second pair, $(0.25, 0.25)$.** This pair was chosen on these benchmark rows, and the file labels it `minimax_0p25_0p25`. The 0-D and scaling-exponent cases below also use it. It is not the code default.
 
-`python tools/verification/evaluate_mlt_top_slope_calibration.py --full` generates the file, and `--check` recomputes `E340` and `f60_H4` live and verifies all stored rows and summary statistics. A label such as `E340` is a row of Korenaga (2009)[^cite-korenaga2009], Table 1, named for its activation energy in kJ/mol. A label such as `f70_1e7_H2` is a row of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, named for its radius ratio, Rayleigh number and heating.
+`python tools/verification/evaluate_mlt_top_slope_calibration.py --full` generates the file, and `--check` recomputes `E340` and `f60_H4` live and verifies all stored rows and summary statistics. A label such as `E340` is a row of Korenaga (2009)[^cite-korenaga2009], Table 1, named for its activation energy in kJ/mol. A label such as `f70_1e7_H2` is a row of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, named for its radius ratio (0.70), its viscosity contrast ($10^7$) and its heating ($H = 2$). A label such as `f80_32_1e6_H4` also gives the Rayleigh-number entry (32).
 
 **How we know the right answer.** The references are published convection experiments, and each has a tolerance on the compared quantity.
 
@@ -58,7 +58,7 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 - A half-cell conductive boundary-flux patch on inner boundary condition (BC) 3 through `_patched_state_update`.
 - A Frank-Kamenetskii viscosity override during steady-state integration on the spherical cases.
 
-**Results.** The test recomputes the file and fails if it differs. It does not assert agreement with the published values.
+**Results.** The test recomputes `E340` and `f60_H4` live, checks the other stored rows and the summary values for consistency, and fails on a difference. It does not assert agreement with the published values.
 
 | Result | Second pair $(0.25, 0.25)$ | Default pair $(0.22, 0.15)$ |
 |:---|:---|:---|
@@ -80,7 +80,7 @@ This case has no plot, because its tests check a stored file and hand values and
 
 **Known limit.** The default pair misses all 12 planar rows of Korenaga (2009)[^cite-korenaga2009], Table 1. The second pair is within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$), with local closure and $s_\text{top}$ frozen at the tabulated $\theta$. This pair was chosen on the benchmark rows, with all these residuals of one sign, so this is not independent agreement.
 
-The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$). Those rows are part of the same benchmark set, so these misses are not an independent failure either.
+The second pair does not satisfy the spherical suite of Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$). The pair was chosen on these rows too, so these misses remain after the choice.
 
 A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spherical-curvature geometry factor cannot match both planar internally heated and spherical mixed-heating stagnant-lid scaling across core-to-planet radius ratios $f \in [0.60, 0.85]$.
 
@@ -191,7 +191,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **Result.** At a fixed interior temperature, the 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$.
 
-At fixed internal heating, the surface flux at steady state balances the heating, so it stays at $2078.91\text{ mW m}^{-2}$ for every yield stress. Yielding lets the mantle carry this flux at a lower interior temperature, so the 0-D model has its own, weaker target. The solver gives 2 lid measures: Pass-1, the isotherm depth of solver pass 1, and the conductive diagnostic $d_\text{lid,cond} = (1 - 2.2 / \theta) k (T_i - T_\text{surf}) / F_\text{top}$. The conductive diagnostic comes from the stored fields and is not the solver `d_lid` output.
+At fixed internal heating, the surface flux at steady state balances the heating, so it stays at $2078.91\text{ mW m}^{-2}$ for every yield stress. With yielding, the 0-D model also carries this flux at a lower interior temperature ($1631.58\text{ K}$ at $0.5\,\tau_{d,\text{lid}}$). At fixed flux its lid scales about with $T_i - T_\text{surf}$, so its target thins only to $0.9773$. The solver gives 2 lid measures: Pass-1, the isotherm depth of solver pass 1, and the conductive diagnostic $d_\text{lid,cond} = (1 - 2.2 / \theta) k (T_i - T_\text{surf}) / F_\text{top}$. The conductive diagnostic comes from the stored fields and is not the solver `d_lid` output.
 
 **At fixed internal heating.**
 
