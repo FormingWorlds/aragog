@@ -35,7 +35,7 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 
 ## The top slope against published convection grids
 
-**Why this check exists.** The [top slope](../Explanations/solid_state_convection.md#viscosity-contrast-dependent-mixing-length-slope) $s_\text{top}(\theta)$ represents how a cold, high-viscosity lid shortens the mixing length near the top boundary, where $\theta$ is the viscosity-contrast parameter. It reduces the convective flux near that boundary. The stored evaluation shows how far one slope law reproduces 2 published sets of convection runs.
+**Why this check exists.** The [top slope](../Explanations/solid_state_convection.md#viscosity-contrast-dependent-mixing-length-slope) $s_\text{top}(\theta)$ represents how a cold, high-viscosity lid shortens the mixing length, where $\theta$ is the viscosity-contrast parameter. It reduces the convective flux over most of the depth. The stored evaluation shows how far one slope law reproduces 2 published sets of convection runs.
 
 **What it tests.** Aragog runs to steady state for each published case, with the slope fixed at the $\theta$ of that case. The result is compared with the published value. `tests/reference/ssc_mlt_top_slope_calibration.json` holds the results for 2 slope pairs $(s_{\text{top},\infty}, c_\theta)$:
 

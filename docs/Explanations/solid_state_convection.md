@@ -382,7 +382,7 @@ The closure is finite and smooth everywhere, and it does not rise with driving s
 
 ## 6. Mixing Length in the Solid
 
-A cold, stiff lid shortens the distance that a parcel travels near the top boundary. Aragog represents this with a top slope that falls as the viscosity contrast $\theta$ rises.
+A cold, stiff lid shortens the distance that a parcel travels. Aragog represents this with a top slope that falls as the viscosity contrast $\theta$ rises.
 
 ### Viscosity-Contrast-Dependent Mixing-Length Slope
 
