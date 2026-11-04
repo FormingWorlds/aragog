@@ -225,6 +225,115 @@ def test_recording_leaves_the_solution_bitwise_unchanged(monkeypatch, cap):
         assert res.t[-1] == ref.roots.t[-1] and np.array_equal(res.y[:, -1], ref.roots.y[-1])
 
 
+END_YR = 500.0
+
+
+def _replay_each_call(monkeypatch, cap):
+    """Solve a 60-node grey-body case, then repeat each CVODE call without the recording.
+
+    Each plain solve takes the same right-hand side, options, output times and start state, and
+    the root function of the caller in place of the recording wrapper.
+    """
+    from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
+
+    if not EOS_DIR.exists():
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}')
+    real, solve_cvode, calls, user = es._scikits_cvode, es.EntropySolver._solve_cvode, [], []
+
+    class Spy:
+        def __init__(self, rhs, **opts):
+            self.rhs, self.opts, self._s = rhs, opts, real(rhs, **opts)
+            calls.append(self)
+
+        def solve(self, tspan, y0):
+            self.args = (np.array(tspan), np.array(y0))
+            self.sol = self._s.solve(tspan, y0)
+            return self.sol
+
+        def __getattr__(self, name):
+            return getattr(self._s, name)
+
+    def record_rootfn(self, *args, **kwargs):
+        user.append(kwargs.get('phi_cap_rootfn'))
+        return solve_cvode(self, *args, **kwargs)
+
+    monkeypatch.setattr(es, '_scikits_cvode', Spy)
+    monkeypatch.setattr(es.EntropySolver, '_solve_cvode', record_rootfn)
+    s = TestCvodeEnergyOutputGrid._build_greybody_solver(
+        'cvode', n_out=2, core_bc='bower2018', n_nodes=60
+    )
+    s.parameters.solver.end_time = END_YR
+    if cap is not None:
+        s.parameters.energy.temperature_step_cap = cap
+    s.solve()
+    assert len(calls) == len(user) > 0
+    replays = []
+    for call, fn in zip(calls, user):
+        opts = dict(call.opts)
+        if fn is None:
+            del opts['rootfn'], opts['nr_rootfns']
+        else:
+            opts['rootfn'] = getattr(fn, 'evaluate', fn)
+        replays.append(real(call.rhs, **opts).solve(*call.args))
+    return s, calls, replays
+
+
+def _assert_solution_ends_at(sol, call, t, y):
+    """The solution is the scaled end of this call: one factor links the times, one the entropies."""
+    assert sol.t[-1] == pytest.approx(t * END_YR / call.args[0][-1], rel=1e-10)
+    ratio = sol.y[:59, -1] / y[:59]
+    np.testing.assert_allclose(ratio, ratio[0], rtol=1e-12)
+
+
+def _assert_bitwise_equal(calls, replays):
+    for call, ref in zip(calls, replays):
+        sol = call.sol
+        assert sol.flag == ref.flag
+        assert np.array_equal(sol.values.t, ref.values.t)
+        assert np.array_equal(sol.values.y, ref.values.y)
+        if sol.flag == 2:
+            assert np.array_equal(sol.roots.t, ref.roots.t)
+            assert np.array_equal(sol.roots.y, ref.roots.y)
+
+
+@pytest.mark.integration
+@pytest.mark.physics_invariant
+@pytest.mark.timeout(300)
+def test_recording_leaves_a_physical_run_bitwise_unchanged(monkeypatch):
+    """Recording the quadrature nodes changes no time and no state of a physical run.
+
+    Bower2018 core and a grey-body surface over 500 yr, with the mush front in the mesh and
+    the dense Jacobian in use. The core must cool, so a run that does nothing cannot pass.
+    """
+    s, calls, replays = _replay_each_call(monkeypatch, None)
+    sol = s._solution
+    assert sol.t[-1] == pytest.approx(END_YR, rel=1e-12)
+    assert sol.y.shape[0] == 60 and sol.y[-1, -1] < sol.y[-1, 0]
+    assert all(call.opts['linsolver'] == 'dense' for call in calls)
+    Ps = np.asarray(s.evaluator.mesh.staggered_pressure).ravel()
+    S_liq = np.asarray(s.entropy_eos.liquidus_entropy(Ps)).ravel()
+    S_sol = np.asarray(s.entropy_eos.solidus_entropy(Ps)).ravel()
+    assert np.any((sol.y[:59, -1] < S_liq) & (sol.y[:59, -1] > S_sol)), 'no cell in the mush'
+    _assert_bitwise_equal(calls, replays)
+    _assert_solution_ends_at(sol, calls[-1], replays[-1].values.t[-1], replays[-1].values.y[-1])
+
+
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+@pytest.mark.timeout(60)
+def test_recording_leaves_a_fired_temperature_cap_bitwise_unchanged(monkeypatch):
+    """A temperature cap that fires gives the same root time and root state with the recording.
+
+    A cap of 100 K ends the steep first flux decay well before the 500 yr of the call.
+    """
+    s, calls, replays = _replay_each_call(monkeypatch, 100.0)
+    sol = s._solution
+    assert sol.cap_fired and sol.cap_label == 'temperature' and sol.t[-1] < 1.0
+    assert replays[-1].flag == 2
+    _assert_bitwise_equal(calls, replays)
+    _assert_solution_ends_at(sol, calls[-1], replays[-1].roots.t[-1], replays[-1].roots.y[-1])
+
+
 def _fake_solver(sol):
     s = es.EntropySolver.__new__(es.EntropySolver)
     s._solution, s.entropy_eos = sol, object()
