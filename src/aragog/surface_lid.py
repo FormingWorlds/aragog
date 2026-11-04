@@ -46,6 +46,9 @@ from scipy.special import dawsn, erf
 
 # The lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell width.
 LID_CAP_FRAC: float = 0.8
+LID_HANDOVER_FRAC: float = 0.7
+LID_FLOOR_GAP: float = 1.0
+LID_FLOOR_WIDTH: float = 5.0
 LID_CAP_WIDTH: float = 0.02
 # A lid weight below this value is set to 0 (the lid is hidden).
 LID_WEIGHT_FLOOR: float = 1.0e-10
@@ -380,6 +383,35 @@ def convective_base_flux(
         return 0.0
     kappa = k / (rho * cp)
     return k * dT ** (4.0 / 3.0) * (alpha * rho * g / (ra_crit * kappa * eta)) ** (1.0 / 3.0)
+
+
+def floor_weight(S_f: float, S_sol: float) -> float:
+    """Weight [0, 1] of the base flux above the top-cell floor of the mush base.
+
+    The quintic ramp in ``x = (S_f - S_sol - LID_FLOOR_GAP) / LID_FLOOR_WIDTH``, entropies in
+    J/kg/K: 0 at and below the floor ``S_sol + LID_FLOOR_GAP``, 1 from ``LID_FLOOR_WIDTH`` above
+    it, and C2 at both ends.
+    """
+    x = min(max((S_f - S_sol - LID_FLOOR_GAP) / LID_FLOOR_WIDTH, 0.0), 1.0)
+    return x * x * x * (x * (6.0 * x - 15.0) + 10.0)
+
+
+def floor_flux(phi_integral: float, h_top: float, delta: float) -> float:
+    """Steady flux [W/m^2] of the eddy-diffusivity floor from the fluid to the lid base.
+
+    ``F = Phi / (0.5 (h_top - delta))``, with ``Phi(S) = int_{S_sol}^{S} rho T kappa dS'``
+    [W/m], the Kirchhoff integral of the floor over entropy, across half of the fluid part of
+    the top cell. Lengths in m.
+    """
+    return phi_integral / (0.5 * max(h_top - delta, 1.0e-3))
+
+
+def mush_base_flux(
+    phi_integral: float, h_top: float, delta: float, F_in: float, g: float, q_conv: float
+) -> float:
+    """Flux [W/m^2] from the mush into the lid base: the floor flux plus the boundary-layer
+    flux ``q_conv``, blended by the floor weight ``g`` to the flux from below ``F_in``."""
+    return F_in + g * (floor_flux(phi_integral, h_top, delta) + q_conv - F_in)
 
 
 def stefan_rate(

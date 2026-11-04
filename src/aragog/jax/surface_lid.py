@@ -19,6 +19,8 @@ from aragog.surface_lid import (
     LID_DELTA_FLOOR,
     LID_DH_MIN,
     LID_EXIST_WIDTH,
+    LID_FLOOR_GAP,
+    LID_FLOOR_WIDTH,
     LID_SHAPE_MAX,
     LID_SHAPE_MIN,
     LID_TAU_HIDDEN,
@@ -352,12 +354,26 @@ class LidParams(NamedTuple):
     convection: float
     rheo: float
     closure_lid: float
+    mush: float
+    phi_k: Enthalpy
     fixed: float
     T_fixed: float
     contrast: float
     H_arr: float
     phi_rheo: float
     phi_width: float
+
+
+def floor_weight(S_f, S_sol):
+    """The floor weight of :func:`aragog.surface_lid.floor_weight`."""
+    x = jnp.clip((S_f - S_sol - LID_FLOOR_GAP) / LID_FLOOR_WIDTH, 0.0, 1.0)
+    return x * x * x * (x * (6.0 * x - 15.0) + 10.0)
+
+
+def mush_base_flux(lp: LidParams, S_f, delta, F_in, q_conv):
+    """The flux of :func:`aragog.surface_lid.mush_base_flux` from the table of ``Phi``."""
+    F_k = enthalpy_H(lp.phi_k, S_f) / (0.5 * jnp.maximum(lp.h_top - delta, 1.0e-3))
+    return F_in + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_in)
 
 
 def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
@@ -377,7 +393,9 @@ def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
     S_rh = eos.entropy_at_temperature(lp.P, jnp.where(capped, lp.T_sol - 1.0, T_rh))
     S_rh = jnp.minimum(jnp.minimum(jnp.where(capped, lp.S_sol, S_rh), lp.S_sol), S_f)
     S_b = jnp.where(
-        (lp.rheo > 0.5) & (w_phi < 1.0), w_phi * lp.S_sol + (1.0 - w_phi) * S_rh, lp.S_sol
+        (lp.rheo > 0.5) & (lp.mush < 0.5) & (w_phi < 1.0),
+        w_phi * lp.S_sol + (1.0 - w_phi) * S_rh,
+        lp.S_sol,
     )
     return dict(
         S_b=S_b,
@@ -414,8 +432,14 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         top['eta'],
         lp.ra_crit,
     )
-    F_b = jnp.maximum(jnp.maximum(q_conv, F_in), 0.0)
+    mush = lp.mush > 0.5
+    F_b = jnp.where(
+        mush,
+        mush_base_flux(lp, S_f, delta, F_in, q_conv),
+        jnp.maximum(jnp.maximum(q_conv, F_in), 0.0),
+    )
     w = existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on)
+    w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
     surf = surface_state(
         delta, E, base['T_b'], lp.k, lp.emissivity, lp.T_eq, LID_DELTA_FLOOR, lp.e
     )

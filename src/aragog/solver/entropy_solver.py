@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog import surface_lid as _lid
-from aragog.config.boundary import _is_real, check_subgrid_lid
+from aragog.config.boundary import _is_real, check_lid_mush_base, check_subgrid_lid
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -2488,6 +2488,7 @@ class EntropySolver:
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
+        self._lid_mush = False
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -2533,6 +2534,10 @@ class EntropySolver:
         self._lid_k = float(self.state.phase_staggered._k_solid)
         rheo = self._solid_rheology() if self._rheology_enabled else None
         self._lid_rheo = rheo
+        check_lid_mush_base(bc.lid_mush_base, self._lid_on)
+        self._lid_mush = bc.lid_mush_base
+        if self._lid_mush and rheo is None:
+            raise ValueError('lid_mush_base needs the solid rheology on')
         self._lid_H = None
         if rheo is not None and rheo.lid_base_mode != 'fixed':
             from aragog.rheology import compute_arrhenius_enthalpy
@@ -2549,6 +2554,8 @@ class EntropySolver:
                 )
             )
         self._lid_hv = self._lid_enthalpy_table()
+        if self._lid_mush:
+            self._lid_Phi, self._lid_Phi_table = self._lid_floor_integral()
         r_stag = np.asarray(self.evaluator.mesh.staggered.radii).ravel()
         self._lid_z_stag = (float(r[-1]) - r_stag)[::-1]  # depths [m], top cell first
         self._lid_active = True
@@ -3105,7 +3112,24 @@ class EntropySolver:
         return start
 
     def _lid_start(self, S_top: float) -> npt.NDArray:
-        """The start of :meth:`_initial_lid`."""
+        """The start of :meth:`_initial_lid`.
+
+        Raises
+        ------
+        ValueError
+            With ``lid_mush_base`` and a live lid over a top cell below the floor.
+        """
+        start = self._lid_start_values(S_top)
+        floor = self._lid_S_sol + _lid.LID_FLOOR_GAP if self._lid_mush else -math.inf
+        if start[0] != 0.0 and S_top < floor:
+            raise ValueError(
+                f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, below the floor '
+                f'{floor:.6g} J/kg/K; a run that starts solid needs the present lid base'
+            )
+        return start
+
+    def _lid_start_values(self, S_top: float) -> npt.NDArray:
+        """The set, carried or phantom lid start."""
         init = getattr(self, '_lid_init', None)
         if init is not None:
             return np.array(init)
@@ -3209,6 +3233,8 @@ class EntropySolver:
             convection=float(self._lid_convection),
             rheo=float(on),
             closure_lid=float(self._lid_handover_armed()),
+            mush=float(self._lid_mush),
+            phi_k=jl.enthalpy(self._lid_Phi_table) if self._lid_mush else jl.enthalpy(hs),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
             T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
             contrast=float(rheo.lid_contrast_coeff) if on else 0.0,
@@ -3216,6 +3242,36 @@ class EntropySolver:
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
         )
+
+    def _lid_floor_integral(self) -> tuple:
+        """The Kirchhoff integral ``Phi(S)`` [W/m] of the eddy-diffusivity floor at the
+        top-cell pressure, zero at the solidus, from the solidus to the table top: 2048 and 512
+        intervals (4-point Gauss-Legendre each) over and above the melt band. Returns ``Phi``
+        in entropy, linear above its knots, and its table for the JAX form.
+        """
+        from aragog.solver.entropy_state import tanh_weight, zero_anchored_weight
+
+        eos, P, ph = self.entropy_eos, self._lid_P, self.state.phase_staggered
+        S = np.unique(
+            np.concatenate(
+                [
+                    np.linspace(self._lid_S_sol, self._lid_S_liq, 2049),
+                    np.linspace(self._lid_S_liq, float(eos.S_max), 513),
+                ]
+            )
+        )
+        g, w = np.polynomial.legendre.leggauss(4)
+        half = 0.5 * np.diff(S)[:, None]
+        nodes = 0.5 * (S[1:] + S[:-1])[:, None] + half * g
+        Pn = np.full(nodes.size, P)
+        s = nodes.ravel()
+        phi = np.asarray(eos.melt_fraction(Pn, s), dtype=float).ravel()
+        f = zero_anchored_weight(tanh_weight, phi, ph._phi_rheo, ph._phi_width)
+        y = np.asarray(eos.density(Pn, s) * eos.temperature(Pn, s)).ravel() * np.asarray(f)
+        y = y * float(self.parameters.energy.kappah_floor)
+        Phi = np.concatenate([[0.0], np.cumsum((half * w * y.reshape(nodes.shape)).sum(1))])
+        table = _lid.LidEnthalpy.table(S, Phi, np.zeros(S.size))
+        return table.H, table
 
     def _lid_W(self, S: npt.ArrayLike) -> npt.NDArray:
         """Heat content per volume ``W(S)`` [J/m^3] at the top-cell pressure, zero at the
@@ -3243,7 +3299,7 @@ class EntropySolver:
         eos, P, S_sol = self.entropy_eos, self._lid_P, self._lid_S_sol
         S_b = S_sol
         rheo = self._lid_rheo
-        if rheo is not None:
+        if rheo is not None and not self._lid_mush:
             from aragog.rheology_lid import _melt_ramp
 
             ph = self.state.phase_staggered
@@ -3283,6 +3339,11 @@ class EntropySolver:
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
+        if self._lid_mush and ev.S_f < self._lid_S_sol:
+            raise RuntimeError(
+                f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: top cell entropy '
+                f'{ev.S_f:.6g} J/kg/K below the solidus {self._lid_S_sol:.6g} J/kg/K'
+            )
         lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
@@ -3338,6 +3399,8 @@ class EntropySolver:
         the 'lid' closure the root is :meth:`_lid_solidus_root`."""
         if float(y[-2]) == 0.0:
             return -1.0
+        if self._lid_mush:
+            return (float(y[-2]) - _lid.LID_HANDOVER_FRAC * self._lid_h_top) / self._lid_h_top
         if not self._lid_handover_armed():
             return self._lid_solidus_root(y)
         n = self._n_stag
@@ -3482,9 +3545,17 @@ class EntropySolver:
             top(ph.viscosity()),
             self._lid_ra_crit,
         )
-        F_b = max(q_conv, float(self.state._heat_flux[-2]), 0.0)
+        F_in = float(self.state._heat_flux[-2])
         eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
+        if self._lid_mush:
+            g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)
+            Phi = float(self._lid_Phi(float(entropy[-1])))
+            F_b = _lid.mush_base_flux(Phi, self._lid_h_top, delta, F_in, g, q_conv)
+        else:
+            F_b = max(q_conv, F_in, 0.0)
         w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
+        if self._lid_mush:
+            w = 1.0 - g * (1.0 - w)
         surf = _lid.surface_state(
             delta, E, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR, self._lid_hv
         )
@@ -5359,7 +5430,9 @@ class EntropySolver:
         # Hand-over root of the sub-grid lid (nondimensional): the stagnant-lid isotherm of the
         # 'lid' closure, or the solidus of the top cell without the solid rheology.
         lid_g = None
-        if self._n_lid and (self._lid_handover_armed() or self._lid_rheo is None):
+        if self._n_lid and (
+            self._lid_handover_armed() or self._lid_rheo is None or self._lid_mush
+        ):
 
             def lid_g(t_nd, y_nd):
                 return self._lid_root_value(t_nd * t_ref, y_nd * _state_scale + _offset)

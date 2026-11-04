@@ -41,6 +41,20 @@ def _is_real(value) -> bool:
     return isinstance(value, numbers.Real) and not isinstance(value, bool)
 
 
+def check_lid_mush_base(lid_mush_base, subgrid_lid) -> None:
+    """Refuse a ``lid_mush_base`` that is not a bool, or that is on without the lid.
+
+    Raises
+    ------
+    ValueError
+        For another type, or for ``lid_mush_base`` without ``subgrid_lid``.
+    """
+    if not isinstance(lid_mush_base, bool):
+        raise ValueError(f'lid_mush_base must be true or false, got {lid_mush_base!r}')
+    if lid_mush_base and not subgrid_lid:
+        raise ValueError('lid_mush_base needs subgrid_lid = true')
+
+
 def check_subgrid_lid(
     subgrid_lid,
     lid_delta_on,
@@ -183,6 +197,10 @@ class BoundaryConfig:
         hand-over does not use this field; with another closure the lid never hands over.
     lid_ra_crit : float
         Critical Rayleigh number of the boundary-layer flux under the lid [-].
+    lid_mush_base : bool
+        With the solid rheology on: the lid base lies at the solidus, the mush gives the lid
+        the floor flux plus the boundary-layer flux, the top cell stays above the solidus and
+        the lid hands over at ``LID_HANDOVER_FRAC`` of the top cell. Off by default.
     """
 
     outer_boundary_condition: int
@@ -206,9 +224,11 @@ class BoundaryConfig:
     lid_delta_lo: float | None = None
     lid_handover_cells: int = 3
     lid_ra_crit: float = 450.0
+    lid_mush_base: bool = False
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,
