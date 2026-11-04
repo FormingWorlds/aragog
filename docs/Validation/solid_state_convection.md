@@ -4,11 +4,11 @@
 
 This page covers the solid-state part of Aragog: the activation law of solid creep, the mixing length below a stagnant lid, the cooling of a mantle under a lid, and how its heat loss scales. The physics is on the [Solid-state convection](../Explanations/solid_state_convection.md) page.
 
-Validation means that we run the code on a case where another source gives the right answer: an analytical result, a published table or a second independent model. We then check that the code gives that answer. If this part of the code were wrong, a PROTEUS run with `rheology.enabled = true` would have the wrong mantle temperature, lid thickness and surface heat flux.
+Validation means that we run the code on a case where another source gives the right answer: an analytical result, a published table or a second independent model. We then check that the code gives that answer. If this part of the code were wrong, a standalone Aragog run with `rheology.enabled = true` would have the wrong mantle temperature, lid thickness and surface heat flux.
 
-**Read the known limits.** Case A passes against its references. Cases B, C and D do not meet all their published or derived bounds. For these cases, the tests pin the current values, so a change in the code is detected. Each `**Known limit.**` line states what does not match.
+**Read the known limits.** The saturating activation law passes against its references. The top slope, the 0-D comparison and the internal-heating exponents do not meet all their published or derived bounds. For these cases, the tests pin the current values, so a change in the code is detected. Each **Known limit.** line states what does not match.
 
-Each case has the same layout: why the check exists, what it tests, how we know the right answer, why it matters, the plot, the known limit and the test details.
+Each case gives, where they apply: why the check exists, what it tests, how we know the right answer, why it matters, the plot, a known limit and the test details.
 
 ## The saturating activation law gives its limits
 
@@ -23,7 +23,7 @@ Each case has the same layout: why the check exists, what it tests, how we know 
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits.svg#only-light){ width="80%" }
 ![Saturating integral activation enthalpy limits and convergence](../assets/validation/ssc_activation_law_limits_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$. It compares curves for $P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$ with the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit. Panel (b) plots the enthalpy difference $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$.
+**How to read the plot.** A pass: in panel (b), $\mathrm{d}H$ lies on or below the bound. Panel (a) plots $H(P)$ over pressure $P \in [0, 1000]\text{ GPa}$ for $E_a = 300\text{ kJ mol}^{-1}$ and $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$. It compares curves for $P_\text{decay} \in \{200, 1100, 1610, \infty\}\text{ GPa}$ with the $P_\text{decay} = 200\text{ GPa}$ secant curve and the $V_0 = 0$ isobaric limit. Panel (b) plots the enthalpy difference $\mathrm{d}H = H_\text{lin}(P) - H_\text{int}(P)$ against the analytical Lagrange bound $\text{Bound} = V_0 P^2 / (2 P_\text{decay})$.
 
 Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over decay pressures $P_\text{decay} \in [10^2, 10^6]\text{ GPa}$ ($E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 5.0\text{ cm}^3\text{ mol}^{-1}$, where $V_0 P^2 / 2 = 45562.5\text{ kJ mol}^{-1}\text{ GPa}$). The secant-form parameter sets of Tackley et al. (2013)[^cite-tackley2013] (Table 2) for $E_0 + P V_0 \exp(-P / P_\text{decay})$ are not valid parameter sets of this integral law.
 
@@ -35,15 +35,15 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 
 ## The top slope against published convection grids
 
-**Why this check exists.** The [top slope](../Explanations/solid_state_convection.md#viscosity-contrast-dependent-mixing-length-slope) $s_\text{top}(\theta)$ represents how a cold, high-viscosity lid shortens the mixing length near the top boundary. It sets the heat flux through the lid. A stored evaluation shows how far one slope law goes across published experiments.
+**Why this check exists.** The [top slope](../Explanations/solid_state_convection.md#viscosity-contrast-dependent-mixing-length-slope) $s_\text{top}(\theta)$ represents how a cold, high-viscosity lid shortens the mixing length near the top boundary, where $\theta$ is the viscosity-contrast parameter. It reduces the convective flux near that boundary. The stored evaluation shows how far one slope law reproduces 2 published sets of convection runs.
 
-**What it tests.** Steady 1-D runs against 2 published benchmark sets. `tests/reference/ssc_mlt_top_slope_calibration.json` holds the results. `python tools/verification/evaluate_mlt_top_slope_calibration.py --full` generates the file, and `--check` recomputes `E340` and `f60_H4` live and verifies all stored rows and summary statistics.
+**What it tests.** Aragog runs to steady state for each published case, with the slope fixed at the $\theta$ of that case. The result is compared with the published value. `tests/reference/ssc_mlt_top_slope_calibration.json` holds the results. `python tools/verification/evaluate_mlt_top_slope_calibration.py --full` generates the file, and `--check` recomputes `E340` and `f60_H4` live and verifies all stored rows and summary statistics.
 
 The runs have this setup:
 
 - `stress_closure_mode = 'local'`, with $s_\text{top}$ frozen at the nominal $\theta$ of each table through `c_theta = 0`.
 - The prescribed surface temperature of the solver (`outer_boundary_condition = 5`).
-- A half-cell conductive boundary-flux patch on inner BC 3 through `_patched_state_update`.
+- A half-cell conductive boundary-flux patch on inner boundary condition (BC) 3 through `_patched_state_update`.
 - A Frank-Kamenetskii viscosity override during steady-state integration on the spherical cases.
 
 **How we know the right answer.** The references are published convection experiments, and each has a tolerance on the compared quantity.
@@ -53,7 +53,7 @@ The runs have this setup:
 | Planar internally heated Newtonian stagnant-lid convection: Korenaga (2009)[^cite-korenaga2009], Table 1, 12 cases | $N = 100$ uniform planar Boussinesq | Nusselt number $\mathrm{Nu}$, $10\%$ relative; $r_\text{norm} = \lvert\mathrm{Nu} - \mathrm{Nu}_\text{ref}\rvert / (0.10 \, \mathrm{Nu}_\text{ref})$ |
 | Spherical mixed-heating stagnant-lid convection: Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, 24 cases, 72 observables | $N = 100$ spherical-shell Boussinesq; $f = r_\text{in} / r_\text{out} \in \{0.60, 0.70, 0.75, 0.80, 0.85\}$ | Interior temperature $T_m$, $0.03$ absolute; top heat flow $\Phi_\text{top}$, $15\%$ relative; lid thickness $d_\text{lid}$, $20\%$ relative |
 
-**Results.** The table compares the chosen point $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ with the default pair $(0.22, 0.15)$.
+**Results.** The table compares the chosen point $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ with the default pair $(0.22, 0.15)$. The chosen point is the pair selected for this comparison, and it is not the code default.
 
 | Result | Chosen point $(0.25, 0.25)$ | Default pair $(0.22, 0.15)$ |
 |:---|:---|:---|
@@ -67,17 +67,17 @@ The runs have this setup:
 | $J_\text{DV}$ | $1.0570$ | $1.4659$ |
 | $J_\text{all}$ over all $84$ observables ($36$ total cases) | $1.0334$ | $1.4549$ |
 
-**Why it matters.** The slope changes the heat flux of every run with the solid rheology in `'lid'` mode, because the solver passes $\theta$ to the mixing-length factor.
+**Why it matters.** In `'lid'` mode, pass 2 of the solver passes $\theta$ to the mixing-length factor, so the slope acts on the convective flux near the top boundary. These runs use `'local'` mode and test the slope at a frozen $\theta$.
 
-This case has no plot. The test writes no plot pair for it.
+This case has no plot, because its test checks a stored file and writes no plot pair.
 
 **Known limit.** With local closure and $s_\text{top}$ frozen at the tabulated $\theta$, the chosen point reproduces all $12$ planar cases of Korenaga (2009, Table 1) within the $10\%$ $\mathrm{Nu}$ tolerance ($\max |r_\text{norm}| = 0.9839$). It does not satisfy the spherical suite of Deschamps and Vilella (2021, Table 1), where $34$ of $72$ observables exceed their tolerances ($0.03$ on $T_m$, $15\%$ on $\Phi_\text{top}$, $20\%$ on $d_\text{lid}$).
 
 A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spherical-curvature geometry factor cannot match both planar internally heated and spherical mixed-heating stagnant-lid scaling across core-to-planet radius ratios $f \in [0.60, 0.85]$. The chosen point is not the code default.
 
 ??? info "Test details"
-    - Reference: Korenaga (2009, Table 1); Deschamps and Vilella (2021, Table 1). Hand values and limits of the slope: $s_\text{top}(\theta \le 0) = 1.0$, $s_\text{top}(15) = 0.3022113951582542$.
-    - Tolerance: `--check` of the stored file; hand values and limits 1e-15 to 1e-13 relative.
+    - Reference: Korenaga (2009, Table 1); Deschamps and Vilella (2021, Table 1). Hand values and limits of the slope at the default pair: $s_\text{top}(\theta \le 0) = 1.0$, $s_\text{top}(15) = 0.3022113951582542$.
+    - Tolerance: `--check` of the stored file; hand values and limits 1e-15 to 1e-13 relative. The `--check` test also runs the 0-D, scaling-exponent and solver-wiring generators. It checks the stored file and does not assert agreement with the published values. The hand-value test is the `reference_pinned` test.
     - Test id: `tests/test_mlt_calibration_smoke.py::test_benchmark_generators_check_mode_passes_on_committed_jsons` (stored file); `tests/test_mlt_calibration.py::test_theta_dependent_top_slope_hand_values_and_limits` (hand values)
     - Command: `pytest tests/test_mlt_calibration_smoke.py -k test_benchmark_generators_check_mode_passes_on_committed_jsons`; `pytest tests/test_mlt_calibration.py -k test_theta_dependent_top_slope_hand_values_and_limits`; `python tools/verification/evaluate_mlt_top_slope_calibration.py --check`
 
@@ -85,9 +85,9 @@ A single contrast-dependent upper slope $s_\text{top}(\theta)$ without a spheric
 
 Planetary thermal-history models often use a zero-dimensional (0-D) energy balance, an ordinary differential equation (ODE), to estimate interior cooling and lid growth. This case compares the one-dimensional (1-D) radial finite-volume solver `EntropySolver` with the standalone 0-D stagnant-lid ODE in `tests/reference/stagnant_lid_0d.py`. It covers $4.50\text{ Gyr}$ of secular cooling and steady-state plastic yield-thinning sweeps. `tests/reference/ssc_0d_reference_benchmarks.json` holds the results (regenerated with `python tools/verification/generate_ssc_0d_reference_benchmarks.py --full` and verified with `--check`).
 
-**Result in short.** The 1-D solver fails the pre-run 0-D tolerances on the $4.50\text{ Gyr}$ cooling trajectory ($5\%$ on interior temperature $T_i$, $22\%$ on lid thickness $d_\text{lid}$) and on the steady-state yield-ceiling thinning ratio ($11\%$ at yield stress $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$). This is consistent with differences between 1-D resolved radial heat transport and the 0-D bulk energy balance, and with plastic yielding that mobilises convective transport only below the top two radial nodes. Yield acts only with `rheology.enabled = true` (default `false`).
+**Result in short.** The 1-D solver fails the 0-D tolerances set before the runs on the $4.50\text{ Gyr}$ cooling trajectory ($5\%$ on interior temperature $T_i$, $22\%$ on lid thickness $d_\text{lid}$) and on the steady-state yield-ceiling thinning ratio ($11\%$ at yield stress $\tau_{y,0} = 0.5\,\tau_{d,\text{lid}}$). This is consistent with differences between 1-D resolved radial heat transport and the 0-D bulk energy balance, and with plastic yielding that mobilises convective transport only below the top two radial nodes. Yield acts only with `rheology.enabled = true` (default `false`).
 
-Under yield at fixed internal heating, the stored 1-D Pass-1 lid thickens. Its ratio to the unyielded lid is $1.5257$, $1.7395$ and $1.9116$ at $\tau_{y,0} / \tau_{d,\text{lid}} = 0.5$, $0.2$ and $0.1$, against 0-D thinning targets of $0.7937$, $0.5848$ and $0.4642$.
+Under yield at fixed internal heating, the stored 1-D lid of solver pass 1 (Pass-1) thickens, while the 0-D model predicts that it thins. The table in [the thinning section](#steady-state-yield-ceiling-lid-thinning) gives the values.
 
 **Why this check exists.** If the lid geometry, the mixing-length slope or the plastic yield blend of the 1-D solver were miswired, the model would predict the wrong mantle cooling rate or silently ignore yielding. This test catches three classes of code faults. A mutation or perturbation probe verified each:
 
@@ -110,8 +110,10 @@ Under yield at fixed internal heating, the stored 1-D Pass-1 lid thickens. Its r
 | $\tau_{d,\text{lid}}$ | Convective driving stress at the lid base | $\text{Pa}$ |
 | $\tau_{y,0}$ | Surface yield-stress cohesion ceiling | $\text{Pa}$ |
 | $R_\text{thin} = d_\text{lid}(\tau_{y,0}) / d_\text{lid}(\text{unyielded})$ | Lid-thinning ratio when plastic yielding is active | dimensionless |
+| $a_\text{lid}$ | Lid contrast coefficient, `lid_contrast_coeff` | dimensionless |
+| $D$ | Mantle thickness | $\text{m}$ |
 
-**The prefactors.** In the 0-D ODE, $a_\text{Nu} = 0.5954$ (`0.5954345503010264`) is the arithmetic mean of $a_\text{Nu} = \mathrm{Nu}_\text{ref}\,\theta^{4/3}\,\mathrm{Ra}_i^{-1/3}$ over the 12 Newtonian Arrhenius 2-D stagnant-lid runs of Korenaga (2009, p. 157, Table 1; $\min = 0.5025$, $\max = 0.6862$, standard deviation $0.0651$; `a_nu_provenance` in `tests/reference/ssc_0d_reference_benchmarks.json`). The test also runs 2 published prefactors. The first does not use the Korenaga (2009) Table 1 rows.
+**The prefactors.** In the 0-D ODE, $a_\text{Nu} = 0.5954$ (`0.5954345503010264`) is the arithmetic mean of $a_\text{Nu} = \mathrm{Nu}_\text{ref}\,\theta^{4/3}\,\mathrm{Ra}_i^{-1/3}$ over the 12 Newtonian Arrhenius 2-D stagnant-lid runs of Korenaga (2009, p. 157, Table 1; $\min = 0.5025$, $\max = 0.6862$, standard deviation $0.0651$; `a_nu_provenance` in `tests/reference/ssc_0d_reference_benchmarks.json`). The test also runs 2 published prefactors. The $0.53$ prefactor of Solomatov and Moresi does not use the Korenaga (2009) Table 1 rows, so that check does not depend on them.
 
 | Prefactor | Source | $T_{i,\text{0D}}(4.50\text{ Gyr})$ | Largest $T_i$ deviation at $4.50\text{ Gyr}$ | On the pre-clamp window $t < 3.6958\text{ Gyr}$ | Post-relaxation $d_\text{lid}$ deviation |
 |:---|:---|:---:|:---:|:---:|:---:|
@@ -123,7 +125,7 @@ The $a_\text{Nu} = 0.53$ run gives $d_{\text{lid,0D}}(4.50\text{ Gyr}) = 899.2\t
 **How the runs are set up.**
 
 - Material properties are constant in both cases (`eos_method = 1`, `const_properties = True`, no equation-of-state table read).
-- The steady-state `E300` runs prescribe the surface temperature (`outer_boundary_condition = 5`). The solver sets the surface node to the entropy whose temperature is $T_\text{surf} = 273.0\text{ K}$ and takes the surface gradient from the half-cell temperature gradient. The top conductive heat flux is then $F_\text{top} = k (T_\text{cell} - T_\text{surf}) / (\Delta r / 2)$, and the lid closure reads $T_\text{surf}$. `test_rheology_verification_smoke.py` evaluates the stored `E300` steady states with the same surface temperature.
+- The steady-state `E300` runs (a case label in the stored benchmark file, as `E340` and `E210` above) prescribe the surface temperature (`outer_boundary_condition = 5`). The solver sets the surface node to the entropy whose temperature is $T_\text{surf} = 273.0\text{ K}$ and takes the surface gradient from the half-cell temperature gradient. The top conductive heat flux is then $F_\text{top} = k (T_\text{cell} - T_\text{surf}) / (\Delta r / 2)$, and the lid closure reads $T_\text{surf}$. `test_rheology_verification_smoke.py` evaluates the stored `E300` steady states with the same surface temperature.
 - The $400\text{ Myr}$ and $4.50\text{ Gyr}$ secular-cooling trajectories use `outer_boundary_condition = 1` (grey-body radiative boundary condition with emissivity $\varepsilon = 1$ and equilibrium temperature $T_\text{eq} = 300\text{ K}$), in a single continuous integration over $[0, t_\text{end}]$.
 
 ??? note "What the generator does in `--full` and `--check` mode"
@@ -180,7 +182,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **How the solver yields.** In the two-pass update, the first pass locates $r_\text{lid,base}$ from the unyielded convective flux fraction and the rheological isotherm $T_\text{lid,iso} = T_i - 2.2\,\Delta T_\text{rh}$. The second pass lowers $\eta_\text{eff}$ in the lid and mobilises convective heat transport below $20.20\text{ km}$ depth ($20202.02\text{ m} = 2 \times 10^6\text{ m} / 99$, equal to $2$ radial node spacings on the $N = 100$ mesh).
 
-**Result.** The 0-D scaling predicts $R_\text{thin,0D} = (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}$, which is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check. The table gives the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$.
+**Result.** The 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check. The table gives the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$.
 
 | Quantity | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.5$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.2$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.1$ |
 |:---|:---:|:---:|:---:|
@@ -196,13 +198,13 @@ The offset can come from the resolved radial temperature profile across the thic
 | Pass-2 fixed-isotherm depth (ratio to $435.21\text{ km}$) | $392.63\text{ km}$ ($0.9022$) | $225.93\text{ km}$ ($0.5191$) | $179.61\text{ km}$ ($0.4127$) |
 | Conductive diagnostic ratio | $0.6102$ ($0.61$), $-23.1\%$ | $0.4988$ ($0.50$), $-14.7\%$ | $0.4207$ ($0.42$), $-9.4\%$ |
 
-Percentages are the excess over the 0-D target. Enhanced surface heat loss cools the interior at fixed internal heating.
+Percentages are the excess over the 0-D target. At fixed internal heating, enhanced surface heat loss cools the interior.
 
 The conductive diagnostic is $d_\text{lid,cond} = (1 - 2.2 / \theta) k (T_i - T_\text{surf}) / F_\text{top}$. It was chosen after the result and is not the solver `d_lid` output. Against the $11\%$ relative bound, all three values fail at fixed internal heating. At matched $T_i$, the values at $0.5$ and $0.2\,\tau_{d,\text{lid}}$ fail, and only the value at $0.1\,\tau_{d,\text{lid}}$ lies within $11\%$.
 
-**How we know the right answer.** The reference trajectory comes from integrating the 0-D stagnant-lid global energy balance with published Nusselt-Rayleigh scaling laws from Korenaga (2009) and Solomatov and Moresi (2000). The analytical yield-thinning reference $R_\text{thin,0D} = (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}$ follows from a balance of plastic yield stress against convective boundary-layer stress (Moresi and Solomatov, 1998[^cite-moresi1998]; Foley and Bercovici, 2014[^cite-foley2014]).
+**How we know the right answer.** The reference trajectory comes from integrating the 0-D stagnant-lid global energy balance with published Nusselt-Rayleigh scaling laws from Korenaga (2009) and Solomatov and Moresi (2000). The analytical yield-thinning reference $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$ follows from a balance of plastic yield stress against convective boundary-layer stress (Moresi and Solomatov, 1998[^cite-moresi1998]; Foley and Bercovici, 2014[^cite-foley2014]).
 
-**Why it matters.** Lid thickness and plastic yielding control how fast a solid rocky mantle loses heat after magma-ocean solidification. They also decide whether lithospheric failure can move a stagnant lid toward mobile-lid cooling in coupled PROTEUS evolutions.
+**Why it matters.** Lid thickness and plastic yielding control how fast a solid rocky mantle loses heat after magma-ocean solidification. They also decide whether lithospheric failure can move a stagnant lid toward mobile-lid cooling in standalone runs.
 
 ![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_0d_reference_comparison.svg#only-light){ width="80%" }
 ![0-D stagnant-lid trajectory and yield-thinning comparison](../assets/validation/ssc_0d_reference_comparison_dark.svg#only-dark){ width="80%" }
@@ -230,7 +232,7 @@ In a stagnant-lid mantle heated from within by radioactive decay, boundary-layer
 **Why this check exists.** If the top-slope formula, the steady-state convective flux or the sub-lid interior temperature diagnostic changed, the scaling of mantle heat loss with radiogenic heating and viscosity contrast would shift silently. This test catches three classes of code faults. A mutation or perturbation probe verified each:
 
 - **Changes to the top-slope asymptote on steady profiles.** Changing $s_{\text{top},\infty}$ from $0.25$ to $0.26$ on the live steady-state snapshot `case_03` ($\mathrm{Ra}_i = 10^7$, $\theta = 15$) shifts the peak convective heat flux $j_\text{conv,max}$ from $0.8229\text{ W m}^{-2}$ to $0.9504\text{ W m}^{-2}$ ($15.49\%$ relative, which fails the $10^{-7}$ pinned tolerance). It raises the steady-state entropy residual $\max |\mathrm{d}S/\mathrm{d}t|$ from $3.388 \times 10^{-11}\text{ J kg}^{-1}\text{ K}^{-1}\text{ yr}^{-1}$ to $1.701 \times 10^{-5}\text{ J kg}^{-1}\text{ K}^{-1}\text{ yr}^{-1}$, above the $10^{-9}\text{ J kg}^{-1}\text{ K}^{-1}\text{ yr}^{-1}$ bound.
-- **Changes to the Nusselt numbers or the regression.** Changing the first steady-state Nusselt number by $1\%$ ($1.01\,\mathrm{Nu}_1$) shifts the fitted exponent $\beta$ from $0.2819$ (`0.281862`) to $0.2812$ (`0.281166`, a $2.931 \times 10^{-3}$ relative change), which fails the $10^{-7}$ pinned tolerance.
+- **Changes to the Nusselt numbers or the regression.** Changing the first steady-state Nusselt number by $1\%$ ($1.01\,\mathrm{Nu}_1$) shifts the fitted exponent $\beta$ from $0.2819$ (`0.281862`) to $0.2810$ (`0.281035`, a $2.933 \times 10^{-3}$ relative change), which fails the $10^{-7}$ pinned tolerance.
 - **Non-convergence of the interior temperature solver.** `korenaga_ti_fixed_point` (`tools/verification/_ssc_helpers.py`), the fixed-point solver for the Korenaga (2009, p. 156, eq. 20) sub-lid temperature, raises `RuntimeError` if the iteration does not converge within `100` steps.
 
 **What it tests.** The symbols are:
@@ -244,6 +246,7 @@ In a stagnant-lid mantle heated from within by radioactive decay, boundary-layer
 | $\Delta T_H = \rho H D^2 / k$ | Internal-heating temperature scale in kelvins ($\text{K}$); $H$ is the internal heat generation rate in watts per kilogram ($\text{W kg}^{-1}$), $D$ is the mantle thickness in metres ($\text{m}$) |
 | $\mathrm{Nu} = \Delta T_H / (T_{i,\text{kor}} - T_\text{surf})$ | Internal-heating Nusselt number |
 | $\beta$, $\alpha$, $a$ | Rayleigh exponent, Frank-Kamenetskii exponent, dimensionless prefactor |
+| $E_\text{act}$ | Activation energy |
 
 **Setup.** The 12 steady-state runs span design values $\mathrm{Ra}_i \in [10^6, 10^9]$ at fixed $\theta = 15$ and $\theta \in [10, 25]$ at fixed $\mathrm{Ra}_i = 10^7$. All use an $N = 100$ mesh, insulated basal boundary $F_\text{bot} = 0$, planar aspect ratio $r_\text{out} = 100\,D$, surface temperature $T_\text{surf} = 273\text{ K}$, nominal interior temperature $T_{i,\text{nom}} = 1773\text{ K}$, calibration $(s_{\text{top},\infty}, c_\theta) = (0.25, 0.25)$ and constant material properties (`eos_method = 1`, `const_properties = True`, no equation-of-state table read).
 
@@ -260,7 +263,7 @@ Korenaga (2009, p. 157, Table 1; p. 158, eqs. 29-30) fits the Arrhenius internal
 
 ### Design values against realized values
 
-In each run, the heating rate $H$ and the reference viscosity $\eta_{i,\text{nom}}$ come from the design parameters $(\mathrm{Ra}_i, \theta)$ at $T_{i,\text{nom}} = 1773\text{ K}$ ($\Delta T_\text{nom} = 1500\text{ K}$). As the mantle equilibrates, the steady state cools to the Korenaga (2009, p. 156, eq. 20) sub-lid interior temperature $T_{i,\text{kor}} < T_{i,\text{nom}}$. This temperature defines the realized parameters (`theta_realized_kor` and `Ra_i_realized_kor` in `tests/reference/ssc_scaling_exponents_benchmarks.json`):
+In each run, the heating rate $H$ and the reference viscosity $\eta_{i,\text{nom}}$ come from the design parameters $(\mathrm{Ra}_i, \theta)$ at $T_{i,\text{nom}} = 1773\text{ K}$ ($\Delta T_\text{nom} = 1500\text{ K}$). As the mantle equilibrates, the steady state cools to the Korenaga (2009, p. 156, eq. 20) sub-lid interior temperature $T_{i,\text{kor}} < T_{i,\text{nom}}$. This temperature defines the realized parameters (`theta_realized_kor` and `Ra_i_realized_kor` in `tests/reference/ssc_scaling_exponents_benchmarks.json`). In this equation, $\alpha$ is the thermal expansivity, not the exponent:
 
 $$
 \theta_\text{realized,kor} = \frac{E_\text{act}(T_{i,\text{kor}} - T_\text{surf})}{R T_{i,\text{kor}}^2}, \quad \mathrm{Ra}_{i,\text{realized,kor}} = \frac{\alpha \rho g (T_{i,\text{kor}} - T_\text{surf}) D^3}{\kappa \eta_\text{diff}(T_{i,\text{kor}})}
@@ -294,7 +297,7 @@ Arrhenius cooling $T_{i,\text{kor}} < T_{i,\text{nom}}$ increases $\eta_\text{di
 
 ### The pure-conduction floor
 
-Without convection, the Nusselt number cannot fall below a floor. Take a continuous planar conductive layer with uniform internal heating $H$, insulated base ($z = 1$) and fixed surface temperature $T_\text{surf}$ ($z = 0$). The dimensionless profile is $u(z) = (T(z) - T_\text{surf}) / \Delta T_H = z - \frac{1}{2}z^2$. It has basal peak $u(1) = 1/2$ ($\mathrm{Nu}_\text{peak} = 2.0$) and volume average $\int_0^1 u(z)\,\mathrm{d}z = 1/3$ ($\mathrm{Nu}_\text{vol} = 3.0$).
+The conductive state gives the lowest Nusselt number, and convection raises it. Take a continuous planar conductive layer with uniform internal heating $H$, insulated base ($z = 1$) and fixed surface temperature $T_\text{surf}$ ($z = 0$). The dimensionless profile is $u(z) = (T(z) - T_\text{surf}) / \Delta T_H = z - \frac{1}{2}z^2$. It has basal peak $u(1) = 1/2$ ($\mathrm{Nu}_\text{peak} = 2.0$) and volume average $\int_0^1 u(z)\,\mathrm{d}z = 1/3$ ($\mathrm{Nu}_\text{vol} = 3.0$).
 
 Put $u(z)$ into the Korenaga (2009, p. 156, eq. 20) sub-lid average $u_i = \frac{1}{1 - d_l}\int_{d_l}^1 (z - \frac{1}{2}z^2)\,\mathrm{d}z = \frac{1}{3} + \frac{1}{3}d_l - \frac{1}{6}d_l^2$, with conductive lid thickness $d_l = u_i$. This gives $d_l^2 + 4 d_l - 2 = 0$, with physical root $d_l = \sqrt{6} - 2 \approx 0.4495$ (`0.44948974`).
 
@@ -328,11 +331,11 @@ Even on this subset, $\alpha = 1.1698$ (and $\alpha_\text{real} = 0.3573$) stays
 
 **How to read the plot.** Panel (a) plots $\log_{10}(\mathrm{Nu}\,\theta^{4/3})$ against $\log_{10}(\mathrm{Ra}_i)$ at design $\theta = 15$. Panel (b) plots $\log_{10}(\mathrm{Nu}\,\mathrm{Ra}_i^{-1/3})$ against $\log_{10}(\theta)$ at design $\mathrm{Ra}_i = 10^7$. Circles show the 12 steady-state 1-D runs. The solid line is the 12-case ordinary least-squares fit, and the dash-dotted line is the post-hoc 7-case convecting fit. The dashed line is the Solomatov and Moresi (2000) asymptotic slope ($\beta = 1/3$ in panel a, $-\alpha = -4/3$ in panel b). Low-$\mathrm{Ra}_i$ and high-$\theta$ points flatten onto the conduction floor.
 
-**Known limit.** Both the 12-case design-parameter fit ($\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$) and the realized-state fit ($\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$) fail the pre-run acceptance window $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$. The test pins the current steady-state values and regressions to $10^{-7}$ relative.
+**Known limit.** Both the 12-case design-parameter fit ($\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$) and the realized-state fit ($\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$) fail the acceptance window set before the runs $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$. The test pins the current steady-state values and regressions to $10^{-7}$ relative.
 
 ??? info "Test details"
     - Reference: Newtonian ($n = 1$) internal-heating stagnant-lid scaling theory and numerical fits of Solomatov and Moresi (2000, pp. 21797-21798, sec. 3; p. 21800, Table 4 and eqs. 9, 10, 12; p. 21801, Table 5; p. 21803, Table 6 rows 6-8; p. 21805, sec. 7.4), Korenaga (2009, p. 156, eq. 20; p. 157, Table 1; p. 158, eqs. 29-30), and Reese et al. (2005, p. 366, Table 2 and eq. 20).
-    - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation (both the 12-case design-value fit $\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$ and the realized-state fit $\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$ fail the pre-run acceptance window $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$ as documented above).
+    - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation (both the 12-case design-value fit $\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$ and the realized-state fit $\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$ fail the acceptance window set before the runs $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$ as documented above).
     - Test id: `tests/test_mlt_calibration_smoke.py::test_stagnant_lid_scaling_exponents`
     - Command: `pytest tests/test_mlt_calibration_smoke.py -k test_stagnant_lid_scaling_exponents` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_scaling_exponents_benchmarks.py --full`)
 
