@@ -219,7 +219,7 @@ Panel (b) plots the lid-thinning ratio $R_\text{thin}$ against $\log_{10}(\tau_{
 
 ??? info "Test details"
     - Reference: Zero-dimensional stagnant-lid energy-balance ODE (`tests/reference/stagnant_lid_0d.py`), Korenaga (2009, p. 157, Table 1; p. 158, eq. 29; p. 159, Fig. 4a), Solomatov and Moresi (2000, p. 21803, Table 6; p. 21804, eq. 23), Moresi and Solomatov (1998, p. 672, eqs. 11, 13-14; p. 677, eqs. 25-26), and Foley and Bercovici (2014, p. 588, eqs. 26-27).
-    - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation, and $1e-07$ relative on the live $25\text{ Myr}$ 1-D trajectory segment from its measured 5-start round-off spread ($\le 4.28 \times 10^{-9}$ on $T_i$, $\le 5.25 \times 10^{-9}$ on $d_\text{lid}$, and $\le 2.77 \times 10^{-8}$ on $F_\text{top}$; the comparison fails the derived $5\%$ $T_i$, $22\%$ $d_\text{lid}$, and $11\%$ isotherm thinning bounds as documented above).
+    - Tolerance: Pinned to `1e-07` relative for deterministic single-process evaluation, and `1e-07` relative on the live $25\text{ Myr}$ 1-D trajectory segment from its measured 5-start round-off spread ($\le 4.28 \times 10^{-9}$ on $T_i$, $\le 5.25 \times 10^{-9}$ on $d_\text{lid}$, and $\le 2.77 \times 10^{-8}$ on $F_\text{top}$; the comparison fails the derived $5\%$ $T_i$, $22\%$ $d_\text{lid}$, and $11\%$ isotherm thinning bounds as documented above).
     - Test id: `tests/test_rheology_verification_smoke.py::test_0d_stagnant_lid_reference_and_yield_thinning`
     - Command: `pytest tests/test_rheology_verification_smoke.py -k test_0d_stagnant_lid_reference_and_yield_thinning` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_0d_reference_benchmarks.py --full`)
 
@@ -271,10 +271,17 @@ $$
 
 The fit is the regression $\ln \mathrm{Nu} = \ln a - \alpha \ln \theta + \beta \ln \mathrm{Ra}_i$, with $\mathrm{Nu} = \Delta T_H / (T_{i,\text{kor}} - T_\text{surf})$.
 
-| Fit | $\beta$ | $\alpha$ | $a$ | $R^2$ | Single-sweep slopes |
-|:---|:---|:---|:---|:---:|:---|
-| All 12 cases, design values | $\beta = 0.2819 \pm 0.0134$ | $\alpha = 1.0366 \pm 0.0971$ | $a = 0.6415$ ($\ln a = -0.4439 \pm 0.3571$) | $R^2 = 0.9849$ | $\beta_\text{sweep} = 0.2783 \pm 0.0172$ at design $\theta = 15$ (`6` points); $\alpha_\text{sweep} = 1.0104 \pm 0.0590$ at design $\mathrm{Ra}_i = 10^7$ (`6` points) |
-| All 12 cases, realized values | $\beta_\text{real} = 0.1128 \pm 0.0286$ | $\alpha_\text{real} = -0.0786 \pm 0.4398$ | $a_\text{real} = 0.6940$ ($\ln a_\text{real} = -0.3653 \pm 1.5581$) | $R^2 = 0.7750$ | $\beta_\text{real,sweep} = 0.1198 \pm 0.0285$; $\alpha_\text{real,sweep} = 0.8290 \pm 0.0731$ |
+| Fit | $\beta$ | $\alpha$ | $a$ | $R^2$ |
+|:---|:---|:---|:---|:---:|
+| All 12 cases, design values | $\beta = 0.2819 \pm 0.0134$ | $\alpha = 1.0366 \pm 0.0971$ | $a = 0.6415$ ($\ln a = -0.4439 \pm 0.3571$) | $R^2 = 0.9849$ |
+| All 12 cases, realized values | $\beta_\text{real} = 0.1128 \pm 0.0286$ | $\alpha_\text{real} = -0.0786 \pm 0.4398$ | $a_\text{real} = 0.6940$ ($\ln a_\text{real} = -0.3653 \pm 1.5581$) | $R^2 = 0.7750$ |
+
+The single-sweep ordinary least-squares slopes are:
+
+| Fit | Rayleigh sweep | Frank-Kamenetskii sweep |
+|:---|:---|:---|
+| Design values | $\beta_\text{sweep} = 0.2783 \pm 0.0172$ at design $\theta = 15$ (`6` points) | $\alpha_\text{sweep} = 1.0104 \pm 0.0590$ at design $\mathrm{Ra}_i = 10^7$ (`6` points) |
+| Realized values | $\beta_\text{real,sweep} = 0.1198 \pm 0.0285$ | $\alpha_\text{real,sweep} = 0.8290 \pm 0.0731$ |
 
 $T_{i,\text{kor}}$ enters both the dependent variable $\mathrm{Nu} = \Delta T_H / (T_{i,\text{kor}} - T_\text{surf})$ and the realized regressors $(\mathrm{Ra}_{i,\text{realized,kor}}, \theta_\text{realized,kor})$. Variations in $T_{i,\text{kor}}$ therefore couple the response and predictor axes in the realized-state regression.
 
@@ -335,16 +342,16 @@ Even on this subset, $\alpha = 1.1698$ (and $\alpha_\text{real} = 0.3573$) stays
 
 ??? info "Test details"
     - Reference: Newtonian ($n = 1$) internal-heating stagnant-lid scaling theory and numerical fits of Solomatov and Moresi (2000, pp. 21797-21798, sec. 3; p. 21800, Table 4 and eqs. 9, 10, 12; p. 21801, Table 5; p. 21803, Table 6 rows 6-8; p. 21805, sec. 7.4), Korenaga (2009, p. 156, eq. 20; p. 157, Table 1; p. 158, eqs. 29-30), and Reese et al. (2005, p. 366, Table 2 and eq. 20).
-    - Tolerance: Pinned to $1e-07$ relative for deterministic single-process evaluation (both the 12-case design-value fit $\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$ and the realized-state fit $\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$ fail the acceptance window set before the runs $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$ as documented above).
+    - Tolerance: Pinned to `1e-07` relative for deterministic single-process evaluation (both the 12-case design-value fit $\beta = 0.2819 \pm 0.0134$, $\alpha = 1.0366 \pm 0.0971$ and the realized-state fit $\beta_\text{real} = 0.1128 \pm 0.0286$, $\alpha_\text{real} = -0.0786 \pm 0.4398$ fail the acceptance window set before the runs $\beta \in [0.294, 0.350]$ and $\alpha \in [1.294, 1.350]$ as documented above).
     - Test id: `tests/test_mlt_calibration_smoke.py::test_stagnant_lid_scaling_exponents`
     - Command: `pytest tests/test_mlt_calibration_smoke.py -k test_stagnant_lid_scaling_exponents` (add `--validation-plots` to write the plot pair; regenerate the benchmark file with `python tools/verification/generate_ssc_scaling_exponents_benchmarks.py --full`)
 
 [^cite-armann2012]: M. Armann, P. J. Tackley, *[Simulating the thermochemical magmatic and tectonic evolution of Venus's mantle and lithosphere: Two-dimensional models](https://doi.org/10.1029/2012JE004231)*, Journal of Geophysical Research: Planets, 117, E12003, 2012. [SciX](https://scixplorer.org/abs/2012JGRE..11712003A/abstract).
 [^cite-deschamps2021]: F. Deschamps, K. Vilella, *[Scaling Laws for Mixed-Heated Stagnant-Lid Convection and Application to Europa](https://doi.org/10.1029/2021JE006963)*, Journal of Geophysical Research: Planets, 126, e2021JE006963, 2021. [SciX](https://scixplorer.org/abs/2021JGRE..12606963D/abstract).
 [^cite-foley2014]: B. J. Foley, D. Bercovici, *[Scaling laws for convection with temperature-dependent viscosity and grain-damage](https://doi.org/10.1093/gji/ggu275)*, Geophysical Journal International, 199, 580–603, 2014. [SciX](https://scixplorer.org/abs/2014GeoJI.199..580F/abstract).
-[^cite-karato1993]: S. Karato, P. Wu, *[Rheology of the Upper Mantle: A Synthesis](https://doi.org/10.1126/science.260.5109.771)*, Science, 260, 771–778, 1993. [SciX](https://scixplorer.org/abs/1993Sci...260..771K/abstract).
+[^cite-karato1993]: S.-I. Karato, P. Wu, *[Rheology of the Upper Mantle: A Synthesis](https://doi.org/10.1126/science.260.5109.771)*, Science, 260, 771–778, 1993. [SciX](https://scixplorer.org/abs/1993Sci...260..771K/abstract).
 [^cite-korenaga2009]: J. Korenaga, *[Scaling of stagnant-lid convection with Arrhenius rheology and the effects of mantle melting](https://doi.org/10.1111/j.1365-246X.2009.04272.x)*, Geophysical Journal International, 179, 154–170, 2009. [SciX](https://scixplorer.org/abs/2009GeoJI.179..154K/abstract).
 [^cite-moresi1998]: L. Moresi, V. Solomatov, *[Mantle convection with a brittle lithosphere: thoughts on the global tectonic styles of the Earth and Venus](https://doi.org/10.1046/j.1365-246X.1998.00521.x)*, Geophysical Journal International, 133, 669–682, 1998. [SciX](https://scixplorer.org/abs/1998GeoJI.133..669M/abstract).
 [^cite-reese2005]: C. C. Reese, V. S. Solomatov, J. R. Baumgardner, *[Scaling laws for time-dependent stagnant lid convection in a spherical shell](https://doi.org/10.1016/j.pepi.2004.11.004)*, Physics of the Earth and Planetary Interiors, 149, 361–370, 2005. [SciX](https://scixplorer.org/abs/2005PEPI..149..361R/abstract).
-[^cite-solomatov2000]: V. S. Solomatov, L. -N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
+[^cite-solomatov2000]: V. S. Solomatov, L.-N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
 [^cite-tackley2013]: P. J. Tackley, M. Ammann, J. P. Brodholt, D. P. Dobson, D. Valencia, *[Mantle dynamics in super-Earths: Post-perovskite rheology and self-regulation of viscosity](https://doi.org/10.1016/j.icarus.2013.03.013)*, Icarus, 225, 50–61, 2013. [SciX](https://scixplorer.org/abs/2013Icar..225...50T/abstract).

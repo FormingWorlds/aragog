@@ -25,7 +25,7 @@ The modules `aragog.rheology` and `aragog.rheology_lid` hold this physics. The s
 
 With `enabled = False` the solver skips the rheology kernels and reproduces the baseline trajectory without this physics.
 
-## 1. Homologous-Temperature Diffusion Creep
+## 1. Viscosity of Solid Rock: Diffusion Creep
 
 **How does solid viscosity depend on temperature and pressure?** Solid rock flows by diffusion creep: atoms move slowly through the crystal grains. The hotter the rock is relative to its solidus temperature, the faster this is. Aragog therefore writes viscosity as a function of $T / T_\text{sol}$, the temperature divided by the solidus temperature. This ratio is the homologous temperature.
 
@@ -54,7 +54,7 @@ $$
 | Test table of the continuous integration (CI) | $T_{\text{sol,table}}(0) = 1439.230032\text{ K}$ | $1.8459\times$ | $\eta_\text{diff}(1600\text{ K}, 0) = 1.8459 \times 10^{21}\text{ Pa s}$ |
 | PALEOS value | $1464.8\text{ K}$ | $2.752\times$, or $2.75\times$ | $\eta_\text{diff}(1600\text{ K}, 0) = 2.752 \times 10^{21}\text{ Pa s}$ |
 
-### Homologous Activation Enthalpy and Linear Fallback
+### The Activation Enthalpy and the Solidus
 
 **Why the enthalpy follows the solidus.** With a constant activation volume $V_a$, the activation enthalpy grows linearly with pressure: $H(P) = E_a + P V_a$. If this line is extended to core-mantle boundary pressures ($135\text{ GPa}$ in Earth), viscosity along an adiabat rises by more than nine orders of magnitude. The deep mantle would then be rigid, which is not physical.
 
@@ -166,7 +166,7 @@ The reduction is below the bound, as the theorem requires. For comparison, the u
 
 **Where this is checked.** [Saturating activation law](../Validation/solid_state_convection.md#the-saturating-activation-law-gives-its-limits).
 
-## 2. Plastic Yielding Criterion
+## 2. Yield Stress of the Rock
 
 **How strong is the rock?** At low pressure, cold rock fails by friction along fractures. Its strength then rises with pressure. Deeper and hotter rock deforms in a ductile way, and this limits its strength. `compute_yield_stress` combines both effects. It uses a Byerlee frictional criterion (Byerlee, 1978[^cite-byerlee1978]; Moresi and Solomatov, 1998[^cite-moresi1998], p. 672, eq. 9) with a ductile ceiling (Tackley, 2000[^cite-tackley2000], p. 8, eq. 7):
 
@@ -181,7 +181,7 @@ $$
 | $P$ | Lithostatic pressure | | |
 | $\tau_\text{max}$ | Yield stress ceiling | `yield_stress_max` | $500\text{ MPa}$ |
 
-### Invariant Conventions
+### Stress and Strain-Rate Invariants
 
 Stress and strain rate are tensors, and the closures use one number for each. These numbers are the second invariants of the deviatoric stress and strain rate (Moresi and Solomatov, 1998; Tackley, 2000):
 
@@ -191,7 +191,7 @@ $$
 
 Under simple shear with velocity gradient $\partial v / \partial y = v / l$, the strain rate tensor has components $\dot{\epsilon}_{xy} = \dot{\epsilon}_{yx} = \frac{1}{2} v / l$. This gives $\dot{\epsilon} = v / (2 l)$ and second invariant $D = 2 \dot{\epsilon} = v / l$.
 
-### Physical Validity and Ceiling Depth
+### The Ductile Ceiling and Its Depth
 
 Byerlee frictional failure governs brittle deformation in the cold shallow lithosphere. At higher temperatures and greater depths, ductile mechanisms limit the shear strength. The ceiling $\tau_\text{max}$ stands in for this ductile limit (Tackley, 2000, p. 8).
 
@@ -203,11 +203,11 @@ $$
 
 On Earth, $0.75\text{ GPa}$ is at a depth of about $23\text{ km}$. Thermal lithospheres are typically thicker than $23\text{ km}$, so the ceiling $\tau_\text{max}$ commonly sets the yield stress at the base of the lid. The scalar $\tau_{y,\text{lid}}$ is the yield stress at the lid-base pressure, and it decides whether the lid moves. `compute_yield_stress` calculates the local profile $\tau_y(P)$.
 
-## 3. Stagnant Lid Identification
+## 3. Finding the Stagnant Lid
 
 **Where is the lid, and how thick is it?** Below a cold surface, convection carries the heat in the interior, and conduction carries it through the cold lid. `compute_stagnant_lid_state` finds the top of the convecting layer. From this it gets the interior temperature, the base of the lid and the lid thickness. The weights behind this search are in [section 11](#11-code-details).
 
-### Interior Convective State
+### The Convecting Interior
 
 The code measures convection with the convective flux fraction $f_k$ at each node $k$: the convective flux divided by the total flux. It compares $f_k$ with a threshold $f_\text{conv,min} \in [0.05, 0.5]$ (`interior_flux_fraction`, default $0.05$) over a fixed transition width of $0.01$:
 
@@ -238,7 +238,7 @@ $$
 
 The code evaluates this scale at the pressure $P_{T_i}$ of the interior node. This avoids a circular dependence on the lid thickness.
 
-### Asymptotic Validity Conditions
+### When the Lid Scaling Holds
 
 The boundary-layer scaling of a stagnant lid is valid under 2 conditions (Solomatov, 1995[^cite-solomatov1995]; Foley and Bercovici, 2014[^cite-foley2014], pp. 582, 586):
 
@@ -282,7 +282,7 @@ $$
 
 The gradient $|dT/dr|_\mathrm{lid\_base}$ is a weighted value from nodal central differences (`xp.gradient(T, r)`). To prevent a division by zero in isothermal or near-adiabatic profiles, the code floors the nodal gradient at a small positive value: a $1\text{ K}$ difference over the minimum grid spacing.
 
-### Smooth Lid Mask and Resolution
+### Lid Mask and Mesh Resolution
 
 Inside the cold solid lid, the mask $w_\text{lid} \to 1$. In the warm or partly molten interior, $w_\text{lid} \to 0$. The mask is smooth, and section 11 gives its formula.
 
@@ -324,7 +324,7 @@ Both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the temperature d
 
 **No lid, no stress.** Convection can be inactive or can reach the surface, so that no conductive lid forms ($d_\text{lid,raw} \le 1\text{ m}$ or $T_i - T_\text{surf} \le 10^{-3}\text{ K}$). A smooth weight $w_\text{lid,present}$ then takes the lid diagnostics to zero. The weight keeps them continuous across lid onset. Section 11 gives its formula.
 
-### 4.1 Heating Mode and Evolutionary Context
+### 4.1 Bottom Heating and Internal Heating
 
 **Does this velocity law hold at all stages of cooling?** It is for bottom heating, so it is an upper estimate later on. The $2/3$ velocity law applies to bottom-heated stagnant-lid convection (Dumoulin et al., 1999; Foley and Bercovici, 2014, p. 587). A cooling terrestrial planet starts with a superheated core. The large temperature difference at the core-mantle boundary drives strong basal heating during early post-magma-ocean evolution (Thiriet et al., 2019[^cite-thiriet2019], pp. 139-140, sec. 1).
 
@@ -346,7 +346,7 @@ Here $a_u = 0.385 \pm 0.003$ for Newtonian rheology ($n = 1$) and $a_\text{rh} =
 
 At $a_\text{rh} = 2.4$, the internally heated stress is approximately four times lower than the bottom-heated estimate. At $a_\text{rh} = 1.0$ it is about six times lower. The bottom-heated $2/3$ scaling is therefore an upper estimate of the convective shear stress during later, internally heated epochs.
 
-### 4.2 Validated Parameter Ranges and Mushy Extrapolation
+### 4.2 Tested Range and Mushy Mantles
 
 **Over what range was the law tested?** Far below the values of a mushy mantle. Foley and Bercovici (2014, sec. 4.2, p. 589; Tables 2 and 3, p. 593; Figs. 8-9) calibrate and validate the scaling laws over this range of their reference Rayleigh number $\mathrm{Ra}_0$:
 
@@ -363,7 +363,7 @@ A partly molten mantle lies far outside this range. There, the two-phase log-vis
 
 The scaling in a mushy interior is therefore an extrapolation. Solomatov and Moresi (2000, sec. 5.4, p. 21802) note that the velocity law can change at very high Rayleigh numbers, when convective plumes disconnect from the lid base.
 
-### 4.3 Rheological Parameter Calibration
+### 4.3 Where the Constants Come From
 
 **Where do the constants come from?** From a joint fit to models with grain damage. The constants $a_\text{rh} = 1.3$ and $C_4 = 0.125$ are empirical. Foley and Bercovici (2014, sec. 4.2, p. 589) fit them jointly for their theory-curve constant-healing ($E_h = 0$) damage models. Every numerical model in that paper includes dynamic grain damage, and the paper gives no pure damage-free numerical fit. For temperature-dependent healing, Foley and Bercovici (2014, sec. 5.2, pp. 594-595) find $a_\text{rh} \approx 1.82$.
 
@@ -375,7 +375,7 @@ The sensitivity to $a_\text{rh}$ is moderate. With $a_\text{rh} = 2.0$ instead o
 
 Do not confuse $a_\text{rh}$ with `lid_contrast_coeff`. The sublayer parameter $a_\text{rh} = 1.3$ enters the velocity $v_m$. The configured `lid_contrast_coeff` ($a = 2.2$; Solomatov, 1995; Solomatov and Moresi, 2000, sec. 5.1, pp. 21799-21800) sets the isotherm of the rigid lid ($T_{\text{lid,iso}} = T_i - a \Delta T_\text{rh}$). The two values differ on purpose.
 
-### 4.4 Diagnostic Quantities and Force Balance
+### 4.4 Buoyancy Stress of the Sublayer
 
 **How does the driving stress compare with the buoyancy of the sublayer?** In the Earth example below, the ratio is about 0.1 to 0.15. `compute_stagnant_lid_state` also calculates the buoyancy stress of the sublayer. This is a diagnostic entry in `lid_state`:
 
@@ -385,7 +385,7 @@ $$
 
 Here $\delta_\text{rh}$ is the sublayer thickness and $\Delta T_\text{rh} = R T_i^2 / H(P_{T_i})$. `lid_state` also holds the force-balance ratio $\tau_d / \tau_\text{buoy}$.
 
-**Worked example.** Take the Earth reference state of section 4.1, with $\eta_i = 10^{20}\text{ Pa s}$, $\theta \approx 18.32$, $\Delta T_\text{rh} \approx 71.0\text{ K}$ and $\tau_d \approx 0.232\text{ MPa}$.
+**Worked example.** Take the Earth reference state of section 4.1, with $\mu_i = 10^{20}\text{ Pa s}$, $\theta \approx 18.32$, $\Delta T_\text{rh} \approx 71.0\text{ K}$ and $\tau_d \approx 0.232\text{ MPa}$.
 
 | Evaluation | Lid thickness | $\delta_\text{rh}$ | $\tau_\text{buoy}$ | $\tau_d / \tau_\text{buoy}$ |
 |:---|:---:|:---:|:---:|:---:|
@@ -394,7 +394,7 @@ Here $\delta_\text{rh}$ is the sublayer thickness and $\Delta T_\text{rh} = R T_
 
 The two rows differ because `xp.gradient(T, r)` spans the isothermal-to-conductive corner on the 50-node profile. In addition, `lid_state` holds the shifted soft-maximum convective velocity $v_i$ as a diagnostic, evaluated over the upper mantle with `SOFTMAX_VELOCITY_SCALE` ($3.17 \times 10^{-12}\text{ m s}^{-1}$).
 
-## 5. Minimum Yield Closure
+## 5. When the Lid Yields
 
 **What happens when the stress reaches the yield stress?** Below the yield stress, the rock follows the creep law. At the yield stress, the rock cannot carry more stress, so its effective viscosity falls. `aragog.rheology_lid.compute_effective_viscosity` combines creep and yielding with a smooth minimum (Moresi and Solomatov, 1998, p. 672, eqs. 13-14; Tackley, 2000, p. 8, eq. 8):
 
@@ -545,7 +545,7 @@ In this mode, yielding is not a stress cap. The two-pass mixing-length solver wo
 
 Thus in `'local'` mode yielding scales the convective velocity by $\tau_{\text{buoy},1} / \tau_y$. Both passes use the upper mixing-length slope $s_{\text{top},\infty}$ with no $\theta$, so `c_theta` has no effect.
 
-## 9. Asymptotic Limits
+## 9. Limits of the Model
 
 **What do the kernels give when one quantity goes to a limit?** The kernels in `aragog.rheology` and `aragog.rheology_lid` have these limits.
 
@@ -558,7 +558,7 @@ Thus in `'local'` mode yielding scales the convective velocity by $\tau_{\text{b
 7. **No solid layer ($\phi \ge 0.012$ at every node, with or without a solidus table):** the solidus ramp $w_{\text{sol},\phi}$ of section 11 is 1, so $w_\text{hot,sol} = 1$ and $w_\text{interior} = 1$ identically through the column, however steep the temperature gradient is. The lid-base weight $\tilde{W}_\text{base}$ places $r_\text{lid,base}$ strictly at the surface node $r[-1]$. This gives $d_\text{lid,raw} = 0$, `has_lid = False`, $d_\text{lid} = 0$, $\tau_d = 0$ and `lid_regime = 0.0` at all mesh resolutions $N$, including $N \in \{3, 10, 50, 100, 200\}$ on both Earth and $9000\text{ km}$ mantle spans.
 8. **High driving stress ($\tau_{d,\text{lid}} / \tau_{y,\text{lid}} > 1$):** $w_y \to 1$ and $\eta_\text{eff} \to \min(\eta_\text{diff}, \mu_i \tau_{y,\text{lid}} / \tau_{d,\text{lid}}) < \mu_i$. The cold surface boundary layer moves into thin-boundary-layer convection.
 
-## 10. Rheology Parameters
+## 10. Parameters
 
 **What can a user set?** `SolidRheologyParams` in `aragog.rheology` holds the parameters. `PhaseConfig.rheology` in `aragog.config.phases` exposes them.
 
@@ -650,7 +650,7 @@ This section is for a reader who works on the kernels. It holds the weights, flo
     T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
     $$
 
-??? note "Weak convection and the weight $w_\text{weight}$"
+??? note "Weak convection"
     These values hold at the default $f_\text{conv,min} = 0.05$ (`interior_flux_fraction = 0.05`).
 
     | Interior peak | $w_\text{weight}$ | Result |
@@ -709,7 +709,7 @@ This section is for a reader who works on the kernels. It holds the weights, flo
 
 ### Size of the Effect and Round-Off Spread
 
-??? note "Size of the effect and round-off spread"
+??? note "Numbers for 2 configurations"
     The perturbed starts are $S_0(r)(1 + k \cdot 10^{-12})$ ($k \in \{-2, -1, 0, +1, +2\}$) over $100\text{ yr}$. The case is [Round-off perturbation spread with solid rheology](../Validation/numerics.md#round-off-perturbation-spread-with-solid-rheology).
 
     | Quantity | Active-solid variant of `cfg/abe_solid.toml` | Default `cfg/abe_solid.toml` |
@@ -770,15 +770,15 @@ This section is for a reader who works on the kernels. It holds the weights, flo
 [^cite-armann2012]: M. Armann, P. J. Tackley, *[Simulating the thermochemical magmatic and tectonic evolution of Venus's mantle and lithosphere: Two-dimensional models](https://doi.org/10.1029/2012JE004231)*, Journal of Geophysical Research: Planets, 117, E12003, 2012. [SciX](https://scixplorer.org/abs/2012JGRE..11712003A/abstract).
 [^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
 [^cite-byerlee1978]: J. Byerlee, *[Friction of rocks](https://doi.org/10.1007/BF00876528)*, Pure and Applied Geophysics, 116, 615–626, 1978. [SciX](https://scixplorer.org/abs/1978PApGe.116..615B/abstract).
-[^cite-dumoulin1999]: C. Dumoulin, M. Doin, L. Fleitout, *[Heat transport in stagnant lid convection with temperature- and pressure-dependent Newtonian or non-Newtonian rheology](https://doi.org/10.1029/1999JB900110)*, Journal of Geophysical Research, 104, 12759–12777, 1999. [SciX](https://scixplorer.org/abs/1999JGR...10412759D/abstract).
+[^cite-dumoulin1999]: C. Dumoulin, M.-P. Doin, L. Fleitout, *[Heat transport in stagnant lid convection with temperature- and pressure-dependent Newtonian or non-Newtonian rheology](https://doi.org/10.1029/1999JB900110)*, Journal of Geophysical Research, 104, 12759–12777, 1999. [SciX](https://scixplorer.org/abs/1999JGR...10412759D/abstract).
 [^cite-foley2009]: B. J. Foley, T. W. Becker, *[Generation of plate-like behavior and mantle heterogeneity from a spherical, viscoplastic convection model](https://doi.org/10.1029/2009GC002378)*, Geochemistry, Geophysics, Geosystems, 10, Q08001, 2009. [SciX](https://scixplorer.org/abs/2009GGG....10.8001F/abstract).
 [^cite-foley2014]: B. J. Foley, D. Bercovici, *[Scaling laws for convection with temperature-dependent viscosity and grain-damage](https://doi.org/10.1093/gji/ggu275)*, Geophysical Journal International, 199, 580–603, 2014. [SciX](https://scixplorer.org/abs/2014GeoJI.199..580F/abstract).
-[^cite-karato1993]: S. Karato, P. Wu, *[Rheology of the Upper Mantle: A Synthesis](https://doi.org/10.1126/science.260.5109.771)*, Science, 260, 771–778, 1993. [SciX](https://scixplorer.org/abs/1993Sci...260..771K/abstract).
+[^cite-karato1993]: S.-I. Karato, P. Wu, *[Rheology of the Upper Mantle: A Synthesis](https://doi.org/10.1126/science.260.5109.771)*, Science, 260, 771–778, 1993. [SciX](https://scixplorer.org/abs/1993Sci...260..771K/abstract).
 [^cite-korenaga2009]: J. Korenaga, *[Scaling of stagnant-lid convection with Arrhenius rheology and the effects of mantle melting](https://doi.org/10.1111/j.1365-246X.2009.04272.x)*, Geophysical Journal International, 179, 154–170, 2009. [SciX](https://scixplorer.org/abs/2009GeoJI.179..154K/abstract).
 [^cite-moresi1998]: L. Moresi, V. Solomatov, *[Mantle convection with a brittle lithosphere: thoughts on the global tectonic styles of the Earth and Venus](https://doi.org/10.1046/j.1365-246X.1998.00521.x)*, Geophysical Journal International, 133, 669–682, 1998. [SciX](https://scixplorer.org/abs/1998GeoJI.133..669M/abstract).
 [^cite-solomatov1995]: V. S. Solomatov, *[Scaling of temperature- and stress-dependent viscosity convection](https://doi.org/10.1063/1.868624)*, Physics of Fluids, 7, 266–274, 1995. [SciX](https://scixplorer.org/abs/1995PhFl....7..266S/abstract).
-[^cite-solomatov2000]: V. S. Solomatov, L. -N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
+[^cite-solomatov2000]: V. S. Solomatov, L.-N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
 [^cite-tackley2000]: P. J. Tackley, *[Self-consistent generation of tectonic plates in time-dependent, three-dimensional mantle convection simulations](https://doi.org/10.1029/2000GC000036)*, Geochemistry, Geophysics, Geosystems, 1, 1021, 2000. [SciX](https://scixplorer.org/abs/2000GGG.....1.1021T/abstract).
 [^cite-tackley2013]: P. J. Tackley, M. Ammann, J. P. Brodholt, D. P. Dobson, D. Valencia, *[Mantle dynamics in super-Earths: Post-perovskite rheology and self-regulation of viscosity](https://doi.org/10.1016/j.icarus.2013.03.013)*, Icarus, 225, 50–61, 2013. [SciX](https://scixplorer.org/abs/2013Icar..225...50T/abstract).
 [^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138–153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
-[^cite-yamazaki2001]: D. Yamazaki, S. Karato, *[Some mineral physics constraints on the rheology and geothermal structure of Earth's lower mantle](https://doi.org/10.2138/am-2001-0401)*, American Mineralogist, 86, 385–391, 2001. [SciX](https://scixplorer.org/abs/2001AmMin..86..385Y/abstract).
+[^cite-yamazaki2001]: D. Yamazaki, S.-I. Karato, *[Some mineral physics constraints on the rheology and geothermal structure of Earth's lower mantle](https://doi.org/10.2138/am-2001-0401)*, American Mineralogist, 86, 385–391, 2001. [SciX](https://scixplorer.org/abs/2001AmMin..86..385Y/abstract).
