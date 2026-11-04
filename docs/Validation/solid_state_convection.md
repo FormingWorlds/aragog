@@ -182,7 +182,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **How the solver yields.** In the two-pass update, the first pass locates $r_\text{lid,base}$ from the unyielded convective flux fraction and the rheological isotherm $T_\text{lid,iso} = T_i - 2.2\,\Delta T_\text{rh}$. The second pass lowers $\eta_\text{eff}$ in the lid and mobilises convective heat transport below $20.20\text{ km}$ depth ($20202.02\text{ m} = 2 \times 10^6\text{ m} / 99$, equal to $2$ radial node spacings on the $N = 100$ mesh).
 
-**Result.** The 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check at the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$, which the table gives. Those values are $\tau_{y,0} / \tau_{d,\text{lid}}$.
+**Result.** The 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ ($1.00$) at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$. The rheological isotherm lid thickness `d_lid` fails this thinning check at the other 3 values of $\tau_{y,0} / \tau_{d,\text{lid}}$, which the table gives.
 
 | Quantity | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.5$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.2$ | $\tau_{y,0} / \tau_{d,\text{lid}} = 0.1$ |
 |:---|:---:|:---:|:---:|
