@@ -86,6 +86,16 @@ def test_constant_property_lid_is_refused_outside_its_mode(kw, match):
     assert not _solver(lid=False, **kw)._lid_on
 
 
+def test_lid_without_tables_or_constant_properties_is_refused():
+    """A lid on neither the entropy tables nor constant properties stops at setup by name."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _params()
+    p.phase_mixed.const_properties = False
+    with pytest.raises(ValueError, match='subgrid_lid needs the entropy EOS tables'):
+        EntropySolver(p, entropy_eos=None).initialize()
+
+
 def test_constant_property_lid_refuses_the_jax_rhs():
     """The JAX right-hand side has no constant-property mode: the lid data refuses by name."""
     with pytest.raises(ValueError, match='NumPy right-hand side'):
