@@ -126,7 +126,7 @@ def check_subgrid_lid(
         and not (lid_mush_base and outer_boundary_condition == 4)
     ):
         raise ValueError(
-            'subgrid_lid needs the grey-body outer boundary (outer_boundary_condition = 1), '
+            'subgrid_lid needs outer_boundary_condition = 1, or 4 with lid_mush_base = true, '
             f'got {outer_boundary_condition}'
         )
     if subgrid_lid and core_bc in ('gradient', 'bower2018'):

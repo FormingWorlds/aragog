@@ -794,8 +794,8 @@ def test_lid_is_refused_with_constant_properties(eos, attach_eos):
 @pytest.mark.parametrize(
     ('kw', 'match'),
     [
-        ({'outer_bc': 4}, 'grey-body outer boundary'),
-        ({'outer_bc': 5}, 'grey-body outer boundary'),
+        ({'outer_bc': 4}, 'needs outer_boundary_condition'),
+        ({'outer_bc': 5}, 'needs outer_boundary_condition'),
         ({'core_bc': 'gradient'}, "core_bc = 'gradient'"),
     ],
     ids=['flux', 'surface_temperature', 'gradient'],

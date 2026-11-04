@@ -91,7 +91,7 @@ def test_handover_cells_must_be_integer_at_least_one(value):
 @pytest.mark.parametrize('outer', [2, 4, 5])
 def test_lid_refused_without_grey_body(outer):
     """With the lid on, an outer boundary other than grey body is refused; off, it passes."""
-    with pytest.raises(ValueError, match='needs the grey-body outer boundary'):
+    with pytest.raises(ValueError, match='needs outer_boundary_condition'):
         BoundaryConfig(**{**BASE, 'outer_boundary_condition': outer}, **GOOD)
     BoundaryConfig(
         **{**BASE, 'outer_boundary_condition': outer}, **{**GOOD, 'subgrid_lid': False}
