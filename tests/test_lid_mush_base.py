@@ -10,6 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aragog import surface_lid as sl
+from aragog.solver.entropy_solver import SECS_PER_YEAR
 from tests.conftest import entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
@@ -132,7 +133,26 @@ class TestSolver:
         ev = s._lid_last
         F_in = float(s.state._heat_flux[-2])
         assert ev.rates.w == 1.0
-        assert ev.F_b == F_in
+        A_in, A = s._area_flat[-2], s._area_flat[-1]
+        assert A_in < A
+        assert ev.F_b == F_in * A_in / A
+
+    def test_floor_holds_the_fluid_on_a_sphere(self, eos):
+        """At g = 0 the base takes the heat that enters through the smaller lower face, so the
+        fluid entropy holds; with the flux per unit area of that face it falls."""
+        s = _solver(eos)
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[n - 1] = s._lid_S_sol + sl.LID_FLOOR_GAP
+        y[-2:] = s._lid_start(y[n - 1])
+        dS = np.asarray(s._dSdt_single(0.0, y)).ravel()[n - 1]
+        ev = s._lid_last
+        F_in = float(s.state._heat_flux[-2])
+        assert F_in > 0.0
+        ph = s.state.phase_staggered
+        cap = float(np.ravel(ph.density())[-1] * np.ravel(ph.temperature())[-1]) * ev.V_fluid
+        mismatch = (s._area_flat[-1] - s._area_flat[-2]) * F_in
+        assert abs(dS) / SECS_PER_YEAR * cap < 1.0e-6 * mismatch
 
     def test_invariant_refuses_an_accepted_state_below_the_solidus(self, eos):
         s = _solver(eos)
@@ -194,7 +214,7 @@ class TestSolver:
                 float(s._lid_Phi(S_f)),
                 s._lid_h_top,
                 3.0,
-                50.0,
+                50.0 * s._area_flat[-2] / s._area_flat[-1],
                 sl.floor_weight(S_f, s._lid_S_sol),
                 float(
                     sl.convective_base_flux(

@@ -437,7 +437,8 @@ def mush_base_flux(
     phi_integral: float, h_top: float, delta: float, F_in: float, g: float, q_conv: float
 ) -> float:
     """Flux [W/m^2] from the mush into the lid base: the floor flux plus the boundary-layer
-    flux ``q_conv``, blended by the floor weight ``g`` to the flux from below ``F_in``."""
+    flux ``q_conv``, blended by the floor weight ``g`` to the flux from below ``F_in``, given
+    per unit area of the top face of the cell, so that ``g = 0`` holds the fluid entropy."""
     return F_in + g * (floor_flux(phi_integral, h_top, delta) + q_conv - F_in)
 
 

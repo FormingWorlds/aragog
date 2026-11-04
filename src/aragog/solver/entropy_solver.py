@@ -3232,6 +3232,7 @@ class EntropySolver:
             delta_lo=self._lid_delta_lo,
             h_top=self._lid_h_top,
             area=self._lid_area,
+            area_below=float(self._area_flat[-2]),
             volume_top=float(self._volume_flat[-1]),
             ra_crit=self._lid_ra_crit,
             convection=float(self._lid_convection),
@@ -3555,7 +3556,8 @@ class EntropySolver:
         if self._lid_mush:
             g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)
             Phi = float(self._lid_Phi(float(entropy[-1])))
-            F_b = _lid.mush_base_flux(Phi, self._lid_h_top, delta, F_in, g, q_conv)
+            F_lo = F_in * float(self._area_flat[-2]) / self._lid_area
+            F_b = _lid.mush_base_flux(Phi, self._lid_h_top, delta, F_lo, g, q_conv)
         else:
             F_b = max(q_conv, F_in, 0.0)
         floor = _lid.LID_DELTA_FLOOR

@@ -359,6 +359,7 @@ class LidParams(NamedTuple):
     delta_lo: float
     h_top: float
     area: float
+    area_below: float
     volume_top: float
     ra_crit: float
     convection: float
@@ -384,7 +385,8 @@ def floor_weight(S_f, S_sol):
 def mush_base_flux(lp: LidParams, S_f, delta, F_in, q_conv):
     """The flux of :func:`aragog.surface_lid.mush_base_flux` from the table of ``Phi``."""
     F_k = enthalpy_H(lp.phi_k, S_f) / (0.5 * jnp.maximum(lp.h_top - delta, 1.0e-3))
-    return F_in + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_in)
+    F_lo = F_in * lp.area_below / lp.area
+    return F_lo + floor_weight(S_f, lp.S_sol) * (F_k + q_conv - F_lo)
 
 
 def flux_weight(F_b, F_atm):
