@@ -50,6 +50,24 @@ $S_f$ is the entropy of the melt and $S_b$ that of the crust at its base. The le
 
 **Why it matters.** At the cap the growth rate depends on the floor and not on a latent heat, so the crust thickness and the surface flux there depend on the floor and on the mesh. The [Validation page](../Validation/surface_lid.md) gives the size of that dependence.
 
+### The base at the solidus
+
+**Why.** A top cell on a coarse mesh can freeze whole while the mush below it still moves, and it then blocks the heat of the column: the surface flux falls far below that of a fine mesh. On a fine mesh the eddy-diffusivity floor of the solver carries the heat through the mush to the crust base, while the boundary-layer law for $F_b$ gives a flux many orders of magnitude smaller, because the mush near the solidus is about 10²² Pa s.
+
+**What.** With `lid_mush_base = true` the crust base lies at the solidus, $S_b = S_\mathrm{sol}$, and the melt delivers the steady flux of the floor through the fluid part of the top cell,
+
+$$F_K = \frac{\Phi(S_f)}{(h - \delta)/2}, \qquad \Phi(S) = \int_{S_\mathrm{sol}}^{S} \rho\, T\, \kappa_\mathrm{floor}\, f(\phi)\, dS',$$
+
+with $h$ the top-cell width, $\kappa_\mathrm{floor}$ the setting `kappah_floor`, and $f(\phi)$ its weight in the melt fraction, 0 at the solidus. $\Phi$ is the Kirchhoff integral, the exact steady flux times distance for a point value of $S$. The solver holds a cell mean: for $\Phi \propto (S - S_\mathrm{sol})^n$ this gives $F_K$ low by the factor $2 (n/(n+1))^n$, 0.89 at $n = 2$ and at least $2/e = 0.74$. The base takes $F_K$ plus the boundary-layer flux.
+
+The top cell must stay above the solidus, because the jump $W(S_f) - W(S_b)$ vanishes there. A weight $g$ rises smoothly from 0 at $S_\mathrm{sol} + 1$ J/kg/K to 1 at $S_\mathrm{sol} + 6$ J/kg/K. At $g = 0$ the base takes exactly the heat that enters the top cell from below and the lid acts with weight 1, so the entropy of the cell holds. The base flux is
+
+$$F_b = F_\mathrm{in}\frac{A_\mathrm{in}}{A} + g \left(F_K + q_\mathrm{conv} - F_\mathrm{in}\frac{A_\mathrm{in}}{A}\right),$$
+
+with $A_\mathrm{in}$ and $A$ the areas of the lower and upper faces of the cell. The lid hands over to the mesh when it reaches 0.7 of the top-cell width.
+
+**Why it matters.** $F_K$ scales with $\kappa_\mathrm{floor}$, and the fine mesh it reproduces scales with it too. The lid therefore follows a mesh solution that depends on the floor. This does not test the floor as physics: the floor is a numerical setting in the mush, not a measured transport law. A run with a molten start and the solid rheology without this setting keeps the base of the previous section, so set it for such a run.
+
 ## Energy
 
 The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
@@ -91,6 +109,7 @@ A melt layer at $T_b$ = 1400 K freezes under a surface held at 300 K, with $c_p$
 - `lid_delta_lo` \[m\] (default `lid_delta_on / 2`): must lie in (0, `lid_delta_on`).
 - `lid_handover_cells` (integer ≥ 1, default 3): must leave at least one cell below the hand-over face.
 - `lid_ra_crit` (default 450): positive and finite.
+- `lid_mush_base` (bool, default false): the base at the solidus, with the floor flux. It needs `subgrid_lid` and the solid rheology. A start with a live lid below $S_\mathrm{sol} + 1$ J/kg/K is refused, so a run that starts solid keeps the other base.
 - The crust stops growing at 0.8 of the top-cell width (one logged warning per run) and stops thinning at `lid_delta_lo`. The integrator can leave a crust at the growth stop slightly above it; the step check accepts up to 10⁻³ above the stop and records the largest excess of each call as `lid_cap_excess` on the solution.
 - The heat jump per mass, $(W(S_f) - W(S_b)) / \rho_b$ with $\rho_b$ the density at the lid base, has a floor of 10³ J/kg (one logged warning when it acts).
 - The floors cost solver steps. While the top cell freezes and thaws, the lid forms and vanishes at its phantom thickness and passes the weight floor and the lower stop many times.
