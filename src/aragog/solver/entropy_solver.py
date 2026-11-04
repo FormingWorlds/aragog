@@ -3342,7 +3342,8 @@ class EntropySolver:
             ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
             ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy
             lies more than ``_EOS_TABLE_TOL`` outside the heat table. With the solid rheology
-            on, its own check refuses any state outside the table before this one runs.
+            on, its own check refuses any state outside the table before this one runs. With
+            ``lid_mush_base``, when the top cell lies below half of the floor gap.
         """
         ev = self._lid_last
         r = ev.rates
@@ -3357,10 +3358,11 @@ class EntropySolver:
                 f'sub-grid lid: at t={time_yr:.6e} yr the lid carries {ev.surf.F_s:.6g} W/m^2, '
                 'less or more than the prescribed flux, at a limit of its profile',
             )
-        if self._lid_mush and ev.S_f < self._lid_S_sol:
+        slack = 0.5 * _lid.LID_FLOOR_GAP
+        if self._lid_mush and ev.S_f < self._lid_S_sol + slack:
             raise RuntimeError(
                 f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: top cell entropy '
-                f'{ev.S_f:.6g} J/kg/K below the solidus {self._lid_S_sol:.6g} J/kg/K'
+                f'{ev.S_f:.6g} J/kg/K below the floor, solidus {self._lid_S_sol:.6g} J/kg/K'
             )
         lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)

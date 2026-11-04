@@ -154,15 +154,25 @@ class TestSolver:
         mismatch = (s._area_flat[-1] - s._area_flat[-2]) * F_in
         assert abs(dS) / SECS_PER_YEAR * cap < 1.0e-6 * mismatch
 
-    def test_invariant_refuses_an_accepted_state_below_the_solidus(self, eos):
+    @pytest.mark.parametrize('dS', [-1.0, 0.0, 0.49 * sl.LID_FLOOR_GAP])
+    def test_invariant_refuses_an_accepted_state_below_the_floor(self, eos, dS):
         s = _solver(eos)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
         y[-2:] = s._lid_start(3050.0)
-        y[n - 1] = s._lid_S_sol - 1.0
+        y[n - 1] = s._lid_S_sol + dS
         s._dSdt_single(0.0, y)
-        with pytest.raises(RuntimeError, match='below the solidus'):
+        with pytest.raises(RuntimeError, match='below the floor'):
             s._check_lid_step(s._lid_delta_lo, 3, 1.0)
+
+    def test_invariant_accepts_a_state_at_the_slack(self, eos):
+        s = _solver(eos)
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[-2:] = s._lid_start(3050.0)
+        y[n - 1] = s._lid_S_sol + 0.51 * sl.LID_FLOOR_GAP
+        s._dSdt_single(0.0, y)
+        s._check_lid_step(s._lid_delta_lo, 3, 1.0)
 
     def test_hand_over_at_the_fraction_of_the_cell(self, eos):
         s = _solver(eos)
