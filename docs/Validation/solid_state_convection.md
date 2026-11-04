@@ -191,7 +191,7 @@ The offset can come from the resolved radial temperature profile across the thic
 
 **Result.** At a fixed interior temperature, the 0-D scaling predicts $R_\text{thin,0D} = \min\big(1, (\tau_{y,0} / \tau_{d,\text{lid}})^{1/3}\big)$. The lid does not thin when the yield stress is above the driving stress, so the value is $1.0000$ at $\tau_{y,0} / \tau_{d,\text{lid}} = 2.0$.
 
-At fixed internal heating the interior cools, because more heat leaves through the surface, so the 0-D model has its own, weaker target. The solver gives 2 lid measures: Pass-1, the isotherm depth of solver pass 1, and the conductive diagnostic $d_\text{lid,cond} = (1 - 2.2 / \theta) k (T_i - T_\text{surf}) / F_\text{top}$. The conductive diagnostic comes from the stored fields and is not the solver `d_lid` output.
+At fixed internal heating, the surface flux at steady state balances the heating, so it stays at $2078.91\text{ mW m}^{-2}$ for every yield stress. Yielding lets the mantle carry this flux at a lower interior temperature, so the 0-D model has its own, weaker target. The solver gives 2 lid measures: Pass-1, the isotherm depth of solver pass 1, and the conductive diagnostic $d_\text{lid,cond} = (1 - 2.2 / \theta) k (T_i - T_\text{surf}) / F_\text{top}$. The conductive diagnostic comes from the stored fields and is not the solver `d_lid` output.
 
 **At fixed internal heating.**
 
