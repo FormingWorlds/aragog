@@ -152,7 +152,9 @@ The thickness grows by a factor 4.08 over a 16-fold time, and $\delta / \sqrt{t}
 
 ## 4. The lid on a constant-property column
 
-The stagnant-lid benchmarks of [Solid-state convection](../Explanations/solid_state_convection.md) use constant material properties and a fixed surface temperature. The lid runs there in one mode: no equation-of-state tables, the solid rheology on, and the `'lid'` closure, whose stagnant lid gives the base of the crust (see [On a constant-property column](../Explanations/surface_lid.md#on-a-constant-property-column)). The function below takes the configuration of step 1 and changes it to a shell 300 km thick on 20 nodes (top cell 16 km), with the surface held at 300 K, constant properties and the solid rheology. It passes `entropy_eos=None`, because the lid refuses this mode when tables are attached. The shell starts at 3200 J/kg/K at the bottom and 2800 J/kg/K at the top, 1878 K and 1363 K.
+The stagnant-lid benchmarks of [Solid-state convection](../Explanations/solid_state_convection.md) use constant material properties and a fixed surface temperature. The lid runs there in one mode: no equation-of-state tables, the solid rheology on, and the `'lid'` closure, whose stagnant lid gives the base of the crust (see [On a constant-property column](../Explanations/surface_lid.md#on-a-constant-property-column)).
+
+The function below takes the configuration of step 1 and changes it to a shell 300 km thick on 20 nodes (top cell 16 km), with the surface held at 300 K, constant properties and the solid rheology. It passes `entropy_eos=None`, because the lid refuses this mode when tables are attached. The shell starts at 3200 J/kg/K at the bottom and 2800 J/kg/K at the top, 1878 K and 1363 K.
 
 `phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the lid-base isotherm of the closure already lies about 150 km deep at the start, 9 cells of this mesh, so the lid hands over at once.
 
