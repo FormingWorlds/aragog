@@ -242,13 +242,25 @@ def _bracket_root(f, lo, hi, f_lo, f_hi):
 
 
 def surface_state(
-    delta, E, T_b, k, emissivity, T_eq, delta_floor, e: Enthalpy, flux=0.0, F_atm=0.0
+    delta,
+    E,
+    T_b,
+    k,
+    emissivity,
+    T_eq,
+    delta_floor,
+    e: Enthalpy,
+    flux=0.0,
+    F_atm=0.0,
+    held=0.0,
+    T_held=0.0,
 ):
     """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
 
     With ``flux`` above 0.5 the surface carries the prescribed ``F_atm``, as
-    :func:`aragog.surface_lid.flux_surface_state`.
+    :func:`aragog.surface_lid.flux_surface_state`; with ``held`` above 0.5 as well, the surface
+    is at ``T_held``, at most ``T_b``, as :func:`aragog.surface_lid.fixed_surface_state`.
     The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
@@ -264,8 +276,13 @@ def surface_state(
         f0 = shape(s)[0]
         return jnp.where(
             flux > 0.5,
-            jnp.maximum(
-                T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)), LID_T_S_MIN
+            jnp.where(
+                held > 0.5,
+                jnp.minimum(T_held, T_b),
+                jnp.maximum(
+                    T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
+                    LID_T_S_MIN,
+                ),
             ),
             grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq),
         )
@@ -362,6 +379,8 @@ class LidParams(NamedTuple):
     h_top: float
     area: float
     area_below: float
+    held: float
+    T_held: float
     volume_top: float
     ra_crit: float
     convection: float
@@ -470,6 +489,8 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         lp.e,
         lp.flux,
         F_grid,
+        lp.held,
+        lp.T_held,
     )
     w = jnp.where(
         lp.flux > 0.5,

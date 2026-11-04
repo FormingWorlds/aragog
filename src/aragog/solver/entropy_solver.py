@@ -37,7 +37,12 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog import surface_lid as _lid
-from aragog.config.boundary import _is_real, check_lid_mush_base, check_subgrid_lid
+from aragog.config.boundary import (
+    _is_real,
+    check_lid_mush_base,
+    check_lid_surface_temperature,
+    check_subgrid_lid,
+)
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
     MATPROP_SMOOTH_WIDTH_DEFAULT,
@@ -3150,7 +3155,12 @@ class EntropySolver:
         base = self._lid_base_state(T_f, phi_f, S_top)
         d = self._lid_delta_lo
         if self._outer_bc_kind == 4:
-            T_s = max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN)
+            T_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
+            T_s = (
+                max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN)
+                if T_held is None
+                else min(T_held, base['T_b'])
+            )
         else:
             T_s = _lid.linear_lid_surface(
                 d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
@@ -3218,6 +3228,7 @@ class EntropySolver:
         from aragog.jax import surface_lid as jl
 
         rheo, ph = self._lid_rheo, self.state.phase_staggered
+        bc_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
         S_knots = self._lid_W_of_S.x
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
@@ -3242,6 +3253,8 @@ class EntropySolver:
             closure_lid=float(self._lid_handover_armed()),
             mush=float(self._lid_mush),
             flux=float(self._outer_bc_kind == 4),
+            held=float(bc_held is not None),
+            T_held=float(bc_held) if bc_held is not None else 0.0,
             phi_k=jl.enthalpy(self._lid_Phi_table) if self._lid_mush else jl.enthalpy(hs),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
             T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
@@ -3355,8 +3368,8 @@ class EntropySolver:
         ):
             self._warn_once(
                 'lid_flux_mismatch',
-                f'sub-grid lid: at t={time_yr:.6e} yr the lid carries {ev.surf.F_s:.6g} W/m^2, '
-                'less or more than the prescribed flux, at a limit of its profile',
+                f'sub-grid lid: at t={time_yr:.6e} yr the lid carries {ev.surf.F_s:.6g} W/m^2 '
+                'at a limit of its profile, which can differ from the flux of the atmosphere',
             )
         slack = 0.5 * _lid.LID_FLOOR_GAP
         if self._lid_mush and ev.S_f < self._lid_S_sol + slack:
@@ -3576,8 +3589,21 @@ class EntropySolver:
             F_b = max(q_conv, F_in, 0.0)
         floor = _lid.LID_DELTA_FLOOR
         if self._outer_bc_kind == 4:
-            surf = _lid.flux_surface_state(
-                delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
+            T_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
+            surf = (
+                _lid.flux_surface_state(
+                    delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
+                )
+                if T_held is None
+                else _lid.fixed_surface_state(
+                    delta,
+                    E,
+                    base['T_b'],
+                    self._lid_k,
+                    min(T_held, base['T_b']),
+                    floor,
+                    self._lid_hv,
+                )
             )
             w = _lid.flux_weight(
                 F_b, base['T_b'], surf.T_s, self._lid_k, eps, T_eq, self._lid_delta_on
@@ -5144,6 +5170,11 @@ class EntropySolver:
         self._lid_init = None  # a set initial lid holds until this solve
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()
+        check_lid_surface_temperature(
+            self.evaluator.boundary_conditions._settings.lid_surface_temperature,
+            self._outer_bc_kind,
+            self._lid_mush,
+        )
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.

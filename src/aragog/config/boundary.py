@@ -55,6 +55,26 @@ def check_lid_mush_base(lid_mush_base, subgrid_lid) -> None:
         raise ValueError('lid_mush_base needs subgrid_lid = true')
 
 
+def check_lid_surface_temperature(value, outer_boundary_condition, lid_mush_base) -> None:
+    """Refuse a held lid surface temperature that is not a positive finite number, or that is
+    set without the prescribed flux boundary and the mush base.
+
+    Raises
+    ------
+    ValueError
+        Naming the field and the value.
+    """
+    if value is None:
+        return
+    if not _is_real(value) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f'lid_surface_temperature must be a finite number > 0, got {value!r}')
+    if outer_boundary_condition != 4 or not lid_mush_base:
+        raise ValueError(
+            'lid_surface_temperature needs outer_boundary_condition = 4 and lid_mush_base = '
+            f'true, got {outer_boundary_condition} and {lid_mush_base}'
+        )
+
+
 def check_subgrid_lid(
     subgrid_lid,
     lid_delta_on,
@@ -206,6 +226,11 @@ class BoundaryConfig:
         With the solid rheology on: the lid base lies at the solidus, the mush gives the lid
         the floor flux plus the boundary-layer flux, the top cell stays above the solidus and
         the lid hands over at ``LID_HANDOVER_FRAC`` of the top cell. Off by default.
+    lid_surface_temperature : float or None
+        With ``outer_boundary_condition = 4`` and ``lid_mush_base``: the surface temperature
+        of the lid [K], held through a call; the caller sets it from the atmosphere between
+        calls. The lid then loses heat by conduction to this surface, and the flux value of the
+        boundary holds only for the part ``1 - w``. None: the lid takes the flux value.
     """
 
     outer_boundary_condition: int
@@ -230,10 +255,14 @@ class BoundaryConfig:
     lid_handover_cells: int = 3
     lid_ra_crit: float = 450.0
     lid_mush_base: bool = False
+    lid_surface_temperature: float | None = None
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
+        check_lid_surface_temperature(
+            self.lid_surface_temperature, self.outer_boundary_condition, self.lid_mush_base
+        )
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,

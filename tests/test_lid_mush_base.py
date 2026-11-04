@@ -383,7 +383,7 @@ class TestFluxSolver:
         assert ev.rates.w > 0.5
         with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
             s._check_lid_step(s._lid_delta_lo, 0, 0.0)
-        assert 'less or more than the prescribed flux' in caplog.text
+        assert 'at a limit of its profile' in caplog.text
 
 
 NOT_BOOL = st.one_of(
@@ -680,3 +680,177 @@ def test_jax_factory_rhs_matches_on_the_mush_base(outer):
         np.testing.assert_allclose(got[top], want[top], rtol=1e-9, atol=atol)
         np.testing.assert_allclose(got[:top], want[:top], rtol=1e-12, atol=atol)
     assert info['rhs_calls'] == n
+
+
+@settings(max_examples=80, deadline=None)
+@given(
+    st.one_of(
+        st.floats(max_value=0.0),
+        st.just(math.nan),
+        st.just(math.inf),
+        st.booleans(),
+        st.text(max_size=3),
+    )
+)
+def test_lid_surface_temperature_refuses_every_other_value(value):
+    from aragog.config.boundary import check_lid_surface_temperature
+
+    with pytest.raises(ValueError, match='lid_surface_temperature'):
+        check_lid_surface_temperature(value, 4, True)
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.floats(min_value=1.0e-3, max_value=1.0e5), st.integers(0, 6), st.booleans())
+def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc, mush):
+    from aragog.config.boundary import check_lid_surface_temperature
+
+    assert check_lid_surface_temperature(None, bc, mush) is None
+    if bc == 4 and mush:
+        assert check_lid_surface_temperature(T, bc, mush) is None
+    else:
+        with pytest.raises(ValueError, match='lid_surface_temperature'):
+            check_lid_surface_temperature(T, bc, mush)
+
+
+def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10):
+    from aragog.parser import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=4,
+        inner_bc=2,
+        n_nodes=n_nodes,
+        end_time=end,
+        outer_bc_value=F_atm,
+    )
+    p.boundary_conditions.subgrid_lid = True
+    p.boundary_conditions.lid_mush_base = True
+    p.boundary_conditions.lid_surface_temperature = T_held
+    p.boundary_conditions.normalize()
+    p.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    return s
+
+
+@needs_eos
+class TestHeldSurface:
+    @pytest.fixture(scope='class')
+    def eos(self):
+        return entropy_eos_copy(EOS_DIR)
+
+    @staticmethod
+    def _state(s, delta, T_s, dS=40.0):
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[n - 1] = s._lid_S_sol + dS
+        y[-2:] = (delta, delta * float(s._lid_hv.profile_heat(0.0, T_s, s._lid_T_sol)))
+        return y
+
+    def test_surface_loss_is_the_conduction_to_the_held_surface(self, eos):
+        """The surface flux does not read the flux value of the boundary."""
+        out = []
+        for F_atm in (200.0, 5.0e4):
+            s = _held_solver(eos, 500.0, F_atm=F_atm)
+            s._dSdt_single(0.0, self._state(s, 100.0, 500.0))
+            ev = s._lid_last
+            assert ev.rates.w == 1.0
+            assert ev.surf.T_s == 500.0
+            out.append(float(s.state._heat_flux[-1]))
+        assert out[0] == out[1]
+        assert out[0] == pytest.approx(s._lid_k * (s._lid_T_sol - 500.0) / 100.0, rel=1e-6)
+
+    def test_a_surface_at_or_above_the_base_hands_the_surface_to_the_flux(self, eos):
+        s = _held_solver(eos, 1.0e4, F_atm=123.0)
+        s._dSdt_single(0.0, self._state(s, 100.0, 500.0, dS=sl.LID_FLOOR_WIDTH * 3.0))
+        ev = s._lid_last
+        assert ev.surf.T_s == s._lid_T_sol
+        assert ev.rates.w == 0.0
+        assert float(s.state._heat_flux[-1]) == 123.0
+
+    def test_change_of_the_held_surface_between_calls_is_read(self, eos):
+        s = _held_solver(eos, 500.0)
+        y = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y)
+        s.parameters.boundary_conditions.lid_surface_temperature = 800.0
+        s._dSdt_single(0.0, y)
+        assert s._lid_last.surf.T_s == 800.0
+
+    def test_bad_value_set_between_calls_is_refused_at_the_solve(self, eos):
+        s = _held_solver(eos, 500.0)
+        s.parameters.boundary_conditions.lid_surface_temperature = -3.0
+        with pytest.raises(ValueError, match='lid_surface_temperature'):
+            s.solve()
+
+    def test_jax_factory_matches_numpy_with_the_held_surface(self, eos):
+        from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
+
+        s = _held_solver(eos, 500.0)
+        rhs_fn, _, info = _factory_rhs(s, s.jax_lid_params())
+        f, top = _physical(rhs_fn, s._build_nondim_scales()), s._n_stag - 1
+        for y in _mush_states(s):
+            want = np.asarray(s._dSdt_single(0.0, y), dtype=float)
+            got = f(y)
+            atol = 1e-12 * np.abs(want[: s._n_stag]).max()
+            np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-9, atol=1e-300)
+            np.testing.assert_allclose(got[top], want[top], rtol=1e-9, atol=atol)
+        assert info['rhs_calls'] == 6
+
+    def test_coupled_budget_closes_and_reports_the_difference_from_the_atmosphere(self, eos):
+        """Steps under a grey balance: the state heat of each call equals the integrated powers,
+        and the mean lid flux differs from the flux of the atmosphere only by the crust change
+        inside the step."""
+        F_atm, T_held, y, t = None, None, None, 0.0
+        sig, T_eq = 5.670374419e-8, 255.0
+        k_s, d_s = 2.0, 0.01
+        diffs = []
+        for t_end in (
+            20.0,
+            22.0,
+            24.2,
+            26.6,
+            29.3,
+            32.2,
+            35.4,
+            38.9,
+        ):  # ratio 1.1, as a coupling
+            s = _held_solver(eos, T_held, F_atm=F_atm or 1.0e4, end=t_end)
+            s.parameters.solver.start_time = t
+            if y is None:
+                s.set_initial_lid(
+                    30.0, 30.0 * float(s._lid_hv.profile_heat(0.0, 500.0, s._lid_T_sol))
+                )
+                P = np.asarray(s._P_stag_flat, float)
+                S = np.asarray(eos.solidus_entropy(P), float).ravel() + 40.0
+            else:
+                S = y[: s._n_stag]
+                s.set_initial_lid(float(y[-2]), float(y[-1]))
+            s.set_initial_entropy(S)
+            s.solve()
+            sol = s._solution
+            assert sol.status == 0
+            ei = sol.energy_integrals
+            gap = ei['state_heat'] - (ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal'])
+            assert abs(gap) <= 1.0e-3 * abs(ei['F_int'])
+            assert abs(ei['solver_residual']) <= 1.0e-10 * abs(ei['F_int'])
+            y = np.asarray(sol.y[:, -1])
+            st = s.get_state()
+            F_mean = -ei['F_int'] / (s._lid_area * (t_end - t) * SECS_PER_YEAR)
+            if F_atm is not None:
+                diffs.append((F_mean - F_atm) / F_atm)
+            w, G_lid = float(st.lid_weight), float(st.lid_conductance)
+            G = 1.0 / (w / G_lid + (1.0 - w) * d_s / k_s)
+            from scipy.optimize import brentq
+
+            T_held = brentq(
+                lambda T: sig * (T**4 - T_eq**4) - G * (st.T_magma - T), T_eq, st.T_magma
+            )
+            F_atm = sig * (T_held**4 - T_eq**4)
+            t = t_end
+        assert len(diffs) == 7
+        assert abs(diffs[0]) < 0.25  # the first call moves the surface to the balance
+        assert max(abs(v) for v in diffs[1:]) < 0.05
