@@ -991,6 +991,7 @@ _ZERO_ENERGY_INTEGRALS = {
     'solver_residual': 0.0,
     'state_heat': 0.0,
     'core': 0.0,
+    'core_tol': 0.0,
 }
 
 
@@ -1206,6 +1207,7 @@ class SolverOutput:
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
+    step_core_tol_J: float = 0.0  # tolerance bound of step_dE_core_J from the T_core error control [J]
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
@@ -1388,6 +1390,12 @@ class SolverOutput:
                 'step_dE_F_cmb_J', self.step_dE_F_cmb_J, 'J', 'Per-call CMB heat-gain energy'
             )
             _scalar('step_dE_core_J', self.step_dE_core_J, 'J', 'Per-call core energy change')
+            _scalar(
+                'step_core_tol_J',
+                self.step_core_tol_J,
+                'J',
+                'Tolerance bound of the per-call core energy change',
+            )
             _scalar(
                 'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
             )
@@ -5128,6 +5136,12 @@ class EntropySolver:
         # front and prevent cumulative integration error during long
         # solidification runs.
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
+        if self.parameters.solver.atol < 1.0e-8:
+            self._warn_once(
+                'atol_floor',
+                f'solver atol {self.parameters.solver.atol:.3e} is below the floor 1e-8; '
+                'the solve uses 1e-8',
+            )
         rtol = self.parameters.solver.rtol
 
         # Phase-aware atol: tight during crystallization, relaxed by 10 when fully solid
@@ -5365,6 +5379,7 @@ class EntropySolver:
         # 1.0 leaves behaviour unchanged for callers that don't set it.
         atol_sf_external = float(getattr(self, '_atol_sf', 1.0))
         atol = atol_base * atol_scale * atol_sf_external
+        self._call_tol = (atol, rtol)  # physical per-slot tolerances, for the core heat bound
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
@@ -6152,7 +6167,7 @@ class EntropySolver:
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         # Core energy content change over the call [J] from closed-form C_eff.
-        step_dE_core = 0.0
+        step_dE_core = step_core_tol = 0.0
         y_arr = np.atleast_2d(y_pts)
         if core_bc == 'core_module' and getattr(self, '_core_module_budget', None) is not None:
             budget = self._core_module_budget
@@ -6187,6 +6202,9 @@ class EntropySolver:
                 content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
                 step_dE_core += content[1] - content[0]
                 self._check_shell_base(budget, t_core_traj, base)
+            step_core_tol = self._core_heat_tolerance(
+                budget, t_core_traj, content, None if not budget.stratification else c_eff_vals
+            )
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -6210,7 +6228,29 @@ class EntropySolver:
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
             'core': step_dE_core,
+            'core_tol': step_core_tol,
         }
+
+    def _core_heat_tolerance(self, budget, t_core_traj, content, c_eff_vals=None) -> float:
+        """Bound [J] on the error of the core heat change of a call from the T_core error control.
+
+        T_core is integrated as its change within the call, so each node allows ``atol + rtol
+        |T - T_0|`` [K]; the bound sums that times C_eff over the nodes after the start, plus the
+        float spacing of the 2 heat contents. CVODE controls an estimate of the local error, so
+        the bound is not strict.
+        """
+        atol, rtol = getattr(self, '_call_tol', (0.0, 0.0))
+        tol_nodes = atol + rtol * np.abs(t_core_traj[1:] - t_core_traj[0])
+        if c_eff_vals is None:
+            import jax
+
+            fn = getattr(budget, '_vmap_capacity', None)
+            if fn is None:
+                fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
+            c_nodes = np.asarray(fn(t_core_traj[1:]))
+        else:
+            c_nodes = np.asarray(c_eff_vals)[1:]
+        return float(np.sum(c_nodes * tol_nodes) + np.sum(np.spacing(np.abs(content))))
 
     def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
         """Staggered-node entropy of one solver state, in any state layout.
@@ -6915,6 +6955,7 @@ class EntropySolver:
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_core_J=step_integrals['core'],
+            step_core_tol_J=step_integrals.get('core_tol', 0.0),
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
