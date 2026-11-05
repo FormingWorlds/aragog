@@ -7,15 +7,16 @@ In this tutorial you switch on the sub-grid surface lid, run a short cooling ste
 - How to switch on the lid with `subgrid_lid = true`.
 - How the lid changes the heat the planet loses.
 - How to read the crust thickness and its temperatures from `SolverOutput`.
+- How the lid runs on a constant-property column under a fixed surface temperature, and how to check its energy.
 
 ## What you need
 
 - Aragog installed (see [Installation](../How-to/installation.md)).
-- The SPIDER-format test tables, with `ARAGOG_TEST_EOS_DIR` pointing at them (see [First run](firstrun.md), step 1). The lid needs equation-of-state tables; it does not run in the constant-properties mode.
+- The SPIDER-format test tables, with `ARAGOG_TEST_EOS_DIR` pointing at them (see [First run](firstrun.md), step 1). This tutorial uses the equation-of-state tables. The lid also runs in one constant-properties mode (see [Surface lid](../Explanations/surface_lid.md#on-a-constant-property-column)).
 
 ## 1. Write the configuration
 
-The mantle has 9 cells (10 nodes), from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid needs the grey-body surface, `outer_boundary_condition = 1`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
+The mantle has 9 cells (10 nodes), from 3480 km to 6371 km radius, with a grey-body surface and no heat flow through the bottom. The lid runs with this grey-body surface, `outer_boundary_condition = 1`, or with a fixed surface temperature, `5`. The only new line is `subgrid_lid = true`. Nothing else changes: the other lid settings keep their defaults (see [Surface lid](../Explanations/surface_lid.md#settings-and-limits)).
 
 ```python
 import os
@@ -29,7 +30,7 @@ atol = 1e-8
 rtol = 1e-8
 
 [boundary_conditions]
-outer_boundary_condition = 1        # grey-body surface, needed by the lid
+outer_boundary_condition = 1        # grey-body surface
 outer_boundary_value = 0
 inner_boundary_condition = 2        # prescribed flux at the bottom
 inner_boundary_value = 0            # W/m^2: no heat crosses the bottom
@@ -148,6 +149,62 @@ t =   16 yr: delta =  19.840 m, delta / sqrt(t) = 4.960 m/yr^0.5
 ```
 
 The thickness grows by a factor 4.08 over a 16-fold time, and $\delta / \sqrt{t}$ changes by 2 %. The lid starts as a thin phantom crust of 0.5 m, not on the textbook profile, and the ratio still rises slowly.
+
+## 4. The lid on a constant-property column
+
+The stagnant-lid benchmarks of [Solid-state convection](../Validation/solid_state_convection.md#the-top-slope-against-published-convection-grids) use constant material properties and a fixed surface temperature. The lid runs there in one mode: no equation-of-state tables, the solid rheology on, and the `'lid'` closure, whose stagnant lid gives the base of the crust (see [On a constant-property column](../Explanations/surface_lid.md#on-a-constant-property-column)).
+
+The function below takes the configuration of step 1 and changes it to a shell 300 km thick on 20 nodes (top cell 16 km), with the surface held at 300 K, constant properties and the solid rheology. It passes `entropy_eos=None`, because the lid refuses this mode when tables are attached. The shell starts at 3200 J/kg/K at the bottom and 2800 J/kg/K at the top, 1878 K and 1363 K.
+
+`phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the lid-base isotherm of the closure already lies about 150 km deep at the start, 9 cells of this mesh, so the lid hands over at once.
+
+```python
+import numpy as np
+from aragog.config import Config
+from aragog.parser import SolidRheologyParams
+
+
+def run_constant(end_yr):
+    config = Config.from_file('surface_lid.toml')
+    config.solver.end_time = end_yr
+    config.mesh.number_of_nodes = 20
+    config.mesh.inner_radius = 6071000.0  # a shell 300 km thick
+    bc = config.boundary_conditions
+    bc.outer_boundary_condition, bc.outer_boundary_value = 5, 300.0  # surface held at 300 K
+    bc.subgrid_lid, bc.lid_handover_cells = True, 1
+    pm = config.phase_mixed
+    pm.const_properties = True
+    pm.const_T_ref, pm.const_S_ref = 1600.0, 3000.0  # T = 1600 K at S = 3000 J/kg/K
+    pm.const_rho, pm.const_Cp, pm.const_cond = 3300.0, 1250.0, 3.0
+    config.phase_solid.viscosity = 1e16  # a demonstration value, see the text
+    config.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    solver = EntropySolver(config, entropy_eos=None)  # no tables: the constant-property mode
+    solver.initialize()
+    solver.set_initial_entropy(np.linspace(3200.0, 2800.0, config.mesh.number_of_nodes - 1))
+    solver.solve()
+    return solver.get_state()
+
+
+out = run_constant(2.5e5)
+powers = out.step_dE_F_int_J + out.step_dE_F_cmb_J + out.step_dE_Q_radio_J + out.step_dE_Q_tidal_J
+print(f'hand-over at {out.lid_handover_time:.4g} yr, lid thickness now {out.lid_delta:.1f} m')
+print(f'heat content change {out.step_dE_state_heat_J:.4e} J, integrated powers {powers:.4e} J')
+print(f'relative miss {out.step_dE_state_heat_J / powers - 1:.1e}, solver residual below 1e-12: {abs(out.step_solver_residual_J / out.step_dE_F_int_J) < 1e-12}')
+assert abs(out.lid_handover_time / 2.417e5 - 1.0) < 1e-3
+assert abs(out.step_dE_state_heat_J / powers - 1.0) < 1e-4
+```
+
+The output (about 50 s):
+
+```text
+hand-over at 2.417e+05 yr, lid thickness now 0.0 m
+heat content change -5.9818e+27 J, integrated powers -5.9819e+27 J
+relative miss -1.3e-05, solver residual below 1e-12: True
+```
+
+What to look at. The crust grows under the cold surface until the isotherm of the stagnant lid has moved below the top cell; then, at 2.4 × 10⁵ years, the lid hands its crust to the mesh, and its thickness is 0. The energy of the shell and the lid together changes by the heat that leaves through the surface: the change of the heat content and the time integral of the surface power agree to 1.3 × 10⁻⁵, and the solver residual is at round-off.
+
+The miss falls as the solver tolerance falls, to 5.6 × 10⁻⁶, 2.4 × 10⁻⁶ and 1.1 × 10⁻⁶ at 10⁻⁹, 10⁻¹⁰ and 10⁻¹¹ against 10⁻⁸ here, which fits an error of the time integration over the steps. The check of the heat of the lid alone, its sub-ledger, is part of the [validation of the lid on the stagnant-lid benchmarks](../Validation/surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks).
 
 ## What next
 

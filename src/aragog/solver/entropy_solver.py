@@ -2488,6 +2488,7 @@ class EntropySolver:
         """
         self._lid_on = bool(getattr(bc, 'subgrid_lid', False))
         self._lid_y = None
+        self._lid_const = False
         if not self._lid_on:
             return
         check_subgrid_lid(
@@ -2501,10 +2502,22 @@ class EntropySolver:
             bc.param_utbl,
         )
         self._lid_convection = bool(self.parameters.energy.convection)  # as the mesh state
-        if self.entropy_eos is None or getattr(
-            self.parameters.phase_mixed, 'const_properties', False
-        ):
-            raise ValueError('subgrid_lid needs the entropy EOS tables (no const_properties)')
+        self._lid_const = bool(getattr(self.parameters.phase_mixed, 'const_properties', False))
+        if self._lid_const and self.entropy_eos is not None:
+            raise ValueError(
+                'the constant-property lid needs entropy_eos=None: an attached EOS would give '
+                'the lid other physics than the column'
+            )
+        if self._lid_const and not self._lid_handover_armed():
+            raise ValueError(
+                "the constant-property lid needs the solid rheology with the stress closure 'lid'"
+            )
+        if self._lid_const and self._core_bc != 'quasi_steady':
+            raise ValueError(
+                f"the constant-property lid needs core_bc = 'quasi_steady', got {self._core_bc!r}"
+            )
+        if self.entropy_eos is None and not self._lid_const:
+            raise ValueError('subgrid_lid needs the entropy EOS tables')
         r = self._r_basic_flat
         n_cells = int(bc.lid_handover_cells)
         if n_cells >= r.size - 1:
@@ -2525,12 +2538,20 @@ class EntropySolver:
                 f'{_lid.LID_CAP_FRAC} x the top-cell width {self._lid_h_top:.6g} m '
                 f'= {_lid.LID_CAP_FRAC * self._lid_h_top:.6g} m'
             )
-        eos, P = self.entropy_eos, float(self._P_stag_flat[-1])
+        eos, P, ph = self.entropy_eos, float(self._P_stag_flat[-1]), self.state.phase_staggered
         self._lid_P = P
-        self._lid_S_sol = float(np.asarray(eos.solidus_entropy(P)).item())
-        self._lid_S_liq = float(np.asarray(eos.liquidus_entropy(P)).item())
-        self._lid_T_sol = float(np.asarray(eos.temperature(P, self._lid_S_sol)).item())
-        self._lid_k = float(self.state.phase_staggered._k_solid)
+        if self._lid_const:  # no solidus: the values below are not read in this mode
+            self._lid_props = _lid.ConstantProperties(
+                ph._const_T_ref, ph._const_S_ref, ph._const_rho, ph._const_Cp
+            )
+            self._lid_S_sol = self._lid_S_liq = self._lid_T_sol = math.nan
+            self._lid_k = float(ph._const_cond)
+        else:
+            self._lid_props = eos
+            self._lid_S_sol = float(np.asarray(eos.solidus_entropy(P)).item())
+            self._lid_S_liq = float(np.asarray(eos.liquidus_entropy(P)).item())
+            self._lid_T_sol = float(np.asarray(eos.temperature(P, self._lid_S_sol)).item())
+            self._lid_k = float(ph._k_solid)
         rheo = self._solid_rheology() if self._rheology_enabled else None
         self._lid_rheo = rheo
         self._lid_H = None
@@ -3117,15 +3138,23 @@ class EntropySolver:
                 'sub-grid lid: the lid of the previous solution is not carried to a new node '
                 'count, so the phantom lid starts; use set_initial_lid to pass it on'
             )
-        eos, P = self.entropy_eos, self._lid_P
+        self._refresh_surface_temperature()
+        eos, P = self._lid_props, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
         base = self._lid_base_state(T_f, phi_f, S_top)
-        d = self._lid_delta_lo
-        T_s = _lid.linear_lid_surface(
-            d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
-        )
+        d, T_s = self._lid_delta_lo, self._lid_T_surf()
+        if T_s is None:
+            T_s = _lid.linear_lid_surface(
+                d, base['T_b'], self._lid_k, self._outer_bc_emiss, self._outer_bc_T_eq
+            )
         return np.array([d, d * self._lid_hv.profile_heat(0.0, T_s, base['T_b'])])
+
+    def _lid_T_surf(self) -> float | None:
+        """Surface temperature [K] of outer boundary 5, the lid surface there; None on the
+        grey body."""
+        bc5 = self.state._surface_temperature_bc if self._outer_bc_kind == 5 else None
+        return None if bc5 is None else float(bc5[1])
 
     def _lid_handover_armed(self) -> bool:
         """True when the lid can hand over: the solid rheology runs the 'lid' stress closure,
@@ -3146,6 +3175,7 @@ class EntropySolver:
         table floor to the solidus, the liquidus and the table top. Sets ``_lid_W_of_S``, ``W``
         in entropy, and returns ``W`` and the density of the solid in temperature between the
         flat floor of the table and the band below the solidus at the solidus temperature.
+        With constant properties ``W = rho cp T`` (zero at 0 K), linear in ``T``.
 
         Raises
         ------
@@ -3154,6 +3184,9 @@ class EntropySolver:
         """
         from scipy.interpolate import PchipInterpolator
 
+        if self._lid_const:
+            p = self._lid_props
+            return _lid.LidEnthalpy.linear(p.rho, p.cp, 0.0, 0.0)
         eos, P = self.entropy_eos, self._lid_P
         edges = (float(eos.S_min), self._lid_S_sol, self._lid_S_liq, float(eos.S_max))
         counts = (2048, 512, 2048)  # intervals below the solidus, in the melt band, above it
@@ -3188,6 +3221,16 @@ class EntropySolver:
         from aragog.jax import surface_lid as jl
 
         rheo, ph = self._lid_rheo, self.state.phase_staggered
+        if self._lid_const:
+            raise ValueError(
+                'the constant-property lid runs on the NumPy right-hand side only '
+                '(the JAX right-hand side has no constant-property mode)'
+            )
+        if self._outer_bc_kind == 5:
+            raise ValueError(
+                'the lid under a fixed surface temperature (outer boundary 5) runs on the NumPy '
+                'right-hand side only (the JAX lid has the grey-body surface)'
+            )
         S_knots = self._lid_W_of_S.x
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
@@ -3217,11 +3260,23 @@ class EntropySolver:
             phi_width=float(ph._phi_width),
         )
 
+    @property
+    def _lid_S_range(self) -> tuple[float, float]:
+        """Entropy range [J/kg/K] of the lid heat table with the band of the EOS table guard
+        (``_EOS_TABLE_TOL``) at both ends; unbounded with constant properties."""
+        if self._lid_const:
+            return (-np.inf, np.inf)
+        lo, hi = self._lid_W_of_S.x[[0, -1]]
+        return float(lo) - _EOS_TABLE_TOL, float(hi) + _EOS_TABLE_TOL
+
     def _lid_W(self, S: npt.ArrayLike) -> npt.NDArray:
         """Heat content per volume ``W(S)`` [J/m^3] at the top-cell pressure, zero at the
         solidus (:meth:`_lid_enthalpy_table`). Outside the table it continues linearly with
         the end slope, as the JAX table does; :meth:`_check_lid_step` refuses a state more than
-        ``_EOS_TABLE_TOL`` outside."""
+        ``_EOS_TABLE_TOL`` outside. With constant properties ``W = rho cp T(S)``."""
+        if self._lid_const:
+            p = self._lid_props
+            return p.rho * p.cp * p.temperature(None, S)
         pp = self._lid_W_of_S
         S = np.asarray(S, dtype=float)
         edge = np.clip(S, *pp.x[[0, -1]])
@@ -3237,10 +3292,11 @@ class EntropySolver:
         has one, else ``T_f - lid_contrast_coeff R T_f^2 / H`` (or ``lid_base_temperature`` in
         the 'fixed' mode). The two are blended in entropy by the melt ramp of the transition.
         Without rheology the base is the solidus. At the fluid cap ``T_b = T_f``, the jump is 0
-        and the Stefan rate runs at the enthalpy floor ``LID_DH_MIN`` by design.
+        and the Stefan rate runs at the enthalpy floor ``LID_DH_MIN`` by design. With constant
+        properties (no solidus, no melt) the base is ``min(T_rh, T_f)``.
         Returns ``S_b``, ``T_b`` [K] and ``rho`` [kg/m^3].
         """
-        eos, P, S_sol = self.entropy_eos, self._lid_P, self._lid_S_sol
+        eos, P, S_sol = self._lid_props, self._lid_P, self._lid_S_sol
         S_b = S_sol
         rheo = self._lid_rheo
         if rheo is not None:
@@ -3257,10 +3313,16 @@ class EntropySolver:
                 else:
                     T_rh = T_f - rheo.lid_contrast_coeff * _R_GAS * T_f**2 / self._lid_H
                 T_rh = max(T_rh, 1.0)
-                # the EOS holds T at the solidus over a band below S_sol: the cap is S_sol
-                S_rh = S_sol if T_rh >= self._lid_T_sol else eos.entropy_at_temperature(P, T_rh)
-                S_rh = min(float(S_rh), S_sol, float(S_f))
-                S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
+                if self._lid_const:
+                    S_b = min(float(eos.entropy_at_temperature(P, T_rh)), float(S_f))
+                else:  # the EOS holds T at the solidus over a band below S_sol: the cap is S_sol
+                    S_rh = (
+                        S_sol
+                        if T_rh >= self._lid_T_sol
+                        else eos.entropy_at_temperature(P, T_rh)
+                    )
+                    S_rh = min(float(S_rh), S_sol, float(S_f))
+                    S_b = w_phi * S_sol + (1.0 - w_phi) * S_rh
         return dict(
             S_b=S_b,
             T_b=float(np.asarray(eos.temperature(P, S_b)).item()),
@@ -3283,7 +3345,7 @@ class EntropySolver:
         ev = self._lid_last
         r = ev.rates
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
-        lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
+        lo, hi = self._lid_S_range
         values = (ev.delta, ev.E, ev.S_f, ev.S_b, r.ddelta, r.dE, r.F_top, r.F_fluid)
         bad = None
         if not np.all(np.isfinite(values)):
@@ -3408,16 +3470,20 @@ class EntropySolver:
         S_f, delta, E = float(y[i_top]), float(y[-2]), float(y[-1])
         V, W_f = float(self._volume_flat[-1]), float(self._lid_W(S_f))
         target = V * W_f + self._lid_area * (E - W_f * delta)
-        S_new = brentq(
-            lambda S: V * float(self._lid_W(S)) - target,
-            float(self.entropy_eos.S_min),
-            float(self.entropy_eos.S_max),
-            xtol=1e-12,
-            rtol=4.0 * np.finfo(float).eps,
-        )
+        if self._lid_const:  # W linear in T: T' = target / (V rho cp)
+            p = self._lid_props
+            S_new = float(p.entropy_at_temperature(None, target / (V * p.rho * p.cp)))
+        else:
+            S_new = brentq(
+                lambda S: V * float(self._lid_W(S)) - target,
+                float(self.entropy_eos.S_min),
+                float(self.entropy_eos.S_max),
+                xtol=1e-12,
+                rtol=4.0 * np.finfo(float).eps,
+            )
         scale = max(abs(target), self._lid_area * abs(E), V * abs(W_f))
         resid = abs(V * float(self._lid_W(S_new)) - target) / max(scale, 1.0)
-        if resid > 1e-10:
+        if not resid <= 1e-10:
             raise RuntimeError(f'lid hand-over merge residual {resid:.3e} exceeds 1e-10')
         y[i_top] = S_new
         y[-2:] = 0.0
@@ -3483,11 +3549,25 @@ class EntropySolver:
             self._lid_ra_crit,
         )
         F_b = max(q_conv, float(self.state._heat_flux[-2]), 0.0)
-        eps, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
-        w = _lid.existence_weight(F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on)
-        surf = _lid.surface_state(
-            delta, E, base['T_b'], self._lid_k, eps, T_eq, _lid.LID_DELTA_FLOOR, self._lid_hv
+        eps, T_eq, T_surf = self._outer_bc_emiss, self._outer_bc_T_eq, self._lid_T_surf()
+        w = _lid.existence_weight(
+            F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on, T_surf=T_surf
         )
+        if T_surf is None:
+            surf = _lid.surface_state(
+                delta,
+                E,
+                base['T_b'],
+                self._lid_k,
+                eps,
+                T_eq,
+                _lid.LID_DELTA_FLOOR,
+                self._lid_hv,
+            )
+        else:
+            surf = _lid.fixed_surface_state(
+                delta, E, base['T_b'], self._lid_k, T_surf, _lid.LID_DELTA_FLOOR, self._lid_hv
+            )
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
@@ -5928,13 +6008,14 @@ class EntropySolver:
             ``solver_residual`` are node integrals [J]; ``state_heat`` [J] is the heat
             content change from the start and end states alone; ``F_cmb_step_avg`` is
             ``F_cmb`` divided by ``A_cmb`` and the call duration [W/m^2]. Without an
-            entropy EOS or with fewer than 2 output points the integrals are zero and
-            ``F_cmb_step_avg`` is None.
+            entropy EOS (except with the constant-property lid) or with fewer than 2 output
+            points the integrals are zero and ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
         rheo = self._solid_rheology()
         check_rheo = self._rheology_enabled
-        if self.entropy_eos is None or sol is None or sol.t.size < 2:
+        no_ledger = self.entropy_eos is None and not getattr(self, '_lid_const', False)
+        if no_ledger or sol is None or sol.t.size < 2:
             if not check_rheo:
                 return dict(_ZERO_ENERGY_INTEGRALS)
             if sol is not None and sol.t.size > 0 and sol.y.size > 0:
@@ -6000,7 +6081,7 @@ class EntropySolver:
                     self._check_rheology_eos_trace(t_pts, y_pts)
                 self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
                 if self._n_lid:
-                    lo, hi = self._lid_W_of_S.x[[0, -1]] + (-_EOS_TABLE_TOL, _EOS_TABLE_TOL)
+                    lo, hi = self._lid_S_range
                     S_f = np.array([self._stag_entropy(y)[-1] for y in y_pts.T])
                     bad = np.flatnonzero((y_pts[-2] != 0.0) & ~((S_f >= lo) & (S_f <= hi)))
                     if bad.size:
@@ -6237,8 +6318,9 @@ class EntropySolver:
         p_cmb = float(self.state._heat_flux[0]) * A_cmb
 
         S_i = self._stag_entropy(y_col)
+        dens = self.entropy_eos if self.entropy_eos is not None else self._lid_props
         mass_i = self._heated_mass(
-            np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
+            np.asarray(dens.density(self._P_stag_flat, S_i)).ravel() * vol
         )
         heating_radio_i = np.asarray(self.state.heating_radio).ravel()
         heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
@@ -6337,11 +6419,13 @@ class EntropySolver:
         Returns
         -------
         float
-            Heat content change [J], negative when the mantle cools. Zero
-            when no EOS is attached.
+            Heat content change [J], negative when the mantle cools. With the
+            constant-property lid the closed form ``rho cp (T(Sf) - T(S0))`` per
+            volume; zero when no EOS is attached otherwise.
         """
         eos = self.entropy_eos
-        if eos is None:
+        const = eos is None and getattr(self, '_lid_const', False)
+        if eos is None and not const:
             return 0.0
         P = np.asarray(self._P_stag_flat, dtype=float).ravel()
         vol = np.asarray(self._volume_flat, dtype=float).ravel()
@@ -6349,6 +6433,8 @@ class EntropySolver:
         Sf = np.asarray(Sf_stag, dtype=float).ravel()
         n = min(P.size, vol.size, S0.size, Sf.size)
         P, vol, S0, Sf = P[:n], vol[:n], S0[:n], Sf[:n]
+        if const:
+            return float(np.sum((self._lid_W(Sf) - self._lid_W(S0)) * vol))
         dS = Sf - S0
         if n_quad is None:
             n_quad = 512 if getattr(self, '_core_bc', None) == 'core_module' else 16
