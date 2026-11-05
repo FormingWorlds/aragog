@@ -17,9 +17,9 @@ Usage::
         [--eta PA_S] [--heating W_PER_KG]
     python tools/verification/run_surface_lid_case.py --collect OUT.npz NAME=DIR [NAME=DIR ...]
 
-``--collect`` writes the time and, per run NAME, ``<NAME>_delta`` [m], ``<NAME>_F_top`` [W/m^2]
-and ``<NAME>_T_i`` [K] of every part to ``OUT.npz``; all runs must share the times, the commit
-and the table folder.
+``--collect`` writes the time and, per run NAME, ``<NAME>_delta`` [m], 0 for a ``--no-lid`` run,
+``<NAME>_F_top`` [W/m^2] and ``<NAME>_T_i`` [K], NaN without a value, of every part to
+``OUT.npz``; all runs must share the times, the commit and the table folder.
 """
 
 from __future__ import annotations
@@ -147,8 +147,9 @@ def _install_factory(s, eos_dir):
 def collect(out: Path, runs: list[str]) -> None:
     """Write the per-part time, lid thickness, surface flux and T_i of each run to ``out``.
 
-    The thickness is ``y_end[-2]`` of each part file; ``T_i`` is read from the record or from
-    its ``lid`` entry, so folders of an older record layout with the same parts also load.
+    The thickness is ``y_end[-2]`` of each part file, and 0 for a ``--no-lid`` run, whose state
+    has no lid thickness. ``T_i`` is read from the record or from its ``lid`` entry, so folders
+    of an older record layout with the same parts also load; a run without a value gives NaN.
     """
     data, meta = {}, set()
     for spec in runs:
@@ -159,13 +160,16 @@ def collect(out: Path, runs: list[str]) -> None:
         )
         data[f'{name}_delta'] = np.array(
             [
-                np.load(Path(folder) / f'{STEM}_part{k}.npz')['y_end'][-2]
-                for k in range(len(rows))
+                0.0
+                if r.get('lid') is False
+                else np.load(Path(folder) / f'{STEM}_part{k}.npz')['y_end'][-2]
+                for k, r in enumerate(rows)
             ]
         )
         data[f'{name}_F_top'] = np.array([r['F_top'] for r in rows])
         data[f'{name}_T_i'] = np.array(
-            [r.get('T_i', r.get('lid', {}).get('T_i')) for r in rows]
+            [r['T_i'] if 'T_i' in r else r.get('lid', {}).get('T_i') for r in rows],
+            dtype=float,
         )
         data[f'{name}_dh_min'] = rows[0]['dh_min']
         data[f'{name}_nodes'] = rows[0]['nodes']
