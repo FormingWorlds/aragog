@@ -109,12 +109,12 @@ def test_the_activation_energy_law_sets_the_layer(eos):
 
 def test_the_jax_path_gives_the_same_fields(eos):
     """A solve on the JAX right-hand side reports the same fields as one on the NumPy path, within
-    the solver tolerance of the 2 integrations."""
+    the 2 integrations: at most 7.6e-6 here."""
     a, b = _hot_shell(eos).get_state(), _hot_shell(eos, factory=True).get_state()
     assert a.lid_drho > 0.0
     assert b.lid_delta != a.lid_delta  # bitwise equal means the JAX path did not run
     for name in FIELDS:
-        assert getattr(b, name) == pytest.approx(getattr(a, name), rel=1e-2), name
+        assert getattr(b, name) == pytest.approx(getattr(a, name), rel=1e-4), name
 
 
 def test_without_the_rheology_only_the_density_difference_is_written(eos, tmp_path):
