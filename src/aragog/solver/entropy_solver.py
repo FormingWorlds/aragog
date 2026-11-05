@@ -3138,6 +3138,7 @@ class EntropySolver:
                 'sub-grid lid: the lid of the previous solution is not carried to a new node '
                 'count, so the phantom lid starts; use set_initial_lid to pass it on'
             )
+        self._refresh_surface_temperature()
         eos, P = self._lid_props, self._lid_P
         T_f = float(np.asarray(eos.temperature(P, S_top)).item())
         phi_f = float(np.asarray(eos.melt_fraction(P, S_top)).item())
@@ -3302,11 +3303,7 @@ class EntropySolver:
             from aragog.rheology_lid import _melt_ramp
 
             ph = self.state.phase_staggered
-            w_phi = (
-                0.0
-                if self._lid_const
-                else float(_melt_ramp(phi_f, ph._phi_rheo, ph._phi_width))
-            )
+            w_phi = float(_melt_ramp(phi_f, ph._phi_rheo, ph._phi_width))
             if w_phi < 1.0:
                 ls = getattr(self.state, 'lid_state', None)
                 if ls is not None:

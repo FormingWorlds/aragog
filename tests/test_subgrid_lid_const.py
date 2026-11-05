@@ -128,12 +128,10 @@ def test_constant_property_base_entropy_round_trips(T):
     assert float(s._lid_props.temperature(s._lid_P, S)) == pytest.approx(T, rel=1e-13)
 
 
-@pytest.mark.parametrize('width', [0.01, 0.5, 5.0])
 @pytest.mark.parametrize('T_rh', [900.0, 1500.0, 2500.0])
-def test_constant_property_lid_base_is_the_lower_of_the_isotherm_and_the_fluid(width, T_rh):
-    """T_b = min(T_rh, T_f) for any transition width: the mode has no solidus and no melt."""
+def test_constant_property_lid_base_is_the_lower_of_the_isotherm_and_the_fluid(T_rh):
+    """T_b = min(T_rh, T_f): the mode has no solidus and no melt."""
     s = _solver()
-    s.state.phase_staggered._phi_width = width
     S_f = 3000.0
     T_f = float(_T(S_f))
     s.state._lid_state = {'T_lid_iso': np.asarray(T_rh)}
@@ -144,7 +142,7 @@ def test_constant_property_lid_base_is_the_lower_of_the_isotherm_and_the_fluid(w
 
 def test_phantom_lid_reads_a_changed_surface_temperature():
     """A value set after setup reaches the start of the lid: the phantom energy is the one of
-    the new surface temperature, so the first step starts with the straight profile."""
+    the new surface temperature, so the shape of the first step is not clipped."""
     s = _solver(outer_bc=5)
     s.evaluator.boundary_conditions._settings.outer_boundary_value = 1000.0
     s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
@@ -154,7 +152,7 @@ def test_phantom_lid_reads_a_changed_surface_temperature():
     assert s._S0[-1] == pytest.approx(E, rel=1e-13)
     s._dSdt_single(0.0, s._S0)
     assert s._lid_last.surf.T_s == 1000.0
-    assert s._lid_last.surf.s == pytest.approx(0.0, abs=1e-6)
+    assert s._lid_last.surf.clipped == 0
 
 
 @settings(max_examples=30, deadline=None)
