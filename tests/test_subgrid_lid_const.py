@@ -142,6 +142,21 @@ def test_constant_property_lid_base_is_the_lower_of_the_isotherm_and_the_fluid(w
     assert base['rho'] == RHO
 
 
+def test_phantom_lid_reads_a_changed_surface_temperature():
+    """A value set after setup reaches the start of the lid: the phantom energy is the one of
+    the new surface temperature, so the first step starts with the straight profile."""
+    s = _solver(outer_bc=5)
+    s.evaluator.boundary_conditions._settings.outer_boundary_value = 1000.0
+    s.set_initial_entropy(np.linspace(3200.0, 2800.0, s._n_stag))
+    S_top = float(s._S0[s._n_stag - 1])
+    T_b = s._lid_base_state(float(_T(S_top)), 0.0, S_top)['T_b']
+    E = s._lid_delta_lo * s._lid_hv.profile_heat(0.0, 1000.0, T_b)
+    assert s._S0[-1] == pytest.approx(E, rel=1e-13)
+    s._dSdt_single(0.0, s._S0)
+    assert s._lid_last.surf.T_s == 1000.0
+    assert s._lid_last.surf.s == pytest.approx(0.0, abs=1e-6)
+
+
 @settings(max_examples=30, deadline=None)
 @given(
     S_f=st.floats(2600.0, 3400.0),
