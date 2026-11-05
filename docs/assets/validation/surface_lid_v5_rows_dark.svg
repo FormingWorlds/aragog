@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid; command: pytest tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "log"], "categories": [null, null], "lines": [[12, 1.0, 12.0, 6.5, 2.166666666666667, -11.213887674034412, -7.914259269568277, -9.948990889993889, 0.37558745553287065], [1, 13.5, 13.5, 13.5, 0.0, 0.0, 0.0, 0.0, 0.0], [24, 15.0, 38.0, 26.499999999999996, 4.166666666666665, -14.699317265087696, -12.087240153002211, -13.643831510346159, -0.02362654946413058], [2, 0.0, 1.0, 0.5, 0.5, -5.0, -5.0, -5.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid; command: pytest tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "log"], "categories": [null, null], "lines": [[12, 1.0, 12.0, 6.5, 2.166666666666667, -11.213887674034412, -7.914259269568277, -9.948990889993889, 0.37558745553287065], [1, 13.5, 13.5, 13.5, 0.0, 0.0, 0.0, 0.0, 0.0], [24, 15.0, 38.0, 26.499999999999996, 4.166666666666665, -14.699317265087696, -12.087240153002211, -13.643831510346159, -0.02362654946413058], [2, 0.0, 1.0, 0.5, 0.5, -7.0, -7.0, -7.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -795,8 +795,8 @@ L 212.678965 25
     </g>
    </g>
    <g id="line2d_18">
-    <path d="M 67.075 47.058182 
-L 480.042343 47.058182 
+    <path d="M 67.075 69.116364 
+L 480.042343 69.116364 
 " clip-path="url(#p57ca30c302)" style="fill: none; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #57c08a"/>
    </g>
    <g id="patch_3">

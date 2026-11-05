@@ -59,7 +59,6 @@ def _flux_step(d, m):
     return t[i - 1], F[i - 1], F[i]
 
 
-@pytest.mark.reference_pinned
 def test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes(d):
     """The lid hands over on all 3 meshes; each lid sits at 0.8 of its top cell before the hand-over,
     and the hand-over times agree within 3 %."""
@@ -73,8 +72,6 @@ def test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes(d):
         assert d[f'{m}_w_active'][-1] == 1.0
 
 
-@pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
     """After the last hand-over the step from 200 to 400 nodes is at most R_MAX of the step from
     100 to 200 nodes in the surface flux and the lid-base isotherm depth, at the part ends. In the
@@ -113,17 +110,17 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
                 ('n400', 'C3', '-.'),
                 ('s1000', ink, ':'),
             ):
-                label = f'{run[1:]} nodes' if run != 's1000' else '1000 m cell'
+                label = f'{run[1:]} nodes, lid' if run != 's1000' else 'no lid, 1000 m cell'
                 ratio = _window_mean(d, run, key, t, start) / base
                 ax.plot(t / 1e8, ratio, color=c, ls=ls, label=label)
-            ax.axhline(1.0, color=ink, lw=0.8)
+            ax.axhline(1.0, color=ink, lw=0.8, label='no lid, 500 m cell')
             ax.grid(False)
         axes[0].set_ylabel('flux ratio')
         axes[1].set_ylabel('depth ratio')
         axes[1].set_xlabel('time (100 Myr)')
         axes[0].set_ylim(0.5, 1.25)
         axes[1].set_ylim(0.9, 2.1)
-        opaque_legend(axes[0], loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=4)
+        opaque_legend(axes[0], loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=3)
         fig.tight_layout()
         assert_legend_clear(fig)
         fig.canvas.draw()
@@ -134,7 +131,6 @@ def test_v8_the_mesh_converges_after_the_hand_over(d, validation_plot):
     validation_plot(figure, 'surface_lid_v8_after_the_hand_over')
 
 
-@pytest.mark.reference_pinned
 def test_v8_the_flux_before_the_hand_over_lies_below_the_reference(d):
     """From 1e6 yr, the first stored state, to the last stored state with the lid the flux lies
     below both references. Against 500 m by up to 13 % on 100 and 200 nodes and 4.8 % on 400 nodes,
@@ -160,7 +156,6 @@ def test_v8_the_flux_before_the_hand_over_lies_below_the_reference(d):
     )
 
 
-@pytest.mark.reference_pinned
 def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
     """The limit of EVENT_LIMIT on the flux step at a hand-over is missed: from the stored
     state at the hand-over to the next one the flux rises by 15 to 27 %, at least 80 times the step
@@ -183,7 +178,6 @@ def test_v8_the_flux_step_at_the_hand_over_misses_its_limit(d):
     np.testing.assert_allclose(late, (28.9, 8.0, 2.1), rtol=0.05)
 
 
-@pytest.mark.reference_pinned
 def test_v8_the_merge_states_and_the_offset_of_the_growth_stop():
     """From ``tools/verification/run_surface_lid_merge_state.py``: the merge keeps the energy, the
     surface node falls below the equilibrium temperature, so the flux is negative for up to about

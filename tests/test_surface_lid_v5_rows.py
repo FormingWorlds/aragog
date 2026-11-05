@@ -24,9 +24,10 @@ REF = Path(__file__).resolve().parent / 'reference' / 'surface_lid_v5_rows.json'
 CALIBRATION = (
     Path(__file__).resolve().parent / 'reference' / 'ssc_mlt_top_slope_calibration.json'
 )
-SAME = 1e-5  # lid on against lid off under the 'lid' closure, each observable
+SAME = 1e-7  # lid on against lid off under the 'lid' closure, each observable
 GUARD = 1e-4  # gross ledger guard per call: time quadrature of the start transient
 SUB = 1e-2  # lid sub-ledger per call that starts with the lid
+HANDOVER_TOL = 1e-4  # hand-over time of a run against the stored run
 FIRST_OUTPUT_YR = 5e9  # first output of both runners: 4e10 yr in 8 parts, 2e11 yr in 40
 TABLES = {'K': 'korenaga_2009_rows', 'D': 'deschamps_vilella_2021_rows'}
 
@@ -51,13 +52,11 @@ def _change(on: dict, off: dict, table: str) -> float:
 
 
 @pytest.mark.unit
-@pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
     """Every row with the lid equals the row without it within SAME and hands the lid to the
     mesh before the first output; each call closes the gross ledger within GUARD and each call
-    with the lid its lid sub-ledger within SUB; the lid off 'local' runs equal the calibration
-    and the counts outside the published tolerances agree in all 3 ways."""
+    with the lid its lid sub-ledger within SUB; the lid off runs equal the calibration under
+    both closures, and the counts outside the published tolerances are 0 and 34 in all 3 ways."""
     d = json.loads(REF.read_text())
     cal = json.loads(CALIBRATION.read_text())['evaluated_points']['minimax_0p25_0p25']
     assert (d['meta']['s_top_inf'], d['meta']['c_theta'], d['meta']['n_nodes']) == (
@@ -68,20 +67,19 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
     change = {}
     for t, name in TABLES.items():
         rows = sorted(cal[name])
-        counts = {w: 0 for w in ('off:local', 'off:lid', 'on:lid')}
+        ways = ('off:local', 'off:lid', 'on:lid')
+        counts = [sum(d[f'{t}:{row}:{w}']['exceeds'] for row in rows) for w in ways]
+        assert counts == [{'K': 0, 'D': 34}[t]] * 3, (t, counts)
         for row in rows:
-            r = {w: d[f'{t}:{row}:{w}'] for w in counts}
-            for w in counts:
-                counts[w] += r[w]['exceeds']
+            r = {w: d[f'{t}:{row}:{w}'] for w in ways}
             for k in OBSERVABLES[t]:
-                assert r['off:local'][k] == cal[name][row][k], (row, k)
+                assert r['off:local'][k] == r['off:lid'][k] == cal[name][row][k], (row, k)
             on = r['on:lid']
             change[(t, row)] = _change(on, r['off:lid'], t)
             assert 0.0 < change[(t, row)] <= SAME, row
             assert on['handover_t'] is not None and on['handover_t'] < FIRST_OUTPUT_YR, row
             assert on['guard_max'] <= GUARD, row
             assert on['sub'] and max(abs(x) for x in on['sub']) <= SUB, row
-        assert len(set(counts.values())) == 1, (t, counts)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -127,16 +125,21 @@ def test_stored_rows_keep_their_values_with_the_lid(validation_plot):
 
 
 @pytest.mark.slow
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
 @pytest.mark.timeout(1800)
 @pytest.mark.parametrize(('table', 'row'), [('K', 'E230a'), ('D', 'f60_H4')])
 def test_row_keeps_its_values_with_the_lid(table, row):
     """A row run now with and without the lid under the 'lid' closure gives the same
-    observables within SAME, hands the lid over before the first output and closes its lid
-    sub-ledger within SUB."""
+    observables within SAME, hands the lid over at its stored time within HANDOVER_TOL, closes
+    the gross ledger within GUARD and the lid sub-ledger within SUB. The steady state alone does
+    not see a wrong lid; the hand-over time and the ledgers do."""
     on = run_row(table, row, True, 'lid')
     off = run_row(table, row, False, 'lid')
     assert _change(on['result'], off['result'], table) <= SAME
-    assert on['handover_t'] is not None and on['handover_t'] < FIRST_OUTPUT_YR
+    stored = json.loads(REF.read_text())[f'{table}:{row}:on:lid']['handover_t']
+    assert on['handover_t'] == pytest.approx(stored, rel=HANDOVER_TOL)
+    assert max(c['guard'] for c in on['calls']) <= GUARD
     sub = [c['lid']['miss_rel'] for c in on['calls'] if 'lid' in c]
     assert sub and max(abs(x) for x in sub) <= SUB
 

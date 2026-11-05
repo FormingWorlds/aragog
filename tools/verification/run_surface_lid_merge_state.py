@@ -64,25 +64,10 @@ def _state(s, y):
     )
 
 
-def main(argv=None) -> None:
+def over_the_merge(a, t0: float, y0: np.ndarray, t_ho: float) -> tuple[dict, object, float]:
+    """Run the lid column from the state ``y0`` at ``t0`` to 2e4 yr after the hand-over near
+    ``t_ho``; return the merge values, the solver and the top-node offset of the lid base."""
     from aragog.solver.entropy_solver import EntropySolver
-
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('run', type=Path)
-    ap.add_argument('ref', type=Path)
-    ap.add_argument('out', type=Path)
-    ap.add_argument('--eos-dir', type=Path, required=True)
-    ap.add_argument('--nodes', type=int, required=True)
-    ap.add_argument('--ref-cell', type=float, required=True)
-    ap.add_argument('--eta', type=float, required=True)
-    ap.add_argument('--heating', type=float, required=True)
-    a = ap.parse_args(argv)
-    rows = json.loads((a.run / f'{STEM}.json').read_text())
-    t_ho = max(r['handover_time'] for r in rows if r.get('handover_time') is not None)
-    part = next(k for k, r in enumerate(rows) if r['t_target'] > t_ho)
-    z = np.load(a.run / f'{STEM}_part{part}.npz')
-    before = np.flatnonzero(z['t'] < t_ho * (1.0 - 1.0e-6))[-1]
-    t0, y0 = float(z['t'][before]), np.asarray(z['y'][:, before], dtype=float)
 
     s = _solver(a, lid=True, nodes=a.nodes, cell=None, end=t_ho + 2.0e4)
     s.set_initial_lid(float(y0[-2]), float(y0[-1]))
@@ -113,13 +98,41 @@ def main(argv=None) -> None:
     t, y = sol.get('energy_trace') or (sol.t, sol.y)
     t, y = np.asarray(t, dtype=float), np.asarray(y, dtype=float)
     t_merge = float(s._lid_handover_time)
-    late = np.flatnonzero(t > t_merge)
-    negative = [k for k in late if _state(s, y[:, k])['flux'] < 0.0]
+    negative = [k for k in np.flatnonzero(t > t_merge) if _state(s, y[:, k])['flux'] < 0.0]
     delta = float(merged['before'][-2])
-    side_before = _state(s, merged['before'])
+    before = _state(s, merged['before'])
     lid = s._lid_last
-    gradient = (lid.T_b - lid.surf.T_s) / delta
-    offset = (delta - 0.5 * s._lid_h_top) * gradient
+    offset = (delta - 0.5 * s._lid_h_top) * (lid.T_b - lid.surf.T_s) / delta
+    values = dict(
+        t_merge=t_merge,
+        delta=delta,
+        h_top=float(s._lid_h_top),
+        merge_residual=merged['resid'],
+        before=before,
+        after=_state(s, merged['after']),
+        negative_yr=float(t[negative[-1]] - t_merge) if negative else 0.0,
+    )
+    return values, s, float(offset)
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('run', type=Path)
+    ap.add_argument('ref', type=Path)
+    ap.add_argument('out', type=Path)
+    ap.add_argument('--eos-dir', type=Path, required=True)
+    ap.add_argument('--nodes', type=int, required=True)
+    ap.add_argument('--ref-cell', type=float, required=True)
+    ap.add_argument('--eta', type=float, required=True)
+    ap.add_argument('--heating', type=float, required=True)
+    a = ap.parse_args(argv)
+    rows = json.loads((a.run / f'{STEM}.json').read_text())
+    t_ho = max(r['handover_time'] for r in rows if r.get('handover_time') is not None)
+    part = next(k for k, r in enumerate(rows) if r['t_target'] > t_ho)
+    z = np.load(a.run / f'{STEM}_part{part}.npz')
+    before = np.flatnonzero(z['t'] < t_ho * (1.0 - 1.0e-6))[-1]
+    t0, y0 = float(z['t'][before]), np.asarray(z['y'][:, before], dtype=float)
+    values, s, offset = over_the_merge(a, t0, y0, t_ho)
 
     refs = json.loads((a.ref / f'{STEM}.json').read_text())
     k_ref = next(k for k, r in enumerate(refs) if r['t_target'] > t0)
@@ -134,16 +147,10 @@ def main(argv=None) -> None:
         json.dumps(
             dict(
                 sha=rows[-1]['sha'],
-                t_merge=t_merge,
-                delta=delta,
-                h_top=float(s._lid_h_top),
-                merge_residual=merged['resid'],
-                before=side_before,
-                after=_state(s, merged['after']),
-                negative_yr=float(t[negative[-1]] - t_merge) if negative else 0.0,
-                offset_predicted=float(offset),
+                **values,
+                offset_predicted=offset,
                 offset_measured=float(
-                    side_before['T_cell'] - np.interp(0.5 * s._lid_h_top, z_ref, T_ref)
+                    values['before']['T_cell'] - np.interp(0.5 * s._lid_h_top, z_ref, T_ref)
                 ),
             )
         )
