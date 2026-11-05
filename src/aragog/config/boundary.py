@@ -91,9 +91,10 @@ def check_subgrid_lid(
     ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
     positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
     ``lid_handover_cells`` an integer of at least 1. With the lid on, the outer boundary must
-    be the grey body (1), the core boundary neither ``'gradient'`` nor ``'bower2018'``, and
-    ``param_utbl`` off, because the lid replaces the surface flux the correction acts on. The
-    check against the top-cell width needs the mesh and runs at solver setup.
+    be the grey body (1) or the fixed surface temperature (5), the core boundary neither
+    ``'gradient'`` nor ``'bower2018'``, and ``param_utbl`` off, because the lid replaces the
+    surface flux the correction acts on. The check against the top-cell width needs the mesh
+    and runs at solver setup.
 
     Raises
     ------
@@ -122,11 +123,11 @@ def check_subgrid_lid(
         raise ValueError(f'lid_handover_cells must be >= 1, got {lid_handover_cells!r}')
     if (
         subgrid_lid
-        and outer_boundary_condition != 1
+        and outer_boundary_condition not in (1, 5)
         and not (lid_mush_base and outer_boundary_condition == 4)
     ):
         raise ValueError(
-            'subgrid_lid needs outer_boundary_condition = 1, or 4 with lid_mush_base = true, '
+            'subgrid_lid needs outer_boundary_condition = 1 or 5, or 4 with lid_mush_base = true, '
             f'got {outer_boundary_condition}'
         )
     if subgrid_lid and core_bc in ('gradient', 'bower2018'):

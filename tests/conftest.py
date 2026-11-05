@@ -82,11 +82,20 @@ def assert_legend_clear(fig) -> None:
     Each drawn line is sampled at 50 points per segment in display space, markers at their
     points, and the legend box is padded by half the marker size. The frame must be opaque, so
     that no gridline shows behind the text, and the box must stay off every band of the axes.
-    No visible text of the figure outside the legend may overlap the legend box.
+    No drawn text of the figure outside the legend may overlap the legend box; a tick label
+    outside its axis limits stays visible as an object, but is not drawn.
     """
     from matplotlib.text import Text
 
     fig.canvas.draw()
+    undrawn = set()
+    for ax in fig.axes:
+        for axis in (ax.xaxis, ax.yaxis):
+            lo, hi = sorted(axis.get_view_interval())
+            pad = 1.0e-6 * (hi - lo)
+            for tick in axis.get_major_ticks() + axis.get_minor_ticks():
+                if not lo - pad <= tick.get_loc() <= hi + pad:
+                    undrawn |= {tick.label1, tick.label2}
     for ax in fig.axes:
         legend = ax.get_legend()
         if legend is None:
@@ -119,7 +128,7 @@ def assert_legend_clear(fig) -> None:
             )
             hit = box.count_contains(dense[np.all(np.isfinite(dense), axis=1)])
             assert hit == 0, f'the legend of {ax.get_ylabel()!r} covers {hit} plotted points'
-        box, own = legend.get_window_extent(), set(legend.findobj())
+        box, own = legend.get_window_extent(), set(legend.findobj()) | undrawn
         for text in fig.findobj(Text):
             if text.get_visible() and text.get_text() and text not in own:
                 assert not box.overlaps(text.get_window_extent()), (

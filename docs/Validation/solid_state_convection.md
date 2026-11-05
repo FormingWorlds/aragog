@@ -48,8 +48,10 @@ Panel (b) uses Earth core-mantle boundary pressure $P = 135\text{ GPa}$ over dec
 
 | Benchmark | Grid | Observables and tolerance |
 |:---|:---|:---|
-| Planar internally heated Newtonian stagnant-lid convection: Korenaga (2009)[^cite-korenaga2009], Table 1, 12 cases | $N = 100$ uniform planar Boussinesq | Nusselt number $\mathrm{Nu}$, $10\%$ relative; $r_\text{norm} = \lvert\mathrm{Nu} - \mathrm{Nu}_\text{ref}\rvert / (0.10 \, \mathrm{Nu}_\text{ref})$ |
-| Spherical mixed-heating stagnant-lid convection: Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, 24 cases, 72 observables | $N = 100$ spherical-shell Boussinesq; $f = r_\text{in} / r_\text{out} \in \{0.60, 0.70, 0.75, 0.80, 0.85\}$ | Interior temperature $T_m$, $0.03$ absolute; top heat flow $\Phi_\text{top}$, $15\%$ relative; lid thickness $d_\text{lid}$, $20\%$ relative |
+| Planar internally heated Newtonian stagnant-lid convection: Korenaga (2009)[^cite-korenaga2009], Table 1, the 12 cases with $n = 1$ | $N = 100$ uniform planar Boussinesq | Nusselt number $\mathrm{Nu}$, $10\%$ relative; $r_\text{norm} = \lvert\mathrm{Nu} - \mathrm{Nu}_\text{ref}\rvert / (0.10 \, \mathrm{Nu}_\text{ref})$ |
+| Spherical mixed-heating stagnant-lid convection: Deschamps and Vilella (2021)[^cite-deschamps2021], Table 1, 24 of the 25 spherical cases, 72 observables | $N = 100$ spherical-shell Boussinesq; $f = r_\text{in} / r_\text{out} \in \{0.60, 0.70, 0.75, 0.80, 0.85\}$ | Interior temperature $T_m$, $0.03$ absolute; top heat flow $\Phi_\text{top}$, $15\%$ relative; lid thickness $d_\text{lid}$, $20\%$ relative |
+
+Two spherical entries of that table print the same parameters, $Ra_\text{surf} = 10$, $f = 0.70$, $\Delta\eta = 10^6$, $\tilde{H} = 8$, with different grids and results: $T_m$ 1.035 and $\Phi_\text{top}$ 5.596 at $256 \times 768 \times 128 \times 2$, and $T_m$ 0.964 and $\Phi_\text{top}$ 3.964 at $192 \times 576 \times 96 \times 2$. The row `f70_1e6_H8` uses the first and the second is left out. The second lies near the entry with $\tilde{H} = 4$ at $f = 0.80$ ($T_m$ 0.977, $\Phi_\text{top}$ 4.267), so its $\tilde{H}$ may be a misprint; the paper does not say.
 
 **Setup.**
 

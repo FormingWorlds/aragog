@@ -3974,7 +3974,7 @@ def test_d_geom_floor_tau_d_lid_yield_and_d_lid_raw():
                 xp=np,
             )
             assert 'd_lid_raw' in st
-            assert len(st) == 32
+            assert len(st) == 33
             d_lid = float(st['d_lid'])
             d_lid_raw = float(st['d_lid_raw'])
             w_act = float(st['w_active'])

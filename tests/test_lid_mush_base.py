@@ -260,7 +260,7 @@ def test_flux_surface_state_carries_the_prescribed_flux():
 
 
 @pytest.mark.parametrize(
-    'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (5, True, False)]
+    'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (2, True, False)]
 )
 def test_prescribed_flux_needs_the_mush_base(bc, mush, ok):
     from aragog.config.boundary import check_subgrid_lid

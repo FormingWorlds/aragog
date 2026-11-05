@@ -300,6 +300,11 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
             np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
             np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
+        elif k == 'f_int_max':  # not in the main fixture: it sets w_active
+            exp_w = 0.5 * (
+                1.0 + np.tanh((arr - SolidRheologyParams().interior_flux_fraction) / 0.01)
+            )
+            np.testing.assert_allclose(exp_w, saved['lid_w_active'], rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, saved[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 

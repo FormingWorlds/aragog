@@ -63,6 +63,37 @@ def test_opaque_legend_passes_the_check():
     assert legend.get_frame().get_facecolor() == ax.get_facecolor()
 
 
+def _legend_on_tick(y_top, anchor_y):
+    """Figure with a tall legend over the height of the tick at 1.1, on the y limits 0 to y_top."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(4.0, 3.0))
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot()
+    ax.plot([0, 1], [0.2, 0.2], label='a')
+    ax.set_yticks([0.0, 0.5, 1.1])
+    ax.set_ylim(0.0, y_top)
+    opaque_legend(ax, loc='lower left', bbox_to_anchor=(-0.2, anchor_y), fontsize=30)
+    fig.canvas.draw()
+    label = next(t for t in ax.yaxis.get_major_ticks() if t.get_loc() == 1.1).label1
+    assert label.get_visible()
+    assert ax.get_legend().get_window_extent().overlaps(label.get_window_extent())
+    return fig
+
+
+def test_legend_check_skips_a_tick_label_outside_the_view():
+    """A tick label above the y limit is not drawn, so a legend cannot cover it."""
+    assert_legend_clear(_legend_on_tick(1.0, 1.0))
+
+
+@pytest.mark.parametrize('y_top', [1.2, 1.1 * (1.0 - 1.0e-9)], ids=['inside', 'at_the_limit'])
+def test_legend_check_refuses_a_covered_tick_label_inside_the_view(y_top):
+    """The same legend fails on a tick label that the axes draw, also at the limit by round-off."""
+    with pytest.raises(AssertionError, match='a legend covers the text'):
+        assert_legend_clear(_legend_on_tick(y_top, 0.8))
+
+
 def test_legend_check_refuses_a_legend_on_a_band():
     """An opaque frame cuts a corner out of the band, so the legend stays off the band."""
     fig, ax = _legend_figure(frameon=True, framealpha=1.0)

@@ -629,7 +629,7 @@ def run_deschamps_vilella_row(
         t_stag = np.asarray(st.T_stag, float)
         rb, rs = np.asarray(st.r_basic, float), np.asarray(st.r_stag, float)
         f_top = k_cond * (t_stag[-1] - t_s) / (rb[-1] - rs[-1])
-        s.dSdt(float(t_end), np.asarray(st.S_final, float).ravel())
+        s.dSdt(float(t_end), np.asarray(s._S0, float).ravel())  # S_final with any lid states
         f_bot = float(np.asarray(s.state.heat_flux, float).ravel()[0])
     finally:
         _restore_benchmark_patches()

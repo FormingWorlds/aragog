@@ -5,18 +5,21 @@ Each part is a fresh solver started from the end state of the previous part and 
 next sample time. After each part the run folder gets ``za_part<k>.npz`` (stored rows ``t``
 [yr], ``y`` and ``y_end``) and one record in ``za.json`` (time, lid thickness and heat content,
 surface flux, interior temperature of the lid closure, status, mesh, jump floor, source commit,
-config hash and the md5 of every table file). Run it from the root of the aragog tree under
+config hash, the md5 of every table file and the hand-over gate: ``w_active``, ``f_int_max``,
+the hand-over root and the hand-over time; the CVODE step count, the mean step and the range of
+``max_step`` over the rate-cap segments of the part). Run it from the root of the aragog tree under
 test. A 400-node run to 4e5 yr takes about 10 h on one core.
 
 Usage::
 
     python tools/verification/run_surface_lid_case.py <outdir> --eos-dir DIR [--eos-md5 MD5]
         [--samples 1e2,1e3,...] [--nodes 100] [--s-init S] [--dh-min J_PER_KG] [--resume]
+        [--eta PA_S] [--heating W_PER_KG]
     python tools/verification/run_surface_lid_case.py --collect OUT.npz NAME=DIR [NAME=DIR ...]
 
-``--collect`` writes the time and, per run NAME, ``<NAME>_delta`` [m], ``<NAME>_F_top`` [W/m^2]
-and ``<NAME>_T_i`` [K] of every part to ``OUT.npz``; all runs must share the times, the commit
-and the table folder.
+``--collect`` writes the time and, per run NAME, ``<NAME>_delta`` [m], 0 for a ``--no-lid`` run,
+``<NAME>_F_top`` [W/m^2] and ``<NAME>_T_i`` [K], NaN without a value, of every part to
+``OUT.npz``; all runs must share the times, the commit and the table folder.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ import numpy as np
 
 STEM = 'za'
 SAMPLES = '1e2,1e3,3e3,1e4,3e4,1e5,2e5,3e5,4e5'
+OPTIONS = ('eta', 'heating', 'surface_cell')  # in the config hash when given
+PRINTED = 'part t_yr status delta w_active f_int_max cvode_nst max_step_max_yr'.split()
 RHEOLOGY = dict(
     enabled=True,
     stress_closure_mode='lid',
@@ -52,8 +57,26 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument('--s-init', type=float, default=9466.0, help='start entropy [J/kg/K]')
     ap.add_argument('--dh-min', type=float, help='jump floor LID_DH_MIN [J/kg]; default: code')
     ap.add_argument('--resume', action='store_true', help='continue after the last part')
+    ap.add_argument('--eta', type=float, help='solid viscosity [Pa s]; default 1e21')
+    ap.add_argument('--heating', type=float, help='internal heating [W/kg]; default none')
+    ap.add_argument('--no-lid', action='store_true', help='run the column without the lid')
+    ap.add_argument(
+        '--surface-cell', type=float, help='top cell thickness [m]; default uniform'
+    )
     ap.add_argument('--collect', nargs='+', metavar=('OUT.npz', 'NAME=DIR'))
     return ap.parse_args(argv)
+
+
+def _check_options(a: argparse.Namespace) -> None:
+    """Refuse a ``--eta`` that is not finite and positive, a ``--heating`` that is not finite
+    and non-negative and a ``--surface-cell`` that is not finite and at least 2 m."""
+    if a.eta is not None and not (np.isfinite(a.eta) and a.eta > 0.0):
+        raise SystemExit(f'--eta must be finite and positive, got {a.eta}')
+    if a.heating is not None and not (np.isfinite(a.heating) and a.heating >= 0.0):
+        raise SystemExit(f'--heating must be finite and non-negative, got {a.heating}')
+    cell = a.surface_cell
+    if cell is not None and not (np.isfinite(cell) and cell >= 2.0):
+        raise SystemExit(f'--surface-cell must be finite and at least 2 m, got {cell}')
 
 
 def _table_md5(eos_dir: Path) -> dict:
@@ -63,8 +86,18 @@ def _table_md5(eos_dir: Path) -> dict:
     }
 
 
+def _heating_array(s):
+    """Internal heating [W/kg] per staggered cell, by the rules of the NumPy state: one value
+    for every cell or one per cell. Radionuclides are refused (not passed to the JAX factory)."""
+    e, n = s.parameters.energy, s._n_stag
+    if getattr(e, 'radionuclides', False):
+        raise SystemExit('radionuclides are not passed to the JAX factory of this driver')
+    h = np.atleast_1d(np.asarray(e.tidal_array, float)) if e.tidal else np.zeros(1)
+    return np.full(n, h[0]) if h.size == 1 else (h.copy() if h.size == n else np.zeros(n))
+
+
 def _install_factory(s, eos_dir):
-    """Give ``s`` the JAX CVODE right-hand side and Jacobian, with the lid, on ``eos_dir``."""
+    """Give ``s`` the JAX CVODE right-hand side and Jacobian, with its lid, on ``eos_dir``."""
     from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams
@@ -97,14 +130,14 @@ def _install_factory(s, eos_dir):
             params_jax,
             mesh_jax,
             bc,
-            np.zeros(s._n_stag),
+            _heating_array(s),
             scales,
             core_bc_mode=core_bc_mode,
             radio_isotope_params=(),
             core_module_budget=getattr(s, '_core_module_budget', None),
             core_module_q_radio=float(getattr(s, '_core_module_q_radio', 0.0)),
             core_module_ra_crit_cmb=getattr(s, '_core_module_ra_crit_cmb', None),
-            lid_params=s.jax_lid_params(),
+            lid_params=s.jax_lid_params() if s._lid_on else None,
         )
         return rhs, jac
 
@@ -114,8 +147,9 @@ def _install_factory(s, eos_dir):
 def collect(out: Path, runs: list[str]) -> None:
     """Write the per-part time, lid thickness, surface flux and T_i of each run to ``out``.
 
-    The thickness is ``y_end[-2]`` of each part file; ``T_i`` is read from the record or from
-    its ``lid`` entry, so folders of an older record layout with the same parts also load.
+    The thickness is ``y_end[-2]`` of each part file, and 0 for a ``--no-lid`` run, whose state
+    has no lid thickness. ``T_i`` is read from the record or from its ``lid`` entry, so folders
+    of an older record layout with the same parts also load; a run without a value gives NaN.
     """
     data, meta = {}, set()
     for spec in runs:
@@ -126,13 +160,16 @@ def collect(out: Path, runs: list[str]) -> None:
         )
         data[f'{name}_delta'] = np.array(
             [
-                np.load(Path(folder) / f'{STEM}_part{k}.npz')['y_end'][-2]
-                for k in range(len(rows))
+                0.0
+                if r.get('lid') is False
+                else np.load(Path(folder) / f'{STEM}_part{k}.npz')['y_end'][-2]
+                for k, r in enumerate(rows)
             ]
         )
         data[f'{name}_F_top'] = np.array([r['F_top'] for r in rows])
         data[f'{name}_T_i'] = np.array(
-            [r.get('T_i', r.get('lid', {}).get('T_i')) for r in rows]
+            [r['T_i'] if 'T_i' in r else r.get('lid', {}).get('T_i') for r in rows],
+            dtype=float,
         )
         data[f'{name}_dh_min'] = rows[0]['dh_min']
         data[f'{name}_nodes'] = rows[0]['nodes']
@@ -156,6 +193,7 @@ def main(argv=None) -> int:
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
+    _check_options(a)
     tree = Path.cwd()
     if not Path(aragog.__file__).resolve().is_relative_to(tree.resolve()):
         raise SystemExit(f'aragog imported from {aragog.__file__}, not from {tree}')
@@ -175,15 +213,22 @@ def main(argv=None) -> int:
     for head in ('[phase_mixed]\n', '[boundary_conditions]\n'):
         if text.count(head) != 1:
             raise SystemExit(f'abe_solid.toml has {text.count(head)} {head.strip()} tables')
-    text = text.replace(
-        '[boundary_conditions]\n', '[boundary_conditions]\nsubgrid_lid = true\n'
-    )
+    if not a.no_lid:
+        text = text.replace(
+            '[boundary_conditions]\n', '[boundary_conditions]\nsubgrid_lid = true\n'
+        )
     text = text.replace('[phase_mixed]\n', '[phase_mixed]\nmatprop_smooth_width = 0.01\n')
     config_hash = hashlib.sha256(
         (
             text
             + json.dumps(
-                dict(RHEOLOGY, nodes=a.nodes, s_init=repr(a.s_init), dh_min=sl.LID_DH_MIN)
+                dict(
+                    RHEOLOGY,
+                    nodes=a.nodes,
+                    s_init=repr(a.s_init),
+                    dh_min=sl.LID_DH_MIN,
+                    **{k: repr(getattr(a, k)) for k in OPTIONS if getattr(a, k) is not None},
+                )
             )
         ).encode()
     ).hexdigest()[:16]
@@ -208,13 +253,20 @@ def main(argv=None) -> int:
     for k, t_end in enumerate(samples[len(rows) :], start=len(rows)):
         c = Config.from_file(str(cfg))
         c.solver.end_time, c.solver.max_steps = t_end, 800_000
-        c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, 1.0e21
+        c.energy.kappah_floor, c.phase_solid.viscosity = (
+            10.0,
+            1.0e21 if a.eta is None else a.eta,
+        )
+        if a.heating:
+            c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
         c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
         c.boundary_conditions.emissivity = 1.0
         c.mesh.number_of_nodes = a.nodes
+        if a.surface_cell is not None:
+            c.mesh.surface_cell_thickness = a.surface_cell
         s = EntropySolver(c, entropy_eos=eos_np)
         s.initialize()
-        if y_prev is not None:
+        if y_prev is not None and not a.no_lid:
             s.set_initial_lid(float(y_prev[-2]), float(y_prev[-1]))
         s.set_initial_entropy(a.s_init)
         _install_factory(s, a.eos_dir)
@@ -238,6 +290,11 @@ def main(argv=None) -> int:
         t_got, y_end = float(tt[-1]), yy[:, -1].copy()
         s.dSdt(t_got, y_end)
         lid = s.state._lid_state or {}
+        F_top = float(np.ravel(s.state._heat_flux)[-1])  # the root below rewrites this slot
+        root = None if a.no_lid else float(s._lid_root_value(t_got, y_end))
+        t_ho = float(getattr(s, '_lid_handover_time', float('nan')))
+        nst = int(s._solution.get('cvode_nst', 0) or 0)
+        h_max = [h for _, _, h in (s._solution.get('segments') or [])]
         rows.append(
             dict(
                 part=k,
@@ -245,11 +302,22 @@ def main(argv=None) -> int:
                 t_target=t_end,
                 reached=bool(t_got >= t_end * (1 - 1e-9)),
                 status=int(s._solution.status),
-                delta=float(y_end[-2]),
-                E=float(y_end[-1]),
-                F_top=float(np.ravel(s.state._heat_flux)[-1]),
+                delta=None if a.no_lid else float(y_end[-2]),
+                E=None if a.no_lid else float(y_end[-1]),
+                F_top=F_top,
                 T_i=float(np.asarray(lid['T_i'])) if 'T_i' in lid else None,
+                w_active=float(np.asarray(lid['w_active'])) if 'w_active' in lid else None,
+                f_int_max=float(np.asarray(lid['f_int_max'])) if 'f_int_max' in lid else None,
+                handover_root=root,
+                handover_time=t_ho if np.isfinite(t_ho) else None,
+                cvode_nst=nst,
+                mean_step_yr=(t_got - float(tt[0])) / nst if nst else None,
+                segments=len(h_max),
+                max_step_min_yr=min(h_max) if h_max else None,
+                max_step_max_yr=max(h_max) if h_max else None,
                 nodes=a.nodes,
+                lid=not a.no_lid,
+                surface_cell=a.surface_cell,
                 s_init=a.s_init,
                 dh_min=float(sl.LID_DH_MIN),
                 sha=sha,
@@ -260,12 +328,10 @@ def main(argv=None) -> int:
                 config_hash=config_hash,
             )
         )
-        np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end)
+        r_basic = np.asarray(s.evaluator.mesh.basic.radii, float).ravel()
+        np.savez(a.outdir / f'{STEM}_part{k}.npz', t=tt, y=yy, y_end=y_end, r_basic=r_basic)
         out_json.write_text('[\n' + ',\n'.join(json.dumps(r) for r in rows) + '\n]\n')
-        print(
-            json.dumps({x: rows[-1][x] for x in ('part', 't_yr', 'status', 'delta')}),
-            flush=True,
-        )
+        print(json.dumps({x: rows[-1][x] for x in PRINTED}), flush=True)
         if not rows[-1]['reached'] or rows[-1]['status'] < 0:
             return 3
         t_prev, y_prev = t_got, y_end
