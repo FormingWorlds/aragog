@@ -50,6 +50,7 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.rheology import R_GAS as _R_GAS
+from aragog.rheology import compute_arrhenius_enthalpy, compute_arrhenius_viscosity
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
 from aragog.solver.entropy_state import EntropyState
@@ -3628,21 +3629,16 @@ class EntropySolver:
         rheo = self._lid_rheo
         if rheo is None or ev.rates.w == 0.0 or not drho > 0.0:
             return {'lid_drho': drho}
-        from aragog.rheology import compute_arrhenius_enthalpy, compute_arrhenius_viscosity
-
         ph = self.state.phase_staggered
-        T_sol = ph._solidus_temperature
-        T_sol = None if T_sol is None or np.size(T_sol) == 0 else float(np.ravel(T_sol)[-1])
         law = dict(
             g_homologous=rheo.g_homologous,
-            solidus_temperature=T_sol,
+            solidus_temperature=self._lid_T_sol,
             t_sol_0=rheo.t_sol_0,
             dt_sol_dp=rheo.dt_sol_dp,
             activation_energy=rheo.activation_energy,
             activation_volume=rheo.activation_volume,
             activation_volume_decay_pressure=rheo.activation_volume_decay_pressure,
         )
-        cp = props.cp if self._lid_const else props.heat_capacity(P, ev.S_b)
         out = _lid.rt_instability(
             drho=drho,
             T_b=ev.T_b,
@@ -3661,7 +3657,7 @@ class EntropySolver:
             ),
             k=self._lid_k,
             rho=ev.rho,
-            cp=float(np.asarray(cp).item()),
+            cp=float(np.asarray(props.heat_capacity(P, ev.S_b)).item()),
             g=abs(float(np.ravel(ph.gravitational_acceleration())[-1])),
         )
         return {
