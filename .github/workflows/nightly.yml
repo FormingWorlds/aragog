@@ -98,9 +98,10 @@ jobs:
       - name: Run unit + smoke + slow tests with coverage
         if: matrix.part == 'main'
         run: |
-          # -n auto runs xdist workers; pytest-cov combines their data into .coverage. -ra prints
-          # the failed, errored and skipped tests at the end, also for a cancelled run.
-          pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
+          # 3 xdist workers on 4 vCPUs: with 4 the lid tests use swap and run close to their 900 s marker.
+          # pytest-cov combines the worker data into .coverage. -ra prints the failed, errored and
+          # skipped tests at the end, also for a cancelled run.
+          pytest -m "unit or smoke or integration or slow" -n 3 -o "addopts=" -ra \
             --ignore=tests/test_core_verification_page.py $(printf -- '--deselect=%s ' $CORE_SOLVES) \
             --timeout=2700 --timeout-method=thread --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
