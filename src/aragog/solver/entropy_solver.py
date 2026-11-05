@@ -1207,7 +1207,7 @@ class SolverOutput:
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
-    step_core_tol_J: float = 0.0  # tolerance bound of step_dE_core_J from the T_core error control [J]
+    step_core_tol_J: float = 0.0  # tolerance bound of step_dE_core_J [J]
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
