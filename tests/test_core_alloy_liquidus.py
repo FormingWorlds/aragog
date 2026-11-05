@@ -330,6 +330,8 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
     assert AlloyLiquidus({'S': 0.5 * w_e}).status(np.array([p]))['past_eutectic'].tolist() == [
         False
     ]
+    just_past = AlloyLiquidus({'S': 1.05 * w_e})
+    assert float(just_past.t_melt(p)) == pytest.approx(t_e, rel=1e-12)
 
 
 @pytest.mark.physics_invariant
@@ -421,3 +423,24 @@ def test_a_binary_with_a_non_positive_a_is_refused(monkeypatch):
     monkeypatch.setitem(alloy._SIMON, 'S', (1.0e5, 21.0, 36.5, 2.07))
     with pytest.raises(ValueError, match='not positive|out of'):
         AlloyLiquidus({'S': 0.02}).t_melt(135e9)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('bad', [1.01, float('nan'), -1.0])
+def test_the_liquidus_guard_refuses_a_temperature_outside_zero_to_pure_iron(bad):
+    """The guard of a concrete call refuses a liquidus above pure iron, non-finite or not
+    positive, with every binary A valid."""
+    p = np.array([135e9])
+    t = np.asarray(T_FE(p)) * bad if bad != -1.0 else np.array([-1.0])
+    with pytest.raises(ValueError, match='out of'):
+        alloy._assert_invariants(p, t, {'S': np.array([0.5])})
+    alloy._assert_invariants(p, np.asarray(T_FE(p)) * 0.9, {'S': np.array([0.5])})
+
+
+@pytest.mark.physics_invariant
+def test_a_bad_a_of_an_absent_element_is_refused(monkeypatch):
+    """A binary with A <= 0 is refused even when its element is absent from the alloy, where the
+    liquidus itself stays valid."""
+    monkeypatch.setitem(alloy._SIMON, 'S', (1.0e5, 21.0, 36.5, 2.07))
+    with pytest.raises(ValueError, match='not positive'):
+        AlloyLiquidus({'O': 0.02}).t_melt(135e9)
