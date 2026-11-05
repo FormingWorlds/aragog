@@ -55,7 +55,9 @@ The command of a case is `pytest <test>`; the young-layer case, the surface-boun
 
 `pytest -m reference_pinned` runs every case. The core-page tests need the SPIDER P-S tables (`ARAGOG_TEST_EOS_DIR`, [Build tests](../How-to/build_tests.md)); the stable-layer and Earth-budget cases take minutes.
 
-**Checks on stored runs.** These tests read stored runs and do not run the code, so they are not in the table and carry no `reference_pinned` marker. `tests/test_surface_lid_v8.py` compares the lid after its hand-over with 2 runs without the lid: the step between 200 and 400 nodes is at most 0.75 of the step between 100 and 200 nodes, and the late mean of the surface flux lies within 1 % of the reference on 200 and 400 nodes ([Surface lid](surface_lid.md#a-case-where-the-lid-hands-over)). `tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` compares all 36 benchmark rows with and without the lid ([Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks)).
+**Checks on stored runs.** These tests read stored runs and do not run the code. They are not in the table and carry no `reference_pinned` marker. `tests/test_surface_lid_v8.py` compares the lid after its hand-over with 2 runs without the lid: the step between 200 and 400 nodes is at most 0.75 of the step between 100 and 200 nodes, and the late mean of the surface flux lies within 1 % of the reference on 200 and 400 nodes ([Surface lid](surface_lid.md#a-case-where-the-lid-hands-over)).
+
+`tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` compares all 36 benchmark rows with and without the lid ([Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks)).
 
 `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor` is a sensitivity study with no reference: it reads stored runs of the lid base at the melt temperature on 100, 200 and 400 nodes and with floors of 1e2, 1e3 and 1e4 J/kg.
 
