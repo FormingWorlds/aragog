@@ -426,10 +426,11 @@ def test_lid_mush_base_needs_the_lid(mush, subgrid):
 @settings(max_examples=120, deadline=None)
 @given(st.booleans(), st.booleans(), st.integers(min_value=0, max_value=6))
 def test_outer_boundary_rule_of_the_lid(subgrid, mush, bc):
-    """The lid runs on the grey body, and on the prescribed flux only with the mush base."""
+    """The lid runs on the grey body and the fixed surface temperature, and on the prescribed
+    flux only with the mush base."""
     from aragog.config.boundary import check_subgrid_lid
 
-    allowed = not subgrid or bc == 1 or (bc == 4 and mush)
+    allowed = not subgrid or bc in (1, 5) or (bc == 4 and mush)
     args = dict(GOOD_LID, outer_boundary_condition=bc, lid_mush_base=mush)
     if allowed:
         assert check_subgrid_lid(subgrid, **args) is None
