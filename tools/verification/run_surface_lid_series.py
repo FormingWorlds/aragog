@@ -2,9 +2,9 @@
 
 Each state of every part goes through one right-hand side on the same column, so the series has
 the time resolution of the stored ``y`` and needs no new solve. ``z_lid`` is the deepest point of
-the mesh column where the temperature rises through ``T_lid_iso``; it is NaN when the whole mesh
-column lies above that isotherm, which under a live lid means that the isotherm lies inside the
-lid.
+the mesh column where the temperature rises through ``T_lid_iso``; it is NaN when the mesh column
+holds no such rise. When the whole mesh column lies above that isotherm under a live lid, the
+isotherm lies inside the lid.
 
 Usage, from the root of a checkout, with its ``src`` on ``PYTHONPATH``::
 
@@ -29,10 +29,10 @@ from run_surface_lid_case import RHEOLOGY, STEM  # noqa: E402
 
 def isotherm_depth(T_top_first: np.ndarray, z: np.ndarray, T_iso: float) -> float:
     """Depth [m] of the deepest rise through ``T_iso``, linear between nodes; NaN without one."""
-    below = np.flatnonzero(T_top_first < T_iso)
-    if below.size == 0 or below[-1] + 1 == z.size:
+    rise = np.flatnonzero((T_top_first[:-1] < T_iso) & (T_top_first[1:] >= T_iso))
+    if rise.size == 0:
         return float('nan')
-    i = int(below[-1])
+    i = int(rise[-1])
     return float(
         z[i]
         + (T_iso - T_top_first[i]) * (z[i + 1] - z[i]) / (T_top_first[i + 1] - T_top_first[i])
