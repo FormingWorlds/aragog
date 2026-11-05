@@ -198,6 +198,7 @@ def test_series_depth_is_nan_where_the_solver_finds_the_isotherm_in_the_lid():
     T_iso=st.floats(300.0, 2500.0),
 )
 @example(T=[300.0, 1800.0, 1000.0], T_iso=1200.0)
+@example(T=[300.0, 1800.0, 1000.0, 1500.0], T_iso=1200.0)
 def test_series_depth_agrees_with_the_solver_on_the_mesh_column(T, T_iso):
     """Where the column holds a rise, the series gives the depth of the solver function; where it
     holds none, the solver finds no crossing below the top cell."""
