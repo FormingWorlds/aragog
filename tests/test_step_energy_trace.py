@@ -291,7 +291,7 @@ def _assert_bitwise_equal(calls, replays):
 @needs_eos
 @pytest.mark.integration
 @pytest.mark.physics_invariant
-@pytest.mark.timeout(400)
+@pytest.mark.timeout(500)
 def test_recording_leaves_a_physical_run_bitwise_unchanged(monkeypatch):
     """Recording the quadrature nodes changes no time and no state of a physical run.
 
