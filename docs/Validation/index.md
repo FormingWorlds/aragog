@@ -36,6 +36,8 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 | Surface lid | Molten shell freezing through: hand-over of the lid and the coarse mesh after it | `tests/test_surface_lid_v2_grid.py::test_c3_molten_lid_matches_the_resolved_mesh` | 800-node solver run without the lid, top cell 0.125 m | 3 % at every output time | [Surface lid](surface_lid.md#a-molten-shell-freezing-through-on-a-fine-mesh) |
 | Surface lid | State on both sides of a hand-over | `tests/test_surface_lid_v8_merge_run.py::test_v8_restart_over_the_merge_gives_the_stored_merge_state` | stored run of the same column on 100 nodes | 1e-6 relative; needs `ARAGOG_LOWT_EOS_DIR` | [Surface lid](surface_lid.md#a-case-where-the-lid-hands-over) |
 | Surface lid | Stagnant-lid benchmark rows with the lid | `tests/test_surface_lid_v5_rows.py::test_row_keeps_its_values_with_the_lid` | the same row without the lid | 1e-7 relative in each observable; hand-over time 1e-4 of the stored run | [Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks) |
+| Surface lid | Critical thickness of a dense layer | `tests/test_surface_lid_stability.py::test_s1_critical_thickness_is_eq_10` | Miyazaki and Stevenson (2024)[^cite-miyazaki2024] Eq. 10 | 1e-12 relative | [Surface lid](surface_lid.md#the-critical-thickness-of-a-dense-layer) |
+| Surface lid | Conduction and growth times of the Io crust | `tests/test_surface_lid_stability.py::test_s2_s3_io_crust_against_figure_5b` | Miyazaki and Stevenson (2024)[^cite-miyazaki2024] Fig. 5B, 2 reads | a factor 1.2 and 1.3 | [Surface lid](surface_lid.md#the-crust-of-io-against-a-published-figure) |
 | Phase transitions | Properties on the solidus and the liquidus | `tests/test_matprop_smooth_width_validation.py::test_on_each_boundary_every_property_is_the_mean_of_the_two_branches` | SPIDER `get_smoothing` (`util.c`): weight 1/2 on each boundary | 1e-12 relative | [Phase transitions](phase_transitions.md#on-each-boundary-a-property-is-the-mean-of-its-two-values) |
 | Mesh | End cells of a refined mesh | `tests/test_mesh_refinement_validation.py::test_the_refined_mesh_has_the_set_end_cells` | the end-cell thickness set in the config | 1e-6 relative (radius mode), 2 mm (mass-coordinate mode) | [Mesh refinement](mesh_refinement.md#the-end-cells-have-the-thickness-that-was-set) |
 | Mesh | Results against the top cell | `tests/test_mesh_refinement_study.py::test_the_results_change_as_the_top_cell_gets_thinner` | stored study runs; spreads against a perturbed pair | each quoted number to its digits | [Mesh refinement](mesh_refinement.md#how-the-results-change-as-the-top-cell-gets-thinner) |
@@ -57,11 +59,13 @@ The command of a case is `pytest <test>`; the young-layer case, the surface-boun
 
 **Checks on stored runs.** These tests read stored runs and do not run the code. They are not in the table and carry no `reference_pinned` marker. `tests/test_surface_lid_v8.py` compares the lid after its hand-over with 2 runs without the lid: the step between 200 and 400 nodes is at most 0.75 of the step between 100 and 200 nodes, and the late mean of the surface flux lies within 1 % of the reference on 200 and 400 nodes ([Surface lid](surface_lid.md#a-case-where-the-lid-hands-over)).
 
+`tests/test_surface_lid_stability_run.py::test_s4_stored_runs_on_the_extended_table` states the density difference and the time scales along 2 stored runs, with no reference ([Surface lid](surface_lid.md#the-density-difference-along-real-runs)).
+
 `tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` compares all 36 benchmark rows with and without the lid ([Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks)).
 
 `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor` is a sensitivity study with no reference: it reads stored runs of the lid base at the melt temperature on 100, 200 and 400 nodes and with floors of 1e2, 1e3 and 1e4 J/kg.
 
-At 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py tests/test_surface_lid_v5_rows.py tests/test_surface_lid_v8.py -m "not slow" --validation-plots` writes their plot pairs.
+At 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py tests/test_surface_lid_v5_rows.py tests/test_surface_lid_v8.py tests/test_surface_lid_stability_run.py -m "not slow" --validation-plots` writes their plot pairs.
 
 ## Plots written by the tests
 
@@ -73,4 +77,5 @@ pytest -m reference_pinned --validation-plots
 
 Without `--validation-plots` the tests assert and write nothing. The figures in `docs/figures/vv/` are made by the scripts in `tools/verification/`, not by the tests.
 
+[^cite-miyazaki2024]: Y. Miyazaki, D. J. Stevenson, *[The stability of a dense crust situated on small bodies](https://doi.org/10.3847/PSJ/ad65d2)*, The Planetary Science Journal, 5, 192, 2024. [SciX](https://scixplorer.org/abs/2024PSJ.....5..192M/abstract).
 [^cite-turcotte2014]: D. L. Turcotte, G. Schubert, *[Geodynamics](https://doi.org/10.1017/CBO9780511843877)*, 3rd edition, Cambridge University Press, 2014. [SciX](https://scixplorer.org/abs/2014geod.book.....T/abstract).

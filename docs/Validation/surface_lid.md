@@ -320,7 +320,7 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 **What it tests.** The function `rt_instability` on the Io crust of Fig. 5B of Miyazaki and Stevenson (2024)[^cite-miyazaki2024], at a lid-base temperature from 1205 to 1365 K. The inputs are an activation energy of 300 kJ/mol, a creep exponent of 1, a surface temperature of 150 K and a subsidence velocity of 2 cm/yr, which gives the gradient at the base, $\alpha = (T_b - T_s) v_z / \kappa$. The viscosity is Eq. 16 of the paper, 10¹⁹ Pa s at 1600 K for a grain of 1 mm, with the square of the grain size. We check grains of 0.1 mm, 1 mm and 1 cm.
 
-**How we know the right answer.** We read the curves of Fig. 5B twice, independently, and store the mean of the 2 reads. Fig. 5 does not state $\kappa$, $\Delta\rho$ or $g$. We take $\kappa$ = 10⁻⁶ m²/s, and $\Delta\rho$ = 400 kg/m³ and $g$ = 1.5 m/s² from p. 10 of the paper. Nothing is fitted. The code gives a conduction time within a factor 1.05 of the figure and a growth time within a factor 1.20. The soft layer is 60 to 67 m thick and the conduction time 114 to 143 years at 1200 to 1370 K, inside the 10 to 100 m and below the 400 years of the text on p. 9.
+**How we know the right answer.** We read the curves of Fig. 5B twice, independently, and store the mean of the 2 reads. Fig. 5 does not state $\kappa$, $\Delta\rho$ or $g$. We take $\kappa$ = 10⁻⁶ m²/s, and $\Delta\rho$ = 400 kg/m³ and $g$ = 1.5 m/s² from p. 10 of the paper. Nothing is fitted. The code gives a conduction time within a factor 1.05 of the figure and a growth time within a factor 1.20. The growth time lies above the figure at all 24 points, by a factor 1.1 to 1.2. A constant offset like this can come from an input that the figure does not state; we do not know which. The soft layer is 60 to 67 m thick and the conduction time 114 to 143 years at 1200 to 1370 K, inside the 10 to 100 m and below the 400 years of the text on p. 9.
 
 **Why it matters.** This is the one comparison of both times with an independent source. It does not check a run of the solver: the next case does that.
 
@@ -330,19 +330,19 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 **How to read the plot.** The horizontal axis is the temperature at the lid base. The top panel is the conduction time $\tau_{th}$, the bottom panel the growth time $\tau_{RT}$ for 3 grain sizes, on a logarithmic axis. The lines are this code and the circles are the figure. The growth time lies far above the conduction time at every point, so for these inputs conduction wins at every temperature below the melt step of the figure at about 1375 K.
 
 ??? info "Test details"
-    - Reference: Miyazaki and Stevenson (2024), Fig. 5B, p. 9; viscosity Eq. 16 and the values of $\Delta\rho$ and $g$, p. 10
-    - Data: `tests/validation/data/miyazaki_stevenson_2024_fig5b.csv`, the geometric mean of 2 independent reads, which agree within a factor 1.13
+    - Reference: Miyazaki and Stevenson (2024), Fig. 5B and viscosity Eq. 16, p. 9; the values of $\Delta\rho$ and $g$, p. 10
+    - Data: `tests/validation/data/miyazaki_stevenson_2024_fig5b.csv`, both independent reads, which agree within a factor 1.13; the test uses their geometric mean
     - Tolerance: a factor 1.2 on $\tau_{th}$ and 1.3 on $\tau_{RT}$; the text ranges of p. 9
     - Test id: `tests/test_surface_lid_stability.py::test_s2_s3_io_crust_against_figure_5b`
     - Command: `pytest tests/test_surface_lid_stability.py` (add `--validation-plots` to write the plot pair)
 
 ## The density difference along real runs
 
-**Why this check exists.** The 2 cases above call the function directly. A run has to pass it the right lid state, on the NumPy and the JAX path, and the output has to say when no test exists. There is also no published answer for these columns, so this case states what the output does, and it fails if that changes.
+**Why this check exists.** The 2 cases above call the function directly. A run has to pass it the right lid state, on the NumPy and the JAX path, and the output has to say when no test exists. There is also no published answer for these columns, so this case states what the output does.
 
-**What it tests.** 2 runs on the extended PALEOS table. The first is the 100-node column of [A case where the lid hands over](#a-case-where-the-lid-hands-over): the output fields at each of its 812 stored rows up to the hand-over. The second is a 10-node shell from a molten start with the solid rheology, over 12 chained solves to 300 years.
+**What it tests.** 2 runs on the extended PALEOS table. The first is the 100-node column of [A case where the lid hands over](#a-case-where-the-lid-hands-over): the output fields at each of its 800 stored states up to the hand-over. The second is a 10-node shell from a molten start with the solid rheology, over 12 chained solves to 300 years.
 
-**How we know the right answer.** There is no reference. The test asserts the sign and the NaN rules, and reads each field back from the lid state in a short run on the test tables. In the column, the lid-base entropy is capped at the fluid entropy, so $\Delta\rho$ is exactly 0 in 718 of the 812 rows and the flag is NaN there. In the other 94 rows, from 2.1 × 10⁵ to 6.9 × 10⁵ years, $\Delta\rho$ is at most 18.3 kg/m³, and $\tau_{RT}$ is at least 41 times $\tau_{th}$, so the flag is 0. No row sets the flag. In the molten shell, $\Delta\rho$ is -417 to -547 kg/m³ while the top cell holds melt: the base is lighter than the melt, and the flag is NaN. At 7.9 years it is +19 kg/m³ under a hidden lid. After that it is 0.
+**How we know the right answer.** There is no reference. On the extended table the test reads stored rows and runs no code, so a change in the code does not fail it. Tests on the test tables run the solver: they read each field back from the lid state and check the NaN rules. In the column, the lid-base entropy is capped at the fluid entropy, so $\Delta\rho$ is exactly 0 in 707 of the 800 states and the flag is NaN there. In the other 93 states, from 2.1 × 10⁵ to 6.9 × 10⁵ years, $\Delta\rho$ is at most 18.3 kg/m³, and $\tau_{RT}$ is at least 41 times $\tau_{th}$, so the flag is 0. No state sets the flag. In the molten shell, $\Delta\rho$ is -497 to -547 kg/m³ while the top cell is melt, to 1.8 years: the base is lighter than the melt. At 3.8 years it is -417 kg/m³, with a melt fraction of 0.77. At 7.9 years it is +19 kg/m³ under a hidden lid. After that it is 0. The flag is NaN in every row.
 
 **Why it matters.** A reader of the flag must know that NaN is the common result in these runs: it means that no test exists, not that the lid is stable. These 2 runs do not cover other columns, and new EOS tables can change the sign.
 
@@ -352,10 +352,10 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 **How to read the plot.** The top panel is $\Delta\rho$ in the molten shell against time: strongly negative in the melt, then a short positive point, then 0. The bottom panel holds only the rows of the solid column with $\Delta\rho > 0$. The growth time stays far above the conduction time at all of them, and the rest of that run has no times to plot.
 
 ??? info "Test details"
-    - Reference: none; the stored rows of `tests/reference/surface_lid_stability.json`, from `tools/verification/run_surface_lid_stability.py`
+    - Reference: none; `tests/reference/surface_lid_stability.json` holds counts and extremes over all 800 states and a sample of the rows, from `tools/verification/run_surface_lid_stability.py`, which reads a run folder that the repository does not hold
     - Limit: Eq. 7 of the paper holds for $L$ much below the lid thickness; here $L / \delta$ reaches 0.66, so the growth time near those rows is a rough scale
-    - Test id: `tests/test_surface_lid_stability_run.py::test_s4_stored_runs_on_the_extended_table`, `::test_s4_molten_shell_on_the_test_tables`, `::test_a_solid_lid_base_colder_than_the_fluid_gives_each_field`, `::test_the_jax_path_gives_the_same_fields`, `::test_the_sign_of_the_density_difference_per_table`
-    - Command: `pytest tests/test_surface_lid_stability_run.py` (add `--validation-plots` to write the plot pair)
+    - Test id: `tests/test_surface_lid_stability_run.py::test_s4_stored_runs_on_the_extended_table`, `::test_s4_molten_shell_on_the_test_tables`, `::test_a_solid_lid_base_colder_than_the_fluid_gives_each_field`, `::test_the_jax_path_gives_the_same_fields`, `::test_the_sign_of_the_density_difference_per_table`, `::test_the_solve_does_not_read_the_output`
+    - Command: `pytest tests/test_surface_lid_stability_run.py` (add `--validation-plots` to write the plot pair; the extended-table parts need `ARAGOG_LOWT_EOS_DIR`)
 
 ## Where the lid is not validated
 

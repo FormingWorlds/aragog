@@ -104,7 +104,7 @@ Miyazaki and Stevenson (2024)[^cite-miyazaki2024] (Eqs. 3, 4, 7 and 10) give the
 
 $$L = \frac{n R T_b^2}{H \alpha},$$
 
-with $T_b$ the base temperature of the lid, $\alpha$ the temperature gradient at the base, $H$ the activation enthalpy and $R$ the gas constant. The creep exponent $n$ is 1, because Aragog has only the diffusion-creep law. With $\Delta\rho$ the density of the lid base minus the density of the fluid below, $\eta_0$ the viscosity at the lid base, $g$ the gravity and $\kappa = k / (\rho c_p)$ the thermal diffusivity at the lid base, the 2 times are
+with $T_b$ the base temperature of the lid, $\alpha$ the temperature gradient at the base, $R$ the gas constant and $H$ the activation enthalpy of the viscosity law of the mesh, at the table solidus of the top-cell pressure. The creep exponent $n$ is 1, because Aragog has only the diffusion-creep law. With $\Delta\rho$ the density of the lid base minus the density of the fluid below, $\eta_0$ the viscosity at the lid base, $g$ the gravity and $\kappa = k / (\rho c_p)$ the thermal diffusivity at the lid base, the 2 times are
 
 $$\tau_{RT} = \frac{\eta_0}{\psi_0 \Delta\rho\, g L}, \qquad \tau_{th} = \frac{L^2}{\kappa},$$
 
@@ -119,7 +119,7 @@ with $\psi_0 = 0.1$, a value the paper gives as an order of magnitude. A drip ou
 | `lid_L_crit` | m | $L_{crit}$ |
 | `lid_rt_flag` | 1 | 1 when $\tau_{th} > \tau_{RT}$, 0 when not, NaN when no test exists |
 
-**What the flag means.** On today's tables a flag of 1 says that the cold base of a solid lid can drip into warmer solid below it. It does not say that a crust is denser than its melt: at low pressure the tables give the opposite sign (see [Settings and limits](#settings-and-limits)), and a lid that is not denser has no test.
+**What the flag means.** A flag of 1 says that the base of the lid, denser than the layer below it, can drip into that layer. Which layer this is depends on the table and the pressure. At 55.7 MPa, on the test tables and the extended PALEOS table, a base at the solidus is lighter than melt or mush, so only a solid base over warmer solid can set the flag. At 7.8 GPa on the test tables the base is denser than the mush below it (step 5 of the [tutorial](../Tutorials/surface_lid.md)). A lid that is not denser has no test.
 
 **When the fields are NaN.** All 6 are NaN with the lid off and after the hand-over. Without the solid rheology no creep law exists, so only `lid_drho` is written. The 5 others are also NaN for a hidden lid (weight 0) and for $\Delta\rho \le 0$. With constant properties $\Delta\rho$ is 0.
 
