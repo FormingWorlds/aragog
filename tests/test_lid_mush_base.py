@@ -710,7 +710,7 @@ def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc
             check_lid_surface_temperature(T, bc, mush)
 
 
-def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10):
+def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False):
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -722,6 +722,9 @@ def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10):
         end_time=end,
         outer_bc_value=F_atm,
     )
+    if thin:  # a shell with a thin top cell, where the floor flux reaches a partial lid weight
+        p.mesh.inner_radius = 6.346e6
+        p.energy.convection = True
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.lid_mush_base = True
     p.boundary_conditions.lid_surface_temperature = T_held
@@ -814,6 +817,50 @@ class TestHeldSurface:
             J = np.zeros((x.size, x.size))
             assert jac(0.0, x, np.zeros(x.size), J) == 0
             assert np.all(np.isfinite(J))
+
+    @pytest.mark.parametrize('form', ['parallel', 'series'])
+    def test_flux_of_the_interior_against_the_balance_of_the_atmosphere(self, eos, form):
+        """At partial weight the interior sums the lid and the open part. A parallel balance of
+        the atmosphere is that sum; a series balance differs by w (F_lid - F_atm)."""
+        from scipy.optimize import brentq
+
+        sig, T_eq, G_skin = 5.670374419e-8, 255.0, 200.0
+        s = _held_solver(eos, 1000.0, F_atm=5.0e4, thin=True)
+        n = s._n_stag
+        y = np.empty(n + 2)
+        y[:n] = np.asarray(eos.solidus_entropy(s._P_stag_flat), float).ravel() + 90.0
+        y[-2:] = (0.6, 0.6 * float(s._lid_hv.profile_heat(0.0, 1000.0, s._lid_T_sol)))
+        bc = s.parameters.boundary_conditions
+
+        def balance(T_held):
+            """Lid state and flux of the atmosphere balance at a held surface."""
+            bc.lid_surface_temperature = T_held
+            s._dSdt_single(0.0, y)
+            ev = s._lid_last
+            w, T_b = float(ev.rates.w), float(ev.T_b)
+            G_lid = s._lid_k * max(sl.shape(ev.surf.s)[0], 0.1) / ev.delta
+            T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
+            if form == 'parallel':
+                F = w * G_lid * (T_b - T_held) + (1.0 - w) * G_skin * (T_node - T_held)
+            else:
+                T_melt = w * T_b + (1.0 - w) * T_node
+                F = (T_melt - T_held) / (w / G_lid + (1.0 - w) / G_skin)
+            return w, G_lid, T_b, T_node, F
+
+        T = brentq(
+            lambda v: sig * (v**4 - T_eq**4) - balance(v)[4], T_eq + 1.0, 1400.0, xtol=1e-9
+        )
+        w, G_lid, T_b, T_node, F_atm = balance(T)
+        assert 0.1 < w < 0.9  # the balance sits at a partial weight
+        assert F_atm == pytest.approx(sig * (T**4 - T_eq**4), rel=1e-6)
+        bc.outer_boundary_value = G_skin * (T_node - T) if form == 'parallel' else F_atm
+        s._dSdt_single(0.0, y)
+        F_int = float(s.state._heat_flux[-1])
+        if form == 'parallel':
+            assert F_int == pytest.approx(F_atm, rel=1e-6)
+        else:
+            assert abs(F_int - F_atm) > 0.05 * F_atm
+            assert F_int - F_atm == pytest.approx(w * (G_lid * (T_b - T) - F_atm), rel=1e-6)
 
     def test_coupled_budget_closes_and_reports_the_difference_from_the_atmosphere(self, eos):
         """Steps under a grey balance: the state heat of each call equals the integrated powers,
