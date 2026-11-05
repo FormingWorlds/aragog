@@ -31,10 +31,11 @@ FIG5B = (
 # A lid at kappa = k / (rho cp) = 1e-6 m^2/s; the paper gives no kappa near its Eq. 10.
 K, RHO, CP = 3.0, 3000.0, 1000.0
 KAPPA = K / (RHO * CP)
-# Io crust of Fig. 5 (p. 9): E, T_s, v_z. Eq. 16 (p. 10): eta. drho, g from p. 10; Fig. 5 states neither.
+# Io crust of Fig. 5 and Eq. 16 (p. 9): E, T_s, v_z, eta. drho, g from p. 10; Fig. 5 states neither.
 E_IO, T_S_IO, V_Z_IO = 3.0e5, 150.0, 2.0e-2 / Julian_year
 ETA_IO, T_ETA_IO, DRHO_IO, G_IO = 1.0e19, 1600.0, 400.0, 1.5
 TAU_TH_TOL, TAU_RT_TOL = 1.2, 1.3  # factors against the mean of the 2 figure reads
+READS_AGREE = 1.13  # largest factor between the 2 reads
 GRAIN_MM = {'tau_rt_01mm_yr': 0.1, 'tau_rt_1mm_yr': 1.0, 'tau_rt_1cm_yr': 10.0}
 
 
@@ -65,10 +66,15 @@ def _io(T_b, grain_mm=1.0):
 
 
 def _fig5b():
-    """The stored reads of Fig. 5B as arrays by column."""
+    """The 2 reads of Fig. 5B: their geometric mean by column, after a check that they agree."""
     with FIG5B.open() as f:
         rows = list(csv.DictReader(line for line in f if not line.startswith('#')))
-    return {k: np.array([float(r[k]) for r in rows]) for k in rows[0]}
+    d = {'T_b_K': np.array([float(r['T_b_K']) for r in rows])}
+    for key in (*GRAIN_MM, 'tau_th_yr'):
+        a, b = (np.array([float(r[f'{side}_{key}']) for r in rows]) for side in 'ab')
+        assert np.all(np.abs(np.log(a / b)) <= np.log(READS_AGREE))
+        d[key] = np.sqrt(a * b)
+    return d
 
 
 def test_psi0_is_the_value_of_the_paper():
@@ -84,12 +90,9 @@ def test_psi0_is_the_value_of_the_paper():
 def test_s1_critical_thickness_is_eq_10(eta0, L_crit):
     """S1: Eq. 10 of Miyazaki and Stevenson (2024, p. 4), L_crit = (eta0 kappa / (drho g))^(1/3),
     gives 1.00 km at 1e17 Pa s and 10.0 km at 1e20 Pa s for drho 100 kg/m^3, g 1 m/s^2 and kappa
-    1e-6 m^2/s, the ends of its range of 1 to 10 km. kappa is my assumption. Inverting the ratio
-    under the root moves the value by more than a factor 100."""
-    out = _call(eta0=eta0)
-    assert out.L_crit == pytest.approx(L_crit, rel=1e-12)
-    wrong = (100.0 * 1.0 / (eta0 * KAPPA)) ** (1.0 / 3.0)
-    assert abs(wrong / L_crit - 1.0) > 0.99
+    1e-6 m^2/s, the ends of its range of 1 to 10 km. kappa is an assumption: the paper states no
+    value."""
+    assert _call(eta0=eta0).L_crit == pytest.approx(L_crit, rel=1e-12)
 
 
 @pytest.mark.physics_invariant
@@ -132,6 +135,10 @@ def test_each_scale_follows_its_formula():
     assert _call(k=2.0 * K).tau_th == pytest.approx(0.5 * a.tau_th, rel=1e-14)
     assert _call(rho=2.0 * RHO).tau_th == pytest.approx(2.0 * a.tau_th, rel=1e-14)
     assert _call(cp=2.0 * CP).tau_th == pytest.approx(2.0 * a.tau_th, rel=1e-14)
+    assert _call(g=8.0).L_crit == pytest.approx(0.5 * a.L_crit, rel=1e-14)
+    assert _call(drho=800.0).L_crit == pytest.approx(0.5 * a.L_crit, rel=1e-14)
+    assert _call(eta0=8.0e20).L_crit == pytest.approx(2.0 * a.L_crit, rel=1e-14)
+    assert _call(k=8.0 * K).L_crit == pytest.approx(2.0 * a.L_crit, rel=1e-14)
 
 
 def _all_nan(out):

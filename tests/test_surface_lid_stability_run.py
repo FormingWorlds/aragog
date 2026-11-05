@@ -6,19 +6,26 @@ import hashlib
 import json
 import math
 import os
+from dataclasses import replace
 from pathlib import Path
 
+import netCDF4
 import numpy as np
 import pytest
 from scipy.constants import Julian_year
 
 from aragog import surface_lid as sl
 from aragog.rheology import R_GAS
+from aragog.solver.entropy_solver import _LID_OUTPUT_FIELDS, EntropySolver
 from tests.conftest import assert_legend_clear, entropy_eos_copy, opaque_legend
 from tests.reference.surface_lid_v2_column import LOWT_EOS_MD5, molten_start, shell
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, needs_eos
 from tools.verification.run_surface_lid_case import _install_factory
-from tools.verification.run_surface_lid_stability import FIELDS, MOLTEN_TIMES_YR
+from tools.verification.run_surface_lid_stability import (
+    FIELDS,
+    MOLTEN_TIMES_YR,
+    molten_states,
+)
 
 pytestmark = [pytest.mark.smoke, pytest.mark.timeout(600), needs_eos]
 
@@ -56,7 +63,7 @@ def _hot_shell(eos, factory=False, end=5.0, **kw):
     return s
 
 
-def test_a_solid_lid_base_colder_than_the_fluid_gives_each_field(eos):
+def test_a_solid_lid_base_colder_than_the_fluid_gives_each_field(eos, tmp_path):
     """With the fixed lid base 50 K below the fluid, the base is denser than the fluid and each
     output field follows from the lid state, in the units of its description: the viscosity at
     the base from the top-cell viscosity law, the conduction time with the solid conductivity
@@ -87,12 +94,46 @@ def test_a_solid_lid_base_colder_than_the_fluid_gives_each_field(eos):
     eta_f = float(np.ravel(ph._eta_diff)[-1])
     assert eta0 == pytest.approx(eta_f * math.exp(H / R_GAS * (1 / ev.T_b - 1 / T_f)), rel=1e-9)
     assert o.lid_rt_flag == (1.0 if o.lid_tau_th > o.lid_tau_rt else 0.0)
+    o.to_netcdf(tmp_path / 'on.nc', time=1.0)
+    with netCDF4.Dataset(tmp_path / 'on.nc') as ds:
+        for name, unit, _ in _LID_OUTPUT_FIELDS:
+            assert ds[name].units == unit
+            if name != 'lid_handover_time':
+                assert float(ds[name][...]) == pytest.approx(getattr(o, name), rel=1e-12), name
+
+
+def test_the_solve_does_not_read_the_output(eos, monkeypatch):
+    """With the output helper raising, a solve gives the same state bit for bit: only
+    ``get_state`` calls it."""
+    y = _hot_shell(eos)._solution.y
+
+    def refuse(self, ev):
+        raise AssertionError('read in the solve')
+
+    monkeypatch.setattr(EntropySolver, '_lid_stability', refuse)
+    s = _hot_shell(eos)
+    np.testing.assert_array_equal(s._solution.y, y)
+    with pytest.raises(AssertionError, match='read in the solve'):
+        s.get_state()
+
+
+def test_a_lid_base_below_the_fluid_by_the_contrast_law_gives_the_times():
+    """With the base set by the rheological contrast, not a fixed temperature, the base lies
+    below the fluid, the difference is positive and the times are finite and positive."""
+    from tests.test_subgrid_lid_jax_rhs import _lid_solver
+
+    s = _lid_solver(rheology='arrhenius_local')
+    s.set_initial_entropy(2400.0)
+    s.solve()
+    o, ev = s.get_state(), s._lid_last
+    assert ev.S_b < ev.S_f
+    assert o.lid_drho > 0.0
+    assert min(o.lid_L, o.lid_tau_rt, o.lid_tau_th, o.lid_L_crit) > 0.0
+    assert o.lid_rt_flag in (0.0, 1.0)
 
 
 def test_the_activation_energy_law_sets_the_layer(eos):
     """With ``activation_energy`` set, the layer takes that enthalpy, not the homologous one."""
-    from dataclasses import replace
-
     s = _hot_shell(eos)
     base = s.get_state()
     H = (
@@ -105,6 +146,8 @@ def test_the_activation_energy_law_sets_the_layer(eos):
     s._lid_rheo = rheo
     other = s._lid_stability(s._lid_last)
     assert other['lid_L'] == pytest.approx(2.0 * base.lid_L, rel=1e-9)
+    assert other['lid_tau_th'] == pytest.approx(4.0 * base.lid_tau_th, rel=1e-9)
+    assert other['lid_drho'] == pytest.approx(base.lid_drho, rel=1e-14)
 
 
 def test_the_jax_path_gives_the_same_fields(eos):
@@ -120,8 +163,6 @@ def test_the_jax_path_gives_the_same_fields(eos):
 def test_without_the_rheology_only_the_density_difference_is_written(eos, tmp_path):
     """No creep law exists without the solid rheology, so the time scales stay NaN. The density
     difference stays, in the netCDF snapshot too, negative for a lid on melt on these tables."""
-    import netCDF4
-
     s = shell(10, True, eos, 0.1, rheology=False, convection=True)
     s.set_initial_entropy(np.asarray(molten_start(s, eos)))
     s.solve()
@@ -142,8 +183,6 @@ def test_without_the_rheology_only_the_density_difference_is_written(eos, tmp_pa
 def test_with_the_lid_off_or_handed_over_every_field_is_nan(eos, tmp_path):
     """With the lid off no field exists, also not in the netCDF snapshot; after a hand-over the
     thickness is 0 and the new fields are NaN."""
-    import netCDF4
-
     from tests.test_subgrid_lid_solver import _cold_top_solver
 
     off = shell(10, False, eos, 0.1)
@@ -171,8 +210,6 @@ def test_a_hidden_lid_has_no_time_scales(eos):
     ev = s._lid_last
     assert ev.rates.w > 0.0
     assert math.isfinite(s._lid_stability(ev)['lid_L'])
-    from dataclasses import replace
-
     hidden = replace(ev, rates=replace(ev.rates, w=0.0))
     out = s._lid_stability(hidden)
     assert out == {'lid_drho': pytest.approx(s._lid_stability(ev)['lid_drho'], rel=1e-15)}
@@ -229,48 +266,37 @@ def test_the_sign_of_the_density_difference_per_table(table, expected):
 def test_s4_molten_shell_on_the_test_tables():
     """S4, again by a run: a molten shell with the solid rheology on the test tables has a lid
     lighter than the melt, flag NaN, as long as the top cell is melt."""
-    eos, y, t_prev = entropy_eos_copy(EOS_DIR), None, 0.0
-    for t in MOLTEN_TIMES_YR[:4]:
-        s = shell(10, True, eos, float(t), t_prev, rheology=True, convection=True)
-        if y is not None:
-            s.set_initial_lid(float(y[-2]), float(y[-1]))
-        s.set_initial_entropy(np.asarray(molten_start(s, eos) if y is None else y[: s._n_stag]))
-        s.solve()
-        y, t_prev = np.asarray(s._solution.y[:, -1]), float(t)
-        o = s.get_state()
+    for o in molten_states(EOS_DIR, MOLTEN_TIMES_YR[:4]):
         assert o.phi_stag[-1] == pytest.approx(1.0, abs=1e-6)
         assert -600.0 < o.lid_drho < -400.0
         assert math.isnan(o.lid_rt_flag)
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_s4_stored_runs_on_the_extended_table(validation_plot):
     """S4 on the stored runs of ``tools/verification/run_surface_lid_stability.py`` on the extended
-    table. In the hand-over column the lid-base entropy is capped at the fluid entropy, so the
-    difference is 0 in 718 of 812 rows and the flag is NaN there; in the other 94, at most 18.3
-    kg/m^3, the growth time stays at least 41 times above the conduction time, so no row sets
-    the flag. In the molten shell the lid is lighter than the melt, by 417 to 547 kg/m^3."""
+    table; reads the file and runs no code. The hand-over column is capped at the fluid entropy,
+    so the difference is 0 in 707 of 800 states and the flag is NaN there; in the other 93, at
+    most 18.3 kg/m^3, the growth time stays at least 41 times the conduction time and no state
+    sets the flag. In the molten shell the lid is lighter than the melt by 497 to 547 kg/m^3."""
     d = json.loads(REF.read_text())
     assert d['meta']['md5'] == LOWT_EOS_MD5
+    c = d['all_rows']
+    assert (c['rows'], c['rows_zero'], c['rows_denser'], c['rows_lighter']) == (800, 707, 93, 0)
+    assert c['rows_flag_1'] == 0
+    assert c['drho_max'] == pytest.approx(18.26, abs=0.01)
+    assert c['tau_ratio_min'] == pytest.approx(41.41, abs=0.01)
+    assert c['L_over_delta_max'] == pytest.approx(0.658, abs=0.001)
+    assert c['t_denser_first'] == pytest.approx(2.105e5, rel=1e-3)
+    assert c['t_denser_last'] == pytest.approx(6.857e5, rel=1e-3)
     solid = {k: np.array(v, dtype=float) for k, v in d['solid'].items()}
-    assert (d['solid']['rows'], d['solid']['rows_denser'], d['solid']['rows_flag_1']) == (
-        812,
-        94,
-        0,
-    )
     dense = solid['lid_drho'] > 0.0
-    assert np.all(solid['lid_drho'] >= 0.0)
     assert np.all(np.isnan(solid['lid_rt_flag'][~dense]))
     assert np.all(solid['lid_rt_flag'][dense] == 0.0)
-    assert solid['lid_drho'].max() == pytest.approx(18.26, abs=0.5)
-    assert 2.1e5 < solid['t'][dense].min() and solid['t'][dense].max() < 6.9e5
-    assert np.min(solid['lid_tau_rt'][dense] / solid['lid_tau_th'][dense]) > 41.0
-    ratio = solid['lid_L'][dense] / solid['delta'][dense]
-    assert 0.1 < np.max(ratio) < 0.7  # Eq. 7 of the paper asks for L well below the thickness
     melt = {k: np.array(v, dtype=float) for k, v in d['molten'].items()}
-    early = melt['t'] < 5.0
-    assert np.all((-550.0 < melt['lid_drho'][early]) & (melt['lid_drho'][early] < -410.0))
+    liquid = melt['phi'] == 1.0
+    assert liquid.sum() == 5
+    assert np.all((-550.0 < melt['lid_drho'][liquid]) & (melt['lid_drho'][liquid] < -490.0))
     assert np.all(np.isnan(melt['lid_rt_flag']))
 
     def figure():

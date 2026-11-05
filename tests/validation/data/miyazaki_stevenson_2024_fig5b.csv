@@ -1,12 +1,11 @@
 # Miyazaki and Stevenson (2024, PSJ 5:192), Fig. 5B: Rayleigh-Taylor time (grain 0.1 mm, 1 mm, 1 cm) and thermal time, in years, against the lid-base temperature
-# Each value is the geometric mean of 2 independent reads of the vector figure with figlab; the 2 reads agree within a factor 1.13 on these rows
-# Rows at T_b at most 1365 K: below the melt step of the figure at about 1375 K
-T_b_K,tau_rt_01mm_yr,tau_rt_1mm_yr,tau_rt_1cm_yr,tau_th_yr
-1205,1.2335e+09,1.2024e+11,1.1863e+13,1.1224e+02
-1225,7.5656e+08,7.3863e+10,7.6845e+12,1.1715e+02
-1250,4.2511e+08,4.1770e+10,4.1622e+12,1.2857e+02
-1275,2.3242e+08,2.3332e+10,2.2931e+12,1.2694e+02
-1300,1.2591e+08,1.2599e+10,1.2707e+12,1.2894e+02
-1325,7.6203e+07,7.4771e+09,7.4866e+11,1.3709e+02
-1350,4.3135e+07,4.4338e+09,4.4187e+11,1.3838e+02
-1365,3.3001e+07,3.2716e+09,3.2087e+11,1.4093e+02
+# 2 independent reads of the vector figure with figlab, columns a_ and b_; rows at T_b at most 1365 K, below the melt step of the figure at about 1375 K
+T_b_K,a_tau_rt_01mm_yr,b_tau_rt_01mm_yr,a_tau_rt_1mm_yr,b_tau_rt_1mm_yr,a_tau_rt_1cm_yr,b_tau_rt_1cm_yr,a_tau_th_yr,b_tau_th_yr
+1205,1.2105e+09,1.2570e+09,1.1783e+11,1.2270e+11,1.1469e+13,1.2270e+13,1.1258e+02,1.1190e+02
+1225,7.4123e+08,7.7220e+08,7.2147e+10,7.5620e+10,7.6205e+12,7.7490e+12,1.1760e+02,1.1670e+02
+1250,4.1824e+08,4.3210e+08,4.0708e+10,4.2860e+10,4.1276e+12,4.1970e+12,1.3651e+02,1.2110e+02
+1275,2.3599e+08,2.2890e+08,2.2970e+10,2.3700e+10,2.2357e+12,2.3520e+12,1.2738e+02,1.2650e+02
+1300,1.2270e+08,1.2920e+08,1.2441e+10,1.2760e+10,1.2615e+12,1.2800e+12,1.2838e+02,1.2950e+02
+1325,7.5132e+07,7.7290e+07,7.3128e+09,7.6450e+09,7.4148e+11,7.5590e+11,1.3719e+02,1.3700e+02
+1350,4.2393e+07,4.3890e+07,4.3871e+09,4.4810e+09,4.3583e+11,4.4800e+11,1.3906e+02,1.3770e+02
+1365,3.3172e+07,3.2830e+07,3.2288e+09,3.3150e+09,3.1427e+11,3.2760e+11,1.3987e+02,1.4200e+02
