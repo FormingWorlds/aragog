@@ -139,6 +139,12 @@ _LID_OUTPUT_FIELDS = (
     ('lid_delta_eff', 'm', 'Conductive thickness of the sub-grid lid'),
     ('lid_F_base', 'W m-2', 'Flux into the base of the sub-grid lid'),
     ('lid_handover_time', 'yr', 'Time of the hand-over of the sub-grid lid to the mesh'),
+    ('lid_drho', 'kg m-3', 'Density of the lid base minus density of the fluid below'),
+    ('lid_L', 'm', 'Thickness of the layer at the lid base that can flow'),
+    ('lid_tau_rt', 'yr', 'Rayleigh-Taylor growth time of that layer'),
+    ('lid_tau_th', 'yr', 'Conduction time across that layer'),
+    ('lid_L_crit', 'm', 'Critical thickness of the Rayleigh-Taylor instability'),
+    ('lid_rt_flag', '1', 'Flag (0/1): conduction time above the growth time; NaN when no test'),
 )
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
@@ -1221,6 +1227,12 @@ class SolverOutput:
     # Time [yr] of the hand-over of the lid to the mesh; NaN before it, without it, or on a
     # resume of a handed-over lid that does not give the time.
     lid_handover_time: float = float('nan')
+    lid_drho: float = float('nan')  # [kg/m^3]
+    lid_L: float = float('nan')  # [m]
+    lid_tau_rt: float = float('nan')  # [yr]
+    lid_tau_th: float = float('nan')  # [yr]
+    lid_L_crit: float = float('nan')  # [m]
+    lid_rt_flag: float = float('nan')  # 1.0, 0.0, or NaN when no test exists
 
     # ── NetCDF output ──────────────────────────────────────────────
     @property
@@ -3601,6 +3613,65 @@ class EntropySolver:
         )
         self._lid_last = ev
         return ev
+
+    def _lid_stability(self, ev: '_LidEval') -> dict:
+        """Output fields of the density sign and the Rayleigh-Taylor time scales at the lid
+        ``ev``, for ``get_state``; nothing in the solve reads them.
+
+        ``lid_drho`` holds with every lid. The time scales need the creep law of the solid
+        rheology for the activation enthalpy and the viscosity at the lid base, so without
+        the rheology they stay NaN; also when the lid is hidden (weight 0) or not denser than
+        the fluid below. Creep exponent 1: the code has only the diffusion-creep law.
+        """
+        props, P = self._lid_props, self._lid_P
+        drho = ev.rho - float(np.asarray(props.density(P, ev.S_f)).item())
+        rheo = self._lid_rheo
+        if rheo is None or ev.rates.w == 0.0 or not drho > 0.0:
+            return {'lid_drho': drho}
+        from aragog.rheology import compute_arrhenius_enthalpy, compute_arrhenius_viscosity
+
+        ph = self.state.phase_staggered
+        T_sol = ph._solidus_temperature
+        T_sol = None if T_sol is None or np.size(T_sol) == 0 else float(np.ravel(T_sol)[-1])
+        law = dict(
+            g_homologous=rheo.g_homologous,
+            solidus_temperature=T_sol,
+            t_sol_0=rheo.t_sol_0,
+            dt_sol_dp=rheo.dt_sol_dp,
+            activation_energy=rheo.activation_energy,
+            activation_volume=rheo.activation_volume,
+            activation_volume_decay_pressure=rheo.activation_volume_decay_pressure,
+        )
+        cp = props.cp if self._lid_const else props.heat_capacity(P, ev.S_b)
+        out = _lid.rt_instability(
+            drho=drho,
+            T_b=ev.T_b,
+            alpha=ev.surf.q_b / self._lid_k,
+            H=float(compute_arrhenius_enthalpy(P, **law)),
+            eta0=float(
+                compute_arrhenius_viscosity(
+                    ev.T_b,
+                    P,
+                    viscosity_solid=ph._visc_solid,
+                    arrhenius_t_ref=rheo.arrhenius_t_ref,
+                    viscosity_max_log10=rheo.viscosity_max_log10,
+                    water_prefactor=rheo.water_prefactor,
+                    **law,
+                )
+            ),
+            k=self._lid_k,
+            rho=ev.rho,
+            cp=float(np.asarray(cp).item()),
+            g=abs(float(np.ravel(ph.gravitational_acceleration())[-1])),
+        )
+        return {
+            'lid_drho': drho,
+            'lid_L': out.L,
+            'lid_tau_rt': out.tau_rt / SECS_PER_YEAR,
+            'lid_tau_th': out.tau_th / SECS_PER_YEAR,
+            'lid_L_crit': out.L_crit,
+            'lid_rt_flag': out.flag,
+        }
 
     def _resolve_dSdr_cmb_init(self, S_arr: npt.NDArray, n_stag: int) -> float:
         """Resolve the initial CMB entropy gradient for an extended state.
@@ -6702,6 +6773,7 @@ class EntropySolver:
                 lid_delta_eff=_lid.effective_thickness(ev.delta, ev.surf.s),
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
+                **self._lid_stability(ev),
             )
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()

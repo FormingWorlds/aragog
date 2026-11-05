@@ -30,6 +30,8 @@ References
 Turcotte, D. L. and Schubert, G. (2014), Geodynamics, 3rd ed., Cambridge University Press:
 section 4.18, the Stefan problem (eqs. 4.136 and 4.141, pp. 197-198), and section 4.15, the
 cooling of a half-space (eq. 4.116, p. 189).
+Miyazaki, Y. and Stevenson, D. J. (2024), Planet. Sci. J. 5, 192: the Rayleigh-Taylor time
+scales of :func:`rt_instability` (Eqs. 3, 4, 7 and 10).
 """
 
 from __future__ import annotations
@@ -43,6 +45,8 @@ import numpy.typing as npt
 from scipy.constants import Stefan_Boltzmann
 from scipy.optimize import brentq
 from scipy.special import dawsn, erf
+
+from aragog.rheology import R_GAS
 
 # The lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell width.
 LID_CAP_FRAC: float = 0.8
@@ -60,6 +64,8 @@ LID_MEAN_RATIO_MIN: float = 1.0e-4
 LID_MEAN_RATIO_MAX: float = 0.99
 # Conduction floor [m] of the lid thickness.
 LID_DELTA_FLOOR: float = 1.0e-5
+# Coefficient of the Rayleigh-Taylor growth rate (Miyazaki and Stevenson 2024, Eq. 7).
+LID_RT_PSI0: float = 0.1
 
 _S_SERIES: float = 1.0e-6
 
@@ -538,3 +544,96 @@ def lid_rates(
     return LidRates(
         ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop, H_lid=H_lid
     )
+
+
+@dataclass(frozen=True)
+class LidStability:
+    """Rayleigh-Taylor time scales of the lid base. All NaN when no instability test exists.
+
+    Attributes
+    ----------
+    L : float
+        Thickness [m] of the layer at the lid base that can flow.
+    tau_rt : float
+        Growth time [s] of the instability of that layer.
+    tau_th : float
+        Conduction time [s] across that layer.
+    L_crit : float
+        Thickness [m] of Eq. 10 of the paper, where the 2 times match if ``psi0`` is dropped.
+    flag : float
+        1.0 when ``tau_th > tau_rt``, 0.0 when not.
+    """
+
+    L: float
+    tau_rt: float
+    tau_th: float
+    L_crit: float
+    flag: float
+
+
+def rt_instability(
+    drho: float,
+    T_b: float,
+    alpha: float,
+    H: float,
+    eta0: float,
+    k: float,
+    rho: float,
+    cp: float,
+    g: float,
+    n: float = 1.0,
+    psi0: float = LID_RT_PSI0,
+) -> LidStability:
+    r"""Compare the growth of a dense layer at the lid base with its conduction time.
+
+    After Miyazaki and Stevenson (2024): :math:`L = n R T_b^2 / (H \alpha)` (Eqs. 3 and 4),
+    :math:`\tau_{RT} = \eta_0 / (\psi_0 \Delta\rho g L)` (Eq. 7, for ``L`` much below the lid
+    thickness), :math:`\tau_{th} = L^2 / \kappa` with :math:`\kappa = k / (\rho c_p)`, and
+    :math:`L_{crit} = (\eta_0 \kappa / (\Delta\rho g))^{1/3}` (Eq. 10). The instability
+    outruns conduction when :math:`\tau_{th} > \tau_{RT}`, at
+    :math:`L > \psi_0^{-1/3} L_{crit}`.
+
+    Parameters
+    ----------
+    drho : float
+        Density of the lid base minus density of the fluid below [kg/m^3].
+    T_b : float
+        Temperature of the lid base [K].
+    alpha : float
+        Temperature gradient at the lid base [K/m].
+    H : float
+        Activation enthalpy [J/mol].
+    eta0 : float
+        Viscosity at the lid base [Pa s].
+    k, rho, cp : float
+        Thermal conductivity [W/m/K], density [kg/m^3] and heat capacity [J/kg/K] of the lid base.
+    g : float
+        Gravity [m/s^2].
+    n : float
+        Creep exponent [-].
+    psi0 : float
+        Coefficient of the growth rate [-].
+
+    Returns
+    -------
+    LidStability
+        The scales. All NaN when an input is zero, negative or not finite (``drho <= 0`` means
+        that the lid is not denser, so no instability exists), or when a scale leaves the float
+        range.
+    """
+    inputs = np.array([drho, T_b, alpha, H, eta0, k, rho, cp, g, n, psi0], dtype=float)
+    nan = float('nan')
+    empty = LidStability(nan, nan, nan, nan, nan)
+    if not (np.all(np.isfinite(inputs)) and np.all(inputs > 0.0)):
+        return empty
+    drho, T_b, alpha, H, eta0, k, rho, cp, g, n, psi0 = inputs
+    with np.errstate(all='ignore'):
+        kappa = k / (rho * cp)
+        L = n * R_GAS * T_b * T_b / (H * alpha)
+        tau_rt = eta0 / (psi0 * drho * g * L)
+        tau_th = L * L / kappa
+        L_crit = np.cbrt(eta0 * kappa / (drho * g))
+    scales = np.array([L, tau_rt, tau_th, L_crit])
+    if not (np.all(np.isfinite(scales)) and np.all(scales > 0.0)):
+        return empty
+    return LidStability(*(float(v) for v in scales), float(tau_th > tau_rt))

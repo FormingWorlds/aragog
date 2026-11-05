@@ -216,28 +216,25 @@ def test_s2_s3_io_crust_against_figure_5b(validation_plot):
         np.abs(np.log(4.0 * rt['tau_rt_1mm_yr'] / d['tau_rt_1mm_yr'])) > np.log(TAU_RT_TOL)
     )
 
-    def figure(plt):
-        grid = np.linspace(1200.0, 1370.0, 60)
-        fig, axes = plt.subplots(2, 1, figsize=(7.0, 6.4), sharex=True, height_ratios=(1, 2))
+    def figure():
+        import matplotlib.pyplot as plt
+
+        grid = np.linspace(1200.0, 1370.0, 12)
+        fig, axes = plt.subplots(2, 1, figsize=(6.0, 5.2), sharex=True, height_ratios=(1, 2))
         axes[0].plot(grid, [_io(t).tau_th / Julian_year for t in grid], label='this code')
         axes[0].plot(T, d['tau_th_yr'], 'o', mfc='none', label='Fig. 5B, mean of 2 reads')
-        axes[0].set_ylabel('thermal time [yr]')
+        axes[0].set_ylabel(r'$\tau_{th}$ [yr]')
         opaque_legend(axes[0], loc='upper left')
         for i, (key, grain) in enumerate(GRAIN_MM.items()):
-            axes[1].plot(
-                grid,
-                [_io(t, grain).tau_rt / Julian_year for t in grid],
-                color=f'C{i}',
-                label=f'this code, grain {grain:g} mm',
-            )
-            axes[1].plot(
-                T, d[key], 'o', color=f'C{i}', mfc='none', label=f'Fig. 5B, {grain:g} mm'
-            )
+            color = f'C{i}'
+            rows = [_io(t, grain).tau_rt / Julian_year for t in grid]
+            axes[1].plot(grid, rows, color=color, label=f'grain {grain:g} mm')
+            axes[1].plot(T, d[key], 'o', color=color, mfc='none')
         axes[1].set_yscale('log')
         axes[1].set_xlabel('temperature at the lid base [K]')
-        axes[1].set_ylabel('Rayleigh-Taylor time [yr]')
+        axes[1].set_ylabel(r'$\tau_{RT}$ [yr]')
         axes[1].set_ylim(1e7, 1e16)
-        opaque_legend(axes[1], loc='upper right', ncols=2)
+        opaque_legend(axes[1], loc='upper right', ncols=3)
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
