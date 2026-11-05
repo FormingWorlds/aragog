@@ -711,7 +711,42 @@ def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc
             check_lid_surface_temperature(T, bc, mush)
 
 
-def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False):
+@settings(max_examples=60, deadline=None)
+@given(
+    st.one_of(
+        st.floats(max_value=0.0),
+        st.just(float('nan')),
+        st.just(float('inf')),
+        st.booleans(),
+        st.text(max_size=3),
+    )
+)
+def test_lid_surface_flux_cap_refuses_every_other_value(value):
+    from aragog.config.boundary import check_lid_surface_flux_cap
+
+    with pytest.raises(ValueError, match='lid_surface_flux_cap'):
+        check_lid_surface_flux_cap(value, 4, True, 500.0)
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    st.floats(min_value=1.0e-3, max_value=1.0e7),
+    st.integers(0, 6),
+    st.booleans(),
+    st.one_of(st.none(), st.just(500.0)),
+)
+def test_lid_surface_flux_cap_needs_the_held_surface(C, bc, mush, T_held):
+    from aragog.config.boundary import check_lid_surface_flux_cap
+
+    assert check_lid_surface_flux_cap(None, bc, mush, T_held) is None
+    if bc == 4 and mush and T_held is not None:
+        assert check_lid_surface_flux_cap(C, bc, mush, T_held) is None
+    else:
+        with pytest.raises(ValueError, match='lid_surface_flux_cap'):
+            check_lid_surface_flux_cap(C, bc, mush, T_held)
+
+
+def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=None):
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -729,6 +764,7 @@ def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False):
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.lid_mush_base = True
     p.boundary_conditions.lid_surface_temperature = T_held
+    p.boundary_conditions.lid_surface_flux_cap = cap
     p.boundary_conditions.normalize()
     p.phase_solid.rheology = SolidRheologyParams(
         enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
@@ -765,6 +801,71 @@ class TestHeldSurface:
             out.append(float(s.state._heat_flux[-1]))
         assert out[0] == out[1]
         assert out[0] == pytest.approx(s._lid_k * (s._lid_T_sol - 500.0) / 100.0, rel=1e-6)
+
+    def test_a_cap_above_the_held_flux_leaves_the_held_state(self, eos):
+        """Below the cap the lid is the held state, bit for bit."""
+        y = None
+        out = []
+        for cap in (None, 1.0e9):
+            s = _held_solver(eos, 500.0, cap=cap)
+            y = self._state(s, 100.0, 500.0) if y is None else y
+            dS = np.asarray(s._dSdt_single(0.0, y), dtype=float)
+            out.append((dS, s._lid_last.surf.T_s, float(s.state._heat_flux[-1])))
+        np.testing.assert_array_equal(out[0][0], out[1][0])
+        assert out[0][1:] == out[1][1:] == (500.0, out[0][2])
+
+    def test_a_cap_below_the_held_flux_sets_the_surface_flux(self, eos):
+        """Above the cap the lid surface carries the cap, at a surface above the held one."""
+        s = _held_solver(eos, 500.0)
+        y = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y)
+        F_held = float(s._lid_last.surf.F_s)
+        C = 0.5 * F_held
+        s = _held_solver(eos, 500.0, cap=C)
+        s._dSdt_single(0.0, y)
+        ev = s._lid_last
+        assert ev.rates.w == 1.0
+        assert ev.surf.F_s == pytest.approx(C, rel=1e-9)
+        assert ev.surf.T_s > 500.0
+        assert float(s.state._heat_flux[-1]) == pytest.approx(C, rel=1e-9)
+
+    def test_change_of_the_cap_between_calls_is_read(self, eos):
+        s = _held_solver(eos, 500.0)
+        y = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y)
+        C = 0.25 * float(s._lid_last.surf.F_s)
+        s.parameters.boundary_conditions.lid_surface_flux_cap = C
+        s._dSdt_single(0.0, y)
+        assert s._lid_last.surf.F_s == pytest.approx(C, rel=1e-9)
+        s.parameters.boundary_conditions.lid_surface_flux_cap = -1.0
+        with pytest.raises(ValueError, match='lid_surface_flux_cap'):
+            s.solve()
+
+    @pytest.mark.parametrize('frac', [0.5, 2.0])
+    def test_jax_factory_matches_numpy_with_the_cap(self, eos, frac):
+        from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
+
+        s = _held_solver(eos, 500.0)
+        y0 = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y0)
+        s = _held_solver(eos, 500.0, cap=frac * float(s._lid_last.surf.F_s))
+        rhs_fn, jac, _ = _factory_rhs(s, s.jax_lid_params())
+        sc = s._build_nondim_scales()
+        f, top = _physical(rhs_fn, sc), s._n_stag - 1
+        states = [y0, *_mush_states(s)]
+        wants = [np.asarray(s._dSdt_single(0.0, y), dtype=float) for y in states]
+        # y0 is the held steady lid: its dE cancels to round-off of terms near the largest dE
+        atol_lid = 1e-12 * max(np.abs(w[-2:]).max() for w in wants)
+        for y, want in zip(states, wants):
+            s._dSdt_single(0.0, y)
+            got = f(y)
+            atol = 1e-12 * np.abs(want[: s._n_stag]).max()
+            np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-9, atol=atol_lid)
+            np.testing.assert_allclose(got[top], want[top], rtol=1e-9, atol=atol)
+            x = (y - sc.state_offset) / sc.state_scale
+            J = np.zeros((x.size, x.size))
+            assert jac(0.0, x, np.zeros(x.size), J) == 0
+            assert np.all(np.isfinite(J))
 
     def test_a_surface_at_or_above_the_base_hands_the_surface_to_the_flux(self, eos):
         s = _held_solver(eos, 1.0e4, F_atm=123.0)

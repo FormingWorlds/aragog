@@ -255,6 +255,8 @@ def surface_state(
     F_atm=0.0,
     held=0.0,
     T_held=0.0,
+    capped=0.0,
+    cap=0.0,
 ):
     """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
@@ -262,6 +264,8 @@ def surface_state(
     With ``flux`` above 0.5 the surface carries the prescribed ``F_atm``, as
     :func:`aragog.surface_lid.flux_surface_state`; with ``held`` above 0.5 as well, the surface
     is at ``T_held``, at most ``T_b``, as :func:`aragog.surface_lid.fixed_surface_state`.
+    With ``capped`` above 0.5 too, the surface carries at most ``cap``: the surface is the
+    warmer of ``T_held`` and the surface of the flux ``cap``, one root for both modes.
     The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
@@ -280,7 +284,14 @@ def surface_state(
             jnp.minimum(
                 jnp.where(
                     held > 0.5,
-                    T_held,
+                    jnp.where(
+                        capped > 0.5,
+                        jnp.maximum(
+                            T_held,
+                            T_b - jnp.maximum(cap, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
+                        ),
+                        T_held,
+                    ),
                     jnp.maximum(
                         T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
                         LID_T_S_MIN,
@@ -385,6 +396,8 @@ class LidParams(NamedTuple):
     area_below: float
     held: float
     T_held: float
+    capped: float
+    cap: float
     volume_top: float
     ra_crit: float
     convection: float
@@ -495,6 +508,8 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         F_grid,
         lp.held,
         lp.T_held,
+        lp.capped,
+        lp.cap,
     )
     w = jnp.where(
         lp.flux > 0.5,

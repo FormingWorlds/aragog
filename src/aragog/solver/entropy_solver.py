@@ -40,6 +40,7 @@ from aragog import surface_lid as _lid
 from aragog.config.boundary import (
     _is_real,
     check_lid_mush_base,
+    check_lid_surface_flux_cap,
     check_lid_surface_temperature,
     check_subgrid_lid,
 )
@@ -3261,6 +3262,7 @@ class EntropySolver:
 
         rheo, ph = self._lid_rheo, self.state.phase_staggered
         bc_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
+        bc_cap = self.evaluator.boundary_conditions._settings.lid_surface_flux_cap
         if self._lid_const:
             raise ValueError(
                 'the constant-property lid runs on the NumPy right-hand side only '
@@ -3297,6 +3299,8 @@ class EntropySolver:
             flux=float(self._outer_bc_kind == 4),
             held=float(bc_held is not None),
             T_held=float(bc_held) if bc_held is not None else 0.0,
+            capped=float(bc_held is not None and bc_cap is not None),
+            cap=float(bc_cap) if bc_cap is not None else 0.0,
             phi_k=jl.enthalpy(self._lid_Phi_table) if self._lid_mush else jl.enthalpy(hs),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
             T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
@@ -3670,6 +3674,12 @@ class EntropySolver:
                     self._lid_hv,
                 )
             )
+            cap = self.evaluator.boundary_conditions._settings.lid_surface_flux_cap
+            if T_held is not None and cap is not None and surf.F_s > cap:
+                # rule 3: the lid loses at most the flux the atmosphere gave it
+                surf = _lid.flux_surface_state(
+                    delta, E, base['T_b'], self._lid_k, cap, floor, self._lid_hv
+                )
             T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else base['T_b']
             w = _lid.flux_weight(
                 F_b, base['T_b'], T_top, self._lid_k, eps, T_eq, self._lid_delta_on
@@ -5242,10 +5252,15 @@ class EntropySolver:
         self._lid_init = None  # a set initial lid holds until this solve
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()
+        bc_s = self.evaluator.boundary_conditions._settings
         check_lid_surface_temperature(
-            self.evaluator.boundary_conditions._settings.lid_surface_temperature,
+            bc_s.lid_surface_temperature, self._outer_bc_kind, self._lid_mush
+        )
+        check_lid_surface_flux_cap(
+            bc_s.lid_surface_flux_cap,
             self._outer_bc_kind,
             self._lid_mush,
+            bc_s.lid_surface_temperature,
         )
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
