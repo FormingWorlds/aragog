@@ -416,6 +416,63 @@ def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
 
 
+def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0):
+    """A call of a core that starts at the temperature of a molten mantle base (zero CMB flux
+    at the start, as in a coupled run), from ``state`` (T_core, S) or the start state."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
+    n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
+    if state is None:
+        s0 = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+        state = (float(shared_eos.temperature(p_cmb, s0[:1])[0]), s0)
+    solver.parameters.solver.start_time, solver.parameters.solver.end_time = start, end
+    solver.set_initial_core_temperature(state[0])
+    solver.set_initial_entropy(state[1])
+    solver._atol_sf = atol_sf
+    solver.solve()
+    y = np.asarray(solver._solution.y)
+    return solver.get_state(), (float(y[n + 1, -1]), y[:n, -1])
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_zero_flux_start_closes_each_call_within_its_tolerance_bound(shared_eos):
+    """A core that starts at the mantle base temperature moves only about 2e-3 K in its first
+    1-yr call, so the T_core error control (atol 1e-8 K per node) leaves 1.2e-4 of the call heat
+    unbooked; each call closes within step_core_tol_J, the bound that error control sets."""
+    state, ratios = None, []
+    for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
+        out, state = _zero_flux_start(shared_eos, start, end, state)
+        residual = out.step_dE_core_J + out.step_dE_F_cmb_J
+        assert out.step_core_tol_J > 0.0
+        ratios.append(residual / out.step_core_tol_J)
+        if start == 0.0:
+            assert abs(residual) > 1e-5 * out.step_dE_F_cmb_J  # a 1e-6 bound alone would fail
+    assert max(abs(r) for r in ratios) < 1.0, ratios
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_looser_core_tolerance_breaks_the_default_bound(shared_eos):
+    """With every tolerance of the call 1000 times looser, the first call misses the bound of
+    the default call by more than a factor 2; the same call with the factor 1 stays inside it."""
+    default, _ = _zero_flux_start(shared_eos, 0.0, 1.0)
+    for factor, inside in ((1.0, True), (1.0e3, False)):
+        out, _ = _zero_flux_start(shared_eos, 0.0, 1.0, atol_sf=factor)
+        ratio = abs(out.step_dE_core_J + out.step_dE_F_cmb_J) / default.step_core_tol_J
+        assert (ratio < 1.0) if inside else (ratio > 2.0), (factor, ratio)
+
+
+def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
+    """The solve keeps the absolute tolerance at 1e-8 at least and says so once."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+    solver.parameters.solver.atol = 1.0e-11
+    with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+        solver.solve()
+        solver.solve()
+    hits = [r for r in caplog.records if 'below the floor 1e-8' in r.getMessage()]
+    assert len(hits) == 1
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
