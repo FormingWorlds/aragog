@@ -32,9 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         part: [main, core-verification, core-solves, lid-grid]
-    # With coverage on the 2-vCPU runner the tests of the main part took 58-98 min in 6 runs and
-    # those of the core verification part 23-36 min in 8; 150 min leaves headroom for JAX warmup,
-    # conda cache misses, and runner-to-runner timing variance.
+    # Test time per part on the 4-vCPU runner in recent runs: main 43-85 min (2 runs), core solves
+    # 22-55 min (5), core verification 17-36 min (5), lid grid 30-31 min (2); 150 min leaves
+    # headroom for JAX warmup, conda cache misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     env:
       # The 3 longest core solves and the lid grid tests run alone on their own runners: beside

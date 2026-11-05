@@ -84,7 +84,7 @@ pytest -p no:faulthandler --timeout=60 --timeout-method=thread tests/
 | Trigger | Markers | Budget | Coverage |
 |---|---|---|---|
 | Push / PR (`ci_tests.yml`) | `unit and not slow` | < 5 min | No; test results uploaded to Codecov |
-| Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or integration or slow`, in 4 parallel jobs: the core verification page test in one process, the 3 longest core module solves in one process, the lid grid tests of `test_surface_lid_v2_grid.py` in one process, every other test under xdist | 150 min timeout per job (58 to 98 min and 23 to 36 min in recent runs) | Yes; a fifth job combines the data of all four, writes the XML, applies the 90 % gate and uploads to Codecov under flag `nightly` |
+| Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or integration or slow`, in 4 parallel jobs: the core verification page test in one process, the 3 longest core module solves in one process, the lid grid tests of `test_surface_lid_v2_grid.py` in one process, every other test under xdist | 150 min timeout per job (at most 85 min for the main job and 55 min for the others in recent runs) | Yes; a fifth job combines the data of all four, writes the XML, applies the 90 % gate and uploads to Codecov under flag `nightly` |
 | Manual `workflow_dispatch` | as above | as above | Yes |
 
 Push CI runs the unit tier only because each smoke test executes a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). The nightly tier carries the canonical 90% coverage floor; the per-push upload is a fast-feedback companion view of the unit subset.
