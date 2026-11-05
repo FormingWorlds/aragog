@@ -109,6 +109,45 @@ def test_options_refuse_a_value_that_is_not_a_number(flag):
     assert getattr(d.parse(['out']), flag[2:].replace('-', '_')) is None
 
 
+def _collect_one(tmp_path, record):
+    """``--collect`` of one run folder whose only part ends in the state ``[..., 7000, -1e13]``;
+    ``record`` holds the fields of the record layout under test. Returns the written file."""
+    d, run = _driver(), tmp_path / 'run'
+    run.mkdir()
+    base = dict(t_yr=10.0, sha='abc', eos_dir='/x/tab', F_top=2.5, dh_min=4.0, nodes=20)
+    (run / f'{d.STEM}.json').write_text(json.dumps([{**base, **record}]))
+    np.savez(run / f'{d.STEM}_part0.npz', y_end=np.array([2400.0, 7000.0, -1e13]))
+    assert d.main(['--collect', str(tmp_path / 'out.npz'), f'a={run}']) == 0
+    return np.load(tmp_path / 'out.npz')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'record',
+    [
+        {'T_i': 1400.0},
+        {'lid': {'T_i': 1400.0}},
+        {'lid': True, 'T_i': 1400.0},
+    ],
+    ids=['old-top-level', 'old-lid-entry', 'new-with-lid'],
+)
+def test_collect_reads_every_record_layout_with_a_lid(tmp_path, record):
+    """A run with the lid gives its thickness from the part file and its T_i from the record."""
+    out = _collect_one(tmp_path, record)
+    assert out['a_delta'].tolist() == [7000.0]
+    assert out['a_T_i'].tolist() == [1400.0]
+    assert out['a_F_top'].tolist() == [2.5]
+
+
+@pytest.mark.unit
+def test_collect_gives_a_run_without_the_lid_zero_thickness(tmp_path):
+    """The state of a --no-lid run has no lid thickness, so ``y_end[-2]`` is not read as one; the
+    missing T_i is NaN in a plain float array."""
+    out = _collect_one(tmp_path, {'lid': False, 'T_i': None})
+    assert out['a_delta'].tolist() == [0.0]
+    assert out['a_T_i'].dtype == float and np.isnan(out['a_T_i']).all()
+
+
 @pytest.mark.slow
 @needs_eos
 def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
@@ -137,6 +176,8 @@ def test_driver_runs_without_the_lid_on_a_refined_top_cell(tmp_path):
     assert row['delta'] is None and row['E'] is None and row['handover_root'] is None
     r = np.load(tmp_path / f'{d.STEM}_part0.npz')['r_basic']
     assert r[-1] - r[-2] == pytest.approx(1000.0, rel=1e-6)  # radii from the Newton mass grid
+    assert d.main(['--collect', str(tmp_path / 'o.npz'), f'a={tmp_path}']) == 0
+    assert np.load(tmp_path / 'o.npz')['a_delta'].tolist() == [0.0]
 
 
 @needs_eos
@@ -162,3 +203,6 @@ def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
     row = json.loads((tmp_path / f'{d.STEM}.json').read_text())[-1]
     assert row['delta'] > 0.0
     assert row['F_top'] == pytest.approx(seen[-1], rel=1e-12)
+    assert d.main(['--collect', str(tmp_path / 'o.npz'), f'a={tmp_path}']) == 0
+    out = np.load(tmp_path / 'o.npz')
+    assert out['a_delta'].tolist() == [row['delta']] and out['a_T_i'].tolist() == [row['T_i']]
