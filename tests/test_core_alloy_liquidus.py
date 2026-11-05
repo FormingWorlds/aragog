@@ -60,6 +60,23 @@ def test_si_h_and_n_lower_no_melting_point():
 
 
 @pytest.mark.unit
+def test_si_counts_with_the_iron_solvent():
+    """Si atoms join the Fe solvent: they dilute the S units, so S with Si melts closer to iron
+    than S alone, by the mole-fraction change written out here."""
+    p = 135e9
+    t_fe = float(T_FE(p))
+    t_e, w_e = map(float, eutectic('S', p))
+    a = math.log(_units(w_e, 'S', UNIT['S'])) / (1.0 - t_fe / t_e)
+    w_s, w_si = 0.02, 0.06
+    u = w_s / MOLAR['S']
+    solvent = (1.0 - w_s - w_si) / MOLAR['Fe'] - 3.0 * u + w_si / 28.085
+    by_hand = t_fe / (1.0 - math.log(solvent / (solvent + u)) / a)
+    with_si = float(AlloyLiquidus({'S': w_s, 'Si': w_si}).t_melt(p))
+    assert with_si == pytest.approx(by_hand, rel=1e-12)
+    assert with_si > float(AlloyLiquidus({'S': w_s}).t_melt(p)) + 10.0
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize('el', ['S', 'O'])
 def test_one_element_is_the_binary_ideal_form_on_component_units(el):
     """With one element the harmonic rule is the binary form, written out here by hand on Fe3S or
