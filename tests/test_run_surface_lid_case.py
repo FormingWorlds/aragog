@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ jax = pytest.importorskip('jax')
 pytestmark = [pytest.mark.timeout(600)]
 
 DRIVER = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_surface_lid_case.py'
+SERIES = DRIVER.with_name('run_surface_lid_series.py')
 
 
 @functools.cache
@@ -146,6 +148,68 @@ def test_collect_gives_a_run_without_the_lid_zero_thickness(tmp_path):
     out = _collect_one(tmp_path, {'lid': False, 'T_i': None})
     assert out['a_delta'].tolist() == [0.0]
     assert out['a_T_i'].dtype == float and np.isnan(out['a_T_i']).all()
+
+
+@functools.cache
+def _series():
+    path = list(sys.path)
+    spec = importlib.util.spec_from_file_location('run_surface_lid_series', SERIES)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.path[:] = path
+    return mod
+
+
+@pytest.mark.unit
+def test_series_depth_finds_the_rise_above_a_cold_node():
+    """A cold node below the rise does not hide it: 300 to 1800 K over 1000 m crosses 1200 K at
+    600 m."""
+    T, z = np.array([300.0, 1800.0, 1000.0]), np.array([0.0, 1000.0, 2000.0])
+    assert _series().isotherm_depth(T, z, 1200.0) == pytest.approx(600.0, rel=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('T', 'T_iso'),
+    [([1300.0, 1400.0], 1200.0), ([1000.0, 1100.0], 1200.0), ([1300.0, 1000.0], 1200.0)]
+    + [([1000.0, 1300.0], float('nan'))],
+    ids=['above', 'below', 'falls', 'no-isotherm'],
+)
+def test_series_depth_is_nan_without_a_rise_in_the_column(T, T_iso):
+    """No rise in the mesh column gives NaN, the value that the series stores."""
+    assert np.isnan(_series().isotherm_depth(np.array(T), np.array([10.0, 20.0]), T_iso))
+
+
+@pytest.mark.unit
+def test_series_depth_is_nan_where_the_solver_finds_the_isotherm_in_the_lid():
+    """The series sees only the mesh column. Above the isotherm, a live lid holds the crossing, so
+    the depth is not 0: the solver gives 200 m here and the series has no value to give."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    T, z = np.array([1500.0, 1600.0]), np.array([500.0, 1500.0])
+    assert _isotherm_depth(1000.0, 400.0, 1500.0, lambda: 500.0, z, T) == pytest.approx(200.0)
+    assert np.isnan(_series().isotherm_depth(T, z, 1000.0))
+
+
+@pytest.mark.unit
+@settings(deadline=None, max_examples=300)
+@given(
+    T=st.lists(st.floats(200.0, 3000.0), min_size=2, max_size=12),
+    T_iso=st.floats(300.0, 2500.0),
+)
+@example(T=[300.0, 1800.0, 1000.0], T_iso=1200.0)
+def test_series_depth_agrees_with_the_solver_on_the_mesh_column(T, T_iso):
+    """Where the column holds a rise, the series gives the depth of the solver function; where it
+    holds none, the solver finds no crossing below the top cell."""
+    from aragog.solver.entropy_solver import _isotherm_depth
+
+    T, z = np.array(T), 1000.0 * np.arange(1.0, len(T) + 1.0)
+    got = _series().isotherm_depth(T, z, T_iso)
+    want = _isotherm_depth(T_iso, 500.0, 100.0, lambda: 100.0, z, T)
+    if np.isnan(got):
+        assert want is None or want <= z[0]
+    else:
+        assert got == want
 
 
 @pytest.mark.slow
