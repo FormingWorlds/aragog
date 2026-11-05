@@ -21,7 +21,7 @@ def test_surface_lid_tutorial_blocks_run_and_match_page(tmp_path, monkeypatch, c
     text = PAGE.read_text(encoding='utf-8')
     code = re.findall(r'```python\n(.*?)```', text, flags=re.DOTALL)
     shown = re.findall(r'```text\n(.*?)```', text, flags=re.DOTALL)
-    assert len(code) == 4 and len(shown) == 3
+    assert len(code) == 5 and len(shown) == 4
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('ARAGOG_TEST_EOS_DIR', str(EOS_DIR))
     ns: dict[str, object] = {'__name__': '__main__'}

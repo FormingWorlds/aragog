@@ -298,6 +298,65 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
     - Test id: `tests/test_surface_lid_v8.py::test_v8_the_mesh_converges_after_the_hand_over`, `::test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes`, `::test_v8_the_flux_step_at_the_hand_over_misses_its_limit`, `::test_v8_the_flux_before_the_hand_over_lies_below_the_reference`. These read stored runs and do not run the code again, so a change of the code does not fail them.
     - Command: `pytest tests/test_surface_lid_v8.py` (add `--validation-plots` to write the plot pair)
 
+## The critical thickness of a dense layer
+
+**Why this check exists.** The lid reports how a drip from its base compares with conduction (see [Can the lid sink?](../Explanations/surface_lid.md#can-the-lid-sink)). A wrong power or a swapped ratio in the formula would give a thickness that is wrong by orders of magnitude, and nothing in a run would show it, because the solve does not read this output.
+
+**What it tests.** The function `rt_instability` of `aragog.surface_lid`, called directly, at a viscosity of 10¹⁷ and 10²⁰ Pa s, a density difference of 100 kg/m³, a gravity of 1 m/s² and a thermal diffusivity of 10⁻⁶ m²/s.
+
+**How we know the right answer.** Eq. 10 of Miyazaki and Stevenson (2024)[^cite-miyazaki2024] is a closed form, $L_{crit} = (\eta_0 \kappa / (\Delta\rho\, g))^{1/3}$, which gives 1000 m and 10000 m: the ends of the range of 1 to 10 km that the paper states on p. 4. The paper gives no value of $\kappa$, so 10⁻⁶ m²/s is an assumption of this check.
+
+**Why it matters.** This thickness sets the scale of the comparison. The test also checks that the 2 times match at $\psi_0^{-1/3} L_{crit}$, 2.15 $L_{crit}$ at $\psi_0 = 0.1$, and not at $L_{crit}$.
+
+??? info "Test details"
+    - Reference: Miyazaki and Stevenson (2024), Eq. 10 and its range, p. 4
+    - Tolerance: 10⁻¹² relative against the closed form
+    - Test id: `tests/test_surface_lid_stability.py::test_s1_critical_thickness_is_eq_10`, `::test_the_times_cross_above_the_critical_thickness`
+    - Command: `pytest tests/test_surface_lid_stability.py`
+
+## The crust of Io against a published figure
+
+**Why this check exists.** A formula that passes a closed form can still use the wrong input for a real planet: a gradient in the wrong unit, or a viscosity at the wrong temperature. A published figure with physical inputs checks the 2 times together.
+
+**What it tests.** The function `rt_instability` on the Io crust of Fig. 5B of Miyazaki and Stevenson (2024)[^cite-miyazaki2024], at a lid-base temperature from 1205 to 1365 K. The inputs are an activation energy of 300 kJ/mol, a creep exponent of 1, a surface temperature of 150 K and a subsidence velocity of 2 cm/yr, which gives the gradient at the base, $\alpha = (T_b - T_s) v_z / \kappa$. The viscosity is Eq. 16 of the paper, 10¹⁹ Pa s at 1600 K for a grain of 1 mm, with the square of the grain size. We check grains of 0.1 mm, 1 mm and 1 cm.
+
+**How we know the right answer.** We read the curves of Fig. 5B twice, independently, and store the mean of the 2 reads. Fig. 5 does not state $\kappa$, $\Delta\rho$ or $g$. We take $\kappa$ = 10⁻⁶ m²/s, and $\Delta\rho$ = 400 kg/m³ and $g$ = 1.5 m/s² from p. 10 of the paper. Nothing is fitted. The code gives a conduction time within a factor 1.05 of the figure and a growth time within a factor 1.20. The soft layer is 60 to 67 m thick and the conduction time 114 to 143 years at 1200 to 1370 K, inside the 10 to 100 m and below the 400 years of the text on p. 9.
+
+**Why it matters.** This is the one comparison of both times with an independent source. It does not check a run of the solver: the next case does that.
+
+![The conduction time and the growth time of a dense layer at the base of the Io crust against the base temperature, this code as lines and the mean of 2 reads of the published figure as circles](../assets/validation/surface_lid_rt_io_crust.svg#only-light){ width="70%" }
+![The conduction time and the growth time of a dense layer at the base of the Io crust against the base temperature, this code as lines and the mean of 2 reads of the published figure as circles](../assets/validation/surface_lid_rt_io_crust_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The horizontal axis is the temperature at the lid base. The top panel is the conduction time $\tau_{th}$, the bottom panel the growth time $\tau_{RT}$ for 3 grain sizes, on a logarithmic axis. The lines are this code and the circles are the figure. The growth time lies far above the conduction time at every point, so for these inputs conduction wins at every temperature below the melt step of the figure at about 1375 K.
+
+??? info "Test details"
+    - Reference: Miyazaki and Stevenson (2024), Fig. 5B, p. 9; viscosity Eq. 16 and the values of $\Delta\rho$ and $g$, p. 10
+    - Data: `tests/validation/data/miyazaki_stevenson_2024_fig5b.csv`, the geometric mean of 2 independent reads, which agree within a factor 1.13
+    - Tolerance: a factor 1.2 on $\tau_{th}$ and 1.3 on $\tau_{RT}$; the text ranges of p. 9
+    - Test id: `tests/test_surface_lid_stability.py::test_s2_s3_io_crust_against_figure_5b`
+    - Command: `pytest tests/test_surface_lid_stability.py` (add `--validation-plots` to write the plot pair)
+
+## The density difference along real runs
+
+**Why this check exists.** The 2 cases above call the function directly. A run has to pass it the right lid state, on the NumPy and the JAX path, and the output has to say when no test exists. There is also no published answer for these columns, so this case states what the output does, and it fails if that changes.
+
+**What it tests.** 2 runs on the extended PALEOS table. The first is the 100-node column of [A case where the lid hands over](#a-case-where-the-lid-hands-over): the output fields at each of its 812 stored rows up to the hand-over. The second is a 10-node shell from a molten start with the solid rheology, over 12 chained solves to 300 years.
+
+**How we know the right answer.** There is no reference. The test asserts the sign and the NaN rules, and reads each field back from the lid state in a short run on the test tables. In the column, the lid-base entropy is capped at the fluid entropy, so $\Delta\rho$ is exactly 0 in 718 of the 812 rows and the flag is NaN there. In the other 94 rows, from 2.1 × 10⁵ to 6.9 × 10⁵ years, $\Delta\rho$ is at most 18.3 kg/m³, and $\tau_{RT}$ is at least 41 times $\tau_{th}$, so the flag is 0. No row sets the flag. In the molten shell, $\Delta\rho$ is -417 to -547 kg/m³ while the top cell holds melt: the base is lighter than the melt, and the flag is NaN. At 7.9 years it is +19 kg/m³ under a hidden lid. After that it is 0.
+
+**Why it matters.** A reader of the flag must know that NaN is the common result in these runs: it means that no test exists, not that the lid is stable. These 2 runs do not cover other columns, and new EOS tables can change the sign.
+
+![The density difference at the lid base against time in a molten shell, and the growth and conduction times against time in the rows of the solid column with a denser base](../assets/validation/surface_lid_rt_runs.svg#only-light){ width="70%" }
+![The density difference at the lid base against time in a molten shell, and the growth and conduction times against time in the rows of the solid column with a denser base](../assets/validation/surface_lid_rt_runs_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The top panel is $\Delta\rho$ in the molten shell against time: strongly negative in the melt, then a short positive point, then 0. The bottom panel holds only the rows of the solid column with $\Delta\rho > 0$. The growth time stays far above the conduction time at all of them, and the rest of that run has no times to plot.
+
+??? info "Test details"
+    - Reference: none; the stored rows of `tests/reference/surface_lid_stability.json`, from `tools/verification/run_surface_lid_stability.py`
+    - Limit: Eq. 7 of the paper holds for $L$ much below the lid thickness; here $L / \delta$ reaches 0.66, so the growth time near those rows is a rough scale
+    - Test id: `tests/test_surface_lid_stability_run.py::test_s4_stored_runs_on_the_extended_table`, `::test_s4_molten_shell_on_the_test_tables`, `::test_a_solid_lid_base_colder_than_the_fluid_gives_each_field`, `::test_the_jax_path_gives_the_same_fields`, `::test_the_sign_of_the_density_difference_per_table`
+    - Command: `pytest tests/test_surface_lid_stability_run.py` (add `--validation-plots` to write the plot pair)
+
 ## Where the lid is not validated
 
 **Why this section exists.** The cases above compare the lid with a fine mesh for a solid shell with a fixed lid base and for a shell freezing from the mush without the solid rheology. For a molten shell without the solid rheology they compare only the hand-over and the coarse mesh after it. These configurations have no comparison with a fine mesh:
@@ -314,7 +373,7 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 **The pressure of the lid base.** The lid takes its base temperature, heat content and density at the pressure of the top-cell centre. The cases above use thin top cells, so they do not test a coarse mesh, where the solidus at the top-cell centre lies above the solidus at the lid base (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)).
 
-**No buoyancy.** The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)).
+**No buoyancy.** The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below (see [Settings and limits](../Explanations/surface_lid.md#settings-and-limits)). It reports the contrast and the time scales only; see [the check on real runs](#the-density-difference-along-real-runs).
 
 **Two more limits.** The lid runs only with the grey-body surface (`outer_boundary_condition = 1`) or a fixed surface temperature (`outer_boundary_condition = 5`); another outer boundary stops at setup with an error. It needs one of 2 setups: the entropy EOS tables, or constant properties with `entropy_eos=None`, the solid rheology, the `'lid'` closure and `core_bc = 'quasi_steady'`. Any other setup stops with an error, and so do `core_bc = 'gradient'` and `'bower2018'` with either setup.
 
@@ -337,4 +396,5 @@ These tests run the lid inside the full solver; they check exact properties of t
 
 [^cite-deschamps2021]: F. Deschamps, K. Vilella, *[Scaling laws for mixed-heated stagnant-lid convection and application to Europa](https://doi.org/10.1029/2021JE006963)*, Journal of Geophysical Research: Planets, 126, e2021JE006963, 2021. [SciX](https://scixplorer.org/abs/2021JGRE..12606963D/abstract).
 [^cite-korenaga2009]: J. Korenaga, *[Scaling of stagnant-lid convection with Arrhenius rheology and the effects of mantle melting](https://doi.org/10.1111/j.1365-246X.2009.04272.x)*, Geophysical Journal International, 179, 154–170, 2009. [SciX](https://scixplorer.org/abs/2009GeoJI.179..154K/abstract).
+[^cite-miyazaki2024]: Y. Miyazaki, D. J. Stevenson, *[The stability of a dense crust situated on small bodies](https://doi.org/10.3847/PSJ/ad65d2)*, The Planetary Science Journal, 5, 192, 2024. [SciX](https://scixplorer.org/abs/2024PSJ.....5..192M/abstract).
 [^cite-turcotte2014]: D. L. Turcotte, G. Schubert, *[Geodynamics](https://doi.org/10.1017/CBO9780511843877)*, 3rd edition, Cambridge University Press, 2014. [SciX](https://scixplorer.org/abs/2014geod.book.....T/abstract).

@@ -96,6 +96,37 @@ In this mode the lid uses closed forms instead of the tables. The heat content p
 
 With `outer_boundary_condition = 5` the surface of the lid is held at the boundary temperature $T_\mathrm{surf}$ instead of the grey-body balance. The shape of the profile follows from the lid energy at that surface temperature, the steady crust of the existence weight is $\delta_\mathrm{eq} = k (T_b - T_\mathrm{surf}) / F_b$, and there is no lid where the base is not hotter than the surface. The surface flux is $F_\mathrm{top} = w F_s + (1 - w) F_\mathrm{grid}$, with $w$ the existence weight, $F_s$ the conduction through the lid and $F_\mathrm{grid}$ the conduction of the top cell to the fixed surface over the half cell, so the second term takes over as the weight falls.
 
+## Can the lid sink?
+
+A cold layer on a warmer layer of the same material is denser than what lies below it, so it can sink. Whether it does depends on 2 times. The first is how fast the layer grows as a drip, the second is how fast heat conducts across it and takes the density difference away. Aragog reports both times. It does not act on them: the lid stays at the surface, no drip forms, and no heat moves with a drip.
+
+Miyazaki and Stevenson (2024)[^cite-miyazaki2024] (Eqs. 3, 4, 7 and 10) give the scales. Only the bottom part of a conductive lid is soft enough to flow, because the viscosity rises steeply as the temperature falls. The thickness of that soft layer is
+
+$$L = \frac{n R T_b^2}{H \alpha},$$
+
+with $T_b$ the base temperature of the lid, $\alpha$ the temperature gradient at the base, $H$ the activation enthalpy and $R$ the gas constant. The creep exponent $n$ is 1, because Aragog has only the diffusion-creep law. With $\Delta\rho$ the density of the lid base minus the density of the fluid below, $\eta_0$ the viscosity at the lid base, $g$ the gravity and $\kappa = k / (\rho c_p)$ the thermal diffusivity at the lid base, the 2 times are
+
+$$\tau_{RT} = \frac{\eta_0}{\psi_0 \Delta\rho\, g L}, \qquad \tau_{th} = \frac{L^2}{\kappa},$$
+
+with $\psi_0 = 0.1$, a value the paper gives as an order of magnitude. A drip outruns conduction when $\tau_{th} > \tau_{RT}$, which is at $L > \psi_0^{-1/3} L_{crit}$ with $L_{crit} = (\eta_0 \kappa / (\Delta\rho\, g))^{1/3}$. Note that the 2 times do not match at $L_{crit}$ itself, because that formula drops $\psi_0$.
+
+| output | unit | meaning |
+|---|---|---|
+| `lid_drho` | kg/m³ | density of the lid base minus density of the fluid below, at the top-cell pressure |
+| `lid_L` | m | thickness $L$ of the soft layer |
+| `lid_tau_rt` | yr | growth time $\tau_{RT}$ |
+| `lid_tau_th` | yr | conduction time $\tau_{th}$ |
+| `lid_L_crit` | m | $L_{crit}$ |
+| `lid_rt_flag` | 1 | 1 when $\tau_{th} > \tau_{RT}$, 0 when not, NaN when no test exists |
+
+**What the flag means.** On today's tables a flag of 1 says that the cold base of a solid lid can drip into warmer solid below it. It does not say that a crust is denser than its melt: at low pressure the tables give the opposite sign (see [Settings and limits](#settings-and-limits)), and a lid that is not denser has no test.
+
+**When the fields are NaN.** All 6 are NaN with the lid off and after the hand-over. Without the solid rheology no creep law exists, so only `lid_drho` is written. The 5 others are also NaN for a hidden lid (weight 0) and for $\Delta\rho \le 0$. With constant properties $\Delta\rho$ is 0.
+
+**In a run the flag is often NaN.** The lid-base entropy is capped at the fluid entropy, so wherever the rheological lid base would lie above the fluid, the base has the state of the fluid and $\Delta\rho$ is 0. [The check on real runs](../Validation/surface_lid.md#the-density-difference-along-real-runs) shows how common this is.
+
+**Where the law is valid.** $\tau_{RT}$ holds for $L$ much below the lid thickness (Eq. 7 of the paper). The output does not check this. Compare `lid_L` with `lid_delta`: in the run of that check the ratio reaches 0.66, so the growth time there is only a rough scale.
+
 ## Settings and limits
 
 - `subgrid_lid` (bool, default false): the switch. Only with the grey-body surface, `outer_boundary_condition = 1`, or a fixed surface temperature, `outer_boundary_condition = 5`. It is refused at setup with `core_bc = 'gradient'` or `'bower2018'`, and with `param_utbl = true`, because the lid replaces the surface flux that the correction acts on. With `const_properties` only in the mode of [On a constant-property column](#on-a-constant-property-column).
@@ -109,9 +140,9 @@ With `outer_boundary_condition = 5` the surface of the lid is held at the bounda
 - The lid hands over with the solid rheology and `stress_closure_mode = 'lid'`, or without the solid rheology. With the solid rheology and another closure it never hands over. A molten start with the solid rheology is not validated (see [Where the lid is valid](#where-the-lid-is-valid)).
 - The lid takes its base temperature, its heat content and its density at the pressure of the top-cell centre, not at the pressure of its base. On a coarse mesh the two differ: on the 10-node mantle of the [tutorial](../Tutorials/surface_lid.md) the top-cell centre lies at 7.8 GPa, where the solidus is 2149 K, against 1439 K at the surface. Use a mesh whose top cell is thin enough that the solidus changes little across it.
 - A coupled run with a prescribed surface flux (`outer_boundary_condition = 4`) cannot use the lid: the lid sets the surface flux itself through its surface balance. PROTEUS does not pass the lid settings to Aragog, so a PROTEUS run cannot turn the lid on without a change in PROTEUS.
-- The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below. A crust denser than the melt below it is gravitationally unstable if the two have a similar composition (Miyazaki and Stevenson (2024)[^cite-miyazaki2024] p. 1). That study finds that on small bodies the foundering of the whole crust is often improbable, but this is not modelled here, and a crust that founders in a run is not followed.
+- The lid has no buoyancy test: it stays at the surface until the hand-over, whatever the density contrast with the fluid below. It only reports the contrast and the time scales (see [Can the lid sink?](#can-the-lid-sink)), and nothing in the solve reads them. A crust denser than the melt below it is gravitationally unstable if the two have a similar composition (Miyazaki and Stevenson (2024)[^cite-miyazaki2024] p. 1). That study finds that on small bodies the foundering of the whole crust is often improbable, but this is not modelled here, and a crust that founders in a run is not followed.
 
-    On the tables of the [Validation page](../Validation/surface_lid.md), at its top-cell pressure of 55.7 MPa, the sign is the opposite: the melt at the liquidus is denser than the solid at the solidus (3603 against 3041 kg/m³ on the extended PALEOS table, a ratio of 1.185). This sign is a property of those tables and the opposite of what that study takes for silicates of one composition, so do not read it as a measured result. The density sign in a run comes from the table, not from a check in the lid.
+    On the tables of the [Validation page](../Validation/surface_lid.md), at its top-cell pressure of 55.7 MPa, the sign is the opposite: the melt at the liquidus is denser than the solid at the solidus (3603 against 3041 kg/m³ on the extended PALEOS table, a ratio of 1.185). This sign is a property of those tables and the opposite of what that study takes for silicates of one composition, so do not read it as a measured result. The density sign in a run comes from the table and the pressure, not from a check in the lid: on the test tables at 7.8 GPa, in step 5 of the [tutorial](../Tutorials/surface_lid.md), the lid base is denser than the mush below it.
 
 - At the growth stop the lid base lies deeper than the node of the top cell, by $\delta - h/2$ with $h$ the top-cell width. The base has the temperature of that node, so the column below is warmer than on a mesh that resolves the crust, by about $(\delta - h/2)(T_b - T_s)/\delta$, with the mean temperature gradient of the lid. After a hand-over the surface flux lies above a run without the lid and falls back over millions of years, which fits this excess leaving through the surface. This size is an estimate from the geometry: it matches the runs of the [Validation page](../Validation/surface_lid.md#a-case-where-the-lid-hands-over), but no run exists with the lid base moved, so the cause is not shown.
 - The melt flux $F_b$ at the lid base is the flux per area at the lower face of the top cell, not at the lid base. The bias in the growth rate and the weight is about $2h/R$, with $h$ the top-cell width and $R$ the planet radius: 1.1 % for a 35 km top cell of the Earth, 0.09 % on the shell of the Validation page. The energy budget is not affected, because the flux out of the melt follows from conservation.

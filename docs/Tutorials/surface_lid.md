@@ -7,6 +7,7 @@ In this tutorial you switch on the sub-grid surface lid, run a short cooling ste
 - How to switch on the lid with `subgrid_lid = true`.
 - How the lid changes the heat the planet loses.
 - How to read the crust thickness and its temperatures from `SolverOutput`.
+- How to read the density difference at the lid base and its time scales.
 - How the lid runs on a constant-property column under a fixed surface temperature, and how to check its energy.
 
 ## What you need
@@ -205,6 +206,42 @@ relative miss -1.3e-05, solver residual below 1e-12: True
 What to look at. The crust grows under the cold surface until the isotherm of the stagnant lid has moved below the top cell; then, at 2.4 × 10⁵ years, the lid hands its crust to the mesh, and its thickness is 0. The energy of the shell and the lid together changes by the heat that leaves through the surface: the change of the heat content and the time integral of the surface power agree to 1.3 × 10⁻⁵, and the solver residual is at round-off.
 
 The miss falls as the solver tolerance falls, to 5.6 × 10⁻⁶, 2.4 × 10⁻⁶ and 1.1 × 10⁻⁶ at 10⁻⁹, 10⁻¹⁰ and 10⁻¹¹ against 10⁻⁸ here, which fits an error of the time integration over the steps. The check of the heat of the lid alone, its sub-ledger, is part of the [validation of the lid on the stagnant-lid benchmarks](../Validation/surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks).
+
+## 5. Read the density sign and the time scales
+
+The lid also reports whether its base is denser than the fluid below, and how a drip of that base would compare with conduction (see [Can the lid sink?](../Explanations/surface_lid.md#can-the-lid-sink)). These fields are output only. The time scales need the creep law of the solid rheology, so the run of step 2, without the rheology, holds only the density difference:
+
+```python
+from aragog.parser import SolidRheologyParams
+
+
+def run_rheology(end_yr):
+    solver = EntropySolver.from_file(filename='surface_lid.toml', eos_dir=eos_dir)
+    solver.parameters.solver.end_time = end_yr
+    solver.parameters.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, stress_closure_mode='local', lid_base_mode='fixed', lid_base_temperature=1900.0
+    )
+    solver.initialize()
+    solver.set_initial_entropy(2600.0)
+    solver.solve()
+    return solver.get_state()
+
+
+print(f'without the rheology: drho {on.lid_drho:.1f} kg/m^3, L {on.lid_L}, flag {on.lid_rt_flag}')
+state = run_rheology(1.0)
+print(f'with the rheology: drho {state.lid_drho:.1f} kg/m^3, L {state.lid_L:.3f} m, L_crit {state.lid_L_crit:.0f} m')
+print(f'growth time {state.lid_tau_rt:.3g} yr, conduction time {state.lid_tau_th:.3g} yr, flag {state.lid_rt_flag}')
+```
+
+The output:
+
+```text
+without the rheology: drho 43.5 kg/m^3, L nan, flag nan
+with the rheology: drho 56.8 kg/m^3, L 0.267 m, L_crit 75626 m
+growth time 5.58e+14 yr, conduction time 0.00246 yr, flag 0.0
+```
+
+What to look at. The base is denser than the fluid in both runs, at this pressure and on these tables. The soft layer of the lid is much thinner than `L_crit`, so conduction takes the density difference away long before a drip grows, and the flag is 0. A NaN flag means that no test exists, not that the lid is stable.
 
 ## What next
 
