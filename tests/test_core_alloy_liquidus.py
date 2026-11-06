@@ -427,23 +427,23 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
 
 @pytest.mark.physics_invariant
 def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
-    """From the end of the data plus the fade length the eutectic temperature keeps its ratio to the
-    pure-iron curve and the composition its value there, 4.810 wt% S and 3.271 wt% C (the table
-    continued along its last segment); the flag marks the extrapolation."""
+    """Above the end of the data the eutectic composition is held at its end value (5 wt% S,
+    3.35 wt% C, 15.068 wt% O); from the end plus the fade length the eutectic temperature keeps
+    its ratio to the pure-iron curve, taken 20 GPa above the end; the flag marks the
+    extrapolation."""
     for el in ('S', 'C', 'O'):
         hi = alloy._data()['range'][el][1]
         t_end, w_end = map(float, alloy._eutectic_data(el, hi))
         h = 0.5 * alloy.HOMOLOGOUS_FADE_GPA
-        t_fade, w_fade = (float(v) for v in eutectic(el, (hi + 2.0 * h) * 1e9))
+        t_fade = float(eutectic(el, (hi + 2.0 * h) * 1e9)[0])
+        for p_gpa in (hi + 1e-3, hi + 1.0, hi + h, hi + 2.0 * h, 500.0):
+            assert float(eutectic(el, p_gpa * 1e9)[1]) == pytest.approx(w_end, rel=1e-12)
         for p_gpa in (hi + 2.0 * h, 500.0):
-            t, w = map(float, eutectic(el, p_gpa * 1e9))
-            ratio = t / float(T_FE(p_gpa * 1e9))
+            ratio = float(eutectic(el, p_gpa * 1e9)[0]) / float(T_FE(p_gpa * 1e9))
             assert ratio == pytest.approx(t_fade / float(T_FE((hi + 2.0 * h) * 1e9)), rel=1e-12)
-            assert w == pytest.approx(w_fade, rel=1e-12)
-        assert (t_end, w_end) != (t_fade, w_fade)
-        held = {'S': 0.0481, 'C': 0.032713}
-        if el in held:
-            assert w_fade == pytest.approx(held[el], abs=1e-5)
+        assert t_fade / float(T_FE((hi + 2.0 * h) * 1e9)) != t_end / float(T_FE(hi * 1e9))
+    assert float(eutectic('S', 600e9)[1]) == pytest.approx(0.05, rel=1e-12)
+    assert float(eutectic('C', 600e9)[1]) == pytest.approx(0.0335, rel=1e-12)
     s = AlloyLiquidus({'S': 0.02}).status(np.array([135e9, 500e9]))
     assert s['extrapolated'].tolist() == [False, True]
     assert AlloyLiquidus({'Si': 0.02}).status(np.array([500e9]))['extrapolated'].tolist() == [
@@ -598,15 +598,26 @@ def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
-    'comp',
-    [{'S': 0.048}, {'C': 0.01}, {'C': 0.03}, {'O': 0.1}, {'S': 0.02, 'C': 0.005, 'O': 0.03}],
+    ('comp', 'step_325', 'step_330'),
+    [
+        ({'S': 0.048}, 0.0, 3.671),
+        ({'C': 0.01}, 0.0, 1.273),
+        ({'C': 0.03}, 0.0, 2.693),
+        ({'O': 0.1}, 1.587, 0.0),
+        ({'S': 0.02, 'C': 0.005, 'O': 0.03}, 0.404, 2.333),
+    ],
 )
-def test_the_end_of_the_data_adds_no_slope_step(comp):
-    """Into the homologous rule above the end of the data the slope changes smoothly: between
-    neighbouring points 0.1 GPa apart over 325 to 380 GPa it moves by under 0.1 K/GPa (a hard
-    switch at 330 GPa moves it by several K/GPa)."""
+def test_the_held_eutectic_composition_steps_the_slope_at_the_end_of_the_data(
+    comp, step_325, step_330
+):
+    """The eutectic composition stops changing at the end of the data (325 GPa for O, 330 GPa for
+    S and C), so the liquidus slope steps there by the stated K/GPa between points 0.1 GPa apart;
+    elsewhere over 325 to 380 GPa it moves by under 0.1 K/GPa, the fade of the temperature ratio
+    included."""
     g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(325e9, 380e9, 551))) * 1e9
-    assert np.max(np.abs(np.diff(g))) < 0.1
+    d = np.abs(np.diff(g))
+    assert (d[0], d[50]) == pytest.approx((step_325, step_330), abs=0.01)
+    assert np.delete(d, [0, 50]).max() < 0.1
 
 
 @pytest.mark.physics_invariant
