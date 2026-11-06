@@ -70,6 +70,6 @@ A new light element that lowers the melting point needs 4 parts in `aragog/core/
 1. A table `fe_<el>_composition.csv` of the eutectic liquid composition (mass fraction) against pressure, with its source in the header.
 2. The eutectic temperature: a Simon fit in `_SIMON`, or a table read like `fe_o_temperature.csv`.
 3. The Fe_k X_m unit of the binary in `_UNITS`, and the element in `DEPRESSING` with its atomic weight in `_MOLAR`.
-4. The pressure range of its data in `_data()`; an element whose temperature is a table, like O, also needs its branch in `_eutectic_data`.
+4. The pressure range of its data in `_data()`; an element whose temperature is a table, like O, also needs its branch in `_eutectic_temperature`.
 
 Then add the binary to the end-point test `tests/test_core_alloy_liquidus.py::test_each_binary_runs_through_pure_iron_and_its_eutectic` and, if the source paper draws liquidus curves, a test like `::test_the_fe_s_liquidus_curves_of_mori_are_the_ideal_form_on_fe3s_units`.

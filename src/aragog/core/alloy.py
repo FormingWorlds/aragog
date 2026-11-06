@@ -89,16 +89,13 @@ def _interp(p_gpa, table):
     return jnp.interp(p_gpa, x, y) + jnp.where(p_gpa > x[-1], (p_gpa - x[-1]) * slope, 0.0)
 
 
-def _eutectic_data(el: str, p_gpa):
-    """Eutectic temperature [K] and composition of the Fe-``el`` data at ``p_gpa`` [GPa], the
-    tables continued along their last segment."""
-    d = _data()
+def _eutectic_temperature(el: str, p_gpa):
+    """Eutectic temperature [K] of the Fe-``el`` data at ``p_gpa`` [GPa]: the Simon fit, or the
+    Fe-O table continued along its last segment."""
     if el == 'O':
-        t_e = _interp(p_gpa, d['t_o'])
-    else:
-        t_ref, p_ref, a, c = _SIMON[el]
-        t_e = t_ref * ((p_gpa - p_ref) / a + 1.0) ** (1.0 / c)
-    return t_e, _interp(p_gpa, d['composition'][el])
+        return _interp(p_gpa, _data()['t_o'])
+    t_ref, p_ref, a, c = _SIMON[el]
+    return t_ref * ((p_gpa - p_ref) / a + 1.0) ** (1.0 / c)
 
 
 def eutectic(el: str, pressure):
@@ -120,7 +117,7 @@ def eutectic(el: str, pressure):
     faded = hi + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
     p_in = jnp.where(p_gpa < lo, lo, jnp.where(p_gpa > hi, hi, p_gpa))
     q = jnp.where(p_gpa <= hi, p_in, jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded))
-    t_e = _eutectic_data(el, q)[0]
+    t_e = _eutectic_temperature(el, q)
     w_e = _interp(p_in, _data()['composition'][el])
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
     return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
