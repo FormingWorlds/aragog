@@ -1035,7 +1035,14 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
             assert s._compute_step_energy_integrals()['core'] == pytest.approx(
                 expected, rel=1e-10
             )
+    assert [r.message for r in caplog.records if 'energy_change' in r.message][0].startswith(
+        'EntropySolver: the call has no energy_change'
+    )
     assert sum('energy_change' in r.message for r in caplog.records) == 1
+    s._change_fallback_logged, sol.energy_change = False, sol.y[:, :1]
+    with caplog.at_level('WARNING'):
+        assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+    assert 'has a mismatched energy_change' in caplog.records[-1].message
     # the booking takes changes relative to the first node, so a shifted change books the same
     sol.energy_change = sol.y + 7.0
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
