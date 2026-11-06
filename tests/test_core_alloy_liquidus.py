@@ -603,21 +603,22 @@ def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
         ({'S': 0.048}, 0.0, 3.671),
         ({'C': 0.01}, 0.0, 1.273),
         ({'C': 0.03}, 0.0, 2.693),
-        ({'O': 0.1}, 1.587, 0.0),
-        ({'S': 0.02, 'C': 0.005, 'O': 0.03}, 0.404, 2.333),
+        ({'O': 0.1}, -1.587, 0.0),
+        ({'S': 0.02, 'C': 0.005, 'O': 0.03}, -0.404, 2.333),
     ],
 )
 def test_the_held_eutectic_composition_steps_the_slope_at_the_end_of_the_data(
     comp, step_325, step_330
 ):
     """The eutectic composition stops changing at the end of the data (325 GPa for O, 330 GPa for
-    S and C), so the liquidus slope steps there by the stated K/GPa between points 0.1 GPa apart;
-    elsewhere over 325 to 380 GPa it moves by under 0.1 K/GPa, the fade of the temperature ratio
-    included."""
+    S and C), so the liquidus slope steps there by the stated K/GPa between points 0.1 GPa apart,
+    down where the eutectic composition rose (O) and up where it fell (S, C); elsewhere over 325
+    to 380 GPa it moves by under 0.015 K/GPa (measured at most 0.0116), the fade of the
+    temperature ratio included."""
     g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(325e9, 380e9, 551))) * 1e9
-    d = np.abs(np.diff(g))
+    d = np.diff(g)
     assert (d[0], d[50]) == pytest.approx((step_325, step_330), abs=0.01)
-    assert np.delete(d, [0, 50]).max() < 0.1
+    assert np.abs(np.delete(d, [0, 50])).max() < 0.015
 
 
 @pytest.mark.physics_invariant
@@ -784,3 +785,14 @@ def test_a_huge_fraction_is_refused_as_a_mass_fraction():
 
     with pytest.raises(ValueError, match='mass fraction'):
         AlloyLiquidus({'S': Fraction(10**400)})
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('el', 'w_end'), [('S', 0.05), ('C', 0.0335), ('O', 0.15068)])
+def test_an_alloy_at_its_end_eutectic_stays_inside_it_above_the_data(el, w_end):
+    """With the eutectic composition held, an alloy at the end value of its binary's data is not
+    past its eutectic at any pressure from the end of the data to 600 GPa, and one 0.1 % richer
+    is past it at every one."""
+    p = np.linspace(331e9, 600e9, 270)
+    assert not AlloyLiquidus({el: w_end}).status(p)['past_eutectic'].any()
+    assert AlloyLiquidus({el: 1.001 * w_end}).status(p)['past_eutectic'].all()
