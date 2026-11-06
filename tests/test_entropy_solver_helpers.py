@@ -1346,6 +1346,61 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     assert heat == pytest.approx(exact, rel=1e-13, abs=0.0)
 
 
+def test_a_stratified_call_below_onset_books_the_trapezoid_of_a_varying_capacity():
+    """Below onset with an inner core inside the shell base, C_eff of a stratified core changes
+    by about 60 % over 5 K; the core heat is the trapezoid of C_eff over the temperature changes
+    plus c_p sum m dT of the shell, which a one-sided rule misses."""
+    import functools
+    from types import SimpleNamespace
+
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+    from aragog.solver import entropy_solver as es
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        profiles,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=130.0,
+        layer={'n_cells': 4},
+    )
+    shell = budget.shell
+    t_core = budget.t_onset - np.array([2.0, 4.5, 7.0])
+    t_shell = np.column_stack([shell.adiabatic_profile(t) for t in t_core])
+    y = np.vstack([np.zeros(3), t_core, t_shell])
+    s = SimpleNamespace(_n_stag=0)
+    s._check_shell_base = functools.partial(es.EntropySolver._check_shell_base, s)
+    heat, c_eff = es.EntropySolver._core_heat_change(s, budget, y, y - y[:, :1])
+    cap = np.array(
+        [
+            float(
+                budget.effective_capacity(
+                    t, gravitational_upper=shell.layer_base(t_shell[:, i], t)
+                )
+            )
+            for i, t in enumerate(t_core)
+        ]
+    )
+    np.testing.assert_allclose(c_eff, cap, rtol=1e-12)
+    assert cap[-1] / cap[0] - 1.0 > 0.5
+    d_shell = t_shell[:, -1] - t_shell[:, 0]
+    sensible = profiles.c_p * float(np.sum(np.asarray(shell.mass) * d_shell))
+    trapezoid = float(np.sum(0.5 * (cap[:-1] + cap[1:]) * np.diff(t_core)))
+    assert heat == pytest.approx(trapezoid + sensible, rel=1e-12)
+    left = float(np.sum(cap[:-1] * np.diff(t_core))) + sensible
+    assert abs(left / heat - 1.0) > 0.02
+
+
 def test_without_call_tolerances_the_scale_is_nan():
     """A scale needs the tolerances of the call; without them it is NaN, not round-off."""
     from types import SimpleNamespace
