@@ -665,7 +665,7 @@ def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
 def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     """A core 300 K below the mantle gains heat through the CMB: the top shell cell warms toward
     the mantle while the convecting core below barely changes, and the heat the core gains is
-    the heat booked out of the mantle."""
+    the heat booked out of the mantle to 1e-7 (measured 2.0e-8)."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -685,7 +685,7 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     assert out.step_dE_F_cmb_J < 0.0
     assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
     assert out.core_T_top == y[-1, -1]
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-7 * abs(out.step_dE_F_cmb_J)
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])

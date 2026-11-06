@@ -978,9 +978,10 @@ def test_set_initial_entropy_core_module_with_and_without_mesh():
     assert s_c._S0[9] == pytest.approx(4500.0)
 
 
-def test_step_energy_stratified_core_module_and_fallback():
+def test_step_energy_stratified_core_module_and_fallback(caplog):
     """A stratified core books the convecting core's trapezoid of C_eff dT_c plus the change of
-    the shell's heat, on the compiled path and on the fallback."""
+    the shell's heat, on the compiled path and on the fallback; a result without the solver's
+    temperature changes is booked from the states and logged once."""
     from types import SimpleNamespace
 
     from scipy.optimize import OptimizeResult
@@ -1029,7 +1030,16 @@ def test_step_energy_stratified_core_module_and_fallback():
     ]
     content = [float(shell.heat_content(t_shell[:, i])) for i in (0, 1)]
     expected = 0.5 * sum(capacity) * -100.0 + content[1] - content[0]
+    with caplog.at_level('WARNING'):
+        for _ in range(2):
+            assert s._compute_step_energy_integrals()['core'] == pytest.approx(
+                expected, rel=1e-10
+            )
+    assert sum('energy_change' in r.message for r in caplog.records) == 1
+    # the booking takes changes relative to the first node, so a shifted change books the same
+    sol.energy_change = sol.y + 7.0
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+    del sol.energy_change
 
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
