@@ -442,7 +442,8 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
     tolerances; with atol and rtol 1000 times tighter each of the first 3 calls closes to 1e-5,
     its residual falls at least 20 times (measured 111, 121, 143) and step_core_tol_J falls with
     it. A leak independent of the tolerance of 3e-7 of the CMB heat or more, of either sign,
-    fails the fall."""
+    fails the fall; the first call alone, at the tight tolerances within 3e-6 (measured 1.1e-6),
+    fails from a leak of 4.1e-6 in that call."""
     residuals, scales = {}, {}
     for sf in (1.0, 1.0e-3):
         state, residuals[sf], scales[sf] = None, [], []
@@ -452,6 +453,7 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
             scales[sf].append(out.step_core_tol_J / cmb)
             residuals[sf].append((out.step_dE_core_J + cmb) / cmb)
     assert abs(residuals[1.0][0]) > 1e-5
+    assert abs(residuals[1.0e-3][0]) < 3e-6, residuals
     for loose, tight, s_loose, s_tight in zip(*residuals.values(), *scales.values()):
         assert abs(tight) < 1e-5, residuals
         assert abs(loose) > 20.0 * abs(tight), residuals

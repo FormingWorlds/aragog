@@ -1296,10 +1296,16 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
 @pytest.mark.parametrize('n_nodes', [1, 2, 3, 4, 6, 10])
 def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     """Without stratification the capacity at the nodes comes from a jit over a power-of-2 padded
-    array; it equals a plain loop for every node count, also for a trace of the start alone."""
+    array; it equals a plain loop for every node count, also for a trace of the start alone, in
+    the 64-bit JAX that a real core budget sets on import."""
     from types import SimpleNamespace
 
+    import jax
+
+    import aragog.core.budget  # noqa: F401
     from aragog.solver import entropy_solver as es
+
+    assert jax.config.jax_enable_x64
 
     class Budget:
         @staticmethod
@@ -1328,3 +1334,23 @@ def test_without_call_tolerances_the_scale_is_nan():
         SimpleNamespace(), None, t_core, [1.0e31, 2.0e31], np.array([1.0e27, 1.0e27])
     )
     assert np.isnan(got)
+
+
+@pytest.mark.parametrize('n_nodes', [0, 1, 2, 3, 5, 8, 9])
+def test_the_padded_call_pads_to_a_power_of_2_and_keeps_each_value(n_nodes):
+    """_padded_call hands fn every array padded with its last value to the next power of 2 (none
+    for an empty trace) and returns fn's values at the input positions, for 2 arrays as in the
+    stratified call."""
+    from aragog.solver import entropy_solver as es
+
+    seen = []
+
+    def fn(a, b):
+        seen.append((len(a), len(b), a[-1], b[-1]))
+        return a * b + np.arange(len(a))
+
+    a, b = np.linspace(1.0, 2.0, n_nodes), np.arange(n_nodes) + 3.0
+    got = es._padded_call(fn, a, b)
+    np.testing.assert_array_equal(got, a * b + np.arange(n_nodes))
+    m = 1 << (n_nodes - 1).bit_length() if n_nodes else None
+    assert seen == ([] if m is None else [(m, m, a[-1], b[-1])])
