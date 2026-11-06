@@ -121,7 +121,7 @@ The depression is 640.7 K at 135 GPa and 1748.6 K at 330 GPa. The composition-we
 
 **Why this check exists.** The slope $dT/dP$ of the liquidus decides where a core starts to freeze: where it is smaller than the slope of the core adiabat, iron freezes first at the top. A kink in a table, an anchor point or the end of the data can make a false slope there.
 
-**What it tests.** For C contents of 0.5 to 3.2 wt%, S up to 4.8 wt%, O up to 10 wt% and 2 mixed alloys, the slope must be positive at every pressure from 1 to 600 GPa where the alloy is not past its eutectic. Over 325 to 380 GPa, into the extrapolation above the data, the slope must change by less than 0.1 K/GPa between points 0.1 GPa apart. Alloys between the continued and the end eutectic compositions must pass their eutectic above the data at the pinned pressures. Across the blend of the 2 C units the slope must fall less than 1 K/GPa below its value at the blend edges. For 5.0, 5.4 and 5.8 wt% S and for 4 wt% S with 1 wt% C the least slope and the pressures where the slope is negative are pinned.
+**What it tests.** For C contents of 0.5 to 3.2 wt%, S up to 4.8 wt%, O up to 10 wt% and 2 mixed alloys, the slope must be positive at every pressure from 1 to 600 GPa where the alloy is not past its eutectic. Over 325 to 380 GPa, into the extrapolation above the data, the slope must change by less than 0.1 K/GPa between points 0.1 GPa apart. Alloys whose sum of $w_i / w_{e,i}$ passes 1 above the data must cross their eutectic once, at the pinned pressure and with the pinned slope step: S and C alloys and an S-C mixture into it, O alloys out of it. Across the blend of the 2 C units the slope must fall less than 1 K/GPa below its value at the blend edges. For 5.0, 5.4 and 5.8 wt% S and for 4 wt% S with 1 wt% C the least slope and the pressures where the slope is negative are pinned.
 
 **How we know the right answer.** A liquidus of a fixed composition rises with pressure where its data do; the pinned values come from the read curve of Mori et al. (2017, Fig. 5).
 
@@ -134,13 +134,13 @@ The depression is 640.7 K at 135 GPa and 1748.6 K at 330 GPa. The composition-we
 
 The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope changes by at most 0.025 K/GPa (3 wt% C) between points 0.1 GPa apart. Across the C blend the slope falls at most 0.76 K/GPa (2 wt% C) below its edge value; a 10 GPa blend would fall 3.7 to 8.9 K/GPa.
 
-**Known limit.** Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa), 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa); outside the tests also 4.9, 6 and 7 wt% S between 209 and 275 GPa and 3.28 to 3.37 wt% C between 323.8 and 336 GPa (down to $-0.11$ K/GPa for 3.34 wt%). Above the data, 4.85, 4.9 and 4.95 wt% S and 3.3 wt% C pass their eutectic by extrapolation of the composition tables, at 348, 341, 335 and 344 GPa.
+**Known limit.** Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa), 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa); outside the tests also 4.9, 6 and 7 wt% S between 209 and 275 GPa and 3.28 to 3.37 wt% C between 323.8 and 336 GPa (down to $-0.105$ K/GPa for 3.34 wt%). Above the data, alloys cross their eutectic by extrapolation of the composition tables: into it 4.85, 4.9 and 4.95 wt% S at 348, 341 and 335 GPa, 3.3 wt% C at 344 GPa and 4 wt% S with 0.65 wt% C at 333 GPa; out of it 15.2 and 15.28 wt% O at 338 and 354 GPa.
 
 ??? info "Test details"
     - Reference: the sign of the slope (physical); for 5.0 to 5.8 wt% S, pinned values of the read curve of Mori et al. (2017, Fig. 5).
     - Tolerance: slope above 0; step below 0.1 K/GPa; crossing pressures to 0.02 GPa; blend dip below 1 K/GPa; pinned least slope within 0.01 K/GPa and the negative range within 0.2 GPa.
     - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_alloys_near_the_end_eutectic_cross_it_above_the_data`, `::test_the_fe_c_liquidus_falls_near_the_end_of_its_data_for_3_28_to_3_37_wt_percent`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
-    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls"`
+    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls or cross"`
 
 ## The 2 reads of each figure curve
 
@@ -167,7 +167,7 @@ The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope c
 
 ## Related tests
 
-The other tests in `tests/test_core_alloy_liquidus.py` check that a composition past the eutectic is held at its boundary and flagged, that above the data the eutectic temperature is homologous and flagged, that O is flagged beyond its composition table at 325 GPa, that the composition slope at zero light element is the dilute slope, that a traced or 0-d array composition works like a float, that invalid compositions and a binary with $A \le 0$ are refused, and, with Hypothesis, that every valid alloy melts at or below pure iron and that more S never raises the liquidus on the Fe-rich side.
+The other tests in `tests/test_core_alloy_liquidus.py` check that a composition past the eutectic is held at its boundary and flagged, that above the data the eutectic composition continues its last table segment while the eutectic temperature becomes homologous, both flagged, that O is flagged beyond its composition table at 325 GPa, that the composition slope at zero light element is the dilute slope, that a traced or 0-d array composition works like a float, that invalid compositions and a binary with $A \le 0$ are refused, and, with Hypothesis, that every valid alloy melts at or below pure iron and that more S never raises the liquidus on the Fe-rich side.
 
 ## Limits
 

@@ -16,9 +16,10 @@ The eutectic compositions and the Fe-O eutectic temperature are tables read from
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Outside the
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
-ratio (homologous) and the eutectic composition is held; over the 40 GPa above the end of the
-data the tables continue along their last segment while their pressure slopes fade to zero by a
-smootherstep, so the held values are those of the continued tables 20 GPa above the end. A
+ratio (homologous) and the eutectic composition is held from 40 GPa above the end; over those
+40 GPa the composition tables and the Fe-O temperature table continue along their last segment,
+and their pressure slopes and that of the Simon fits fade to zero by a smootherstep, so the held
+values are those 20 GPa above the end. A
 composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
 boundary.
 """
