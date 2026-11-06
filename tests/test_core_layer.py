@@ -148,3 +148,20 @@ def test_the_shell_refuses_a_bad_geometry():
         _shell(base_fraction=1.0)
     with pytest.raises(ValueError, match='n_cells'):
         _shell(n_cells=1)
+
+
+@pytest.mark.physics_invariant
+def test_the_heat_change_of_a_temperature_change_is_exact_where_contents_round():
+    """heat_change(dT) is c_p sum m_j dT_j: equal to the content difference for a 1 K change, and
+    exact for a 1e-9 K change, which the difference of 2 contents of 8e30 J cannot resolve."""
+    shell = _shell()
+    t = np.asarray(shell.adiabatic_profile(T_C))
+    d = 1.0 + 0.01 * np.arange(shell.n_cells)
+    diff = float(shell.heat_content(t + d)) - float(shell.heat_content(t))
+    assert float(shell.heat_change(d)) == pytest.approx(diff, rel=1e-9)
+    tiny = np.full(shell.n_cells, 1e-9)
+    exact = 840.0 * float(np.sum(shell.mass)) * 1e-9
+    assert float(shell.heat_change(tiny)) == pytest.approx(exact, rel=1e-12)
+    assert float(shell.heat_content(t + tiny)) - float(shell.heat_content(t)) != pytest.approx(
+        exact, rel=1e-6
+    )

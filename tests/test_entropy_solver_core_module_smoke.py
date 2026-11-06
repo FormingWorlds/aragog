@@ -617,11 +617,13 @@ def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
     )
 
 
+@needs_cvode
 @pytest.mark.physics_invariant
-def test_a_stratified_call_books_the_shell_heat_from_its_temperature_change():
-    """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-4
-    of its CMB heat (6.2e17 J): the shell heat change is booked from the cell temperature
-    changes, since each absolute shell heat (8.2e30 J) has a float spacing of 1.8e-3 of it."""
+def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
+    """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-8
+    of its CMB heat (6.2e17 J, measured 1.7e-10): the core and shell heat changes are booked from
+    the integrated temperature changes, not from absolute temperatures, whose float spacing
+    (9e-13 K) times C_eff is 2.3e-4 of that heat."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -634,7 +636,28 @@ def test_a_stratified_call_books_the_shell_heat_from_its_temperature_change():
     solver.parameters.solver.rtol *= 1e-3
     solver.solve()
     out = solver.get_state()
-    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-4 * abs(out.step_dE_F_cmb_J)
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
+    """A 5 yr call of an unstratified core from the driven start moves T_core by only 2e-12 K
+    and books 3.9e15 J of CMB heat, 3.5 float spacings of the absolute core heat (8.95e30 J); at
+    tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat (measured 1.1e-7)."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        CORE_MODULE_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * abs(out.step_dE_F_cmb_J)
 
 
 @needs_cvode

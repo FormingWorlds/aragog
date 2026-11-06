@@ -1336,21 +1336,30 @@ def test_without_call_tolerances_the_scale_is_nan():
     assert np.isnan(got)
 
 
-@pytest.mark.parametrize('n_nodes', [0, 1, 2, 3, 5, 8, 9])
-def test_the_padded_call_pads_to_a_power_of_2_and_keeps_each_value(n_nodes):
-    """_padded_call hands fn every array padded with its last value to the next power of 2 (none
-    for an empty trace) and returns fn's values at the input positions, for 2 arrays as in the
-    stratified call."""
+@pytest.mark.parametrize(
+    ('n_nodes', 'padded'), [(0, None), (1, 1), (2, 2), (3, 4), (5, 8), (8, 8), (9, 16)]
+)
+def test_the_padded_call_pads_to_a_power_of_2_and_keeps_each_value(n_nodes, padded):
+    """_padded_call hands fn every array unchanged in its first entries and padded with its own
+    last value to the next power of 2 (none for an empty trace), and returns fn's values at the
+    input positions, for 2 non-monotone arrays as in the stratified call."""
     from aragog.solver import entropy_solver as es
 
     seen = []
 
     def fn(a, b):
-        seen.append((len(a), len(b), a[-1], b[-1]))
+        seen.append((np.array(a), np.array(b)))
         return a * b + np.arange(len(a))
 
-    a, b = np.linspace(1.0, 2.0, n_nodes), np.arange(n_nodes) + 3.0
+    a = np.array([5.0, 1.0, 9.0, 2.0, 7.0, 3.0, 8.0, 4.0, 6.0])[:n_nodes]
+    b = np.array([0.5, 3.0, 1.5, 4.0, 2.5, 0.25, 3.5, 1.0, 2.0])[:n_nodes]
     got = es._padded_call(fn, a, b)
     np.testing.assert_array_equal(got, a * b + np.arange(n_nodes))
-    m = 1 << (n_nodes - 1).bit_length() if n_nodes else None
-    assert seen == ([] if m is None else [(m, m, a[-1], b[-1])])
+    if padded is None:
+        assert seen == []
+        return
+    ((pa, pb),) = seen
+    assert len(pa) == len(pb) == padded
+    np.testing.assert_array_equal(pa[:n_nodes], a)
+    np.testing.assert_array_equal(pb[:n_nodes], b)
+    assert np.all(pa[n_nodes:] == a[-1]) and np.all(pb[n_nodes:] == b[-1])
