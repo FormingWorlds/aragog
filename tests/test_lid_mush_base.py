@@ -186,6 +186,17 @@ class TestSolver:
         s._dSdt_single(0.0, y)
         s._check_lid_step(s._lid_delta_lo, 3, 1.0)
 
+    def test_the_solve_watches_the_hand_over_without_the_lid_closure(self, eos, monkeypatch):
+        """With the 'local' stress closure the mush base still installs the hand-over root."""
+        s = _solver(eos)
+        assert not s._lid_handover_armed()
+        calls = []
+        root = s._lid_root_value
+        monkeypatch.setattr(s, '_lid_root_value', lambda t, y: calls.append(t) or root(t, y))
+        s.solve()
+        assert s._solution.status == 0
+        assert len(calls) > 0
+
     def test_hand_over_at_the_fraction_of_the_cell(self, eos):
         s = _solver(eos)
         n = s._n_stag
