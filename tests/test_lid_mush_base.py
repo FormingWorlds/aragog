@@ -20,13 +20,15 @@ from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_e
 pytestmark = pytest.mark.timeout(900)
 
 
-def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10):
+def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10, **bc):
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=n_nodes, end_time=end)
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.lid_mush_base = mush
+    for name, value in bc.items():
+        setattr(p.boundary_conditions, name, value)
     p.boundary_conditions.normalize()
     p.phase_solid.rheology = rheo or SolidRheologyParams(
         enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
@@ -35,6 +37,12 @@ def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10):
     s.initialize()
     s.set_initial_entropy(S0)
     return s
+
+
+@pytest.mark.unit
+def test_the_hand_over_lies_below_the_growth_stop():
+    """The mush-base hand-over fraction lies below the growth stop of the lid."""
+    assert sl.LID_HANDOVER_FRAC < sl.LID_CAP_FRAC
 
 
 @pytest.mark.unit
@@ -206,6 +214,32 @@ class TestSolver:
         s.solve()
         assert s._solution.status == 0
         assert len(calls) > 0
+
+    def test_the_onset_thickness_must_lie_below_the_hand_over(self, eos):
+        """With the mush base an onset thickness at or above 0.7 of the top cell is refused at
+        setup with the hand-over named, so that no phantom lid hands over at the start."""
+        h = _solver(eos)._lid_h_top
+        for frac in (0.75, 0.7):
+            with pytest.raises(
+                ValueError, match=r'below the hand-over at 0\.7 x the top-cell width'
+            ):
+                _solver(eos, lid_delta_on=frac * h)
+        s = _solver(eos, lid_delta_on=0.69 * h)
+        assert s._lid_delta_on == 0.69 * h and s._lid_delta_lo == pytest.approx(
+            0.345 * h, rel=1e-14
+        )
+        assert s._lid_delta_lo < sl.LID_HANDOVER_FRAC * h
+
+    def test_the_mush_base_is_refused_in_the_constant_property_mode(self):
+        """The constant-property column has no solidus, so the mush base is refused by name."""
+        from aragog.solver.entropy_solver import EntropySolver
+        from tests.test_subgrid_lid_const import _params
+
+        p = _params()
+        p.boundary_conditions.lid_mush_base = True
+        p.boundary_conditions.normalize()
+        with pytest.raises(ValueError, match='lid_mush_base needs the entropy EOS tables'):
+            EntropySolver(p, entropy_eos=None).initialize()
 
     def test_hand_over_at_the_fraction_of_the_cell(self, eos):
         s = _solver(eos)

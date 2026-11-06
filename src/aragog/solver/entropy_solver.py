@@ -2572,6 +2572,17 @@ class EntropySolver:
         self._lid_mush = bc.lid_mush_base
         if self._lid_mush and rheo is None:
             raise ValueError('lid_mush_base needs the solid rheology on')
+        if self._lid_mush and self._lid_const:
+            raise ValueError(
+                'lid_mush_base needs the entropy EOS tables: the constant-property column has no '
+                'solidus for the lid base'
+            )
+        if self._lid_mush and self._lid_delta_on >= _lid.LID_HANDOVER_FRAC * self._lid_h_top:
+            raise ValueError(
+                f'with lid_mush_base, lid_delta_on = {self._lid_delta_on} m must lie below the '
+                f'hand-over at {_lid.LID_HANDOVER_FRAC} x the top-cell width {self._lid_h_top:.6g} m '
+                f'= {_lid.LID_HANDOVER_FRAC * self._lid_h_top:.6g} m'
+            )
         self._lid_H = None
         if rheo is not None and rheo.lid_base_mode != 'fixed':
             from aragog.rheology import compute_arrhenius_enthalpy
