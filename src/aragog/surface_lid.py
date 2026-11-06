@@ -46,12 +46,17 @@ from scipy.special import dawsn, erf
 
 # The lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell width.
 LID_CAP_FRAC: float = 0.8
+LID_CAP_WIDTH: float = 0.02
+# With the mush base the lid hands over to the mesh at this fraction of the top-cell width.
 LID_HANDOVER_FRAC: float = 0.7
+# Floor ramp of the mush base [J/kg/K]: weight 0 up to S_sol + GAP, 1 from S_sol + GAP + WIDTH.
 LID_FLOOR_GAP: float = 1.0
 LID_FLOOR_WIDTH: float = 5.0
+# Lowest lid surface temperature [K], and smallest drop [K] of the surface below the base.
 LID_T_S_MIN: float = 1.0
 LID_DT_MIN: float = 1.0
-LID_CAP_WIDTH: float = 0.02
+# Smallest surface slope f'(0) in the reported lid conductance.
+LID_SLOPE_MIN: float = 0.1
 # A lid weight below this value is set to 0 (the lid is hidden).
 LID_WEIGHT_FLOOR: float = 1.0e-10
 # Width [decades] of the existence ramp in log10(delta_eq / lid_delta_on).

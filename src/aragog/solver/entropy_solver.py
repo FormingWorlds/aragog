@@ -3343,7 +3343,7 @@ class EntropySolver:
         intervals (4-point Gauss-Legendre each) over and above the melt band. Returns ``Phi``
         in entropy, linear above its knots, and its table for the JAX form.
         """
-        from aragog.solver.entropy_state import tanh_weight, zero_anchored_weight
+        from aragog.utilities import tanh_weight, zero_anchored_weight
 
         eos, P, ph = self.entropy_eos, self._lid_P, self.state.phase_staggered
         S = np.unique(
@@ -3486,7 +3486,10 @@ class EntropySolver:
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
         elif not self._lid_lo_bound(delta_lo) <= ev.delta <= cap * (1.0 + _LID_CAP_SLACK):
-            bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
+            bad = (
+                f'thickness {ev.delta:.6g} m outside [{self._lid_lo_bound(delta_lo):.6g}, '
+                f'{cap * (1.0 + _LID_CAP_SLACK):.6g}] m (stops {delta_lo:.6g} and {cap:.6g} m)'
+            )
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
         elif not (lo <= ev.S_f <= hi and lo <= ev.S_b <= hi):
@@ -6289,7 +6292,9 @@ class EntropySolver:
                         k = int(bad[0])
                         raise RuntimeError(
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: thickness '
-                            f'{d[k]:.6g} m outside [{lid_lo:.6g}, {cap:.6g}] m'
+                            f'{d[k]:.6g} m outside [{self._lid_lo_bound(lid_lo):.6g}, '
+                            f'{cap * (1.0 + _LID_CAP_SLACK):.6g}] m (stops {lid_lo:.6g} and '
+                            f'{cap:.6g} m)'
                         )
                 if self._n_lid and self._lid_active:
                     self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
@@ -6893,7 +6898,9 @@ class EntropySolver:
                 lid_T_base=ev.T_b,
                 lid_weight=ev.rates.w,
                 lid_delta_eff=_lid.effective_thickness(ev.delta, ev.surf.s),
-                lid_conductance=self._lid_k * max(_lid.shape(ev.surf.s)[0], 0.1) / ev.delta,
+                lid_conductance=self._lid_k
+                * max(_lid.shape(ev.surf.s)[0], _lid.LID_SLOPE_MIN)
+                / ev.delta,
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
             )
