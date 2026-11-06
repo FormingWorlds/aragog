@@ -62,7 +62,7 @@ pytest tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balanc
 
 ### Parallel runs
 
-`pyproject.toml` does not set a default `addopts`; `pytest` runs serial unless `-n auto` (or another xdist option) is supplied explicitly. CI invokes `pytest -m "unit and not slow" -n auto` (`ci_tests.yml`) and, in the nightly (`nightly.yml`), `pytest -m "unit or smoke or integration or slow" -n 3` on every test except those of the 3 single-process jobs (the core verification page test, the 3 longest core module solves, `tests/test_surface_lid_v2_grid.py`); reproduce locally by adding the same flag:
+`pyproject.toml` sets `addopts = "--strict-markers"` and no xdist option, so `pytest` runs serial unless `-n auto` (or another xdist option) is supplied explicitly; the CI commands pass `-o "addopts="`. CI invokes `pytest -m "unit and not slow" -n auto` (`ci_tests.yml`) and, in the nightly (`nightly.yml`), `pytest -m "unit or smoke or integration or slow" -n 3` on every test except those of the 3 single-process jobs (the core verification page test, the 3 longest core module solves, `tests/test_surface_lid_v2_grid.py`); reproduce a parallel run locally with `-n`:
 
 ```console
 pytest -m unit -n auto                       # parallel unit run
