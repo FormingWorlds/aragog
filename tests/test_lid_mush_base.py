@@ -20,7 +20,7 @@ from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_e
 pytestmark = pytest.mark.timeout(900)
 
 
-def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10, **bc):
+def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10, kappah_floor=None, **bc):
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -30,6 +30,8 @@ def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10, **bc):
     for name, value in bc.items():
         setattr(p.boundary_conditions, name, value)
     p.boundary_conditions.normalize()
+    if kappah_floor is not None:
+        p.energy.kappah_floor = kappah_floor
     p.phase_solid.rheology = rheo or SolidRheologyParams(
         enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
     )
@@ -229,6 +231,14 @@ class TestSolver:
             0.345 * h, rel=1e-14
         )
         assert s._lid_delta_lo < sl.LID_HANDOVER_FRAC * h
+
+    @pytest.mark.parametrize('floor', [0.0, -1.0])
+    def test_the_mush_base_needs_a_floor(self, eos, floor):
+        """The base flux of the mush base is the floor flux, so a floor of 0 or below is
+        refused at setup with the setting named; a positive floor is used."""
+        with pytest.raises(ValueError, match='lid_mush_base needs kappah_floor > 0'):
+            _solver(eos, kappah_floor=floor)
+        assert _solver(eos, kappah_floor=1.0).parameters.energy.kappah_floor == 1.0
 
     def test_the_mush_base_is_refused_in_the_constant_property_mode(self):
         """The constant-property column has no solidus, so the mush base is refused by name."""

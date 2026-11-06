@@ -2572,6 +2572,11 @@ class EntropySolver:
         self._lid_mush = bc.lid_mush_base
         if self._lid_mush and rheo is None:
             raise ValueError('lid_mush_base needs the solid rheology on')
+        if self._lid_mush and not float(self.parameters.energy.kappah_floor) > 0.0:
+            raise ValueError(
+                'lid_mush_base needs kappah_floor > 0: the base flux of the mush base is the '
+                f'floor flux, got kappah_floor = {self.parameters.energy.kappah_floor!r}'
+            )
         if self._lid_mush and self._lid_const:
             raise ValueError(
                 'lid_mush_base needs the entropy EOS tables: the constant-property column has no '
