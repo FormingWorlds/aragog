@@ -338,6 +338,8 @@ The light-element fraction of the outer core is fixed: the gravitational term us
 
 In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` (J), evaluating $\int \tilde{C} dT_\text{cmb}$ over the call, plus the shell's heat change with `stratification = true`; the shell temperatures (`core_T_shell`), the layer base (`core_layer_base`) and the temperature of the top shell cell (`core_T_top`) are in the output, the last two NaN without a shell, and a resumed run passes the shell back with `set_initial_shell_temperature`.
 
+`step_core_tol_J` (J) is the scale of the error of `step_dE_core_J` that the solver tolerance allows. The core temperature is integrated as its change within the call, so CVODE holds the local error at each node of the energy trace (every accepted step and output point) to about $\mathrm{atol} + \mathrm{rtol}\,|T_\text{cmb} - T_{\text{cmb},0}|$ (K); the scale sums this times $\tilde{C}$ over the nodes after the call start, plus the round-off of the 2 heat contents. It is a diagnostic, not a limit: CVODE controls a norm over all states, and the CMB heat it is compared with is a trapezoid over the same nodes. A requested `atol` below $10^{-8}$ is raised to $10^{-8}$, and the solver logs this once; an `atol` of 0 is not possible, since the core temperature change starts at 0 and CVODE needs a positive weight for it.
+
 ## Energy conservation and core closure
 
 From `SolverOutput`, the core energy closure residual of a call compares the core's heat change with the CMB heat transport:

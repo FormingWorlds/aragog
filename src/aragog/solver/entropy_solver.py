@@ -1207,7 +1207,7 @@ class SolverOutput:
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
-    step_core_tol_J: float = 0.0  # tolerance bound of step_dE_core_J [J]
+    step_core_tol_J: float = 0.0  # tolerance scale of step_dE_core_J [J]
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
@@ -1394,7 +1394,7 @@ class SolverOutput:
                 'step_core_tol_J',
                 self.step_core_tol_J,
                 'J',
-                'Tolerance bound of the per-call core energy change',
+                'Tolerance scale of the per-call core energy change',
             )
             _scalar(
                 'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
@@ -5379,7 +5379,7 @@ class EntropySolver:
         # 1.0 leaves behaviour unchanged for callers that don't set it.
         atol_sf_external = float(getattr(self, '_atol_sf', 1.0))
         atol = atol_base * atol_scale * atol_sf_external
-        self._call_tol = (atol, rtol)  # physical per-slot tolerances, for the core heat bound
+        self._call_tol = (atol, rtol)  # physical per-slot tolerances, for the core heat scale
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
@@ -6232,12 +6232,12 @@ class EntropySolver:
         }
 
     def _core_heat_tolerance(self, budget, t_core_traj, content, c_eff_vals=None) -> float:
-        """Bound [J] on the error of the core heat change of a call from the T_core error control.
+        """Error scale [J] of the core heat change of a call from the T_core error control.
 
         T_core is integrated as its change within the call, so each node allows ``atol + rtol
-        |T - T_0|`` [K]; the bound sums that times C_eff over the nodes after the start, plus the
-        float spacing of the 2 heat contents. CVODE controls an estimate of the local error, so
-        the bound is not strict.
+        |T - T_0|`` [K]; the scale sums that times C_eff over the nodes after the start, plus the
+        float spacing of the 2 heat contents. It is a diagnostic, not a limit: CVODE controls a
+        norm over all states, and the CMB heat it is compared with is a trapezoid.
         """
         atol, rtol = getattr(self, '_call_tol', (0.0, 0.0))
         tol_nodes = atol + rtol * np.abs(t_core_traj[1:] - t_core_traj[0])
