@@ -3204,7 +3204,10 @@ class EntropySolver:
         if self._outer_bc_kind == 4:
             T_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
             T_s = (
-                max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN)
+                min(
+                    max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN),
+                    base['T_b'] - _lid.LID_DT_MIN,
+                )
                 if T_held is None
                 else min(T_held, base['T_b'] - _lid.LID_DT_MIN)
             )

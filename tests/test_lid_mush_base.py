@@ -415,6 +415,18 @@ class TestFluxSolver:
         s.set_initial_entropy(3050.0 if S0 is None else S0)
         return s
 
+    @pytest.mark.parametrize('F_atm', [0.0, -50.0])
+    def test_the_phantom_start_keeps_a_drop_below_the_base(self, eos, F_atm):
+        """Under a prescribed flux at or below 0 the phantom lid starts with its surface
+        ``LID_DT_MIN`` below the base, as the flux state clamps it, not at or above the base."""
+        s = self._s(eos, F_atm=F_atm)
+        d, E = s._lid_start(3050.0)
+        T_b = s._lid_T_sol
+        assert d == s._lid_delta_lo
+        assert E == pytest.approx(
+            d * s._lid_hv.profile_heat(0.0, T_b - sl.LID_DT_MIN, T_b), rel=1e-14
+        )
+
     def test_surface_loss_is_the_prescribed_flux(self, eos):
         s = self._s(eos)
         n = s._n_stag

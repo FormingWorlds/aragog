@@ -372,7 +372,8 @@ def flux_surface_state(
     ``k (T_b - T_s) f'(0) / d = F_atm`` fixes the surface temperature, at least 1 K, and with it
     the lid heat content, so ``Q(s) = E / delta`` gives the shape. At 1 K the lid carries less
     than ``F_atm``. The surface stays ``LID_DT_MIN`` below ``T_b``, so that the profile keeps a
-    temperature drop; :func:`flux_weight` gives such a lid no weight for ``F_atm <= 0``.
+    temperature drop; :func:`flux_weight` gives such a lid no weight for ``F_atm <= 0``, and the
+    mush base blends that weight with its floor weight ``g`` as ``1 - g (1 - w)``.
 
     Parameters and the result as :func:`surface_state`, with ``F_atm`` for the grey body.
     """
