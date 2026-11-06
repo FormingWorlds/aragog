@@ -6211,7 +6211,9 @@ class EntropySolver:
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
                 content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
-                step_dE_core += content[1] - content[0]
+                step_dE_core += float(
+                    shell.profiles.c_p * np.dot(shell.mass, t_shell_traj[-1] - t_shell_traj[0])
+                )
                 self._check_shell_base(budget, t_core_traj, base)
             step_core_tol = self._core_heat_tolerance(
                 budget, t_core_traj, content, None if not budget.stratification else c_eff_vals
