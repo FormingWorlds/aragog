@@ -458,13 +458,51 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
     assert abs(residuals[1.0e-3][0]) < 3e-6, residuals
     for loose, tight in zip(residuals[1.0][3:], residuals[1.0e-3][3:]):
         assert abs(loose) < 2e-6 and abs(loose) > 20.0 * abs(tight), residuals
-    first_3 = [v[:3] for v in (*residuals.values(), *scales.values())]
-    for loose, tight, s_loose, s_tight in zip(*first_3):
-        assert abs(tight) < 1e-5, residuals
-        assert abs(loose) > 20.0 * abs(tight), residuals
-        assert s_loose > 20.0 * s_tight > 0.0, scales
-        for res, scale in ((loose, s_loose), (tight, s_tight)):
-            assert abs(res) < 2.0 * scale < 2.0e3 * abs(res), (res, scale)
+    for values in zip(*[v[:3] for v in (*residuals.values(), *scales.values())]):
+        _assert_converges(*values)
+
+
+def _assert_converges(loose, tight, s_loose, s_tight):
+    """A residual that falls at least 20 times to below 1e-5 at 1000 times tighter tolerances,
+    and a tolerance scale that falls with it and bounds it."""
+    assert abs(tight) < 1e-5 and abs(loose) > 20.0 * abs(tight), (loose, tight)
+    assert s_loose > 20.0 * s_tight > 0.0, (s_loose, s_tight)
+    for res, scale in ((loose, s_loose), (tight, s_tight)):
+        assert abs(res) < 2.0 * scale < 2.0e3 * abs(res), (res, scale)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('stratified', [False, True])
+def test_a_call_across_the_onset_converges_with_the_tolerance(shared_eos, stratified):
+    """A 3 yr call of a core 0.5 K above the onset over a liquid base, with the default entropy
+    of fusion, crosses the onset: its ledger residual falls at least 20 times to below 1e-5 at
+    1000 times tighter tolerances (measured -6.2e-6 to -6.3e-8, stratified -2.4e-6 to -2.4e-8)."""
+    params = UNENRICHED_PARAMS | dict(
+        melting_curve='quadratic', t_m0=1.0, t_m1=2.55e-12, t_m2=0.0
+    )
+    if stratified:
+        params |= dict(stratification=True, k_core=130.0, layer_base_fraction=0.7)
+    probe = _build('core_module', shared_eos, params)
+    p_cmb = probe._P_basic_flat[:1]
+    S = np.full(probe._n_stag, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+    t_m = float(shared_eos.temperature(p_cmb, S[:1])[0])
+    params['t_m0'] = (t_m + 300.0) / probe._core_module_budget.t_onset
+    values = [[], []]
+    for sf in (1.0, 1.0e-3):
+        solver = _build('core_module', shared_eos, params, end_time=3.0, solver_method='cvode')
+        budget = solver._core_module_budget
+        solver.set_initial_core_temperature(budget.t_onset + 0.5)
+        solver.set_initial_entropy(S)
+        solver._atol_sf = sf
+        solver.parameters.solver.rtol *= sf
+        solver.solve()
+        out = solver.get_state()
+        assert float(solver._solution.y[solver._n_stag + 1, -1]) < budget.t_onset
+        cmb = out.step_dE_F_cmb_J
+        values[0].append((out.step_dE_core_J + cmb) / cmb)
+        values[1].append(out.step_core_tol_J / cmb)
+    _assert_converges(*values[0], *values[1])
 
 
 @needs_cvode
