@@ -142,13 +142,13 @@ The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope c
     - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_alloys_near_the_end_eutectic_cross_it_above_the_data`, `::test_the_fe_c_liquidus_falls_near_the_end_of_its_data_for_3_28_to_3_37_wt_percent`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls or cross"`; the plot: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k slope_against_pressure --validation-plots`
 
-## The Fe-S liquidus below 15 GPa
+## The Fe-S liquidus from 1 bar to 15 GPa
 
 **Why this check exists.** Below 21 GPa the liquidus uses the ideal form on FeS units through measured eutectic points. The measured liquidus at these pressures is not ideal: it has a negative curvature and, at 14 GPa, 2 inflection points (Buono & Walker 2011; Chen et al. 2008). This case states how far the form is from measured liquidus points and keeps the misfit from growing.
 
-**What it tests.** The shipped `AlloyLiquidus` for Fe-S against 23 measured liquidus points at 6 GPa (Buono & Walker 2011, Table 1, without the eutectic run) and against 7 and 4 liquidus points at 10 and 14 GPa (Chen et al. 2008, Fig. 1, read A). The RMS misfit must stay below the stated value plus 1 K and the mean misfit must differ from the stated value by less than 1 K. A second test pins the change of the liquidus from 10 to 14 GPa at 4, 8 and 12 wt% S against the same points.
+**What it tests.** The shipped `AlloyLiquidus` for Fe-S against 21 measured liquidus points at 1 bar (Friedrich 1910 and Miyazaki 1928, as compiled by Hansen & Anderko 1958 and drawn by Buono & Walker 2011, Fig. 6; the 2 points past the 1 bar eutectic left out), 23 at 6 GPa (Buono & Walker 2011, Table 1, without the eutectic run) and against 7 and 4 liquidus points at 10 and 14 GPa (Chen et al. 2008, Fig. 1, read A). The RMS misfit must stay below the stated value plus 1 K and the mean misfit must differ from the stated value by less than 1 K. A second test pins the change of the liquidus from 10 to 14 GPa at 4, 8 and 12 wt% S against the same points.
 
-**How we know the right answer.** Measured liquidus temperatures: run temperatures with $\pm 25$ K and microprobe compositions of the liquid at 6 GPa, and the points of Chen et al. (2008, Fig. 1) read twice (vector symbols and a 600 dpi raster, which agree to 0.27 wt% and 3.1 K). None of these points sets a node of the eutectic.
+**How we know the right answer.** Measured liquidus temperatures: the 1 bar points read twice (vector marker centres and a 600 dpi raster, which agree to 0.30 pt of the figure, 1.3 K and 0.0002 in mole fraction), run temperatures with $\pm 25$ K and microprobe compositions of the liquid at 6 GPa, and the points of Chen et al. (2008, Fig. 1) read twice (vector symbols and a 600 dpi raster, which agree to 0.27 wt% and 3.1 K). None of these points sets a node of the eutectic.
 
 **Why it matters.** The liquidus below 21 GPa decides when the core of a planet smaller than the Earth (Mars, about 20 to 40 GPa in the core) starts to freeze.
 
@@ -157,15 +157,20 @@ The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope c
 
 **How to read the plot.** The x-axis is the S content in wt%, the y-axis the liquidus in K. Each line is the shipped liquidus at one pressure, from pure iron to the eutectic; the circles in the same colour are the measured points. The lines lie below most points: the ideal form does not follow the measured curvature.
 
-The RMS misfit is 141.4 K at 6 GPa (mean $-130.6$ K, largest 227.8 K), 89.0 K at 10 GPa (mean $-82.6$ K) and 150.9 K at 14 GPa (mean $-12.4$ K). From 10 to 14 GPa the measured liquidus falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the shipped liquidus changes by $+3.0$, $-14.5$ and $-26.9$ K/GPa.
+![Fe-S liquidus at 1 bar against S content, Aragog line and the points of Friedrich 1910 and Miyazaki 1928](../assets/validation/core_alloy_liquidus_one_bar.svg#only-light){ width="70%" }
+![Fe-S liquidus at 1 bar against S content, Aragog line and the points of Friedrich 1910 and Miyazaki 1928](../assets/validation/core_alloy_liquidus_one_bar_dark.svg#only-dark){ width="70%" }
+
+The second plot shows 1 bar: the line is the shipped liquidus from pure iron to the 1 bar eutectic, the triangles and squares the 2 data sets. The line lies above the points up to 11 wt% S (by up to 67 K) and below them from 16 wt% S to the eutectic (by up to 135 K).
+
+The RMS misfit is 75.0 K at 1 bar (mean $-28.4$ K, largest 135.0 K), 141.4 K at 6 GPa (mean $-130.6$ K, largest 227.8 K), 89.0 K at 10 GPa (mean $-82.6$ K) and 150.9 K at 14 GPa (mean $-12.4$ K). From 10 to 14 GPa the measured liquidus falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the shipped liquidus changes by $+3.0$, $-14.5$ and $-26.9$ K/GPa.
 
 **Known limit.** A non-ideal liquidus below 21 GPa, such as the model of Buono & Walker (2011), is not implemented; the misfit above is the size of that limit.
 
 ??? info "Test details"
-    - Reference: Buono & Walker (2011), Table 1, p. 2075; Chen et al. (2008), Fig. 1, 2 reads (`tests/validation/data/core_eutectics/low_pressure/`).
-    - Tolerance: RMS below the stated value plus 1 K, mean to 1 K; slopes to 0.05 K/GPa (code) and 0.005 K/GPa (data).
-    - Test id: `test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_liquidus_misses_the_measured_points_as_stated`, `::test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data` (unit tier)
-    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "misses or falls_less"`; the plot: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k falls_less --validation-plots`
+    - Reference: Buono & Walker (2011), Fig. 6, p. 2079, 2 reads, and Table 1, p. 2075; Chen et al. (2008), Fig. 1, 2 reads (`tests/validation/data/core_eutectics/low_pressure/`).
+    - Tolerance: RMS below the stated value plus 1 K, mean to 1 K; the 2 reads of the 1 bar points to 0.5 pt; slopes to 0.05 K/GPa (code) and 0.005 K/GPa (data).
+    - Test id: `test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_liquidus_misses_the_measured_points_as_stated`, `::test_the_two_reads_of_the_1_bar_points_agree`, `::test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "misses or 1_bar or falls_less"`; the plots: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "1_bar or falls_less" --validation-plots`
 
 ## The low-pressure eutectic
 
