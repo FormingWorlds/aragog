@@ -829,7 +829,7 @@ def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
     """The JAX batch path checks every accepted state, not only the last: one state in the
     middle of the trace past the growth stop with its slack, or thinner than the melt-back
     stop, fails the lid invariant at its step. A lid that starts the call below ``delta_lo``
-    passes, and the lower bound is then its start thickness."""
+    passes, and the lower bound is then its start thickness less the solver precision."""
     s = _jax_cvode_lid_solver()
     s.solve()
     sol = s._solution
@@ -846,7 +846,7 @@ def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
         calls = s._batch_powers_calls
         s._compute_step_energy_integrals()
         assert s._batch_powers_calls == calls + 1
-        y[-2, k] = y[-2, 0] * (1.0 - 2e-6)
+        y[-2, k] = 2.0 * s._lid_lo_bound(y[-2, 0]) - y[-2, 0]  # 2 slacks below the start
     sol.energy_trace = (t, y)
     calls = s._batch_powers_calls
     with pytest.raises(RuntimeError, match=f'at step {k},.*thickness'):

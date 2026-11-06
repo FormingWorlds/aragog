@@ -375,7 +375,6 @@ _CVODE_TOL_LIMIT = 1.0e-8
 # Relative slack of the lid thickness above the growth stop in the step check: the integrator
 # can leave a lid at the stop a little above it (2.5e-5 measured at rtol 1e-6, 1.4e-8 at 1e-7).
 _LID_CAP_SLACK = 1.0e-3
-_LID_LO_SLACK = 1.0e-6  # relative slack of the lid thickness below the melt-back stop
 # Upper limits of rtol and of the physical atol in rate-cap segments that start sub-solidus.
 _SUBSOLIDUS_RTOL = 1.0e-9
 _SUBSOLIDUS_ATOL = 1.0e-8
@@ -2540,6 +2539,11 @@ class EntropySolver:
         self._lid_delta_on = float(bc.lid_delta_on)
         lo = bc.lid_delta_lo
         self._lid_delta_lo = 0.5 * self._lid_delta_on if lo is None else float(lo)
+        # atol and rtol of the last solve for the melt-back slack; the configured ones before it
+        self._lid_call_tol = (
+            max(self.parameters.solver.atol, 1.0e-8),
+            self.parameters.solver.rtol,
+        )
         self._lid_ra_crit = float(bc.lid_ra_crit)
         self._lid_handover_depth = float(r[-1] - r[-1 - n_cells])
         if self._lid_delta_on >= _lid.LID_CAP_FRAC * self._lid_h_top:
@@ -3409,6 +3413,16 @@ class EntropySolver:
             rho=float(np.asarray(eos.density(P, S_b)).item()),
         )
 
+    def _lid_lo_bound(self, delta_lo: float) -> float:
+        """Smallest thickness [m] the lid checks accept below the melt-back stop ``delta_lo``.
+
+        The weighted RMS error test of the call lets one of the N state components carry a
+        local error of ``sqrt(N)`` times its tolerance, so the bound is
+        ``delta_lo - sqrt(N) (atol + rtol delta_lo)`` with the atol and rtol of the last solve.
+        """
+        atol, rtol = self._lid_call_tol
+        return delta_lo - math.sqrt(self._S0.size) * (atol + rtol * delta_lo)
+
     def _check_lid_step(self, delta_lo: float, step_idx: int, time_yr: float) -> None:
         """Check the lid of an accepted state (the last RHS evaluation) and warn once per run
         when the growth stop, the enthalpy floor or the shape bound acts.
@@ -3417,11 +3431,12 @@ class EntropySolver:
         ------
         RuntimeError
             When a lid state or rate is not finite, the thickness leaves
-            ``[delta_lo, LID_CAP_FRAC h_top]`` (relative slacks ``_LID_LO_SLACK`` below and
-            ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or the fluid or lid-base entropy
-            lies more than ``_EOS_TABLE_TOL`` outside the heat table. With the solid rheology
-            on, its own check refuses any state outside the table before this one runs. With
-            ``lid_mush_base``, when the top cell lies below half of the floor gap.
+            ``[delta_lo, LID_CAP_FRAC h_top]`` (the solver precision of ``_lid_lo_bound``
+            below, the relative slack ``_LID_CAP_SLACK`` above), the weight leaves [0, 1] or
+            the fluid or lid-base entropy lies more than ``_EOS_TABLE_TOL`` outside the heat
+            table. With the solid rheology on, its own check refuses any state outside the
+            table before this one runs. With ``lid_mush_base``, when the top cell lies below
+            half of the floor gap.
         """
         ev = self._lid_last
         r = ev.rates
@@ -3447,7 +3462,7 @@ class EntropySolver:
         bad = None
         if not np.all(np.isfinite(values)):
             bad = f'non-finite lid state or rate {values}'
-        elif not delta_lo * (1.0 - _LID_LO_SLACK) <= ev.delta <= cap * (1.0 + _LID_CAP_SLACK):
+        elif not self._lid_lo_bound(delta_lo) <= ev.delta <= cap * (1.0 + _LID_CAP_SLACK):
             bad = f'thickness {ev.delta:.6g} m outside [{delta_lo:.6g}, {cap:.6g}] m'
         elif not 0.0 <= r.w <= 1.0:
             bad = f'weight {r.w!r} outside [0, 1]'
@@ -5506,6 +5521,7 @@ class EntropySolver:
         # 1.0 leaves behaviour unchanged for callers that don't set it.
         atol_sf_external = float(getattr(self, '_atol_sf', 1.0))
         atol = atol_base * atol_scale * atol_sf_external
+        self._lid_call_tol = (float(atol), float(rtol))
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
@@ -6233,7 +6249,7 @@ class EntropySolver:
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
-                    thin = (d != 0.0) & (d < lid_lo * (1.0 - _LID_LO_SLACK))
+                    thin = (d != 0.0) & (d < self._lid_lo_bound(lid_lo))
                     bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
                     if bad.size:
                         k = int(bad[0])

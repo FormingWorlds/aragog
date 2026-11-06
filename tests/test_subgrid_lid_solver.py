@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import math
+import re
 
 import numpy as np
 import pytest
@@ -841,6 +842,62 @@ def test_lid_above_the_growth_stop_fails_the_step_check(eos):
     with pytest.raises(RuntimeError, match='lid invariant violated at step 0') as err:
         s.solve()
     assert 'outside' in str(err.value)
+
+
+_TOL_LOG = re.compile(r'atol=([0-9.eE+-]+), rtol=([0-9.eE+-]+)\)')
+
+
+def _thin_lid_trace(eos, caplog, dips, atol_sf):
+    """A 1-year solve from a lid at 1.5 times the melt-back stop, with the atol scale factor
+    of a retry, and its accepted trace with the last thickness set below the stop by ``dips``
+    times atol + rtol delta_lo of the call, read from its log line."""
+    s = _solver(eos)
+    s._atol_sf = atol_sf
+    d0 = 1.5 * s._lid_delta_lo
+    E, _ = _phantom_energy(s, d0, 0.5 * (s._lid_T_sol + 300.0))
+    s.set_initial_lid(d0, E)
+    s.set_initial_entropy(3050.0)
+    with caplog.at_level('INFO', logger='fwl.aragog.solver.entropy_solver'):
+        s.solve()
+    found = [m for m in map(_TOL_LOG.search, (r.getMessage() for r in caplog.records)) if m]
+    atol, rtol = (float(v) for v in found[-1].groups())
+    tol = atol + rtol * s._lid_delta_lo
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    assert t.size > 2 and y[-2, -1] > 0.0
+    y[-2, -1] = s._lid_delta_lo - dips(s._S0.size) * tol
+    if sol.get('energy_trace'):
+        sol['energy_trace'] = (t, y)
+    else:
+        sol.y = y
+    return s, t, y
+
+
+@pytest.mark.parametrize('atol_sf', [1.0, 10.0])
+@pytest.mark.parametrize('where', ['step', 'replay'])
+@pytest.mark.parametrize(
+    'dips, raises',
+    [(lambda n: 1.5, False), (lambda n: 2.0 * math.sqrt(n), True)],
+    ids=['solver precision', 'twice the slack'],
+)
+def test_lid_below_the_melt_back_stop_by_the_solver_precision_passes(
+    eos, caplog, where, dips, raises, atol_sf
+):
+    """A thickness 1.5 tolerances below the melt-back stop, as a melt-back under a soft
+    longwave ceiling leaves it, passes the step check and the replay check; 2 times the
+    slack sqrt(N) (atol + rtol delta_lo), with N the state size and the tolerances of the
+    call, raises in both."""
+    s, t, y = _thin_lid_trace(eos, caplog, dips, atol_sf)
+    if where == 'step':
+        s._dSdt_single(float(t[-1]), y[:, -1])
+        run = functools.partial(s._check_lid_step, s._lid_delta_lo, 1, float(t[-1]))
+    else:
+        run = s._compute_step_energy_integrals
+    if raises:
+        with pytest.raises(RuntimeError, match='lid invariant violated .* thickness'):
+            run()
+    else:
+        run()
 
 
 def test_lid_just_above_the_growth_stop_passes_the_step_check(eos):
