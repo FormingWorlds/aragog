@@ -1079,9 +1079,8 @@ def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
 
 
 def test_the_core_heat_tolerance_sums_the_node_tolerances():
-    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start, plus
-    the float spacing of the 2 heat contents; the start node, with a weight that would move the
-    sum by 3e-3, is left out."""
+    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start; the
+    start node, with a weight that would move the sum by 3e-3, is left out."""
     from types import SimpleNamespace
 
     from aragog.solver import entropy_solver as es
@@ -1089,10 +1088,9 @@ def test_the_core_heat_tolerance_sums_the_node_tolerances():
     s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
     t_core = np.array([4000.0, 3999.0, 3990.0])
     c_eff = np.array([1.0e28, 2.0e27, 3.0e27])
-    content = [1.0e31, 2.0e31]
-    got = es.EntropySolver._core_heat_tolerance(s, None, t_core, content, c_eff)
+    got = es.EntropySolver._core_heat_tolerance(s, t_core, c_eff)
     nodes = 2.0e27 * (1.0e-6 + 1.0e-4) + 3.0e27 * (1.0e-6 + 1.0e-3)
-    assert got == pytest.approx(nodes + sum(map(np.spacing, content)), rel=1e-14)
+    assert got == pytest.approx(nodes, rel=1e-14)
     assert abs(got - (nodes + 1.0e28 * 1.0e-6)) > 1e-3 * nodes
 
 
@@ -1296,8 +1294,9 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
 @pytest.mark.parametrize('n_nodes', [1, 2, 3, 4, 6, 10])
 def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     """Without stratification the capacity at the nodes comes from a jit over a power-of-2 padded
-    array; it equals a plain loop for every node count, also for a trace of the start alone, in
-    the 64-bit JAX that a real core budget sets on import."""
+    array; it and the heat change booked from the integrated T_core change equal a plain loop for
+    every node count, also for a trace of the start alone, in the 64-bit JAX that a real core
+    budget sets on import."""
     from types import SimpleNamespace
 
     import jax
@@ -1308,19 +1307,24 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     assert jax.config.jax_enable_x64
 
     class Budget:
+        stratification = False
+
         @staticmethod
         def effective_capacity(t):
             return 2.0e27 + 1.0e24 * (t - 4000.0)
 
-    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
+    s = SimpleNamespace(_n_stag=0)
     t_core = 4000.0 - np.arange(n_nodes) ** 1.5
-    content = [1.0e31, 2.0e31]
-    got = es.EntropySolver._core_heat_tolerance(s, Budget(), t_core, content)
-    loop = sum(
-        Budget.effective_capacity(t) * (1.0e-6 + 1.0e-4 * abs(t - t_core[0]))
-        for t in t_core[1:]
+    change = t_core - t_core[0] + 1e-9 * np.arange(n_nodes)
+    y = np.vstack([np.zeros(n_nodes), t_core])
+    d = np.vstack([np.zeros(n_nodes), change])
+    heat, c_eff = es.EntropySolver._core_heat_change(s, Budget(), y, d)
+    loop = [Budget.effective_capacity(t) for t in t_core]
+    np.testing.assert_allclose(c_eff, loop, rtol=1e-13)
+    trapezoid = sum(
+        0.5 * (a + b) * (y1 - y0) for a, b, y0, y1 in zip(loop, loop[1:], change, change[1:])
     )
-    assert got == pytest.approx(loop + sum(map(np.spacing, content)), rel=1e-13)
+    assert heat == pytest.approx(trapezoid, rel=1e-13, abs=0.0)
 
 
 def test_without_call_tolerances_the_scale_is_nan():
@@ -1331,7 +1335,7 @@ def test_without_call_tolerances_the_scale_is_nan():
 
     t_core = np.array([4000.0, 3999.0])
     got = es.EntropySolver._core_heat_tolerance(
-        SimpleNamespace(), None, t_core, [1.0e31, 2.0e31], np.array([1.0e27, 1.0e27])
+        SimpleNamespace(), t_core, np.array([1.0e27, 1.0e27])
     )
     assert np.isnan(got)
 
