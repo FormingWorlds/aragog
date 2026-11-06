@@ -991,7 +991,7 @@ _ZERO_ENERGY_INTEGRALS = {
     'solver_residual': 0.0,
     'state_heat': 0.0,
     'core': 0.0,
-    'core_tol': 0.0,
+    'core_tol': float('nan'),
 }
 
 
@@ -1207,7 +1207,7 @@ class SolverOutput:
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
-    step_core_tol_J: float = 0.0  # tolerance scale of step_dE_core_J [J]
+    step_core_tol_J: float = float('nan')  # tolerance scale of step_dE_core_J [J]; NaN: none
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
@@ -5140,7 +5140,7 @@ class EntropySolver:
             self._warn_once(
                 'atol_floor',
                 f'solver atol {self.parameters.solver.atol:.3e} is below the floor 1e-8; '
-                'the solve uses 1e-8',
+                'it is raised to 1e-8 before the scale factors of the call',
             )
         rtol = self.parameters.solver.rtol
 
@@ -6167,7 +6167,7 @@ class EntropySolver:
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         # Core energy content change over the call [J] from closed-form C_eff.
-        step_dE_core = step_core_tol = 0.0
+        step_dE_core, step_core_tol = 0.0, float('nan')
         y_arr = np.atleast_2d(y_pts)
         if core_bc == 'core_module' and getattr(self, '_core_module_budget', None) is not None:
             budget = self._core_module_budget
@@ -6247,7 +6247,11 @@ class EntropySolver:
             fn = getattr(budget, '_vmap_capacity', None)
             if fn is None:
                 fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
-            c_nodes = np.asarray(fn(t_core_traj[1:]))
+            n = (
+                t_core_traj.size - 1
+            )  # padded to a power of 2, so the jit compiles per size class
+            padded = np.pad(t_core_traj[1:], (0, (1 << max(n - 1, 0).bit_length()) - n), 'edge')
+            c_nodes = np.asarray(fn(padded))[:n]
         else:
             c_nodes = np.asarray(c_eff_vals)[1:]
         return float(np.sum(c_nodes * tol_nodes) + np.sum(np.spacing(np.abs(content))))
@@ -6955,7 +6959,7 @@ class EntropySolver:
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_core_J=step_integrals['core'],
-            step_core_tol_J=step_integrals.get('core_tol', 0.0),
+            step_core_tol_J=step_integrals['core_tol'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
