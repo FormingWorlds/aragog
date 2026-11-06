@@ -438,7 +438,7 @@ def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0, rtol_sf=1.
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
-    """V9 for a zero-flux start. The first call closes to 3e-4 of its CMB heat at the default
+    """The per-call core ledger of a zero-flux start. The first call closes to 3e-4 of its CMB heat at the default
     tolerances (measured 1.2e-4); with atol and rtol 1000 times tighter each of the first 3 calls
     closes to 1e-5, its residual falls at least 20 times (measured 111, 121, 143) and
     step_core_tol_J falls with it. From the fourth call on each call closes to 2e-6 at the

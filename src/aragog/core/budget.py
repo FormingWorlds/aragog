@@ -413,10 +413,10 @@ class CoreEnergyBudget:
                 'heat_content is the full-core content; a stratified budget evolves '
                 'only its convecting volume'
             )
-        secular = float(t_cmb) * float(self.secular_capacity())
         if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
-            return secular
-        return secular - self._released(0.0, float(_np.sqrt(self.t_onset - float(t_cmb))))
+            return float(t_cmb) * float(self.secular_capacity())
+        on_set = self.t_onset * float(self.secular_capacity())
+        return on_set + self.heat_change(self.t_onset, float(t_cmb) - self.t_onset)
 
     def heat_change(self, t_cmb, d_t) -> float:
         """Core heat change [J] from CMB temperature ``t_cmb`` to ``t_cmb + d_t``.
@@ -467,28 +467,27 @@ class CoreEnergyBudget:
             u_a, u_b = float(_np.sqrt(s_a)), float(_np.sqrt(s_b))
             if u_a + u_b > 0.0:
                 width = (-d_a if s_a > 0.0 and s_b > 0.0 else s_b - s_a) / (u_a + u_b)
-                released += self._released_panel(u_a, width)
+                above = max(t_a, t_a + d_a) > self.t_freeze
+                side = (
+                    (_np.nextafter(self.t_freeze, _np.inf), _np.inf)
+                    if above
+                    else (0.0, self.t_freeze)
+                )
+                released += self._released_panel(u_a, width, side)
         return secular - released
 
-    def _released(self, u_lo, u_hi) -> float:
-        """Latent and gravitational energy [J] released from ``u_lo`` to ``u_hi >= u_lo``, ``u =
-        sqrt(T_onset - T)``; one Gauss-Legendre panel per side of the freeze-out jump."""
-        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
-        if u_lo < u_freeze < u_hi:
-            return self._released_panel(u_lo, u_freeze - u_lo) + self._released_panel(
-                u_freeze, u_hi - u_freeze
-            )
-        return self._released_panel(u_lo, u_hi - u_lo)
-
-    def _released_panel(self, u_lo, width) -> float:
-        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``."""
+    def _released_panel(self, u_lo, width, side=(0.0, _np.inf)) -> float:
+        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``, its
+        node temperatures clipped to ``side`` [K]: a node of the piece above freeze-out that
+        rounds onto T_freeze keeps the liquid capacity."""
         boundary = getattr(self, '_boundary_capacity', None)
         if boundary is None:
             boundary = self._boundary_capacity = jax.jit(
                 jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
             )
         u = u_lo + 0.5 * width * (_GL_X + 1.0)
-        return 0.5 * width * float(jnp.sum(_GL_W * boundary(self.t_onset - u**2) * 2.0 * u))
+        t = jnp.clip(self.t_onset - u**2, *side)
+        return 0.5 * width * float(jnp.sum(_GL_W * boundary(t) * 2.0 * u))
 
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of an unstratified core.

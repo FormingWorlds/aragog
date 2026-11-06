@@ -443,13 +443,12 @@ def test_heat_change_is_the_content_difference_without_its_round_off(prof):
 @pytest.mark.physics_invariant
 def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, monkeypatch):
     """heat_change also books a heating call and calls from far above freeze-out to below it
-    (to 1e-10 against the contents; the far starts check the split, since their panels are those
-    of the contents, and a heating from below freeze-out to below onset its second piece), a 1e-12 K heating as C_eff dT, and a 2**-29 K change
-    that starts 2**-31 K above freeze-out as the capacities on its 2 sides times their
-    lengths, to 1e-12 (below about 1e-10 K the jump of the latent capacity, resolved to the
-    float spacing of T, sets the error); a legacy budget gives C_sec dT, a stratified one
-    refuses, a non-finite start or change gives NaN, and above onset the change is the secular
-    term without the quadrature."""
+    (to 1e-10 against the contents, which share their panel below freeze-out; a heating from
+    below freeze-out to below onset checks the second piece), a 1e-12 K heating as C_eff dT, and
+    a 2**-29 K change that starts 2**-31 K above freeze-out as the capacities on its 2 sides
+    times their lengths, to 1e-12; a legacy budget gives C_sec dT, a stratified one refuses, a
+    non-finite start or change gives NaN, and above onset the change is the secular term without
+    the quadrature."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(
         prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05

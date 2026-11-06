@@ -6186,18 +6186,18 @@ class EntropySolver:
             change = sol.get('energy_change')
             d_arr = np.atleast_2d(change) if change is not None else None
             if d_arr is None or d_arr.shape != y_arr.shape:
-                if not getattr(self, '_change_fallback_logged', False):
-                    self._change_fallback_logged = True
-                    logger.warning(
-                        'EntropySolver: the call has %s energy_change; its core heat is booked '
-                        'from the states, to the float spacing of the absolute temperatures',
-                        'no' if d_arr is None else 'a mismatched',
-                    )
-                d_arr = y_arr - y_arr[:, :1]
+                self._warn_once(
+                    'energy_change_fallback',
+                    f'EntropySolver: the call has {"no" if d_arr is None else "a mismatched"} '
+                    'energy_change; its core heat is booked from the states, to the float '
+                    'spacing of the absolute temperatures',
+                )
+                d_arr = y_arr
+            d_arr = d_arr - d_arr[:, :1]
             step_dE_core, c_eff_vals = self._core_heat_change(
-                self._core_module_budget, y_arr, d_arr - d_arr[:, :1]
+                self._core_module_budget, y_arr, d_arr
             )
-            step_core_tol = self._core_heat_tolerance(y_arr[n_stag + 1, :], c_eff_vals)
+            step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -6230,9 +6230,10 @@ class EntropySolver:
         Unstratified: the closed form :meth:`CoreEnergyBudget.heat_change` of the integrated
         change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
         c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
-        start as the solver integrates them: an absolute temperature near 5000 K holds a change
-        only to its float spacing, 9e-13 K, which times C_eff (9e26 to 8e27 J/K for the core
-        profiles of the tests) is about 8e14 to 7e15 J.
+        start as the solver integrates them: an absolute temperature holds a change only to its
+        float spacing, 4.5e-13 K below 4096 K and 9.1e-13 K above. C_eff of the test cores is
+        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset) and 9.0e26
+        to 1.84e27 J/K for the exoplanet profile, so the spacing is about 4e14 to 8e15 J.
 
         Parameters
         ----------
@@ -6276,16 +6277,17 @@ class EntropySolver:
             fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
         return budget.heat_change(t_core[0], d_arr[n + 1, -1]), _padded_call(fn, t_core)
 
-    def _core_heat_tolerance(self, t_core_traj, c_eff_vals) -> float:
+    def _core_heat_tolerance(self, d_core, c_eff_vals) -> float:
         """Error scale [J] of the core heat change of a call from the T_core error control.
 
         T_core is integrated as its change within the call, so each node allows ``atol + rtol
-        |T - T_0|`` [K]; the scale sums that times C_eff over the nodes after the start. It is a
+        |T - T_0|`` [K], from the changes ``d_core`` [K] of T_core along the call; the scale sums
+        that times C_eff over the nodes after the start. It is a
         diagnostic, not a limit: CVODE controls a norm over all states, and the CMB heat it is
         compared with is a trapezoid. NaN without the tolerances of the call.
         """
         atol, rtol = getattr(self, '_call_tol', (float('nan'), float('nan')))
-        tol_nodes = atol + rtol * np.abs(t_core_traj[1:] - t_core_traj[0])
+        tol_nodes = atol + rtol * np.abs(d_core[1:] - d_core[0])
         return float(np.sum(np.asarray(c_eff_vals)[1:] * tol_nodes))
 
     def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:

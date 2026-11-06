@@ -344,6 +344,7 @@ def _fake_solver(sol):
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=3, _pb_cache_misses=4)
     s._stag_entropy, s._step_heat_content = (lambda y: y), (lambda a, b: 0.0)
+    s._warned = set()
     seen = []
 
     def powers(t, y):

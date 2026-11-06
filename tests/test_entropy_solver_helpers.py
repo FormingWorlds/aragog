@@ -1018,7 +1018,7 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
     s._solution, s.entropy_eos = sol, object()
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
-    s._stag_entropy = lambda y: y
+    s._stag_entropy, s._warned = (lambda y: y), set()
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
     s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
@@ -1039,7 +1039,8 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
         'EntropySolver: the call has no energy_change'
     )
     assert sum('energy_change' in r.message for r in caplog.records) == 1
-    s._change_fallback_logged, sol.energy_change = False, sol.y[:, :1]
+    s._warned.clear()
+    sol.energy_change = sol.y[:, :1]
     with caplog.at_level('WARNING'):
         assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
     assert 'has a mismatched energy_change' in caplog.records[-1].message
@@ -1278,7 +1279,7 @@ def test_step_dE_core_heating_across_onset():
     s.entropy_eos = object()
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
-    s._stag_entropy = lambda y: y
+    s._stag_entropy, s._warned = (lambda y: y), set()
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
     s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
