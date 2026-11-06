@@ -602,6 +602,15 @@ def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
     assert np.all(g[inside & ((p < 240e9) | (p > 280e9))] > 0.0)
 
 
+@pytest.mark.parametrize('comp', [{'Si': 0.05}, {'H': 0.01, 'N': 0.002}, {}])
+def test_an_alloy_without_depressing_elements_has_a_nan_free_gradient(comp):
+    """Without S, C and O the liquidus is the pure-iron curve; its gradient passes jax.debug_nans,
+    which checks the branch that the X = 0 limit does not take."""
+    with jax.debug_nans(True):
+        g = float(AlloyLiquidus(comp).gradient(136e9))
+    assert g == float(jax.grad(IronMeltingCurve.t_melt_pure)(136e9))
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     'comp',
