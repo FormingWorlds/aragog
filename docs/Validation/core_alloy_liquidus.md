@@ -60,7 +60,7 @@ On Fe$_3$S units the form misses the curves by an RMS of 2.06, 2.22 and 0.70 K (
 
 **How to read the plot.** The x-axis is the C content in wt%, the y-axis the liquidus in K. The lines are the binary form through the end points of each curve; the circles are points of the curves of Mashino et al. (2019, first read). Between the end points the circles lie below the lines: the drawn curves are close to straight lines, and the ideal form lies above them.
 
-The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at 54, 138, 203, 255 and 330 GPa, and lies above them by at most 69, 154, 173, 159 and 142 K; straight lines between the end points miss by 0.0, 38.9, 42.6, 84.8 and 112.4 K. The shipped `AlloyLiquidus` misses the curves by 46.5, 175.1, 103.5, 105.1 and 75.1 K: its eutectic points come from the Simon fit and the composition curve of the same paper and differ from the ends of the drawn curves (at 138 GPa the fit gives 3012 K, the curve ends at 2885 K).
+The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at 54, 138, 203, 255 and 330 GPa, and lies above them by at most 69, 154, 173, 159 and 142 K; straight lines between the end points miss by 0.0, 38.9, 42.6, 84.8 and 112.4 K. The shipped `AlloyLiquidus` misses the curves by 46.5, 175.1, 103.5, 105.1 and 70.1 K: its eutectic points come from the Simon fit and the composition curve of the same paper and differ from the ends of the drawn curves (at 138 GPa the fit gives 3012 K, the curve ends at 2885 K).
 
 **Known limit.** Between pure iron and the eutectic the liquidus of a C-bearing alloy differs from the drawn curves by an RMS of 47 to 175 K.
 
@@ -74,7 +74,7 @@ The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at
 
 **Why this check exists.** The eutectic temperature fixes the lowest point of each binary. A wrong fit constant or a wrong table shifts the whole liquidus of an alloy near its eutectic.
 
-**What it tests.** The Fe-S eutectic temperature at 254 GPa and the Fe-C eutectic temperature at 330 GPa against the values the papers state, within 50 K; and the Fe-O eutectic temperature from 0 to 300 GPa against the second read of the curve of Oka et al. (2019, Fig. 4), the read that the table does not come from, within the drawn line width (0.354 pt) in figure points.
+**What it tests.** The Fe-S eutectic temperature at 254 GPa and the Fe-C eutectic temperature at 330 GPa against the values the papers state, within 50 K; and the Fe-O eutectic temperature from 0 to 325 GPa, the end of the Fe-O data, against the second read of the curve of Oka et al. (2019, Fig. 4), the read that the table does not come from, within the drawn line width (0.354 pt) in figure points.
 
 **How we know the right answer.** Mori et al. (2017) measured 3550 K at 254 GPa (run 11); Mashino et al. (2019, p. 140) give about 3750 K at 330 GPa; Oka et al. (2019) draw the Fe-O curve.
 
@@ -83,7 +83,7 @@ The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at
 ![Eutectic temperatures of Fe-S, Fe-C and Fe-O against pressure with the values of Mori et al. 2017, Mashino et al. 2019 and Oka et al. 2019](../assets/validation/core_alloy_liquidus_eutectic_temperatures.svg#only-light){ width="70%" }
 ![Eutectic temperatures of Fe-S, Fe-C and Fe-O against pressure with the values of Mori et al. 2017, Mashino et al. 2019 and Oka et al. 2019](../assets/validation/core_alloy_liquidus_eutectic_temperatures_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The x-axis is the pressure in GPa, the y-axis the eutectic temperature $T_e$ in K. The lines are the eutectic temperatures of the 3 binaries in Aragog; the circles are points of the second read of Oka et al. (2019), the square the value of Mori et al. (2017) and the diamond the value of Mashino et al. (2019). A pass means that the square and the diamond lie within 50 K of their lines and the circles on the Fe-O line. The code gives 3541.1 K (Fe-S, 254 GPa) and 3722.1 K (Fe-C, 330 GPa).
+**How to read the plot.** The x-axis is the pressure in GPa, the y-axis the eutectic temperature $T_e$ in K. The lines are the eutectic temperatures of the 3 binaries in Aragog; the circles are points of the second read of Oka et al. (2019), the square the value of Mori et al. (2017) and the diamond the value of Mashino et al. (2019). A pass means that the square and the diamond lie within 50 K of their lines and the circles on the Fe-O line. The code gives 3541.1 K (Fe-S, 254 GPa) and 3713.3 K (Fe-C, 330 GPa). Up to the end of each range the eutectic equals the shipped tables and, at 330 GPa, the anchors (5 wt% S, 3.35 wt% C and the Fe-C fit).
 
 ??? info "Test details"
     - Reference: Mori et al. (2017), run 11; Mashino et al. (2019), p. 140; Oka et al. (2019), Fig. 4, read B.
@@ -109,7 +109,7 @@ The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at
 
 **How to read the plot.** The x-axis is the total S + C + O content in wt% at a fixed ratio of 4 : 1 : 6 by mass, the y-axis the depression in K, at 135 GPa (top) and 330 GPa (bottom). The solid line is the harmonic rule of Aragog, the dashed lines 3 other rules. All rules agree at small content; the harmonic rule stays close to the sum of the binaries and far from the composition-weighted rule.
 
-The depression is 640.7 K at 135 GPa and 1737.9 K at 330 GPa. The composition-weighted rule gives 488.7 and 882.8 K, the sum of the binaries 664.2 and 1968.8 K, the dilute sum 679.6 and 2189.2 K. Scaled down by 10, 100 and 1000, the depression over the dilute sum is 0.99462, 0.99947 and 0.99995.
+The depression is 640.7 K at 135 GPa and 1748.6 K at 330 GPa. The composition-weighted rule gives 488.7 and 886.6 K, the sum of the binaries 664.2 and 1983.4 K, the dilute sum 679.6 and 2207.9 K. Scaled down by 10, 100 and 1000, the depression over the dilute sum is 0.99462, 0.99947 and 0.99995.
 
 ??? info "Test details"
     - Reference: the 4 rules and the dilute limit, written out in the test (analytical).
@@ -121,7 +121,7 @@ The depression is 640.7 K at 135 GPa and 1737.9 K at 330 GPa. The composition-we
 
 **Why this check exists.** The slope $dT/dP$ of the liquidus decides where a core starts to freeze: where it is smaller than the slope of the core adiabat, iron freezes first at the top. A kink in a table, an anchor point or the end of the data can make a false slope there.
 
-**What it tests.** For C contents of 0.5 to 3.3 wt%, S up to 4.8 wt%, O up to 10 wt% and 2 mixed alloys, the slope must be positive at every pressure from 1 to 600 GPa where the alloy is not past its eutectic. Over 300 to 360 GPa, into the extrapolation above the data, the slope must change by less than 0.1 K/GPa between points 0.1 GPa apart. Across the blend of the 2 C units the slope must fall less than 1 K/GPa below its value at the blend edges. For 5.0, 5.4 and 5.8 wt% S the least slope and the pressures where the slope is negative are pinned.
+**What it tests.** For C contents of 0.5 to 3.2 wt%, S up to 4.8 wt%, O up to 10 wt% and 2 mixed alloys, the slope must be positive at every pressure from 1 to 600 GPa where the alloy is not past its eutectic. Over 325 to 380 GPa, into the extrapolation above the data, the slope must change by less than 0.1 K/GPa between points 0.1 GPa apart. Across the blend of the 2 C units the slope must fall less than 1 K/GPa below its value at the blend edges. For 5.0, 5.4 and 5.8 wt% S and for 4 wt% S with 1 wt% C the least slope and the pressures where the slope is negative are pinned.
 
 **How we know the right answer.** A liquidus of a fixed composition rises with pressure where its data do; the pinned values come from the read curve of Mori et al. (2017, Fig. 5).
 
@@ -132,14 +132,14 @@ The depression is 640.7 K at 135 GPa and 1737.9 K at 330 GPa. The composition-we
 
 **How to read the plot.** The x-axis is the pressure in GPa, the y-axis the slope $dT/dP$ in K/GPa, for 2 wt% C, 4.8 and 5.4 wt% S and the mixed alloy of the tutorial (S 2, C 0.5, O 3, Si 4 wt%). The dashed line is 0. A pass means that every line except 5.4 wt% S stays above 0; 5.4 wt% S dips below 0 at 259 to 275 GPa. The small kinks are the 5 GPa nodes of the composition tables; above 330 GPa the slopes join the homologous rule without a step.
 
-The least slope of 3.3 wt% C is +0.35 K/GPa, and the slope changes by at most 0.018 K/GPa between points 0.1 GPa apart over 300 to 360 GPa. Across the C blend the slope falls at most 0.76 K/GPa (2 wt% C) below its edge value; a 10 GPa blend would fall 3.7 to 8.9 K/GPa.
+The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope changes by at most 0.025 K/GPa (3 wt% C) between points 0.1 GPa apart. Across the C blend the slope falls at most 0.76 K/GPa (2 wt% C) below its edge value; a 10 GPa blend would fall 3.7 to 8.9 K/GPa.
 
-**Known limit.** Near its eutectic the Fe-S liquidus falls with pressure where the read eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa).
+**Known limit.** Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa), 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa); outside the tests also 4.9, 6 and 7 wt% S between 209 and 275 GPa and 3.3 wt% C at 330 to 335 GPa ($-0.04$ K/GPa).
 
 ??? info "Test details"
     - Reference: the sign of the slope (physical); for 5.0 to 5.8 wt% S, pinned values of the read curve of Mori et al. (2017, Fig. 5).
     - Tolerance: slope above 0; step below 0.1 K/GPa; blend dip below 1 K/GPa; pinned least slope within 0.01 K/GPa and the negative range within 0.2 GPa.
-    - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_fe_s_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
+    - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls"`
 
 ## The 2 reads of each figure curve
@@ -155,7 +155,7 @@ The least slope of 3.3 wt% C is +0.35 K/GPa, and the slope changes by at most 0.
 ![Largest distance between the 2 reads of each figure curve over its tolerance](../assets/validation/core_alloy_liquidus_two_reads.svg#only-light){ width="60%" }
 ![Largest distance between the 2 reads of each figure curve over its tolerance](../assets/validation/core_alloy_liquidus_two_reads_dark.svg#only-dark){ width="60%" }
 
-**How to read the plot.** Each bar is one data file: X and a pressure in GPa for a liquidus curve, "X w" for a eutectic composition and "O T" for the Fe-O eutectic temperature. The bar length is the largest distance between the 2 reads over the tolerance of the file, half the drawn line width (the full width for the thin Fe-O temperature line). A pass means that every bar ends left of the dashed line at 1. The largest distance is 0.07 to 1.35 pt against tolerances of 0.35 to 2.34 pt, at most 0.80 of the tolerance.
+**How to read the plot.** Each bar is one data file: X and a pressure in GPa for a liquidus curve, "X w" for a eutectic composition and "O T" for the Fe-O eutectic temperature. The bar length is the largest distance between the 2 reads over the tolerance of the file, half the drawn line width (the full width for the thin Fe-O temperature line). A pass means that every bar ends left of the dashed line at 1 (the test allows 0.02 pt above the tolerance). The largest distance is 0.07 to 1.35 pt against tolerances of 0.35 to 2.34 pt, at most 0.80 of the tolerance.
 
 **Known limit.** The second read of the Fe-O composition has no points from 42 to 52 GPa, where an open symbol in the colour of the curve lies on it.
 

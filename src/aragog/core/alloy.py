@@ -16,8 +16,9 @@ The eutectic compositions and the Fe-O eutectic temperature are tables read from
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Outside the
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
-ratio (homologous) and the eutectic composition holds its end value; over the end of the data
-+- 20 GPa their pressure slopes fade to zero by a smootherstep. A composition past the Fe-rich
+ratio (homologous) and the eutectic composition holds its end value; over the 40 GPa above the
+end of the data the tables continue along their last segment while their pressure slopes fade to
+zero by a smootherstep. A composition past the Fe-rich
 side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
 """
 
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import functools
 import importlib.resources
+import numbers
 
 import jax
 import jax.numpy as jnp
@@ -80,34 +82,45 @@ def _data() -> dict:
     return {'composition': comp, 't_o': t_o, 'range': rng}
 
 
+def _interp(p_gpa, table):
+    """Linear interpolation of a 2-column table, its last segment continued beyond its end."""
+    x, y = table[:, 0], table[:, 1]
+    slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
+    return jnp.interp(p_gpa, x, y) + jnp.where(p_gpa > x[-1], (p_gpa - x[-1]) * slope, 0.0)
+
+
 def _eutectic_data(el: str, p_gpa):
-    """Eutectic temperature [K] and composition of the Fe-``el`` data at ``p_gpa`` [GPa]."""
+    """Eutectic temperature [K] and composition of the Fe-``el`` data at ``p_gpa`` [GPa], the
+    tables continued along their last segment."""
     d = _data()
     if el == 'O':
-        t_e = jnp.interp(p_gpa, d['t_o'][:, 0], d['t_o'][:, 1])
+        t_e = _interp(p_gpa, d['t_o'])
     else:
         t_ref, p_ref, a, c = _SIMON[el]
         t_e = t_ref * ((p_gpa - p_ref) / a + 1.0) ** (1.0 / c)
-    return t_e, jnp.interp(p_gpa, d['composition'][el][:, 0], d['composition'][el][:, 1])
+    return t_e, _interp(p_gpa, d['composition'][el])
 
 
 def eutectic(el: str, pressure):
     """Eutectic temperature [K] and composition (mass fraction of ``el``) of the Fe-``el`` binary.
 
-    The data are taken at an effective pressure ``q`` [GPa]: ``q = max(P, lo)`` below
-    ``hi - h``, ``q = hi`` above ``hi + h`` and, in between,
-    ``q = hi - h + 2h (z - z^4 (5/2 - 3z + z^2))`` with ``z = (P - hi + h) / 2h``, so that
-    ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3``: the slopes of the data
-    fade to zero at the range end ``hi`` (``h`` = :data:`HOMOLOGOUS_BLEND_HALF_WIDTH_GPA`). The
-    temperature keeps its ratio to the pure-iron curve at ``q`` (homologous outside the data) and
-    the composition its value at ``q``.
+    The data are taken at an effective pressure ``q`` [GPa]: ``q = max(P, lo)`` up to the end of
+    the data ``hi``, ``q = hi + h`` above ``hi + 2h`` and, in between,
+    ``q = hi + 2h (z - z^4 (5/2 - 3z + z^2))`` with ``z = (P - hi) / 2h``, so that
+    ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3``: the data are kept up to
+    ``hi`` and their slopes fade to zero over ``2h`` above it (``h`` =
+    :data:`HOMOLOGOUS_BLEND_HALF_WIDTH_GPA`), the tables continued along their last segment. The
+    temperature keeps its ratio to the pure-iron curve at ``q`` (homologous outside the data)
+    and the composition its value at ``q``.
     """
     lo, hi = _data()['range'][el]
     h = HOMOLOGOUS_BLEND_HALF_WIDTH_GPA
     p_gpa = jnp.asarray(pressure) / 1e9
-    z = 0.5 * (p_gpa - hi + h) / h
-    faded = hi - h + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
-    q = jnp.where(p_gpa < hi - h, jnp.maximum(p_gpa, lo), jnp.where(p_gpa > hi + h, hi, faded))
+    z = 0.5 * (p_gpa - hi) / h
+    faded = hi + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
+    q = jnp.where(
+        p_gpa <= hi, jnp.maximum(p_gpa, lo), jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded)
+    )
     t_e, w_e = _eutectic_data(el, q)
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
     return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
@@ -143,11 +156,16 @@ def binary_liquidus(el: str, w, t_fe, t_e, w_e, unit):
     return t_fe / (1.0 - jnp.log(free / (free + u)) / a)
 
 
-def _liquidus(pressure, w: dict, c_unit):
-    """Alloy liquidus [K] for one C unit choice; the composition is scaled back to the Fe-rich
-    boundary where ``sum w_i / w_e,i`` exceeds one."""
-    t_fe = IronMeltingCurve.t_melt_pure(pressure)
-    eut = {el: eutectic(el, pressure) for el in DEPRESSING}
+def _without_h_n(w: dict) -> dict:
+    """The composition without H and N, the rest renormalised: the alloy the liquidus sees."""
+    keep = 1.0 - w['H'] - w['N']
+    return {el: (0.0 if el in ('H', 'N') else w[el] / keep) for el in ELEMENTS}
+
+
+def _liquidus(t_fe, eut: dict, w: dict, c_unit):
+    """Alloy liquidus [K] for one C unit choice, from the pure-iron curve, the eutectic points and
+    the composition without H and N; the composition is scaled back to the Fe-rich boundary where
+    ``sum w_i / w_e,i`` exceeds one."""
     excess = sum(w[el] / eut[el][1] for el in DEPRESSING)
     scale = jnp.where(excess > 1.0, 1.0 / jnp.maximum(excess, 1.0), 1.0)
     ws = {el: (w[el] * scale if el in DEPRESSING else w[el]) for el in ELEMENTS}
@@ -159,7 +177,7 @@ def _liquidus(pressure, w: dict, c_unit):
     a_i = {el: _binary_a(el, t_fe, eut[el][0], eut[el][1], units[el]) for el in DEPRESSING}
     # log1p(-X) 1/A = (log1p(-X)/X) sum x_i/A_i; the ratio is -1 at X = 0, so dT/dw stays finite
     safe_x = jnp.where(big_x > 0.0, big_x, 1.0)
-    ratio = jnp.where(big_x > 0.0, jnp.log1p(-safe_x) / safe_x, -1.0)
+    ratio = jnp.where(big_x > 0.0, jnp.log1p(-safe_x) / safe_x, -1.0 - 0.5 * big_x)
     return t_fe / (1.0 - ratio * sum(x[el] / a_i[el] for el in DEPRESSING)), a_i
 
 
@@ -185,9 +203,11 @@ def _checked(composition) -> dict:
     out = {}
     for el in ELEMENTS:
         v = composition.get(el, 0.0)
+        if isinstance(v, numbers.Real) and not isinstance(v, bool):
+            v = float(v)
         try:
             a = np.asarray(v)
-        except Exception:
+        except (TypeError, ValueError):
             a = np.asarray(None)
         if a.ndim != 0 or a.dtype.kind not in 'fiu' or not np.isfinite(a):
             raise ValueError(f'mass fraction of {el} must be a finite real number, got {v!r}')
@@ -222,14 +242,16 @@ class AlloyLiquidus:
         """Liquidus temperature [K] at ``pressure`` [Pa]; ``composition`` overrides the
         instance's (values checked unless traced). Concrete results are checked against the
         pure-iron curve and each binary's A."""
-        w = _checked(self.composition if composition is None else composition)
+        w = _without_h_n(_checked(self.composition if composition is None else composition))
         p = jnp.asarray(pressure, dtype=float)
         lo = jnp.clip(
             0.5 * ((p - C_UNIT_SWITCH_PA) / C_UNIT_BLEND_HALF_WIDTH_PA + 1.0), 0.0, 1.0
         )
         blend = lo * lo * lo * (lo * (lo * 6.0 - 15.0) + 10.0)
-        t3, a3 = _liquidus(p, w, _UNITS_C[0])
-        t7, a7 = _liquidus(p, w, _UNITS_C[1])
+        t_fe = IronMeltingCurve.t_melt_pure(p)
+        eut = {el: eutectic(el, p) for el in DEPRESSING}
+        t3, a3 = _liquidus(t_fe, eut, w, _UNITS_C[0])
+        t7, a7 = _liquidus(t_fe, eut, w, _UNITS_C[1])
         t_liq = (1.0 - blend) * t3 + blend * t7
         if not isinstance(t_liq, jax.core.Tracer):
             _assert_invariants(p, t_liq, a3, a7)
@@ -245,7 +267,7 @@ class AlloyLiquidus:
         past the Fe-rich side and is held at the boundary; ``extrapolated`` where a depressing
         element present in the alloy is outside its binary's data range."""
         p_gpa = np.asarray(pressure, dtype=float) / 1e9
-        w = self.composition
+        w = _without_h_n(self.composition)
         excess = sum(w[el] / np.asarray(eutectic(el, p_gpa * 1e9)[1]) for el in DEPRESSING)
         rng = _data()['range']
         outside = np.zeros_like(p_gpa, dtype=bool)
