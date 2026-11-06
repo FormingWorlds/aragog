@@ -615,6 +615,26 @@ def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
     )
 
 
+@pytest.mark.physics_invariant
+def test_a_stratified_call_books_the_shell_heat_from_its_temperature_change():
+    """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-4
+    of its CMB heat (6.2e17 J): the shell heat change is booked from the cell temperature
+    changes, since each absolute shell heat (8.2e30 J) has a float spacing of 1.8e-3 of it."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-4 * abs(out.step_dE_F_cmb_J)
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
