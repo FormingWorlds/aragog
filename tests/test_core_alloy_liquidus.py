@@ -746,7 +746,6 @@ def test_the_shipped_liquidus_misses_the_figure_curves_as_stated(name, el, p_gpa
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
 def test_the_liquidus_slope_against_pressure(validation_plot):
     """The slope of the liquidus over 1 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
     and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its eutectic."""
