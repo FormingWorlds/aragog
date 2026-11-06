@@ -1056,6 +1056,7 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
+@pytest.mark.physics_invariant
 def test_a_call_books_the_core_heat_from_energy_change_not_from_the_states():
     """A 1e-9 K change of a core at 5000 K (float spacing 9.1e-13 K) is booked as C_eff x 1e-9 K to
     1e-6 from energy_change taken relative to its first node; the states alone give the change to

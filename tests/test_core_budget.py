@@ -495,18 +495,47 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
     assert budget.heat_change(t_on + 200.0, -1.0) == -1.0 * float(budget.secular_capacity())
 
 
+class _FreezeOutAboveTheJump(CoreEnergyBudget):
+    """A budget whose T_freeze sits 3 floats above its own, 2 floats into the liquid capacity."""
+
+    @property
+    def t_freeze(self):
+        t = super().t_freeze
+        for _ in range(3):
+            t = float(np.nextafter(t, np.inf))
+        return t
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('offset', 'd_t'),
-    [(0.5e-10, -1e-10), (-0.5e-10, 1e-10), (1e-12, -1e-10), (0.5e-12, -1e-12), (0.0, 1e-10)],
+    [
+        (0.5e-10, -1e-10),
+        (-0.5e-10, 1e-10),
+        (1e-12, -1e-10),
+        (0.5e-12, -1e-12),
+        (0.0, 1e-10),
+        (0.0, 1e-13),
+        (-1e-12, 1e-12),
+    ],
 )
-def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(prof, offset, d_t):
-    """A change of 1e-12 to 1e-10 K that crosses or starts at freeze-out books the capacity above
-    and below it times the exact length on each side, to 1e-9: a quadrature node of the piece
-    above freeze-out that rounds onto T_freeze (float spacing near 5e-13 K) must not take the
-    frozen capacity, which is less than 2/3 of the liquid one here."""
-    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
-    budget = CoreEnergyBudget(
+@pytest.mark.parametrize(
+    ('fraction', 'depression', 'budget_class'),
+    [
+        (0.1, 1.2, CoreEnergyBudget),
+        (0.05, 1.0, CoreEnergyBudget),
+        (0.1, 1.2, _FreezeOutAboveTheJump),
+    ],
+)
+def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(
+    prof, offset, d_t, fraction, depression, budget_class
+):
+    """A change of 1e-13 to 1e-10 K that crosses or starts at freeze-out books the capacity above
+    and below it times the exact length on each side, to 1e-9, wherever the float jump of the
+    capacity sits near T_freeze (1 or 2 floats above it for these curves, 2 below it for the
+    shifted budget): no quadrature node that rounds across the jump takes the other capacity."""
+    curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
+    budget = budget_class(
         prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
     )
     t_fr = budget.t_freeze
