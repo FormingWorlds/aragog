@@ -109,7 +109,7 @@ def test_si_counts_with_the_iron_solvent():
 @pytest.mark.parametrize('el', ['S', 'O'])
 def test_one_element_is_the_binary_ideal_form_on_component_units(el):
     """With one element the harmonic rule is the binary form, written out here by hand on Fe3S or
-    FeO units; S atoms in place of Fe3S units give another curve."""
+    FeO units; S or O atoms in place of the units give another curve (251 and 130 K higher)."""
     p = 135e9
     t_e, w_e = map(float, eutectic(el, p))
     t_fe = float(T_FE(p))
@@ -123,8 +123,7 @@ def test_one_element_is_the_binary_ideal_form_on_component_units(el):
     a_atoms = math.log(_units(w_e, el, (0.0, 1.0))) / (1.0 - t_fe / t_e)
     w = 0.4 * w_e
     atoms = t_fe / (1.0 - math.log(_units(w, el, (0.0, 1.0))) / a_atoms)
-    if el == 'S':
-        assert abs(float(AlloyLiquidus({el: w}).t_melt(p)) - atoms) > 20.0
+    assert abs(float(AlloyLiquidus({el: w}).t_melt(p)) - atoms) > 20.0
 
 
 def _multi_by_hand(p, comp):
@@ -312,8 +311,44 @@ def test_the_fe_c_misfit_against_mashino_stays_as_stated(validation_plot):
 )
 def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
     """Fe-S 3550 K at 254 GPa (Mori et al. 2017, run 11) and Fe-C about 3750 K at 330 GPa (Mashino
-    et al. 2019, p. 6)."""
-    assert float(eutectic(el, p_gpa * 1e9)[0]) == pytest.approx(expected, abs=tol)
+    et al. 2019, p. 6, a comparison); Fe-C is the Simon fit 1513 K ((P - 5)/8.4 + 1)^(1/4.1) of
+    Mashino et al. (2019), retyped here, to 1e-3."""
+    t_e = float(eutectic(el, p_gpa * 1e9)[0])
+    assert t_e == pytest.approx(expected, abs=tol)
+    if el == 'C':
+        assert t_e == pytest.approx(1513.0 * ((p_gpa - 5.0) / 8.4 + 1.0) ** (1 / 4.1), rel=1e-3)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('el', 'p_gpa'), [('S', 10.0), ('S', 0.0), ('C', 2.0)])
+def test_below_the_data_the_eutectic_is_held_homologous_and_flagged(el, p_gpa):
+    """Below the start of the data the eutectic composition is the table value there and the
+    eutectic temperature keeps its ratio to the pure-iron curve at the start; the flag marks it."""
+    lo = alloy._data()['range'][el][0]
+    t_lo, w_lo = (float(v) for v in eutectic(el, lo * 1e9))
+    t_e, w_e = (float(v) for v in eutectic(el, p_gpa * 1e9))
+    assert w_e == w_lo
+    assert t_e / float(T_FE(p_gpa * 1e9)) == pytest.approx(
+        t_lo / float(T_FE(lo * 1e9)), rel=1e-12
+    )
+    flags = AlloyLiquidus({el: 0.01}).status(np.array([p_gpa, lo]) * 1e9)['extrapolated']
+    assert flags.tolist() == [True, False]
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('w_c', [0.01, 0.03])
+def test_at_the_carbon_unit_switch_the_liquidus_is_the_mean_of_both_units(w_c):
+    """At 255 GPa the blend weight is 1/2, so the liquidus is the mean of its Fe3C and Fe7C3
+    forms."""
+    p = alloy.C_UNIT_SWITCH_PA
+    t_fe = IronMeltingCurve.t_melt_pure(p)
+    eut = {el: eutectic(el, p) for el in alloy.DEPRESSING}
+    w = alloy._without_h_n(alloy._checked({'C': w_c}))
+    t3, t7 = (float(alloy._liquidus(t_fe, eut, w, u)[0]) for u in alloy._UNITS_C)
+    assert abs(t3 - t7) > 1.0
+    assert float(AlloyLiquidus({'C': w_c}).t_melt(p)) == pytest.approx(
+        0.5 * (t3 + t7), rel=1e-12
+    )
 
 
 @pytest.mark.reference_pinned
