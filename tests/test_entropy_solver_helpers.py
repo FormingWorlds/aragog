@@ -1294,9 +1294,9 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
 @pytest.mark.parametrize('n_nodes', [1, 2, 3, 4, 6, 10])
 def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     """Without stratification the capacity at the nodes comes from a jit over a power-of-2 padded
-    array; it and the heat change booked from the integrated T_core change equal a plain loop for
-    every node count, also for a trace of the start alone, in the 64-bit JAX that a real core
-    budget sets on import."""
+    array and equals a plain loop for every node count, also for a trace of the start alone, in
+    the 64-bit JAX that a real core budget sets on import; the heat change is the budget's
+    heat_change of the integrated T_core change at the end."""
     from types import SimpleNamespace
 
     import jax
@@ -1313,6 +1313,10 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
         def effective_capacity(t):
             return 2.0e27 + 1.0e24 * (t - 4000.0)
 
+        @staticmethod
+        def heat_change(t0, dt):
+            return (2.0e27 + 1.0e24 * (t0 - 4000.0 + 0.5 * dt)) * dt
+
     s = SimpleNamespace(_n_stag=0)
     t_core = 4000.0 - np.arange(n_nodes) ** 1.5
     change = t_core - t_core[0] + 1e-9 * np.arange(n_nodes)
@@ -1321,10 +1325,8 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
     heat, c_eff = es.EntropySolver._core_heat_change(s, Budget(), y, d)
     loop = [Budget.effective_capacity(t) for t in t_core]
     np.testing.assert_allclose(c_eff, loop, rtol=1e-13)
-    trapezoid = sum(
-        0.5 * (a + b) * (y1 - y0) for a, b, y0, y1 in zip(loop, loop[1:], change, change[1:])
-    )
-    assert heat == pytest.approx(trapezoid, rel=1e-13, abs=0.0)
+    exact = Budget.heat_change(t_core[0], change[-1])
+    assert heat == pytest.approx(exact, rel=1e-13, abs=0.0)
 
 
 def test_without_call_tolerances_the_scale_is_nan():

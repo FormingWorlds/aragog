@@ -409,3 +409,29 @@ def test_heat_content_difference_is_the_capacity_integral(prof):
     assert legacy.heat_content(4000.0) == pytest.approx(
         4000.0 * float(legacy.secular_capacity())
     )
+
+
+@pytest.mark.physics_invariant
+def test_heat_change_is_the_content_difference_without_its_round_off(prof):
+    """heat_change(T0, dT) equals heat_content(T0 + dT) - heat_content(T0) above, across and
+    below nucleation onset and across freeze-out (1e-10), and books a 1e-12 K change as
+    C_eff(T0) dT above and below onset, which the difference of 2 contents of about 1e30 J,
+    rounded to their float spacing, cannot."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = budget.t_onset, budget.t_freeze
+    for t0, dt in (
+        (t_on + 200.0, -150.0),
+        (t_on + 50.0, -150.0),
+        (t_on - 40.0, -50.0),
+        (t_on - 100.0, t_fr - 30.0 - t_on + 100.0),
+    ):
+        diff = budget.heat_content(t0 + dt) - budget.heat_content(t0)
+        assert budget.heat_change(t0, dt) == pytest.approx(diff, rel=1e-10)
+    for t0 in (t_on + 10.0, t_on - 40.0):
+        exact = -1e-12 * float(budget.effective_capacity(t0))
+        assert budget.heat_change(t0, -1e-12) == pytest.approx(exact, rel=1e-6)
+        rounded = budget.heat_content(t0 - 1e-12) - budget.heat_content(t0)
+        assert rounded != pytest.approx(exact, rel=0.1)
