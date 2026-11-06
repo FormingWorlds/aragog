@@ -16,6 +16,9 @@ from aragog.solver.entropy_solver import SECS_PER_YEAR
 from tests.conftest import entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
+# Pure-function and config tests are unit; tests that build a solver from the EOS tables are smoke.
+pytestmark = pytest.mark.timeout(900)
+
 
 def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10):
     from aragog.parser import SolidRheologyParams
@@ -34,6 +37,7 @@ def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10):
     return s
 
 
+@pytest.mark.unit
 def test_floor_weight_limits_and_smoothness():
     """The weight is 0 at and below the floor, 1 above floor + width, and C2 at both ends."""
     S_sol = 2000.0
@@ -50,6 +54,7 @@ def test_floor_weight_limits_and_smoothness():
         assert abs(y1 - y0) / h < 1e-6
 
 
+@pytest.mark.unit
 def test_floor_weight_rises_from_1_to_6_j_per_kg_k_above_the_solidus():
     """The documented ramp: 0 up to S_sol + 1 J/kg/K, 0.5 at S_sol + 3.5, 1 from S_sol + 6."""
     S_sol = 2000.0
@@ -60,12 +65,14 @@ def test_floor_weight_rises_from_1_to_6_j_per_kg_k_above_the_solidus():
     assert sl.floor_weight(S_sol + 6.0, S_sol) == 1.0
 
 
+@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(st.floats(allow_nan=False, allow_infinity=False, min_value=-1e6, max_value=1e6))
 def test_floor_weight_stays_in_range(x):
     assert 0.0 <= sl.floor_weight(x, 0.0) <= 1.0
 
 
+@pytest.mark.unit
 def test_floor_flux_constant_diffusivity_hand_value():
     """rho T kappa (S_f - S_sol) / (h_f / 2) for a constant integrand: Phi is its integral."""
     Phi = 3000.0 * 1500.0 * 2.0 * 7.0  # rho T kappa dS
@@ -74,6 +81,7 @@ def test_floor_flux_constant_diffusivity_hand_value():
     assert sl.floor_flux(Phi, h, delta) == pytest.approx(want, rel=1e-14)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     'field, value',
     [('lid_mush_base', 1), ('lid_mush_base', 'yes'), ('lid_mush_base', None)],
@@ -85,12 +93,14 @@ def test_lid_mush_base_must_be_bool(field, value):
         check_lid_mush_base(value, True)
 
 
+@pytest.mark.unit
 def test_lid_mush_base_is_off_by_default():
     from aragog.parser import _BoundaryConditionsParameters
 
     assert _BoundaryConditionsParameters.__dataclass_fields__['lid_mush_base'].default is False
 
 
+@pytest.mark.smoke
 @needs_eos
 class TestSolver:
     @pytest.fixture(scope='class')
@@ -269,6 +279,7 @@ class TestSolver:
             assert math.isfinite(float(out[0]))
 
 
+@pytest.mark.unit
 def test_flux_surface_state_carries_the_prescribed_flux():
     """A lid under a prescribed flux: T_s from the conduction, F_s = F_atm; clipped at 1 K and
     at 1 K below the base."""
@@ -288,6 +299,7 @@ def test_flux_surface_state_carries_the_prescribed_flux():
         )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (2, True, False)]
 )
@@ -302,6 +314,7 @@ def test_prescribed_flux_needs_the_mush_base(bc, mush, ok):
             check_subgrid_lid(*args, lid_mush_base=mush)
 
 
+@pytest.mark.smoke
 @needs_eos
 class TestFluxSolver:
     @pytest.fixture(scope='class')
@@ -445,6 +458,7 @@ GOOD_LID = dict(
 )
 
 
+@pytest.mark.unit
 @settings(max_examples=80, deadline=None)
 @given(NOT_BOOL, st.booleans())
 def test_lid_mush_base_refuses_every_other_type(value, subgrid):
@@ -454,6 +468,7 @@ def test_lid_mush_base_refuses_every_other_type(value, subgrid):
         check_lid_mush_base(value, subgrid)
 
 
+@pytest.mark.unit
 @settings(max_examples=40, deadline=None)
 @given(st.booleans(), st.booleans())
 def test_lid_mush_base_needs_the_lid(mush, subgrid):
@@ -466,6 +481,7 @@ def test_lid_mush_base_needs_the_lid(mush, subgrid):
         assert check_lid_mush_base(mush, subgrid) is None
 
 
+@pytest.mark.unit
 @settings(max_examples=120, deadline=None)
 @given(st.booleans(), st.booleans(), st.integers(min_value=0, max_value=6))
 def test_outer_boundary_rule_of_the_lid(subgrid, mush, bc):
@@ -485,6 +501,7 @@ def test_outer_boundary_rule_of_the_lid(subgrid, mush, bc):
 FLUX = st.floats(min_value=-1e7, max_value=1e7, allow_nan=False)
 
 
+@pytest.mark.unit
 @settings(max_examples=120, deadline=None)
 @given(
     st.floats(min_value=-1e4, max_value=1e4, allow_nan=False),
@@ -494,6 +511,7 @@ def test_floor_weight_does_not_fall_with_entropy(S, dS):
     assert sl.floor_weight(S + dS, 0.0) >= sl.floor_weight(S, 0.0)
 
 
+@pytest.mark.unit
 @settings(max_examples=120, deadline=None)
 @given(
     st.floats(min_value=0.0, max_value=1e12, allow_nan=False),
@@ -516,6 +534,7 @@ def test_base_flux_lies_between_its_two_limits(Phi, h, frac, F_lo, g, q_conv):
     )
 
 
+@pytest.mark.smoke
 @needs_eos
 class TestRestore:
     @pytest.fixture(scope='class')
@@ -602,6 +621,7 @@ def _flux_lid_run(hv, T_b, k, delta0, E0, F_atm, F_b, t_yr, H=None, w_of=None):
     return y[0], y[1], sl.flux_surface_state(y[0], y[1], T_b, k, F_atm, floor, hv)
 
 
+@pytest.mark.smoke
 @needs_eos
 class TestFluxLidKnownAnswers:
     @pytest.fixture(scope='class')
@@ -683,6 +703,7 @@ def _mush_states(s):
         yield y
 
 
+@pytest.mark.smoke
 @needs_eos
 @pytest.mark.parametrize('outer', [1, 4])
 def test_jax_factory_rhs_matches_on_the_mush_base(outer):
@@ -724,6 +745,7 @@ def test_jax_factory_rhs_matches_on_the_mush_base(outer):
     assert info['rhs_calls'] == n
 
 
+@pytest.mark.unit
 @settings(max_examples=80, deadline=None)
 @given(
     st.one_of(
@@ -741,6 +763,7 @@ def test_lid_surface_temperature_refuses_every_other_value(value):
         check_lid_surface_temperature(value, 4, True)
 
 
+@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(st.floats(min_value=1.0e-3, max_value=1.0e5), st.integers(0, 6), st.booleans())
 def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc, mush):
@@ -754,6 +777,7 @@ def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc
             check_lid_surface_temperature(T, bc, mush)
 
 
+@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(
     st.one_of(
@@ -771,6 +795,7 @@ def test_lid_surface_flux_cap_refuses_every_other_value(value):
         check_lid_surface_flux_cap(value, 4, True, 500.0)
 
 
+@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(
     st.floats(min_value=1.0e-3, max_value=1.0e7),
@@ -818,6 +843,7 @@ def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=
     return s
 
 
+@pytest.mark.smoke
 @needs_eos
 class TestHeldSurface:
     @pytest.fixture(scope='class')

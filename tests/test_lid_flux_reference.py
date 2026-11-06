@@ -12,6 +12,8 @@ from scipy.sparse import lil_matrix
 
 from aragog import surface_lid as sl
 
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(900)]
+
 RHO, CP, K, T_B, DW = 3000.0, 1200.0, 4.0, 1500.0, 3.5e9
 KAPPA = K / (RHO * CP)
 YR = 3.15576e7
