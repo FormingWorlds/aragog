@@ -1055,6 +1055,46 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
+def test_a_call_books_the_core_heat_from_energy_change_not_from_the_states():
+    """A 1e-9 K change of a core at 5000 K (float spacing 9.1e-13 K) is booked as C_eff x 1e-9 K to
+    1e-6 from energy_change taken relative to its first node; the states alone give the change to
+    4.4e-4 only, and an energy_change taken without its start value books its offset too."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(profiles, curve, ds_fusion=170.0, icn_width=10.0)
+    t0, d_t, offset = 5000.0, 1e-9, 2.0**-20
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [t0, t0 + d_t]]),
+        energy_change=np.array([[0.0, 0.0], [offset, offset + d_t]]),
+    )
+    assert abs((t0 + d_t) - t0 - d_t) > 1e-4 * d_t  # the states miss the change
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution, s.entropy_eos = sol, object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+    booked = s._compute_step_energy_integrals()['core']
+    assert booked == pytest.approx(float(budget.effective_capacity(t0)) * d_t, rel=1e-6)
+
+
 def test_check_shell_base_refuses_the_inner_core_and_warns_once(caplog):
     """An inner core that reaches the base of the resolved shell is refused, naming both radii;
     a stable layer base within three cells of the shell base warns once per solver."""

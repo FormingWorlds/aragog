@@ -494,3 +494,26 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
         budget, '_released_panel', lambda *a, **k: pytest.fail('quadrature called above onset')
     )
     assert budget.heat_change(t_on + 200.0, -1.0) == -1.0 * float(budget.secular_capacity())
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('offset', 'd_t'),
+    [(0.5e-10, -1e-10), (-0.5e-10, 1e-10), (1e-12, -1e-10), (0.5e-12, -1e-12), (0.0, 1e-10)],
+)
+def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(prof, offset, d_t):
+    """A change of 1e-12 to 1e-10 K that crosses or starts at freeze-out books the capacity above
+    and below it times the exact length on each side, to 1e-9: a quadrature node of the piece
+    above freeze-out that rounds onto T_freeze (float spacing near 5e-13 K) must not take the
+    frozen capacity, which is less than 2/3 of the liquid one here."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_fr = budget.t_freeze
+    t0 = t_fr + offset
+    liquid, frozen = (float(budget.effective_capacity(t_fr + x)) for x in (1e-9, -1e-9))
+    assert liquid > 1.5 * frozen
+    above = t0 - t_fr if d_t < 0.0 else d_t - (t_fr - t0)
+    expected = np.sign(d_t) * (liquid * above + frozen * (abs(d_t) - above))
+    assert budget.heat_change(t0, d_t) == pytest.approx(expected, rel=1e-9)

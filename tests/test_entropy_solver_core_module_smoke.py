@@ -628,7 +628,8 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
     """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-8
     of its CMB heat (6.2e17 J, measured 1.7e-10): the core and shell heat changes are booked from
     the integrated temperature changes, not from absolute temperatures, whose float spacing
-    (9e-13 K) times C_eff is 2.3e-4 of that heat."""
+    (9e-13 K) times C_eff is 2.3e-4 of that heat; the same booking from the stored states misses
+    the bound."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -642,6 +643,9 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
     solver.solve()
     out = solver.get_state()
     assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
+    y = np.asarray(solver._solution.y)[:, [0, -1]]
+    old = solver._core_heat_change(solver._core_module_budget, y, y - y[:, :1])[0]
+    assert abs(old + out.step_dE_F_cmb_J) > 1e-8 * abs(out.step_dE_F_cmb_J)
 
 
 @needs_cvode
@@ -649,7 +653,8 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
 def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
     """A 5 yr call of an unstratified core from the driven start moves T_core by only 2e-12 K
     and books 3.9e15 J of CMB heat, 3.5 float spacings of the absolute core heat (8.95e30 J); at
-    tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat (measured 1.1e-7)."""
+    tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat (measured 1.1e-7), which
+    the difference heat_content(T1) - heat_content(T0) misses."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -663,6 +668,10 @@ def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
     solver.solve()
     out = solver.get_state()
     assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * abs(out.step_dE_F_cmb_J)
+    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+    budget = solver._core_module_budget
+    old = float(budget.heat_content(t1) - budget.heat_content(t0))
+    assert abs(old + out.step_dE_F_cmb_J) > 1e-6 * abs(out.step_dE_F_cmb_J)
 
 
 @needs_cvode
