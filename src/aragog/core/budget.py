@@ -467,27 +467,47 @@ class CoreEnergyBudget:
             u_a, u_b = float(_np.sqrt(s_a)), float(_np.sqrt(s_b))
             if u_a + u_b > 0.0:
                 width = (-d_a if s_a > 0.0 and s_b > 0.0 else s_b - s_a) / (u_a + u_b)
-                above = max(t_a, t_a + d_a) > self.t_freeze
-                side = (
-                    (_np.nextafter(self.t_freeze, _np.inf), _np.inf)
-                    if above
-                    else (0.0, self.t_freeze)
-                )
-                released += self._released_panel(u_a, width, side)
+                above = t_a > self.t_freeze or (t_a == self.t_freeze and d_a > 0.0)
+                released += self._released_panel(u_a, width, above)
         return secular - released
 
-    def _released_panel(self, u_lo, width, side=(0.0, _np.inf)) -> float:
-        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``, its
-        node temperatures clipped to ``side`` [K]: a node of the piece above freeze-out that
-        rounds onto T_freeze keeps the liquid capacity."""
+    def _boundary(self, t):
+        """Latent plus gravitational capacity [J/K] at the CMB temperatures ``t``, jitted once."""
         boundary = getattr(self, '_boundary_capacity', None)
         if boundary is None:
             boundary = self._boundary_capacity = jax.jit(
                 jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
             )
+        return boundary(t)
+
+    def _freeze_out_edges(self):
+        """The last frozen and the first liquid float [K] of the capacity jump at freeze-out.
+
+        The float sign test of the superheat puts the jump a few floats from ``t_freeze``, on
+        either side; a scan of 16 floats each way finds it, and without one jump in the scan the
+        edges are ``t_freeze`` and the next float.
+        """
+        edges = getattr(self, '_freeze_edges', None)
+        if edges is None:
+            ts = [self.t_freeze]
+            for _ in range(16):
+                ts = [_np.nextafter(ts[0], -_np.inf), *ts, _np.nextafter(ts[-1], _np.inf)]
+            liquid = _np.asarray(self._boundary(jnp.asarray(ts))) > 0.0
+            k = int(_np.argmax(liquid))
+            one_jump = k > 0 and bool(liquid[k:].all())
+            edges = (ts[k - 1], ts[k]) if one_jump else (ts[16], ts[17])
+            self._freeze_edges = edges = (float(edges[0]), float(edges[1]))
+        return edges
+
+    def _released_panel(self, u_lo, width, above) -> float:
+        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``, its
+        node temperatures clipped to the side of the freeze-out jump that ``above`` names, so that
+        a node rounding across the jump keeps the capacity of its piece."""
         u = u_lo + 0.5 * width * (_GL_X + 1.0)
-        t = jnp.clip(self.t_onset - u**2, *side)
-        return 0.5 * width * float(jnp.sum(_GL_W * boundary(t) * 2.0 * u))
+        lo, hi = self._freeze_out_edges()
+        t = self.t_onset - u**2
+        t = jnp.maximum(t, hi) if above else jnp.minimum(t, lo)
+        return 0.5 * width * float(jnp.sum(_GL_W * self._boundary(t) * 2.0 * u))
 
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of an unstratified core.

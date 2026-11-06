@@ -6232,8 +6232,9 @@ class EntropySolver:
         c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
         start as the solver integrates them: an absolute temperature holds a change only to its
         float spacing, 4.5e-13 K below 4096 K and 9.1e-13 K above. C_eff of the test cores is
-        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset) and 9.0e26
-        to 1.84e27 J/K for the exoplanet profile, so the spacing is about 4e14 to 8e15 J.
+        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset), 9.0e26 to
+        1.84e27 J/K for the exoplanet profile and 1.5e26 J/K for the convecting volume of the
+        stratified core, so the spacing is about 1.4e14 to 8e15 J.
 
         Parameters
         ----------
