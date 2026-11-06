@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import math
 
 import numpy as np
 import pytest
@@ -455,6 +456,8 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
         assert abs(tight) < 1e-5, residuals
         assert abs(loose) > 20.0 * abs(tight), residuals
         assert s_loose > 20.0 * s_tight > 0.0, scales
+        for res, scale in ((loose, s_loose), (tight, s_tight)):
+            assert abs(res) < 2.0 * scale < 2.0e3 * abs(res), (res, scale)
 
 
 @needs_cvode
@@ -469,7 +472,7 @@ def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
             solver.solve()
         hits = [r for r in caplog.records if 'below the floor 1e-8' in r.getMessage()]
         assert len(hits) == n_warned
-        assert solver._call_tol[0] == 1.0e-8
+        assert solver._call_tol[0] == pytest.approx(1.0e-8, rel=1e-12)
 
 
 @needs_cvode
@@ -919,3 +922,18 @@ def test_a_resume_restarts_the_shell_where_the_previous_solve_ended():
     second.set_initial_shell_temperature(end[n + 3 :])
     with pytest.raises(ValueError, match='cells'):
         second.set_initial_entropy(end[:n])
+
+
+@needs_cvode
+def test_a_core_bc_without_the_core_module_reports_no_tolerance_scale(shared_eos):
+    """A bower2018 call with the EOS tables books a core heat change but no tolerance scale."""
+    solver = _build('bower2018', shared_eos, {}, solver_method='cvode')
+    n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
+    s0 = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+    solver.set_initial_core_temperature(float(shared_eos.temperature(p_cmb, s0[:1])[0]) + 300.0)
+    solver.set_initial_entropy(s0)
+    solver.parameters.solver.start_time, solver.parameters.solver.end_time = 0.0, 1.0
+    solver.solve()
+    out = solver.get_state()
+    assert out.step_dE_core_J != 0.0
+    assert math.isnan(out.step_core_tol_J)

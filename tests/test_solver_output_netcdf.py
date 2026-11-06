@@ -99,6 +99,7 @@ def _make_output(
         step_dE_F_int_J=-1.0e22,
         step_dE_F_cmb_J=+5.0e21,
         step_dE_core_J=-4.8e21,
+        step_core_tol_J=3.250000000000123e19,
         step_dE_Q_radio_J=+3.0e19,
         step_dE_Q_tidal_J=+1.0e19,
         step_dE_Q_radio_cons_J=+3.1e19,
@@ -374,13 +375,14 @@ def test_to_netcdf_round_trips_nan_with_fill_value(tmp_path: Path) -> None:
     out = _make_output()
     out.E_state = float('nan')
     out.E_state_cons = float('nan')
+    out.step_core_tol_J = float('nan')
     f = tmp_path / 'nan_state.nc'
     out.to_netcdf(f)
 
     with nc.Dataset(f, mode='r') as ds:
         # Use ds.variables[name][...] with set_auto_mask(False) so we
         # see the raw NaN rather than a masked-array NaN-as-fill.
-        for name in ('E_state', 'E_state_cons'):
+        for name in ('E_state', 'E_state_cons', 'step_core_tol_J'):
             v = ds[name]
             v.set_auto_mask(False)
             value = float(np.asarray(v[...]))

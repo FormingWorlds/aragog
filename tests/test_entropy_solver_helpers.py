@@ -1291,3 +1291,40 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
     budget = build_core_module_budget({}, r_cmb=3.48e6, p_cmb_fallback=136e9)
     with pytest.raises(ValueError, match='needs k_core'):
         budget.conducted_adiabatic_flow(3.48e6, 4500.0)
+
+
+@pytest.mark.parametrize('n_nodes', [1, 2, 3, 4, 6, 10])
+def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
+    """Without stratification the capacity at the nodes comes from a jit over a power-of-2 padded
+    array; it equals a plain loop for every node count, also for a trace of the start alone."""
+    from types import SimpleNamespace
+
+    from aragog.solver import entropy_solver as es
+
+    class Budget:
+        @staticmethod
+        def effective_capacity(t):
+            return 2.0e27 + 1.0e24 * (t - 4000.0)
+
+    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
+    t_core = 4000.0 - np.arange(n_nodes) ** 1.5
+    content = [1.0e31, 2.0e31]
+    got = es.EntropySolver._core_heat_tolerance(s, Budget(), t_core, content)
+    loop = sum(
+        Budget.effective_capacity(t) * (1.0e-6 + 1.0e-4 * abs(t - t_core[0]))
+        for t in t_core[1:]
+    )
+    assert got == pytest.approx(loop + sum(map(np.spacing, content)), rel=1e-13)
+
+
+def test_without_call_tolerances_the_scale_is_nan():
+    """A scale needs the tolerances of the call; without them it is NaN, not round-off."""
+    from types import SimpleNamespace
+
+    from aragog.solver import entropy_solver as es
+
+    t_core = np.array([4000.0, 3999.0])
+    got = es.EntropySolver._core_heat_tolerance(
+        SimpleNamespace(), None, t_core, [1.0e31, 2.0e31], np.array([1.0e27, 1.0e27])
+    )
+    assert np.isnan(got)
