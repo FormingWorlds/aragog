@@ -3508,8 +3508,9 @@ class EntropySolver:
         positive once the lid-base isotherm lies below the face of ``lid_handover_cells`` top
         cells in the solid regime; -1 for a handed-over lid or without the stagnant-lid state.
         It updates only the column, the lid base and, when the crossing can lie in the lid, the
-        lid surface; its value equals the root after a full right-hand side evaluation. Without
-        the 'lid' closure the root is :meth:`_lid_solidus_root`."""
+        lid surface; its value equals the root after a full right-hand side evaluation. With the
+        mush base the root is ``(delta - LID_HANDOVER_FRAC h_top) / h_top`` for any closure;
+        without it and without the 'lid' closure the root is :meth:`_lid_solidus_root`."""
         if float(y[-2]) == 0.0:
             return -1.0
         if self._lid_mush:
