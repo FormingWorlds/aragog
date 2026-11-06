@@ -37,8 +37,8 @@ jobs:
     # headroom for JAX warmup, conda cache misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     env:
-      # The 3 longest core solves and the lid grid tests run alone on their own runners: beside
-      # the JAX lid tests the same solve takes 2.3 times its wall time on 4 vCPUs.
+      # The 3 longest core solves run alone on their own runner: beside the JAX lid tests the
+      # same solve takes 2.3 times its wall time on 4 vCPUs.
       CORE_SOLVES: >-
         tests/test_entropy_solver_core_module_smoke.py::test_a_stratified_default_start_keeps_the_core_and_closes_its_heat
         tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat
@@ -98,9 +98,9 @@ jobs:
       - name: Run unit + smoke + slow tests with coverage
         if: matrix.part == 'main'
         run: |
-          # 3 xdist workers on 4 vCPUs: with 4 the lid tests use swap and run close to their
-          # 900 s marker. pytest-cov combines the worker data into .coverage. -ra prints the
-          # failed, errored and skipped tests at the end, also for a cancelled run.
+          # 3 xdist workers on 4 vCPUs keep the JAX lid tests out of swap on the 16 GB runner.
+          # pytest-cov combines the worker data into .coverage. -ra prints the failed, errored
+          # and skipped tests at the end, also for a cancelled run.
           pytest -m "unit or smoke or integration or slow" -n 3 -o "addopts=" -ra \
             --ignore=tests/test_core_verification_page.py --ignore=tests/test_surface_lid_v2_grid.py \
             $(printf -- '--deselect=%s ' $CORE_SOLVES) \
@@ -118,6 +118,10 @@ jobs:
       - name: Run the long core solves in one process
         if: matrix.part == 'core-solves'
         run: |
+          # --deselect matches by id prefix: main must drop exactly the ids listed in CORE_SOLVES
+          n="$(pytest tests/test_entropy_solver_core_module_smoke.py --collect-only -q -p no:xdist \
+            -o "addopts=" $(printf -- '--deselect=%s ' $CORE_SOLVES) | grep -oE '[0-9]+ deselected' | cut -d' ' -f1)"
+          test "$n" -eq "$(wc -w <<< "$CORE_SOLVES")"
           pytest $CORE_SOLVES -m "unit or smoke or integration or slow" \
             -p no:xdist -o "addopts=" -ra --timeout=2700 --timeout-method=thread --durations=10 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
@@ -125,8 +129,9 @@ jobs:
       - name: Run the lid grid tests in one process
         if: matrix.part == 'lid-grid'
         run: |
+          # one process: beside the other JAX lid tests its C3 test runs close to the 900 s marker
           pytest tests/test_surface_lid_v2_grid.py -m "unit or smoke or integration or slow" \
-            -p no:xdist -o "addopts=" -ra --timeout=2700 --timeout-method=thread --durations=10 \
+            -p no:xdist -o "addopts=" -ra --timeout-method=thread --durations=10 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
 
       - name: Print the kernel out-of-memory lines
@@ -135,6 +140,7 @@ jobs:
         run: |
           # read the log first: a failed dmesg must not read as a run without an OOM kill
           log="$(sudo dmesg -T)"
+          test -n "$log" || { echo 'kernel log empty: OOM state unknown'; exit 1; }
           echo "kernel log: $(wc -l <<< "$log") lines"
           grep -iE 'out of memory|oom-kill|killed process' <<< "$log" || echo 'no OOM line'
 

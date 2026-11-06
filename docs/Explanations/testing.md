@@ -62,7 +62,7 @@ pytest tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balanc
 
 ### Parallel runs
 
-`pyproject.toml` does not set a default `addopts`; `pytest` runs serial unless `-n auto` (or another xdist option) is supplied explicitly. CI invokes `pytest -m "unit and not slow" -n auto` (`ci_tests.yml`) and, in the nightly (`nightly.yml`), `pytest -m "unit or smoke or integration or slow" -n auto` on every test file except `tests/test_core_verification_page.py`, which runs in its own job in one process; reproduce locally by adding the same flag:
+`pyproject.toml` does not set a default `addopts`; `pytest` runs serial unless `-n auto` (or another xdist option) is supplied explicitly. CI invokes `pytest -m "unit and not slow" -n auto` (`ci_tests.yml`) and, in the nightly (`nightly.yml`), `pytest -m "unit or smoke or integration or slow" -n 3` on every test except those of the 3 single-process jobs (the core verification page test, the 3 longest core module solves, `tests/test_surface_lid_v2_grid.py`); reproduce locally by adding the same flag:
 
 ```console
 pytest -m unit -n auto                       # parallel unit run
@@ -84,7 +84,7 @@ pytest -p no:faulthandler --timeout=60 --timeout-method=thread tests/
 | Trigger | Markers | Budget | Coverage |
 |---|---|---|---|
 | Push / PR (`ci_tests.yml`) | `unit and not slow` | < 5 min | No; test results uploaded to Codecov |
-| Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or integration or slow`, in 4 parallel jobs: the core verification page test in one process, the 3 longest core module solves in one process, the lid grid tests of `test_surface_lid_v2_grid.py` in one process, every other test under xdist | 150 min timeout per job (at most 85 min for the main job and 55 min for the others in recent runs) | Yes; a fifth job combines the data of all four, writes the XML, applies the 90 % gate and uploads to Codecov under flag `nightly` |
+| Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or integration or slow`, in 4 parallel jobs: the core verification page test in one process, the 3 longest core module solves in one process, the lid grid tests of `test_surface_lid_v2_grid.py` in one process, every other test under xdist | 150 min timeout per job (test time at most 85 min in the main job and 55 min in the others in recent runs) | Yes; a fifth job combines the data of all four, writes the XML, applies the 90 % gate and uploads to Codecov under flag `nightly` |
 | Manual `workflow_dispatch` | as above | as above | Yes |
 
 Push CI runs the unit tier only because each smoke test executes a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). The nightly tier carries the canonical 90% coverage floor; the per-push upload is a fast-feedback companion view of the unit subset.
@@ -101,7 +101,7 @@ If `FWL_DATA` is unset or the expected files are missing, `shared_eos` skips the
 
 ## Parallelization
 
-Tests are written to be order-independent and run cleanly under `pytest-xdist`. Pass `-n auto` to use all available cores; CI does this on both the unit and nightly tiers. If you observe flakiness only under xdist, that is a bug in the test (not in xdist). The one exception is `tests/test_core_verification_page.py`: its stable-layer item crashes an xdist worker and its values depend on the tests run before it in the same process, so the nightly runs that file alone in one process (`-p no:xdist`) and the test holds those values to bands measured over recorded runs.
+Tests are written to be order-independent and run cleanly under `pytest-xdist`. Pass `-n auto` to use all available cores; push CI does this on the unit tier, and the nightly uses `-n 3` on its 4-vCPU runner. If you observe flakiness only under xdist, that is a bug in the test (not in xdist). The one exception is `tests/test_core_verification_page.py`: its stable-layer item crashes an xdist worker and its values depend on the tests run before it in the same process, so the nightly runs that file alone in one process (`-p no:xdist`), and the test holds those values to bands measured over recorded runs. The nightly also runs the 3 longest core module solves and `tests/test_surface_lid_v2_grid.py` in one process each, for wall time, not for correctness.
 
 ## Coverage
 
@@ -109,7 +109,7 @@ Tests are written to be order-independent and run cleanly under `pytest-xdist`. 
 pytest --cov=aragog --cov-report=html -m "unit or smoke"
 ```
 
-Open `htmlcov/index.html` to inspect line-by-line coverage. Push CI measures no coverage. The nightly measures it in both test jobs; a third job combines their data, writes `coverage.xml` and uploads it to Codecov under flag `nightly`. The project floor is 90%, enforced via `[tool.coverage.report].fail_under` in `pyproject.toml` on the combined data.
+Open `htmlcov/index.html` to inspect line-by-line coverage. Push CI measures no coverage. The nightly measures it in all 4 test jobs; a fifth job combines their data, writes `coverage.xml` and uploads it to Codecov under flag `nightly`. The project floor is 90%, enforced via `[tool.coverage.report].fail_under` in `pyproject.toml` on the combined data.
 
 ## Linting
 
