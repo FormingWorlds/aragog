@@ -415,8 +415,8 @@ def test_heat_content_difference_is_the_capacity_integral(prof):
 def test_heat_change_is_the_content_difference_without_its_round_off(prof):
     """heat_change(T0, dT) equals heat_content(T0 + dT) - heat_content(T0) above, across and
     below nucleation onset and across freeze-out (1e-10), and books a 1e-12 K change as
-    C_eff(T0) dT above and below onset, which the difference of 2 contents of about 1e30 J,
-    rounded to their float spacing, cannot."""
+    C_eff(T0) dT above and below onset, where the difference of 2 contents of about 1e30 J is a
+    whole multiple of their float spacing."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(
         prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
@@ -434,14 +434,15 @@ def test_heat_change_is_the_content_difference_without_its_round_off(prof):
         exact = -1e-12 * float(budget.effective_capacity(t0))
         assert budget.heat_change(t0, -1e-12) == pytest.approx(exact, rel=1e-6)
         rounded = budget.heat_content(t0 - 1e-12) - budget.heat_content(t0)
-        assert rounded != pytest.approx(exact, rel=0.1)
+        assert (rounded / np.spacing(budget.heat_content(t0))).is_integer()
 
 
 @pytest.mark.physics_invariant
 def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, monkeypatch):
     """heat_change also books a heating call (to 1e-10 against the contents, a 1e-12 K heating
-    as C_eff dT) and a 2**-39 K change that straddles freeze-out as the mean capacity of both
-    sides; a legacy budget gives C_sec dT, a stratified one refuses, and above onset the change
+    as C_eff dT) and a 2**-29 K change that straddles freeze-out as the mean capacity of both
+    sides to 1e-12 (below about 1e-10 K the jump of the latent capacity, resolved to the float
+    spacing of T, sets the error); a legacy budget gives C_sec dT, a stratified one refuses, and above onset the change
     is the secular term without the released-energy quadrature."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(
@@ -454,10 +455,10 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
     for t0 in (t_on + 10.0, t_on - 40.0):
         exact = 1e-12 * float(budget.effective_capacity(t0))
         assert budget.heat_change(t0, 1e-12) == pytest.approx(exact, rel=1e-6)
-    h = 2.0**-40
+    h = 2.0**-30
     t0 = t_fr + h
-    sides = [float(budget.effective_capacity(t_fr + s * 1e-6)) for s in (1.0, -1.0)]
-    assert budget.heat_change(t0, -2.0 * h) == pytest.approx(-h * sum(sides), rel=1e-4)
+    sides = [float(budget.effective_capacity(t_fr + s * h / 2)) for s in (1.0, -1.0)]
+    assert budget.heat_change(t0, -2.0 * h) == pytest.approx(-h * sum(sides), rel=1e-12)
     legacy = CoreEnergyBudget(
         prof,
         curve,
