@@ -5915,9 +5915,7 @@ class EntropySolver:
             keep[0] = True  # a failed call holds the states before the first one outside
             sol.t, sol.y = sol.t[keep], sol.y[:, keep]
             sol.pop('energy_trace', None)
-            change = sol.pop('energy_change', None)
-            if change is not None and np.shape(change)[1:] == keep.shape:
-                sol.energy_change = np.asarray(change)[:, keep]
+            sol.pop('energy_change', None)
             sol.status, sol.success, sol.cvode_flag_name = -1, False, 'EOS_TABLE_GUARD'
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
@@ -6233,8 +6231,8 @@ class EntropySolver:
         change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
         c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
         start as the solver integrates them: an absolute temperature near 5000 K holds a change
-        only to its float spacing, 9e-13 K, which times C_eff (about 1e26 to 1e28 J/K) is about
-        1e14 to 1e16 J.
+        only to its float spacing, 9e-13 K, which times C_eff (9e26 to 8e27 J/K for the core
+        profiles of the tests) is about 8e14 to 7e15 J.
 
         Parameters
         ----------

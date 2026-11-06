@@ -422,8 +422,8 @@ class CoreEnergyBudget:
         """Core heat change [J] from CMB temperature ``t_cmb`` to ``t_cmb + d_t``.
 
         The integral of the effective capacity, equal to ``heat_content(t_cmb + d_t) -
-        heat_content(t_cmb)`` but without that difference of 2 contents near 1e30 J, whose float
-        spacing (about 1e15 J) can exceed the change of a short call: the secular term is
+        heat_content(t_cmb)`` but without that difference of 2 contents near 1e31 J, whose float
+        spacing (near 1e15 J) can exceed the change of a short call: the secular term is
         ``d_t C_secular`` and the released energy is integrated over ``u = sqrt(T_onset - T)``
         with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
         ``T_freeze - t_cmb``.
@@ -438,7 +438,7 @@ class CoreEnergyBudget:
         Returns
         -------
         float
-            Heat change [J], negative when the core cools.
+            Heat change [J], negative when the core cools; NaN for a non-finite input.
 
         Raises
         ------
@@ -451,13 +451,15 @@ class CoreEnergyBudget:
                 'only its convecting volume'
             )
         t0, dt = float(t_cmb), float(d_t)
+        if not (_np.isfinite(t0) and _np.isfinite(dt)):
+            return float('nan')
         secular = dt * float(self.secular_capacity())
         s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
         if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
         pieces = [(t0, dt)]
         if min(s0, s1) < self.t_onset - self.t_freeze < max(s0, s1):
-            d_freeze = self.t_freeze - t0  # exact: a difference of 2 close floats
+            d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
             pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
         released = 0.0
         for t_a, d_a in pieces:
