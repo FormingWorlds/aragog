@@ -452,7 +452,7 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
             cmb = out.step_dE_F_cmb_J
             scales[sf].append(out.step_core_tol_J / cmb)
             residuals[sf].append((out.step_dE_core_J + cmb) / cmb)
-    assert abs(residuals[1.0][0]) > 1e-5
+    assert 1e-5 < abs(residuals[1.0][0]) < 3e-4
     assert abs(residuals[1.0e-3][0]) < 3e-6, residuals
     for loose, tight, s_loose, s_tight in zip(*residuals.values(), *scales.values()):
         assert abs(tight) < 1e-5, residuals
