@@ -6270,6 +6270,16 @@ class EntropySolver:
                             f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
+                    if self._lid_mush:  # the floor check of _check_lid_step at every node
+                        floor = self._lid_S_sol + 0.5 * _lid.LID_FLOOR_GAP
+                        bad = np.flatnonzero((y_pts[-2] != 0.0) & (S_f < floor))
+                        if bad.size:
+                            k = int(bad[0])
+                            raise RuntimeError(
+                                f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: top '
+                                f'cell entropy {S_f[k]:.6g} J/kg/K below the floor, solidus '
+                                f'{self._lid_S_sol:.6g} J/kg/K'
+                            )
                     thin = (d != 0.0) & (d < self._lid_lo_bound(lid_lo))
                     bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
                     if bad.size:

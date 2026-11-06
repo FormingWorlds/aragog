@@ -323,6 +323,33 @@ class TestSolver:
             assert math.isfinite(float(out[0]))
 
 
+@pytest.mark.smoke
+@needs_eos
+def test_an_intermediate_state_below_the_floor_fails_the_jax_batch_path():
+    """The JAX batch path refuses an accepted state in the middle of the trace whose top cell
+    lies below the slack of the floor, as the NumPy loop refuses it at every node."""
+    from aragog.solver import entropy_solver as es
+    from tests.test_subgrid_lid_jax_rhs import _factory_rhs
+
+    if not es._CVODE_AVAILABLE:
+        pytest.skip('scikits.odes is not installed')
+    s = _solver(entropy_eos_copy(EOS_DIR), end=0.1)
+    s.parameters.energy.solver_method = 'cvode'
+    s.parameters.energy.use_jax_jacobian = True
+    s.set_jax_cvode_factory(lambda scales, mode: _factory_rhs(s, s.jax_lid_params())[:2])
+    s.solve()
+    sol = s._solution
+    t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+    k, i = t.size // 2, s._n_stag - 1
+    assert t.size >= 3 and y[-2, k] > 0.0
+    target = s._lid_S_sol + 0.25 * sl.LID_FLOOR_GAP
+    y[i, k] -= s._stag_entropy(y[:, k])[-1] - target
+    assert s._stag_entropy(y[:, k])[-1] == pytest.approx(target, abs=1e-9)
+    sol.energy_trace = (t, y)
+    with pytest.raises(RuntimeError, match=f'at step {k},.*below the floor'):
+        s._compute_step_energy_integrals()
+
+
 @pytest.mark.unit
 def test_flux_surface_state_carries_the_prescribed_flux():
     """A lid under a prescribed flux: T_s from the conduction, F_s = F_atm; clipped at 1 K and
