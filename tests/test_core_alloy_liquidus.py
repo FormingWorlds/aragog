@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from aragog.core import alloy
@@ -482,6 +482,8 @@ _bad_value = st.one_of(
 
 @settings(max_examples=60, deadline=None)
 @given(el=st.sampled_from(alloy.ELEMENTS), bad=_bad_value)
+@example(el='S', bad=-0.01)
+@example(el='C', bad=-1e-12)
 def test_a_bad_mass_fraction_is_refused(el, bad):
     with pytest.raises(ValueError, match='mass fraction'):
         AlloyLiquidus({el: bad})
