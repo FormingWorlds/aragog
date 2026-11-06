@@ -980,6 +980,16 @@ _STATUS_DESCRIPTION = (
 )
 
 
+def _padded_call(fn, *arrays):
+    """``fn(*arrays)`` on arrays padded to a power-of-2 length with their last value, so a jitted
+    ``fn`` compiles once per size class; the result is cut back to the input length."""
+    n = len(arrays[0])
+    if n == 0:
+        return np.zeros(0)
+    m = 1 << (n - 1).bit_length()
+    return np.asarray(fn(*(np.pad(np.asarray(a), (0, m - n), 'edge') for a in arrays)))[:n]
+
+
 _ZERO_ENERGY_INTEGRALS = {
     'F_int': 0.0,
     'F_cmb': 0.0,
@@ -1395,6 +1405,7 @@ class SolverOutput:
                 self.step_core_tol_J,
                 'J',
                 'Tolerance scale of the per-call core energy change',
+                fill_value_nan=True,
             )
             _scalar(
                 'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
@@ -6192,7 +6203,7 @@ class EntropySolver:
                     if c_eff_fn is None:
                         c_eff_fn = jax.jit(jax.vmap(c_eff))
                         budget._vmap_effective_capacity = c_eff_fn
-                    c_eff_vals = np.asarray(c_eff_fn(t_core_traj, base))
+                    c_eff_vals = _padded_call(c_eff_fn, t_core_traj, base)
                 except Exception:
                     c_eff_vals = np.array(
                         [float(c_eff(*map(float, a))) for a in zip(t_core_traj, base)]
@@ -6237,9 +6248,10 @@ class EntropySolver:
         T_core is integrated as its change within the call, so each node allows ``atol + rtol
         |T - T_0|`` [K]; the scale sums that times C_eff over the nodes after the start, plus the
         float spacing of the 2 heat contents. It is a diagnostic, not a limit: CVODE controls a
-        norm over all states, and the CMB heat it is compared with is a trapezoid.
+        norm over all states, and the CMB heat it is compared with is a trapezoid. NaN without the
+        tolerances of the call.
         """
-        atol, rtol = getattr(self, '_call_tol', (0.0, 0.0))
+        atol, rtol = getattr(self, '_call_tol', (float('nan'), float('nan')))
         tol_nodes = atol + rtol * np.abs(t_core_traj[1:] - t_core_traj[0])
         if c_eff_vals is None:
             import jax
@@ -6247,11 +6259,7 @@ class EntropySolver:
             fn = getattr(budget, '_vmap_capacity', None)
             if fn is None:
                 fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
-            n = (
-                t_core_traj.size - 1
-            )  # padded to a power of 2, so the jit compiles per size class
-            padded = np.pad(t_core_traj[1:], (0, (1 << max(n - 1, 0).bit_length()) - n), 'edge')
-            c_nodes = np.asarray(fn(padded))[:n]
+            c_nodes = _padded_call(fn, t_core_traj[1:])
         else:
             c_nodes = np.asarray(c_eff_vals)[1:]
         return float(np.sum(c_nodes * tol_nodes) + np.sum(np.spacing(np.abs(content))))
