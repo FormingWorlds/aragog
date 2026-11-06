@@ -174,7 +174,7 @@ def _liquidus(t_fe, eut: dict, w: dict, c_unit):
     big_x = sum(x.values())
     a_i = {el: _binary_a(el, t_fe, eut[el][0], eut[el][1], units[el]) for el in DEPRESSING}
     # log1p(-X) 1/A = (log1p(-X)/X) sum x_i/A_i; the ratio is -1 at X = 0, so dT/dw stays finite
-    safe_x = jnp.where(big_x > 0.0, big_x, 1.0)
+    safe_x = jnp.where(big_x > 0.0, big_x, 0.5)
     ratio = jnp.where(big_x > 0.0, jnp.log1p(-safe_x) / safe_x, -1.0 - 0.5 * big_x)
     return t_fe / (1.0 - ratio * sum(x[el] / a_i[el] for el in DEPRESSING)), a_i
 
