@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -15,6 +18,8 @@ from aragog.core import alloy
 from aragog.core.alloy import AlloyLiquidus, binary_liquidus, eutectic
 from aragog.core.melting import IronMeltingCurve
 from tests.conftest import assert_legend_clear, opaque_legend
+
+pytestmark = pytest.mark.unit
 
 DATA = Path(__file__).parent / 'validation' / 'data' / 'core_eutectics'
 T_FE = IronMeltingCurve.t_melt_pure
@@ -51,15 +56,22 @@ def test_each_binary_runs_through_pure_iron_and_its_eutectic(el, p_gpa):
     assert float(AlloyLiquidus({el: w_e}).t_melt(p)) == pytest.approx(t_e, rel=1e-12)
 
 
-@pytest.mark.unit
 def test_si_h_and_n_lower_no_melting_point():
-    """Si, H and N change density only (no liquidus data): the liquidus stays pure iron."""
+    """Si, H and N alone leave the liquidus at pure iron."""
     p = np.array([60e9, 135e9, 330e9])
     t = AlloyLiquidus({'Si': 0.06, 'H': 0.005, 'N': 0.01}).t_melt(p)
     np.testing.assert_array_equal(np.asarray(t), np.asarray(T_FE(p)))
 
 
-@pytest.mark.unit
+def test_h_and_n_leave_the_mole_basis():
+    """H and N have no liquidus data at core pressures: the alloy melts like the same alloy with
+    its H and N removed and the rest renormalised."""
+    p = np.array([60e9, 135e9, 330e9])
+    with_hn = np.asarray(AlloyLiquidus({'S': 0.02, 'O': 0.03, 'H': 0.01, 'N': 0.01}).t_melt(p))
+    without = np.asarray(AlloyLiquidus({'S': 0.02 / 0.98, 'O': 0.03 / 0.98}).t_melt(p))
+    np.testing.assert_allclose(with_hn, without, rtol=1e-12)
+
+
 def test_si_counts_with_the_iron_solvent():
     """Si atoms join the Fe solvent: they dilute the S units, so S with Si melts closer to iron
     than S alone, by the mole-fraction change written out here."""
@@ -76,7 +88,6 @@ def test_si_counts_with_the_iron_solvent():
     assert with_si > float(AlloyLiquidus({'S': w_s}).t_melt(p)) + 10.0
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize('el', ['S', 'O'])
 def test_one_element_is_the_binary_ideal_form_on_component_units(el):
     """With one element the harmonic rule is the binary form, written out here by hand on Fe3S or
@@ -128,10 +139,10 @@ def _multi_by_hand(p, comp):
 
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1800.0)])
-def test_the_harmonic_rule_gives_the_plan_table(p_gpa, expected, validation_plot):
+def test_the_harmonic_rule_gives_the_stated_depressions(p_gpa, expected, validation_plot):
     """For S 2, C 0.5, O 3 wt% the harmonic rule lowers the melting point by 641 K at 135 GPa and
-    1800 K at 330 GPa (plan section 4, an independent script); the composition-weighted rule gives
-    a far smaller depression."""
+    1800 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
+    far smaller depression."""
     p = p_gpa * 1e9
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.03}
     depression = float(T_FE(p) - AlloyLiquidus(comp).t_melt(p))
@@ -244,21 +255,23 @@ def test_the_fe_s_liquidus_curves_of_mori_are_the_ideal_form_on_fe3s_units(valid
 @pytest.mark.reference_pinned
 def test_the_fe_c_misfit_against_mashino_stays_as_stated(validation_plot):
     """Mashino et al. (2019, Fig. 8) draw near-straight Fe-C curves; the ideal form on Fe3C (below
-    255 GPa) and Fe7C3 units misses them by the RMS the plan states (on
-    read A, on the 0.1 wt% grid of the test data: 49.6, 112.3, 121.6, 111.7, 86.5 K); the C units
-    are not verified, and this test keeps the misfit from growing."""
+    255 GPa) and Fe7C3 units through each curve's end points, the zero-C end taken at w = 0 by
+    extrapolation of the first 2 points, misses them by the RMS the docs state (read A, 0.1 wt%
+    grid of the test data); the C units are not verified, and this test keeps the misfit from
+    growing."""
     stated = {
-        54: ('C', 49.6),
-        138: ('C', 112.3),
-        203: ('C', 121.6),
-        255: ('C7', 111.7),
-        330: ('C7', 86.5),
+        54: ('C', 48.7),
+        138: ('C', 110.1),
+        203: ('C', 120.8),
+        255: ('C7', 114.5),
+        330: ('C7', 101.5),
     }
     curves = {}
     for p_gpa, (unit, rms_stated) in stated.items():
         _, w, ta, _ = _read(f'mashino_liquidus_{p_gpa}GPa.csv')
+        t_fe = ta[0] - w[0] * (ta[1] - ta[0]) / (w[1] - w[0])
         model = np.asarray(
-            binary_liquidus('C', w / 100.0, ta[0], ta[-1], w[-1] / 100.0, UNIT[unit])
+            binary_liquidus('C', w / 100.0, t_fe, ta[-1], w[-1] / 100.0, UNIT[unit])
         )
         rms = np.sqrt(np.mean((model - ta) ** 2))
         assert rms < rms_stated + 1.0
@@ -277,12 +290,24 @@ def test_the_fe_c_misfit_against_mashino_stays_as_stated(validation_plot):
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize(
     ('el', 'p_gpa', 'expected', 'tol'),
-    [('S', 254.0, 3550.0, 50.0), ('C', 330.0, 3750.0, 50.0), ('O', 330.0, 3854.8, 1.0)],
+    [('S', 254.0, 3550.0, 50.0), ('C', 330.0, 3750.0, 50.0)],
 )
 def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
-    """Fe-S 3550 K at 254 GPa (Mori et al. 2017, run 11), Fe-C about 3750 K at 330 GPa (Mashino et
-    al. 2019, p. 6) and Fe-O 3854.8 K at 330 GPa (Oka et al. 2019, Fig. 4, read A)."""
+    """Fe-S 3550 K at 254 GPa (Mori et al. 2017, run 11) and Fe-C about 3750 K at 330 GPa (Mashino
+    et al. 2019, p. 6)."""
     assert float(eutectic(el, p_gpa * 1e9)[0]) == pytest.approx(expected, abs=tol)
+
+
+@pytest.mark.reference_pinned
+def test_the_fe_o_eutectic_temperature_meets_the_second_read():
+    """The Fe-O eutectic temperature lies on read B of Oka et al. (2019, Fig. 4), the read the
+    table does not come from, within the full drawn line width (0.354 pt) in figure points, from
+    0 to 300 GPa."""
+    _, p_gpa, _, tb = _read('oka2019_fig4_T.csv')
+    keep = (p_gpa >= 0.0) & (p_gpa <= 300.0)
+    got = np.asarray(eutectic('O', p_gpa[keep] * 1e9)[0])
+    assert np.sum(~np.isnan(tb[keep])) > 40
+    assert _perpendicular(p_gpa[keep], got, tb[keep], 0.4654, 0.04946) <= 0.354
 
 
 def _perpendicular(x, ya, yb, sx, sy):
@@ -304,18 +329,9 @@ def test_the_two_reads_of_each_figure_curve_agree(name):
     tolerance in the file header, in points of the source figure."""
     head, x, ya, yb = _read(name)
     scale = next(ln for ln in head if 'figure scale' in ln)
-    nums = [float(t) for t in scale.replace(';', ' ').replace(',', ' ').split() if _is_float(t)]
-    sx, sy, _, tol = nums[0], nums[1], nums[2], nums[3]
+    sx, sy, _, tol = map(float, re.findall(r'\d+\.?\d*', scale))
     assert np.sum(~np.isnan(yb)) > 10
     assert _perpendicular(x, ya, yb, sx, sy) <= tol + 0.02
-
-
-def _is_float(token):
-    try:
-        float(token)
-    except ValueError:
-        return False
-    return True
 
 
 @pytest.mark.physics_invariant
@@ -444,3 +460,102 @@ def test_a_bad_a_of_an_absent_element_is_refused(monkeypatch):
     monkeypatch.setitem(alloy._SIMON, 'S', (1.0e5, 21.0, 36.5, 2.07))
     with pytest.raises(ValueError, match='not positive'):
         AlloyLiquidus({'O': 0.02}).t_melt(135e9)
+
+
+_RISING = (
+    [{'C': w} for w in (0.005, 0.01, 0.02, 0.03, 0.033)]
+    + [{'S': w} for w in (0.01, 0.03, 0.05)]
+    + [{'O': w} for w in (0.01, 0.05, 0.1)]
+    + [
+        {'S': 0.02, 'C': 0.005, 'O': 0.03, 'Si': 0.04},
+        {'S': 0.03, 'O': 0.02},
+    ]
+)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    'comp', _RISING, ids=lambda c: '+'.join(f'{k}{v:g}' for k, v in c.items())
+)
+def test_the_liquidus_rises_with_pressure(comp):
+    """dT_liq/dP > 0 over 1 to 600 GPa wherever the alloy is not past the eutectic, so no table
+    node, anchor or end of the data sets a false top-down regime."""
+    p = np.linspace(1e9, 600e9, 2393)
+    liq = AlloyLiquidus(comp)
+    inside = ~liq.status(p)['past_eutectic']
+    slope = np.asarray(liq.gradient(p))[inside] * 1e9
+    assert inside.sum() > 100
+    assert slope.min() > 0.0, (p[inside][slope.argmin()] / 1e9, slope.min())
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('comp', [{'S': 0.05}, {'C': 0.01}, {'S': 0.02, 'C': 0.005, 'O': 0.03}])
+def test_the_end_of_the_data_adds_no_slope_step(comp):
+    """Into the homologous rule above 330 GPa the slope changes smoothly: between neighbouring
+    points 0.1 GPa apart over 300 to 360 GPa it moves by under 0.1 K/GPa (a hard switch at
+    330 GPa moves it by several K/GPa)."""
+    g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(300e9, 360e9, 601))) * 1e9
+    assert np.max(np.abs(np.diff(g))) < 0.1
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('el', ['S', 'C', 'O'])
+def test_the_composition_slope_at_zero_is_the_dilute_slope(el):
+    """dT_liq/dw of a traced composition at w = 0 is the dilute slope, equal to the finite
+    difference, not 0."""
+    liq = AlloyLiquidus({})
+    full = {e: 0.0 for e in alloy.ELEMENTS}
+
+    def t_of(w):
+        return liq.t_melt(135e9, {**full, el: w})
+
+    at_zero = float(jax.grad(t_of)(0.0))
+    h = 1e-7
+    assert at_zero < -1.0e3
+    assert at_zero == pytest.approx((float(t_of(h)) - float(t_of(0.0))) / h, rel=1e-4)
+
+
+def test_a_traced_composition_takes_zero_for_missing_keys():
+    """A traced composition with only some keys behaves like the full one; an unknown key still
+    fails."""
+    liq = AlloyLiquidus({})
+    part = jax.grad(lambda s: liq.t_melt(135e9, {'S': s}))(0.02)
+    full = jax.grad(lambda s: liq.t_melt(135e9, {**{e: 0.0 for e in alloy.ELEMENTS}, 'S': s}))(
+        0.02
+    )
+    assert float(part) == float(full)
+    with pytest.raises(ValueError, match='unknown light elements'):
+        jax.grad(lambda s: liq.t_melt(135e9, {'Mg': s}))(0.02)
+
+
+@pytest.mark.parametrize('zero_d', [jnp.asarray(0.02), np.asarray(0.02), np.float32(0.02)])
+def test_a_zero_dimensional_array_is_a_mass_fraction(zero_d):
+    """A 0-d NumPy or JAX array is a mass fraction like the float; a 1-d array is refused."""
+    liq = AlloyLiquidus({})
+    expected = float(liq.t_melt(135e9, {'S': float(zero_d)}))
+    assert float(liq.t_melt(135e9, {'S': zero_d})) == expected
+    with pytest.raises(ValueError, match='mass fraction'):
+        AlloyLiquidus({'S': np.array([0.02])})
+
+
+def test_o_is_flagged_beyond_its_composition_table():
+    """The Fe-O composition table ends at 325 GPa, so O is extrapolated from there."""
+    flags = AlloyLiquidus({'O': 0.05}).status(np.array([320e9, 327e9]))['extrapolated']
+    assert flags.tolist() == [False, True]
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.parametrize(
+    ('table', 'read'),
+    [('fe_s_composition', 'mori2017_fig5_S'), ('fe_c_composition', 'mashino2019_fig3_C')]
+    + [('fe_o_composition', 'oka2019_fig3_O'), ('fe_o_temperature', 'oka2019_fig4_T')],
+)
+def test_the_shipped_tables_are_the_first_read(table, read):
+    """Every shipped eutectic table row inside the read range lies on read A of its figure."""
+    shipped = alloy._table(table)
+    _, x, ya, _ = _read(f'{read}.csv')
+    scale = 1.0 if table == 'fe_o_temperature' else 100.0
+    inside = (shipped[:, 0] >= x[0]) & (shipped[:, 0] <= x[-1])
+    on_read = np.interp(shipped[inside, 0], x, ya) / scale
+    assert inside.sum() > 40
+    np.testing.assert_allclose(shipped[inside, 1], on_read, atol=0.06 if scale == 1.0 else 6e-6)
