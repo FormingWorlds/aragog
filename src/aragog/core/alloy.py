@@ -16,9 +16,9 @@ The eutectic compositions and the Fe-O eutectic temperature are tables read from
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Outside the
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
-ratio (homologous) and the eutectic composition holds its end value; over the 40 GPa above the
-end of the data the tables continue along their last segment while their pressure slopes fade to
-zero by a smootherstep. A composition past the Fe-rich
+ratio (homologous) and the eutectic composition is held; over the 40 GPa above the end of the
+data the tables continue along their last segment while their pressure slopes fade to zero by a
+smootherstep, so the held values are those of the continued tables 20 GPa above the end. A composition past the Fe-rich
 side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
 """
 
@@ -55,7 +55,7 @@ _UNITS = {'S': (3.0, 1.0), 'O': (1.0, 1.0)}
 _UNITS_C = ((3.0, 1.0), (7.0, 3.0))
 C_UNIT_SWITCH_PA = 255.0e9
 C_UNIT_BLEND_HALF_WIDTH_PA = 25.0e9
-HOMOLOGOUS_BLEND_HALF_WIDTH_GPA = 20.0
+HOMOLOGOUS_FADE_GPA = 40.0
 # Simon fits of the eutectic temperature, T_ref [K], P_ref [GPa], a [GPa], c.
 _SIMON = {'S': (1348.0, 21.0, 36.5, 2.07), 'C': (1513.0, 5.0, 8.4, 4.1)}
 
@@ -108,18 +108,20 @@ def eutectic(el: str, pressure):
     the data ``hi``, ``q = hi + h`` above ``hi + 2h`` and, in between,
     ``q = hi + 2h (z - z^4 (5/2 - 3z + z^2))`` with ``z = (P - hi) / 2h``, so that
     ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3``: the data are kept up to
-    ``hi`` and their slopes fade to zero over ``2h`` above it (``h`` =
-    :data:`HOMOLOGOUS_BLEND_HALF_WIDTH_GPA`), the tables continued along their last segment. The
+    ``hi`` and their slopes fade to zero over ``2h`` above it (``2h`` =
+    :data:`HOMOLOGOUS_FADE_GPA`), the tables continued along their last segment. The
     temperature keeps its ratio to the pure-iron curve at ``q`` (homologous outside the data)
     and the composition its value at ``q``.
     """
     lo, hi = _data()['range'][el]
-    h = HOMOLOGOUS_BLEND_HALF_WIDTH_GPA
+    h = 0.5 * HOMOLOGOUS_FADE_GPA
     p_gpa = jnp.asarray(pressure) / 1e9
     z = 0.5 * (p_gpa - hi) / h
     faded = hi + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
     q = jnp.where(
-        p_gpa <= hi, jnp.maximum(p_gpa, lo), jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded)
+        p_gpa <= hi,
+        jnp.where(p_gpa < lo, lo, p_gpa),
+        jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded),
     )
     t_e, w_e = _eutectic_data(el, q)
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
@@ -128,7 +130,7 @@ def eutectic(el: str, pressure):
 
 def _units(w: dict, units: dict):
     """Solvent moles (free Fe plus the Si atoms) and the mole numbers of the Fe_k X_m units, per
-    unit mass of alloy; H and N are not counted."""
+    unit mass of alloy, for a composition without H and N (see :func:`_without_h_n`)."""
     free = (1.0 - sum(w.values())) / _MOLAR['Fe'] + sum(w[el] / _MOLAR[el] for el in SOLVENT)
     u = {}
     for el in DEPRESSING:
@@ -203,11 +205,11 @@ def _checked(composition) -> dict:
     out = {}
     for el in ELEMENTS:
         v = composition.get(el, 0.0)
-        if isinstance(v, numbers.Real) and not isinstance(v, bool):
-            v = float(v)
         try:
+            if isinstance(v, numbers.Real) and not isinstance(v, bool):
+                v = float(v)
             a = np.asarray(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             a = np.asarray(None)
         if a.ndim != 0 or a.dtype.kind not in 'fiu' or not np.isfinite(a):
             raise ValueError(f'mass fraction of {el} must be a finite real number, got {v!r}')
