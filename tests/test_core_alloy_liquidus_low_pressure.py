@@ -60,6 +60,7 @@ def _smootherstep(z):
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_the_fe_s_eutectic_nodes_are_the_mean_of_two_reads_of_fei_1997():
     """At 1 bar, 10 and 14 GPa the eutectic is the mean of 2 reads of Fei et al. (1997, Fig. 2),
     which agree to 1.5 C and 0.03 wt%; at 21 GPa it is 1348 K (Fei et al. 2000, the start of the
@@ -122,6 +123,7 @@ def test_the_fe_s_eutectic_inside_the_join_is_the_smootherstep_mean():
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_the_fe_c_eutectic_below_5_gpa_is_the_natural_cubic():
     """From 1 bar (1416.15 K, 4.3 wt% C: Nakajima et al. 2009, p. 207) to the Mashino fit at
     5 GPa, T_e and w_e are the cubic with zero curvature at 1 bar and the value and slope of the
@@ -223,7 +225,9 @@ def _liquidus_points():
         for _, x, t, *_ in _csv('buono_walker2011_fig6_1bar.csv')
     ]
     bw = [
-        (6.0, _w_s(float(x)), float(t)) for _, t, x in _csv('buono_walker2011_table1_6GPa.csv')
+        (6.0, _w_s(float(x)), float(t))
+        for run, t, x in _csv('buono_walker2011_table1_6GPa.csv')
+        if run != 'BB-888'
     ]
     chen = [
         (float(p), float(w) / 100.0, float(t))
@@ -231,10 +235,11 @@ def _liquidus_points():
         if kind == 'liquid'
     ]
     fe_rich = [r for r in one_bar if r[1] < _w_e('S')(0.0)]
-    return fe_rich + [r for r in bw if r[1] < _w_s(0.604)] + chen
+    return fe_rich + bw + chen
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
     """Read A (vector marker centres) and read B (600 dpi raster) of the 23 points of Buono & Walker
     (2011, Fig. 6) agree within 0.5 pt of the figure (357.08 pt per unit X_FeS, 0.22779 pt per K);
@@ -265,6 +270,7 @@ def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('p_gpa', 'n', 'rms', 'mean'),
     [(0.0, 21, 75.0, -28.4), (6.0, 23, 141.4, -130.6), (10.0, 7, 89.0, -82.6)]
@@ -283,11 +289,17 @@ def test_the_low_pressure_liquidus_misses_the_measured_points_as_stated(p_gpa, n
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot):
     """Between 10 and 14 GPa the measured liquidus of Chen et al. (2008, linear between their
     points and their pure-Fe point) falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the
-    ideal form changes by +3.0, -14.5 and -26.9 K/GPa."""
+    ideal form changes by +3.0, -14.5 and -26.9 K/GPa. The 2 reads of the 11 points read twice agree
+    to 0.28 wt% and 3.2 K."""
     rows = _csv('chen2008_fig1_liquidus.csv')
+    both = [r for r in rows if r[4]]
+    assert len(both) == 11
+    for _, _, wa, ta, wb, tb in both:
+        assert abs(float(wa) - float(wb)) <= 0.28 and abs(float(ta) - float(tb)) <= 3.2
 
     def data(p, w):
         pts = sorted((float(r[2]), float(r[3])) for r in rows if float(r[0]) == p)
@@ -342,38 +354,44 @@ def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot
     validation_plot(figure, 'core_alloy_liquidus_low_pressure_liquidus')
 
 
-# code minus source, T_e [K] and w_e [wt%], in the row order of low_pressure_eutectic_checks.csv
-_CHECK_MISS = [
-    (-45.76, -0.935),
-    (-45.76, -0.808),
-    (-41.76, -2.937),
-    (77.24, -2.272),
-    (0.0, -0.669),
-    (36.60, None),
-    (52.45, None),
-    (-148.04, 1.678),
-    (-66.81, None),
-    (-3.85, 0.0),
-    (0.0, 0.311),
-    (77.54, 0.505),
-]
+# code minus source, T_e [K] and w_e [wt%], by source and pressure [GPa] of low_pressure_eutectic_checks.csv
+_CHECK_MISS = {
+    ('Buono & Walker 2011 Table 1', '6'): (-45.76, -0.935),
+    ('Ryzhenko & Kennedy 1973 via Buono & Walker 2011 Table 1', '6'): (-45.76, -0.808),
+    ('Usselman 1975 via Buono & Walker 2011 Table 1', '6'): (-41.76, -2.937),
+    ('Morard et al. 2007 via Buono & Walker 2011 Table 1', '6'): (77.24, -2.272),
+    ('Fei et al. 2000 p. 1831', '21'): (0.0, -0.669),
+    ('Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P', '21'): (36.60, None),
+    ('Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P', '25'): (52.45, None),
+    ('Chudinovskikh & Boehler 2007 Table 1', '21.9'): (-148.04, 1.678),
+    ('Chudinovskikh & Boehler 2007 Table 1', '23.0'): (-66.81, None),
+    ('Lord et al. 2009 p. 158 (after Chipman 1972)', '0'): (-3.85, 0.0),
+    ('Fei & Brosh 2014 p. 158', '5'): (0.0, 0.311),
+    ('Fei & Brosh 2014 p. 158', '10'): (77.54, 0.505),
+}
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
     """Eutectic points that set no node, code minus source: T_e [K] and w_e [wt%]; the 6 GPa
-    eutectic is 46 K and 0.9 wt% below Buono & Walker (2011), Kamada et al. (2010) lie within
-    their fit errors, the 21.9 and 23.0 GPa quench runs (upper bounds of T_e) lie above, and
-    Fe-C at 10 GPa is the Mashino fit, 77.5 K above Fei & Brosh (2014)."""
+    eutectic is 46 K and 0.9 wt% below Buono & Walker (2011), Kamada et al. (2010) lie inside
+    their fit errors, the 21.9 and 23.0 GPa quench runs (upper bounds of T_e) lie above, the liquid
+    at 21.9 GPa (on the Fe-rich liquidus) holds less S than w_e, and Fe-C at 10 GPa is the Mashino
+    fit, 77.5 K above Fei & Brosh (2014). The 2 anchors of the fits (Fei et al. 2000 at 21 GPa,
+    Fei & Brosh 2014 at 5 GPa) check the composition only."""
     rows = _csv('low_pressure_eutectic_checks.csv')
-    assert len(rows) == len(_CHECK_MISS)
-    for (src, el, p, t, t_err, comp, _, unit, kind), (dt, dw) in zip(rows, _CHECK_MISS):
+    assert {(r[0], r[2]) for r in rows} == set(_CHECK_MISS) and len(rows) == len(_CHECK_MISS)
+    assert [r[2] for r in rows if r[8] == 'anchor'] == ['21', '5']
+    for src, el, p, t, t_err, comp, _, unit, kind in rows:
+        dt, dw = _CHECK_MISS[(src, p)]
         t_e, w_e = (float(v) for v in eutectic(el, float(p) * 1e9))
         assert t_e - float(t) == pytest.approx(dt, abs=0.02), src
         if kind == 'fit':
             assert abs(t_e - float(t)) < float(t_err), src
         if kind == 'upper_bound_T':
             assert t_e < float(t), src
+            assert not comp or w_e > float(comp) / 100.0, src
         if comp:
             ref = _w_s(float(comp)) if unit == 'X_FeS' else float(comp) / 100.0
             assert 100.0 * (w_e - ref) == pytest.approx(dw, abs=0.002), src
@@ -453,3 +471,101 @@ def test_below_26_gpa_the_s_liquidus_falls_where_the_eutectic_falls(
         assert down.size == 0
     else:
         assert (down[0], down[-1]) == pytest.approx(falling, abs=0.015)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('p_gpa', [1.0, 3.0, 10.0])
+def test_below_18_gpa_the_fe_c_liquidus_is_the_ideal_form_on_fe3c_units(p_gpa):
+    """Below the S blend the Fe-C liquidus is the ideal form on Fe3C units through pure Fe and the
+    eutectic, written out by hand; on C atoms it is another curve."""
+    t_e, w_e = (float(v) for v in eutectic('C', p_gpa * 1e9))
+    t_fe = float(T_FE(p_gpa * 1e9))
+
+    def x_fe(w, k):
+        u = w / 12.011
+        free = (1.0 - w) / MOLAR['Fe'] - k * u
+        return free / (free + u)
+
+    for k, tol in ((3.0, 1e-12), (0.0, None)):
+        a = math.log(x_fe(w_e, k)) / (1.0 - t_fe / t_e)
+        for w in (0.4 * w_e, 0.8 * w_e):
+            hand = t_fe / (1.0 - math.log(x_fe(w, k)) / a)
+            code = float(AlloyLiquidus({'C': w}).t_melt(p_gpa * 1e9))
+            if tol:
+                assert code == pytest.approx(hand, rel=tol)
+            else:
+                assert abs(code - hand) > 5.0
+
+
+def _harmonic_by_hand(p_gpa, comp, s_unit):
+    """Harmonic-rule liquidus [K] of an S, C, O mixture with Fe3C and FeO units, by hand."""
+    units = {'S': s_unit, 'C': (3.0, 1.0), 'O': (1.0, 1.0)}
+    molar = {'S': 32.06, 'C': 12.011, 'O': 15.999}
+    t_fe = float(T_FE(p_gpa * 1e9))
+    free, u, inv_a = (1.0 - sum(comp.values())) / MOLAR['Fe'], {}, {}
+    for el, w in comp.items():
+        t_e, w_e = (float(v) for v in eutectic(el, p_gpa * 1e9))
+        k, m = units[el]
+        ue = w_e / molar[el] / m
+        fe = (1.0 - w_e) / MOLAR['Fe'] - k * ue
+        inv_a[el] = (1.0 - t_fe / t_e) / math.log(fe / (fe + ue))
+        u[el] = w / molar[el] / m
+        free -= k * u[el]
+    total = free + sum(u.values())
+    big = sum(u.values()) / total
+    return t_fe / (1.0 - math.log1p(-big) * sum(u[e] / total / big * inv_a[e] for e in comp))
+
+
+@pytest.mark.physics_invariant
+def test_a_mixture_takes_the_sulfur_units_of_its_pressure():
+    """A mixture of 2 wt% S, 0.5 wt% C and 1 wt% O, not past its eutectic, follows the harmonic rule
+    on FeS units at 10 GPa, on Fe3S units at 40 GPa and their mean at 22 GPa, written out by hand."""
+    comp = {'S': 0.02, 'C': 0.005, 'O': 0.01}
+    liq = AlloyLiquidus(comp)
+    assert not liq.status(np.array([10e9, 22e9, 40e9]))['past_eutectic'].any()
+    assert float(liq.t_melt(10e9)) == pytest.approx(
+        _harmonic_by_hand(10.0, comp, FES), rel=1e-12
+    )
+    assert float(liq.t_melt(40e9)) == pytest.approx(
+        _harmonic_by_hand(40.0, comp, FE3S), rel=1e-12
+    )
+    mid = 0.5 * (_harmonic_by_hand(22.0, comp, FES) + _harmonic_by_hand(22.0, comp, FE3S))
+    assert float(liq.t_melt(22e9)) == pytest.approx(mid, rel=1e-12)
+    assert abs(_harmonic_by_hand(22.0, comp, FES) - _harmonic_by_hand(22.0, comp, FE3S)) > 10.0
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('el', ['S', 'C', 'O'])
+def test_below_1_bar_the_eutectic_is_held_homologous_and_flagged(el):
+    """Below the start of the data (1 bar, written 0 GPa) the eutectic composition is its 1 bar
+    value and the eutectic temperature keeps its 1 bar ratio to the pure-iron curve; the flag
+    marks it."""
+    t0, w0 = (float(v) for v in eutectic(el, 0.0))
+    t_e, w_e = (float(v) for v in eutectic(el, -2e9))
+    assert w_e == w0
+    assert t_e / float(T_FE(-2e9)) == pytest.approx(t0 / float(T_FE(0.0)), rel=1e-12)
+    assert t_e != pytest.approx(t0, rel=1e-6)
+    flags = AlloyLiquidus({el: 0.01}).status(np.array([-2e9, 0.0]))['extrapolated']
+    assert flags.tolist() == [True, False]
+
+
+@pytest.mark.physics_invariant
+def test_the_fe3s_units_hold_the_eutectic_from_17_83_gpa():
+    """w_e reaches the 16.06 wt% that Fe3S units hold at 17.83 GPa, 0.17 GPa below the blend start."""
+    cap = MOLAR['S'] / (3.0 * MOLAR['Fe'] + MOLAR['S'])
+    assert _w_e('S')(17.82) > cap > _w_e('S')(17.84)
+    assert alloy.S_UNIT_BLEND_GPA[0] - 17.83 == pytest.approx(0.17, abs=0.01)
+
+
+@pytest.mark.physics_invariant
+def test_the_joins_and_blends_sit_where_the_data_need_them():
+    """The S unit blend ends below the C unit blend starts, so the 2 act one at a time; the S join
+    ends at the Simon reference pressure, the Mori composition table starts inside it, and the
+    Mashino table starts at the Fe-C Simon reference pressure, where the cubic joins."""
+    assert (
+        alloy.S_UNIT_BLEND_GPA[1] * 1e9
+        < alloy.C_UNIT_SWITCH_PA - alloy.C_UNIT_BLEND_HALF_WIDTH_PA
+    )
+    assert alloy.S_JOIN_GPA[1] == alloy._SIMON['S'][1]
+    assert alloy.S_JOIN_GPA[0] < alloy._table('fe_s_composition')[0, 0] < alloy.S_JOIN_GPA[1]
+    assert alloy._table('fe_c_composition')[0, 0] == alloy._SIMON['C'][1]

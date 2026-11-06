@@ -328,7 +328,9 @@ def test_at_the_carbon_unit_switch_the_liquidus_is_the_mean_of_both_units(w_c):
     t_fe = IronMeltingCurve.t_melt_pure(p)
     eut = {el: eutectic(el, p) for el in alloy.DEPRESSING}
     w = alloy._without_h_n(alloy._checked({'C': w_c}))
-    t3, t7 = (float(alloy._liquidus(t_fe, eut, w, u)[0]) for u in alloy._UNITS_C)
+    t3, t7 = (
+        float(alloy._liquidus(t_fe, eut, w, u, alloy._UNITS_S[1])[0]) for u in alloy._UNITS_C
+    )
     assert abs(t3 - t7) > 1.0
     assert float(AlloyLiquidus({'C': w_c}).t_melt(p)) == pytest.approx(
         0.5 * (t3 + t7), rel=1e-12
@@ -732,8 +734,9 @@ def test_the_shipped_liquidus_misses_the_figure_curves_as_stated(name, el, p_gpa
 
 @pytest.mark.physics_invariant
 def test_the_liquidus_slope_against_pressure(validation_plot):
-    """The slope of the liquidus over 26 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
-    and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its eutectic."""
+    """The slope of the liquidus over 1 to 600 GPa for 4 alloys (26 to 600 GPa with S): positive
+    for 2 wt% C, 4.8 wt% S and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its
+    eutectic."""
     p = np.linspace(1e9, 600e9, 1198)
     comps = {
         'C 2': {'C': 0.02},
@@ -744,7 +747,8 @@ def test_the_liquidus_slope_against_pressure(validation_plot):
     slopes = {k: np.asarray(AlloyLiquidus(c).gradient(p)) * 1e9 for k, c in comps.items()}
     for k, g in slopes.items():
         low = (p > 259e9) & (p < 275e9)
-        assert (g[low].min() < 0.0) if k == 'S 5.4' else (g[p >= 26e9].min() > 0.0), k
+        cut = p >= (26e9 if 'S' in comps[k] else 0.0)
+        assert (g[low].min() < 0.0) if k == 'S 5.4' else (g[cut].min() > 0.0), k
 
     def figure():
         import matplotlib.pyplot as plt
