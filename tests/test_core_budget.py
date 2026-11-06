@@ -444,7 +444,7 @@ def test_heat_change_is_the_content_difference_without_its_round_off(prof):
 def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, monkeypatch):
     """heat_change also books a heating call and calls from far above freeze-out to below it
     (to 1e-10 against the contents; the far starts check the split, since their panels are those
-    of the contents), a 1e-12 K heating as C_eff dT, and a 2**-29 K change
+    of the contents, and a heating from below freeze-out to below onset its second piece), a 1e-12 K heating as C_eff dT, and a 2**-29 K change
     that starts 2**-31 K above freeze-out as the capacities on its 2 sides times their
     lengths, to 1e-12 (below about 1e-10 K the jump of the latent capacity, resolved to the
     float spacing of T, sets the error); a legacy budget gives C_sec dT, a stratified one
@@ -461,6 +461,7 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
         (t_fr - 30.0, t_on - t_fr + 80.0),
         (8000.0, -4400.0),
         (20000.0, -18000.0),
+        (t_fr - 30.0, 60.0),
     ):
         diff = budget.heat_content(t0 + dt) - budget.heat_content(t0)
         assert budget.heat_change(t0, dt) == pytest.approx(diff, rel=1e-10)
