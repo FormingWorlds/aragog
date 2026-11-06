@@ -7,23 +7,24 @@ Fe and the Fe_k X_m units of the alloy, ``T_Fe`` the pure-iron curve of
 eutectic point (``w_e``, ``T_e``). The units are Fe3S for S and FeO for O; for C they are Fe3C
 below 255 GPa and Fe7C3 above, joined by a C2 blend of the two liquidus temperatures over
 230 to 280 GPa. With several elements, ``x_Fe = 1 - sum x_i`` and ``1/A = sum (x_i/X) / A_i``,
-which keeps the dilute limit of each binary, ``dT ~ T_Fe sum x_i / A_i``. Si, H and N lower no
-melting point: their atoms count with the Fe solvent, so an Fe-Si alloy melts like Fe.
+which keeps the dilute limit of each binary, ``dT ~ T_Fe sum x_i / A_i``. Si is treated as
+lowering no melting point: its atoms count with the Fe solvent, so an Fe-Si alloy melts like Fe.
+H and N have no liquidus data at core pressures and leave the mole count: an alloy melts like the
+same alloy without them.
 
 The eutectic compositions and the Fe-O eutectic temperature are tables read from the papers'
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Outside the
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
-ratio (homologous) and the eutectic composition holds its end value. A composition past the
-Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
+ratio (homologous) and the eutectic composition holds its end value; over the end of the data
++- 20 GPa their pressure slopes fade to zero by a smootherstep. A composition past the Fe-rich
+side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
 """
 
 from __future__ import annotations
 
 import functools
 import importlib.resources
-import math
-import numbers
 
 import jax
 import jax.numpy as jnp
@@ -36,6 +37,7 @@ jax.config.update('jax_enable_x64', True)
 DEPRESSING = ('S', 'C', 'O')
 INERT = ('Si', 'H', 'N')
 ELEMENTS = DEPRESSING + INERT
+SOLVENT = ('Si',)
 # Standard atomic weights [g/mol]; only ratios enter.
 _MOLAR = {
     'Fe': 55.845,
@@ -51,6 +53,7 @@ _UNITS = {'S': (3.0, 1.0), 'O': (1.0, 1.0)}
 _UNITS_C = ((3.0, 1.0), (7.0, 3.0))
 C_UNIT_SWITCH_PA = 255.0e9
 C_UNIT_BLEND_HALF_WIDTH_PA = 25.0e9
+HOMOLOGOUS_BLEND_HALF_WIDTH_GPA = 20.0
 # Simon fits of the eutectic temperature, T_ref [K], P_ref [GPa], a [GPa], c.
 _SIMON = {'S': (1348.0, 21.0, 36.5, 2.07), 'C': (1513.0, 5.0, 8.4, 4.1)}
 
@@ -72,44 +75,48 @@ def _data() -> dict:
     rng = {
         'S': (_SIMON['S'][1], comp['S'][-1, 0]),
         'C': (_SIMON['C'][1], comp['C'][-1, 0]),
-        'O': (max(comp['O'][0, 0], t_o[0, 0]), t_o[-1, 0]),
+        'O': (max(comp['O'][0, 0], t_o[0, 0]), min(comp['O'][-1, 0], t_o[-1, 0])),
     }
     return {'composition': comp, 't_o': t_o, 'range': rng}
 
 
-def _eutectic_at(el: str, p_gpa):
-    """Eutectic temperature [K] and composition (mass fraction) of the Fe-``el`` binary inside
-    its data range, at ``p_gpa`` [GPa] already clipped to that range."""
+def _eutectic_data(el: str, p_gpa):
+    """Eutectic temperature [K] and composition of the Fe-``el`` data at ``p_gpa`` [GPa]."""
     d = _data()
-    table = d['composition'][el]
-    w_e = jnp.interp(p_gpa, table[:, 0], table[:, 1])
     if el == 'O':
         t_e = jnp.interp(p_gpa, d['t_o'][:, 0], d['t_o'][:, 1])
     else:
         t_ref, p_ref, a, c = _SIMON[el]
         t_e = t_ref * ((p_gpa - p_ref) / a + 1.0) ** (1.0 / c)
-    return t_e, w_e
+    return t_e, jnp.interp(p_gpa, d['composition'][el][:, 0], d['composition'][el][:, 1])
 
 
 def eutectic(el: str, pressure):
     """Eutectic temperature [K] and composition (mass fraction of ``el``) of the Fe-``el`` binary.
 
-    Outside the binary's data range the temperature keeps its ratio to the pure-iron curve at the
-    range end and the composition its end value.
+    The data are taken at an effective pressure ``q`` [GPa]: ``q = max(P, lo)`` below
+    ``hi - h``, ``q = hi`` above ``hi + h`` and, in between,
+    ``q = hi - h + 2h (z - z^4 (5/2 - 3z + z^2))`` with ``z = (P - hi + h) / 2h``, so that
+    ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3``: the slopes of the data
+    fade to zero at the range end ``hi`` (``h`` = :data:`HOMOLOGOUS_BLEND_HALF_WIDTH_GPA`). The
+    temperature keeps its ratio to the pure-iron curve at ``q`` (homologous outside the data) and
+    the composition its value at ``q``.
     """
     lo, hi = _data()['range'][el]
+    h = HOMOLOGOUS_BLEND_HALF_WIDTH_GPA
     p_gpa = jnp.asarray(pressure) / 1e9
-    clipped = jnp.clip(p_gpa, lo, hi)
-    t_e, w_e = _eutectic_at(el, clipped)
+    z = 0.5 * (p_gpa - hi + h) / h
+    faded = hi - h + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
+    q = jnp.where(p_gpa < hi - h, jnp.maximum(p_gpa, lo), jnp.where(p_gpa > hi + h, hi, faded))
+    t_e, w_e = _eutectic_data(el, q)
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
-    t_fe_end = IronMeltingCurve.t_melt_pure(clipped * 1e9)
-    return t_e * t_fe / t_fe_end, w_e
+    return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
 
 
 def _units(w: dict, units: dict):
-    """Solvent moles (free Fe plus the Si, H and N atoms) and the mole numbers of the Fe_k X_m
-    units, per unit mass of alloy."""
-    free = (1.0 - sum(w.values())) / _MOLAR['Fe'] + sum(w[el] / _MOLAR[el] for el in INERT)
+    """Solvent moles (free Fe plus the Si atoms) and the mole numbers of the Fe_k X_m units, per
+    unit mass of alloy; H and N are not counted."""
+    free = (1.0 - sum(w.values())) / _MOLAR['Fe'] + sum(w[el] / _MOLAR[el] for el in SOLVENT)
     u = {}
     for el in DEPRESSING:
         k, m = units[el]
@@ -150,34 +157,43 @@ def _liquidus(pressure, w: dict, c_unit):
     x = {el: u[el] / total for el in DEPRESSING}
     big_x = sum(x.values())
     a_i = {el: _binary_a(el, t_fe, eut[el][0], eut[el][1], units[el]) for el in DEPRESSING}
+    # log1p(-X) 1/A = (log1p(-X)/X) sum x_i/A_i; the ratio is -1 at X = 0, so dT/dw stays finite
     safe_x = jnp.where(big_x > 0.0, big_x, 1.0)
-    inv_a = sum((x[el] / safe_x) / a_i[el] for el in DEPRESSING)
-    t_liq = t_fe / (1.0 - jnp.log1p(-big_x) * inv_a)
-    return jnp.where(big_x > 0.0, t_liq, t_fe), a_i
+    ratio = jnp.where(big_x > 0.0, jnp.log1p(-safe_x) / safe_x, -1.0)
+    return t_fe / (1.0 - ratio * sum(x[el] / a_i[el] for el in DEPRESSING)), a_i
 
 
 def _checked(composition) -> dict:
-    """The composition as a dict of float mass fractions over :data:`ELEMENTS`.
+    """The composition as a dict of mass fractions over :data:`ELEMENTS`, missing keys zero.
+
+    The values of a traced composition are taken as they are; concrete values become floats.
 
     Raises
     ------
     ValueError
-        On a key outside :data:`ELEMENTS`, a value that is not a finite real number (a bool or
-        string included), a negative value, or a total of one or more.
+        On a key outside :data:`ELEMENTS`, a value that is not a finite real scalar (a bool,
+        string or array of more than 0 dimensions included), a negative value, or a total of one
+        or more.
     """
     if not isinstance(composition, dict):
         raise ValueError(f'composition must be a dict of mass fractions, got {composition!r}')
     unknown = sorted(set(composition) - set(ELEMENTS))
     if unknown:
         raise ValueError(f'unknown light elements {unknown}; known: {list(ELEMENTS)}')
+    if any(isinstance(v, jax.core.Tracer) for v in composition.values()):
+        return {el: composition.get(el, 0.0) for el in ELEMENTS}
     out = {}
     for el in ELEMENTS:
         v = composition.get(el, 0.0)
-        if isinstance(v, bool) or not isinstance(v, numbers.Real) or not math.isfinite(v):
+        try:
+            a = np.asarray(v)
+        except Exception:
+            a = np.asarray(None)
+        if a.ndim != 0 or a.dtype.kind not in 'fiu' or not np.isfinite(a):
             raise ValueError(f'mass fraction of {el} must be a finite real number, got {v!r}')
-        if v < 0.0:
+        if a < 0.0:
             raise ValueError(f'mass fraction of {el} must not be negative, got {v}')
-        out[el] = float(v)
+        out[el] = float(a)
     if sum(out.values()) >= 1.0:
         raise ValueError(
             f'light-element mass fractions sum to {sum(out.values())}, not below 1'
@@ -186,7 +202,7 @@ def _checked(composition) -> dict:
 
 
 class AlloyLiquidus:
-    """Liquidus of an Fe alloy with S, C, O (melting depression) and Si, H, N (no depression).
+    """Liquidus of an Fe alloy with S, C, O (melting depression) and Si, H, N (none).
 
     Parameters
     ----------
@@ -204,11 +220,9 @@ class AlloyLiquidus:
 
     def t_melt(self, pressure, composition: dict | None = None):
         """Liquidus temperature [K] at ``pressure`` [Pa]; ``composition`` overrides the
-        instance's (checked unless traced). Concrete results are checked against the pure-iron
-        curve and each binary's A."""
-        w = self.composition if composition is None else composition
-        if not any(isinstance(v, jax.core.Tracer) for v in w.values()):
-            w = _checked(w)
+        instance's (values checked unless traced). Concrete results are checked against the
+        pure-iron curve and each binary's A."""
+        w = _checked(self.composition if composition is None else composition)
         p = jnp.asarray(pressure, dtype=float)
         lo = jnp.clip(
             0.5 * ((p - C_UNIT_SWITCH_PA) / C_UNIT_BLEND_HALF_WIDTH_PA + 1.0), 0.0, 1.0

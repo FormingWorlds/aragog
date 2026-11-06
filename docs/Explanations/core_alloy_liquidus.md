@@ -1,6 +1,6 @@
 # The core alloy liquidus
 
-The liquidus of the core alloy decides where an inner core freezes: the inner-core boundary lies where the core adiabat meets it. `aragog.core.AlloyLiquidus` gives the liquidus of iron with S, C and O, which lower the melting point, and with Si, H and N, which do not. It has the `t_melt(pressure)` interface of the other melting curves of the core module ([core boundary conditions](core_bc.md)). The `core_module` configuration selects the `iron` or `quadratic` curve; `AlloyLiquidus` is used through the Python API ([tutorial](../Tutorials/core_alloy_liquidus.md)).
+The liquidus of the core alloy decides where an inner core freezes: the inner-core boundary lies where the core adiabat meets it. `aragog.core.AlloyLiquidus` gives the liquidus of iron with S, C and O, which lower the melting point, and with Si, H and N, which are treated as lowering it not at all. It has the `t_melt(pressure)` interface of the other melting curves of the core module ([core boundary conditions](core_bc.md)). The `core_module` configuration selects the `iron` or `quadratic` curve; `AlloyLiquidus` is used through the Python API ([tutorial](../Tutorials/core_alloy_liquidus.md)).
 
 ## One binary
 
@@ -18,7 +18,7 @@ $$
 
 The liquidus therefore runs from $T_\mathrm{Fe}$ at $w = 0$ to $T_e$ at $w = w_e$. The mole fraction counts Fe against the Fe$_k$X$_m$ units of the alloy, not against single X atoms: Fe$_3$S for S, FeO for O, Fe$_3$C for C below 255 GPa and Fe$_7$C$_3$ above. On the Fe$_3$S units this form reproduces the 3 liquidus curves that Mori et al. (2017, Fig. 9) draw; on S atoms it does not ([validation](../Validation/core_alloy_liquidus.md)). For C the units are not verified: the curves of Mashino et al. (2019, Fig. 8) are closer to straight lines than to this form.
 
-The 2 C units give liquidus temperatures that differ by up to 55 K at 255 GPa. Aragog joins them with a $C^2$ smootherstep over 230 to 280 GPa, so the liquidus has no step; across the blend its slope falls at most 0.5 K/GPa below its value at the blend edges, where the slopes of core liquidus curves are about 4 to 10 K/GPa.
+The 2 C units give liquidus temperatures that differ by up to 55 K at 255 GPa. Aragog joins them with a $C^2$ smootherstep over 230 to 280 GPa, so the liquidus has no step; across the blend its slope falls at most 0.76 K/GPa (at 2 wt% C) below its value at the blend edges, where the slopes are 1.6 to 9.3 K/GPa for 0.5 to 3 wt% C.
 
 ## Several elements
 
@@ -28,7 +28,7 @@ $$
 \frac{1}{A} = \sum_i \frac{x_i}{X} \frac{1}{A_i}.
 $$
 
-For a dilute alloy this gives $T_\mathrm{Fe} - T \approx T_\mathrm{Fe} \sum_i x_i / A_i$, the sum of the dilute depressions of the binaries. Si, H and N lower no melting point: their atoms count with the Fe of the solvent, so an Fe-Si alloy melts like Fe, and Si dilutes the S, C and O units.
+For a dilute alloy this gives $T_\mathrm{Fe} - T \approx T_\mathrm{Fe} \sum_i x_i / A_i$, the sum of the dilute depressions of the binaries. Si is treated as lowering no melting point: its atoms count with the Fe of the solvent, so an Fe-Si alloy melts like Fe, and Si dilutes the S, C and O units (6 wt% Si raises the liquidus of a 2 wt% S alloy by 15 K at 135 GPa). H and N have no liquidus data at core pressures and leave the mole count: an alloy melts like the same alloy without its H and N.
 
 A composition past the Fe-rich side of the eutectic, $\sum_i w_i / w_{e,i} > 1$, would crystallise a compound, not iron. There the liquidus is held at its value on the boundary, with the composition scaled to $\sum_i w_i / w_{e,i} = 1$, and `AlloyLiquidus.status` flags the pressure (`past_eutectic`).
 
@@ -36,17 +36,21 @@ A composition past the Fe-rich side of the eutectic, $\sum_i w_i / w_{e,i} > 1$,
 
 | Binary | Eutectic temperature | Eutectic composition | Pressures of the data |
 |---|---|---|---|
-| Fe-S | Simon fit of Mori et al. (2017, p. 138): $T_e = 1348\,\mathrm{K}\,[(P - 21)/36.5 + 1]^{1/2.07}$, $P$ in GPa | curve of Mori et al. (2017, Fig. 5), to 5 wt% S at 330 GPa (Hirose et al. 2021) | 21 to 330 GPa |
-| Fe-C | Simon fit of Mashino et al. (2019, p. 138): $T_e = 1513\,\mathrm{K}\,[(P - 5)/8.4 + 1]^{1/4.1}$ | curve of Mashino et al. (2019, Fig. 3), to 3 wt% C at 330 GPa (Mashino et al. 2019, p. 140) | 5 to 330 GPa |
-| Fe-O | curve of Oka et al. (2019, Fig. 4) | curve of Oka et al. (2019, Fig. 3), to 325 GPa | 0 to 330 GPa |
+| Fe-S | Simon fit of Mori et al. (2017, p. 138): $T_e = 1348\,\mathrm{K}\,[(P - 21)/36.5 + 1]^{1/2.07}$, $P$ in GPa | curve of Mori et al. (2017, Fig. 5), read to 275.8 GPa, then linear to 5 wt% S at 330 GPa (Hirose et al. 2021) | 21 to 330 GPa |
+| Fe-C | Simon fit of Mashino et al. (2019, p. 138): $T_e = 1513\,\mathrm{K}\,[(P - 5)/8.4 + 1]^{1/4.1}$ | curve of Mashino et al. (2019, Fig. 3), read to 273 GPa, then linear to 3.35 wt% C at 330 GPa, the end of their 330 GPa liquidus (Fig. 8) | 5 to 330 GPa |
+| Fe-O | curve of Oka et al. (2019, Fig. 4), read to 330 GPa | curve of Oka et al. (2019, Fig. 3), read to 325 GPa | 0 to 325 GPa |
 
-The curves were read from the vector paths of the published figures and checked by a second read from a raster image; the tables are in `aragog/core/eutectics/`, each with its source in the header. Outside the pressures of a binary's data the eutectic temperature keeps its ratio to $T_\mathrm{Fe}$ at the end of the data (homologous) and the eutectic composition its end value; `AlloyLiquidus.status` flags such pressures (`extrapolated`) for each depressing element in the alloy.
+The curves were read from the vector paths of the published figures and checked by a second read from a raster image; the tables are in `aragog/core/eutectics/`, each with its source in the header. Mashino et al. (2019, p. 140) give about 3 wt% C for the eutectic at 330 GPa in their text; with that value the eutectic composition falls 4 times faster from 270 to 330 GPa than at the end of their curve, and the liquidus of 2 to 3 wt% C falls with pressure there (down to $-4.6$ K/GPa). The end of their 330 GPa liquidus curve in Fig. 8, 3.35 wt%, keeps the slope positive and is used. The pressures between the end of each read curve and its anchor at 330 GPa count as data.
+
+Outside the pressures of a binary's data the eutectic temperature keeps its ratio to $T_\mathrm{Fe}$ at the end of the data (homologous) and the eutectic composition its end value; `AlloyLiquidus.status` flags such pressures (`extrapolated`) for each depressing element in the alloy. At the high-pressure end the data are taken at an effective pressure $q$ whose slope $dq/dP = 1 - b$ fades from 1 to 0 by a smootherstep $b$ over the end of the data $\pm 20$ GPa (310 to 350 GPa for S and C, 305 to 345 GPa for O): $q = P_\mathrm{end} - h + 2h\,[z - z^4 (5/2 - 3z + z^2)]$ with $z = (P - P_\mathrm{end} + h)/2h$ and $h = 20$ GPa. The slope of the liquidus therefore changes smoothly into the homologous rule, by under 0.02 K/GPa between points 0.1 GPa apart.
 
 ## Limits
 
-- The ideal form is a fit to the eutectic points, not ideal thermodynamics: for a truly ideal solution $A$ is the entropy of fusion of iron in units of $k_B$, about 1.2, while the S and C binaries give $A$ of 0.1 to 0.9.
+- The ideal form is a fit to the eutectic points, not ideal thermodynamics: for a truly ideal solution $A$ is the entropy of fusion of iron over $R$ and the same for every binary, while the binaries give $A$ of 1.8 (S), 1.7 (Fe$_3$C) and 0.5 (Fe$_7$C$_3$) near 20 GPa, falling to 0.21, 0.41 and 0.12 at 330 GPa, and 1.3 to 3.5 for O.
+- Near its eutectic the Fe-S liquidus falls with pressure where the read eutectic composition of Mori et al. (2017, Fig. 5) falls fast: for 5.0 to 5.8 wt% S, at 244 to 275 GPa, down to $-0.64$ K/GPa, since there $dT/dP \approx dT_e/dP - |\partial T/\partial w|\,|dw_e/dP|$. A core in this state freezes from the top, which the core module treats as a regime it does not model ([crystallisation regimes](core_bc.md)). Up to 4.8 wt% S, and for every C and O content tested, the liquidus rises with pressure from 1 to 600 GPa.
 - Only the end points of each binary are data; the liquidus between them follows the form. Ternary data (Hirose et al. 2021) are not used to check the harmonic rule.
-- H and N have no liquidus data at core pressures and lower no melting point here.
+- H and N have no liquidus data at core pressures and do not enter the liquidus.
+- `AlloyLiquidus` is not a melting curve of the core energy budget yet: the budget takes `iron` or `quadratic`, and its outer-core enrichment guard reads the light-element fraction of those curves.
 - The solid takes up no light element in this liquidus; solid-liquid partitioning belongs to the core energy budget.
 - The slope `AlloyLiquidus.gradient` sets whether a core freezes from the centre: where the liquidus is shallower than the adiabat, iron freezes first at the top ([crystallisation regimes](core_bc.md)).
 

@@ -138,10 +138,10 @@ def _multi_by_hand(p, comp):
 
 
 @pytest.mark.reference_pinned
-@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1800.0)])
+@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1738.0)])
 def test_the_harmonic_rule_gives_the_stated_depressions(p_gpa, expected, validation_plot):
     """For S 2, C 0.5, O 3 wt% the harmonic rule lowers the melting point by 641 K at 135 GPa and
-    1800 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
+    1738 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
     far smaller depression."""
     p = p_gpa * 1e9
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.03}
@@ -201,8 +201,8 @@ def _curves_figure(curves, xlabel, source):
         (line,) = ax.plot(w[::10], model[::10], label=f'{p_gpa}')
         keep = ~np.isnan(paper)
         ax.plot(
-            w[keep][1:-1:12],
-            paper[keep][1:-1:12],
+            w[keep][1:-1:18],
+            paper[keep][1:-1:18],
             'o',
             ms=3,
             mfc='none',
@@ -299,7 +299,7 @@ def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
 
 
 @pytest.mark.reference_pinned
-def test_the_fe_o_eutectic_temperature_meets_the_second_read():
+def test_the_fe_o_eutectic_temperature_meets_the_second_read(validation_plot):
     """The Fe-O eutectic temperature lies on read B of Oka et al. (2019, Fig. 4), the read the
     table does not come from, within the full drawn line width (0.354 pt) in figure points, from
     0 to 300 GPa."""
@@ -308,6 +308,33 @@ def test_the_fe_o_eutectic_temperature_meets_the_second_read():
     got = np.asarray(eutectic('O', p_gpa[keep] * 1e9)[0])
     assert np.sum(~np.isnan(tb[keep])) > 40
     assert _perpendicular(p_gpa[keep], got, tb[keep], 0.4654, 0.04946) <= 0.354
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        q = np.linspace(1.0, 400.0, 60)
+        fig, ax = plt.subplots(figsize=(5.6, 3.6))
+        for el in ('S', 'C', 'O'):
+            ax.plot(q, np.asarray(eutectic(el, q * 1e9)[0]), label=f'Fe-{el}')
+        b = ~np.isnan(tb) & keep
+        ax.plot(p_gpa[b][::10], tb[b][::10], 'o', ms=3, mfc='none', label='Oka 2019')
+        ax.plot([254.0], [3550.0], 's', ms=5, mfc='none', label='Mori 2017')
+        ax.plot([330.0], [3750.0], 'D', ms=5, mfc='none', label='Mashino 2019')
+        ax.set(xlabel='Pressure [GPa]', ylabel='$T_e$ [K]')
+        opaque_legend(ax, loc='upper left', bbox_to_anchor=(1.02, 1.0))
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'core_alloy_liquidus_eutectic_temperatures')
+
+
+def _read_distance(name):
+    """Largest read-B-to-read-A distance [pt] of a data file and its tolerance [pt]."""
+    head, x, ya, yb = _read(name)
+    scale = next(ln for ln in head if 'figure scale' in ln)
+    sx, sy, _, tol = map(float, re.findall(r'\d+\.?\d*', scale))
+    return _perpendicular(x, ya, yb, sx, sy), tol
 
 
 def _perpendicular(x, ya, yb, sx, sy):
@@ -327,11 +354,41 @@ def _perpendicular(x, ya, yb, sx, sy):
 def test_the_two_reads_of_each_figure_curve_agree(name):
     """Read A (vector path) and read B (raster trace) of each digitised curve agree within the
     tolerance in the file header, in points of the source figure."""
-    head, x, ya, yb = _read(name)
-    scale = next(ln for ln in head if 'figure scale' in ln)
-    sx, sy, _, tol = map(float, re.findall(r'\d+\.?\d*', scale))
-    assert np.sum(~np.isnan(yb)) > 10
-    assert _perpendicular(x, ya, yb, sx, sy) <= tol + 0.02
+    assert np.sum(~np.isnan(_read(name)[3])) > 10
+    distance, tol = _read_distance(name)
+    assert distance <= tol + 0.02
+
+
+def _short(name):
+    """Short label of a data file: X and the pressure [GPa] of a liquidus curve, X w for an
+    eutectic composition, O T for the Fe-O eutectic temperature."""
+    el = {'mori': 'S', 'mashino': 'C'}
+    if '_liquidus_' in name:
+        src, _, p_gpa = name.removesuffix('GPa.csv').split('_')
+        return f'{el[src]}{p_gpa}'
+    last = name.removesuffix('.csv').split('_')[-1]
+    return 'O T' if last == 'T' else f'{last} w'
+
+
+@pytest.mark.reference_pinned
+def test_the_two_reads_figure(validation_plot):
+    """The largest distance between the 2 reads of every data file, over its tolerance."""
+    names = sorted(p.name for p in DATA.glob('*.csv'))
+    ratios = np.array([d / tol for d, tol in map(_read_distance, names)])
+    assert ratios.max() < 1.0 + 0.02 / 0.35
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.0, 3.6))
+        ax.barh(range(len(names)), ratios, alpha=0.7)
+        ax.axvline(1.0, color=plt.rcParams['text.color'], lw=0.8, ls='--')
+        ax.set_yticks(range(len(names)), [_short(n) for n in names])
+        ax.set(xlabel='Read distance / tolerance', xlim=(0.0, 1.1))
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'core_alloy_liquidus_two_reads')
 
 
 @pytest.mark.physics_invariant
@@ -352,13 +409,17 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
 
 @pytest.mark.physics_invariant
 def test_above_330_gpa_the_eutectic_temperature_is_homologous_and_flagged():
-    """Above the data the eutectic temperature keeps its 330 GPa ratio to the pure-iron curve and
-    the composition its 330 GPa value; the flag marks the extrapolation."""
+    """Beyond the end of the data plus the blend half-width the eutectic temperature keeps the
+    ratio to the pure-iron curve and the composition the value of the data at the end; the flag
+    marks the extrapolation."""
     for el in ('S', 'C', 'O'):
-        t330, w330 = map(float, eutectic(el, 330e9))
-        t500, w500 = map(float, eutectic(el, 500e9))
-        assert t500 / float(T_FE(500e9)) == pytest.approx(t330 / float(T_FE(330e9)), rel=1e-12)
-        assert w500 == w330
+        hi = alloy._data()['range'][el][1]
+        t_end, w_end = map(float, alloy._eutectic_data(el, hi))
+        for p_gpa in (hi + alloy.HOMOLOGOUS_BLEND_HALF_WIDTH_GPA, 500.0):
+            t, w = map(float, eutectic(el, p_gpa * 1e9))
+            ratio = t / float(T_FE(p_gpa * 1e9))
+            assert ratio == pytest.approx(t_end / float(T_FE(hi * 1e9)), rel=1e-12)
+            assert w == pytest.approx(w_end, rel=1e-12)
     s = AlloyLiquidus({'S': 0.02}).status(np.array([135e9, 500e9]))
     assert s['extrapolated'].tolist() == [False, True]
     assert AlloyLiquidus({'Si': 0.02}).status(np.array([500e9]))['extrapolated'].tolist() == [
@@ -369,16 +430,16 @@ def test_above_330_gpa_the_eutectic_temperature_is_homologous_and_flagged():
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('w_c', [0.005, 0.01, 0.02, 0.03])
 def test_the_carbon_unit_switch_adds_no_slope_dip(w_c, monkeypatch):
-    """Across the 230 to 280 GPa blend of the Fe3C and Fe7C3 units the liquidus slope falls at
-    most 0.5 K/GPa below its lower edge value (core liquidus slopes are 5 to 10 K/GPa), so the
-    blend sets no false snow margin; a 10 GPa blend would dip by several K/GPa."""
+    """Across the 230 to 280 GPa blend of the Fe3C and Fe7C3 units the liquidus slope falls under
+    1 K/GPa below its lower edge value (0.76 K/GPa at most, at 2 wt% C, against edge slopes of 1.6
+    to 9.3 K/GPa), so the blend sets no false snow margin; a 10 GPa blend dips 3.7 to 8.9 K/GPa."""
 
     def dip(liq):
         g = np.asarray(liq.gradient(np.linspace(230e9, 280e9, 101))) * 1e9
         edges = np.asarray(liq.gradient(np.array([229e9, 281e9]))) * 1e9
         return edges.min() - g.min()
 
-    assert dip(AlloyLiquidus({'C': w_c})) < 0.5
+    assert dip(AlloyLiquidus({'C': w_c})) < 1.0
     monkeypatch.setattr(alloy, 'C_UNIT_BLEND_HALF_WIDTH_PA', 5.0e9)
     if w_c in (0.01, 0.02):
         assert dip(AlloyLiquidus({'C': w_c})) > 3.0
@@ -464,7 +525,7 @@ def test_a_bad_a_of_an_absent_element_is_refused(monkeypatch):
 
 _RISING = (
     [{'C': w} for w in (0.005, 0.01, 0.02, 0.03, 0.033)]
-    + [{'S': w} for w in (0.01, 0.03, 0.05)]
+    + [{'S': w} for w in (0.01, 0.03, 0.048)]
     + [{'O': w} for w in (0.01, 0.05, 0.1)]
     + [
         {'S': 0.02, 'C': 0.005, 'O': 0.03, 'Si': 0.04},
@@ -479,13 +540,40 @@ _RISING = (
 )
 def test_the_liquidus_rises_with_pressure(comp):
     """dT_liq/dP > 0 over 1 to 600 GPa wherever the alloy is not past the eutectic, so no table
-    node, anchor or end of the data sets a false top-down regime."""
+    node, anchor or end of the data sets a false top-down regime (S up to 4.8 wt%; the next test
+    pins the falling liquidus of 5.0 to 5.8 wt% S)."""
     p = np.linspace(1e9, 600e9, 2393)
     liq = AlloyLiquidus(comp)
     inside = ~liq.status(p)['past_eutectic']
     slope = np.asarray(liq.gradient(p))[inside] * 1e9
     assert inside.sum() > 100
     assert slope.min() > 0.0, (p[inside][slope.argmin()] / 1e9, slope.min())
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.parametrize(
+    ('w_s', 'slope_min', 'p_from', 'p_to'),
+    [
+        (0.050, -0.161, 272.3, 274.9),
+        (0.054, -0.637, 259.0, 274.9),
+        (0.058, -0.508, 243.9, 261.4),
+    ],
+)
+def test_near_the_eutectic_the_fe_s_liquidus_falls_where_the_read_curve_falls(
+    w_s, slope_min, p_from, p_to
+):
+    """The eutectic composition of Mori et al. (2017, Fig. 5) falls by 0.021 wt%/GPa at 250 to
+    275 GPa, so near the eutectic, with dT/dP ~ dT_e/dP - |dT/dw| |dw_e/dP|, the liquidus of 5.0
+    to 5.8 wt% S falls with pressure there; the pinned interval [GPa] and least slope [K/GPa]
+    show a later change of the data or the code."""
+    p = np.linspace(200e9, 320e9, 1201)
+    liq = AlloyLiquidus({'S': w_s})
+    inside = ~liq.status(p)['past_eutectic']
+    g = np.asarray(liq.gradient(p)) * 1e9
+    falling = p[inside & (g <= 0.0)] / 1e9
+    assert g[inside].min() == pytest.approx(slope_min, abs=0.01)
+    assert (falling[0], falling[-1]) == pytest.approx((p_from, p_to), abs=0.2)
+    assert np.all(g[inside & ((p < 240e9) | (p > 280e9))] > 0.0)
 
 
 @pytest.mark.physics_invariant
@@ -559,3 +647,54 @@ def test_the_shipped_tables_are_the_first_read(table, read):
     on_read = np.interp(shipped[inside, 0], x, ya) / scale
     assert inside.sum() > 40
     np.testing.assert_allclose(shipped[inside, 1], on_read, atol=0.06 if scale == 1.0 else 6e-6)
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.parametrize(
+    ('name', 'el', 'p_gpa', 'rms_stated'),
+    [('mori', 'S', 30, 2.6), ('mori', 'S', 130, 2.0), ('mori', 'S', 250, 4.6)]
+    + [('mashino', 'C', 54, 46.5), ('mashino', 'C', 138, 175.1), ('mashino', 'C', 203, 103.5)]
+    + [('mashino', 'C', 255, 105.1), ('mashino', 'C', 330, 75.1)],
+)
+def test_the_shipped_liquidus_misses_the_figure_curves_as_stated(name, el, p_gpa, rms_stated):
+    """AlloyLiquidus with its own eutectic data against read A of the liquidus curves of Mori et
+    al. (2017, Fig. 9) and Mashino et al. (2019, Fig. 8): the RMS [K] the docs state, held to
+    1 K; for C the shipped eutectic points differ from the ends of the drawn curves."""
+    _, w, ta, _ = _read(f'{name}_liquidus_{p_gpa}GPa.csv')
+    keep = w >= 0.0
+    liq = AlloyLiquidus({})
+    model = np.array([float(liq.t_melt(p_gpa * 1e9, {el: x / 100.0})) for x in w[keep]])
+    assert np.sqrt(np.mean((model - ta[keep]) ** 2)) == pytest.approx(rms_stated, abs=1.0)
+
+
+@pytest.mark.physics_invariant
+def test_the_liquidus_slope_against_pressure(validation_plot):
+    """The slope of the liquidus over 1 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
+    and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its eutectic."""
+    p = np.linspace(1e9, 600e9, 1198)
+    comps = {
+        'C 2': {'C': 0.02},
+        'S 4.8': {'S': 0.048},
+        'S 5.4': {'S': 0.054},
+        'mixed': {'S': 0.02, 'C': 0.005, 'O': 0.03, 'Si': 0.04},
+    }
+    slopes = {k: np.asarray(AlloyLiquidus(c).gradient(p)) * 1e9 for k, c in comps.items()}
+    for k, g in slopes.items():
+        low = (p > 259e9) & (p < 275e9)
+        assert (g[low].min() < 0.0) if k == 'S 5.4' else (g.min() > 0.0), k
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        win = (p >= 150e9) & (p <= 400e9)
+        fig, ax = plt.subplots(figsize=(5.6, 3.6))
+        for k, g in slopes.items():
+            ax.plot(p[win][::8] / 1e9, g[win][::8], label=k)
+        ax.axhline(0.0, color=plt.rcParams['text.color'], lw=0.8, ls='--')
+        ax.set(xlabel='Pressure [GPa]', ylabel='dT/dP [K/GPa]')
+        opaque_legend(ax, title='wt%', loc='upper left', bbox_to_anchor=(1.02, 1.0))
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'core_alloy_liquidus_slope')

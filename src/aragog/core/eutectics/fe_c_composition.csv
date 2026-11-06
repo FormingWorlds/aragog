@@ -1,7 +1,7 @@
 # eutectic liquid composition of the Fe-C binary, mass fraction w_e of C, vs pressure
 # source: Mashino et al. 2019, EPSL 515, 135-144, doi:10.1016/j.epsl.2019.03.020, Fig. 3 (eutectic liquid composition, Fe-C); read from the vector path of the curve (figlab read A), checked by a second raster read
 # grid: 5 GPa, linear interpolation of the read
-# last row: Mashino et al. 2019, PDF p. 6: about 3 wt% C at 330 GPa; linear between the end of the curve and this anchor
+# last row: the end of the 330 GPa liquidus of Mashino et al. 2019, Fig. 8, 3.35 wt% C (their text, PDF p. 6, gives about 3 wt%, which makes the liquidus fall with pressure from 270 to 330 GPa); linear between the end of the curve and this anchor
 P_GPa,w_e
 5,0.04311
 10,0.04205
@@ -57,4 +57,4 @@ P_GPa,w_e
 260,0.03608
 265,0.03597
 270,0.03586
-330,0.03000
+330,0.03350
