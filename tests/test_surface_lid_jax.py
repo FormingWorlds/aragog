@@ -305,3 +305,31 @@ def test_surface_solve_evaluates_the_heat_content_at_most_27_times(monkeypatch):
     with jax.disable_jit():
         jl.surface_state(*(jax.numpy.asarray(st[k][i]) for k in KEYS), sl.LID_DELTA_FLOOR, e)
     assert 0 < calls[0] <= 27
+
+
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+@pytest.mark.parametrize('s0', [0.0, 0.3])
+def test_capped_surface_state_matches_numpy_near_the_switch(name, s0):
+    """With the held surface and the flux cap, the JAX surface equals the NumPy rule (held state,
+    then the flux state at the cap when the held flux exceeds it) for caps within 2 W/m^2 of
+    the held flux, on both sides of the switch: q_b and F_s to relative 1e-9."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    delta, T_b, k, T_held, floor = 0.1733, 1440.62788, 4.0, 992.744, sl.LID_DELTA_FLOOR
+    E = delta * hv.profile_heat(s0, T_held, T_b)
+    held = sl.fixed_surface_state(delta, E, T_b, k, T_held, floor, hv)
+    assert held.clipped == 0
+    for eps in (-2.0, -0.9, -0.5, -0.1, -0.01, 0.0, 0.01, 0.1, 0.5, 2.0):
+        cap = held.F_s + eps
+        want = (
+            held if held.F_s <= cap else sl.flux_surface_state(delta, E, T_b, k, cap, floor, hv)
+        )
+        got = jl.surface_state(
+            delta, E, T_b, k, 1.0, 0.0, floor, e,
+            flux=1.0, F_atm=0.0, held=1.0, T_held=T_held, capped=1.0, cap=cap,
+        )  # fmt: skip
+        np.testing.assert_allclose(float(got[2]), want.q_b, rtol=1e-9, err_msg=f'q_b at {eps}')
+        np.testing.assert_allclose(float(got[1]), want.F_s, rtol=1e-9, err_msg=f'F_s at {eps}')
