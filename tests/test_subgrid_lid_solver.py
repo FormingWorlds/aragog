@@ -508,6 +508,18 @@ def test_effective_thickness_at_the_shape_bound_is_nan():
     )
 
 
+def test_the_onset_thickness_must_lie_below_0_8_of_the_top_cell(eos):
+    """lid_delta_on at 0.75 of the top-cell width is used; at 0.8 and above it is refused at
+    setup with the growth stop of 0.8 x the width named."""
+    h = _solver(eos)._lid_h_top
+    for frac in (0.85, 0.8):
+        with pytest.raises(
+            ValueError, match=r'below lid growth stop 0\.8 x the top-cell width'
+        ):
+            _solver(eos, lid_delta_on=frac * h)
+    assert _solver(eos, lid_delta_on=0.75 * h)._lid_delta_on == 0.75 * h
+
+
 def test_a_carried_lid_above_the_growth_stop_is_refused_before_any_change(eos):
     """A previous solution's lid above the growth stop of the new top cell fails at the new
     start, naming both thicknesses and the way out, and leaves the solver as it was, so the way
