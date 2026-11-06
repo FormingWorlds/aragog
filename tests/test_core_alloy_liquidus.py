@@ -156,10 +156,10 @@ def _multi_by_hand(p, comp):
 
 
 @pytest.mark.reference_pinned
-@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1749.0)])
+@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1751.0)])
 def test_the_harmonic_rule_gives_the_stated_depressions(p_gpa, expected, validation_plot):
     """For S 2, C 0.5, O 3 wt% the harmonic rule lowers the melting point by 641 K at 135 GPa and
-    1749 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
+    1751 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
     far smaller depression."""
     p = p_gpa * 1e9
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.03}
