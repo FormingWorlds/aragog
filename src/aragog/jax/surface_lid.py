@@ -264,8 +264,9 @@ def surface_state(
     With ``flux`` above 0.5 the surface carries the prescribed ``F_atm``, as
     :func:`aragog.surface_lid.flux_surface_state`; with ``held`` above 0.5 as well, the surface
     is at ``T_held``, at most ``T_b``, as :func:`aragog.surface_lid.fixed_surface_state`.
-    With ``capped`` above 0.5 too, the surface carries at most ``cap``: the surface is the
-    warmer of ``T_held`` and the surface of the flux ``cap``, one root for both modes.
+    With ``capped`` above 0.5 too, the surface carries at most ``cap``: where the held surface
+    gives a flux above ``cap``, the lid takes the state of the flux ``cap``, as the NumPy rule
+    (a second root, solved only in that case).
     The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
@@ -277,44 +278,36 @@ def surface_state(
     d = jnp.hypot(delta, delta_floor)
     q = E / jnp.maximum(delta, delta_floor)
 
-    def T_s_of(s):
+    def T_s_flux(F, s):
         f0 = shape(s)[0]
+        T_s = T_b - jnp.maximum(F, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30))
+        return jnp.minimum(jnp.maximum(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
+
+    def T_s_of(s):
         return jnp.where(
             flux > 0.5,
-            jnp.minimum(
-                jnp.where(
-                    held > 0.5,
-                    jnp.where(
-                        capped > 0.5,
-                        jnp.maximum(
-                            T_held,
-                            T_b - jnp.maximum(cap, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
-                        ),
-                        T_held,
-                    ),
-                    jnp.maximum(
-                        T_b - jnp.maximum(F_atm, 0.0) * d / (k * jnp.maximum(f0, 1.0e-30)),
-                        LID_T_S_MIN,
-                    ),
-                ),
-                T_b - LID_DT_MIN,
-            ),
-            grey_surface_temperature(f0, d, T_b, k, emissivity, T_eq),
+            jnp.where(held > 0.5, jnp.minimum(T_held, T_b - LID_DT_MIN), T_s_flux(F_atm, s)),
+            grey_surface_temperature(shape(s)[0], d, T_b, k, emissivity, T_eq),
         )
 
-    def residual(s):
-        return profile_heat(e, s, T_s_of(s), T_b) - q
+    def solve(T_of):
+        def residual(s):
+            return profile_heat(e, s, T_of(s), T_b) - q
 
-    lo, hi = jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX)
-    r_min, r_max = (jax.lax.stop_gradient(residual(v)) for v in (lo, hi))
-    root = _bracket_root(lambda v: jax.lax.stop_gradient(residual(v)), lo, hi, r_min, r_max)
-    s_in = _implicit_root(root, residual)
-    clipped = jnp.where(r_min >= 0.0, -1, jnp.where(r_max <= 0.0, 1, 0))
-    s = jnp.select([clipped == -1, clipped == 1], [LID_SHAPE_MIN, LID_SHAPE_MAX], s_in)
-    f0, f1, m = shape(s)
-    T_s = T_s_of(s)
-    dT = T_b - T_s
-    return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped, T_s + m * dT
+        lo, hi = jnp.asarray(LID_SHAPE_MIN), jnp.asarray(LID_SHAPE_MAX)
+        r_min, r_max = (jax.lax.stop_gradient(residual(v)) for v in (lo, hi))
+        root = _bracket_root(lambda v: jax.lax.stop_gradient(residual(v)), lo, hi, r_min, r_max)
+        s_in = _implicit_root(root, residual)
+        clipped = jnp.where(r_min >= 0.0, -1, jnp.where(r_max <= 0.0, 1, 0))
+        s = jnp.select([clipped == -1, clipped == 1], [LID_SHAPE_MIN, LID_SHAPE_MAX], s_in)
+        f0, f1, m = shape(s)
+        T_s = T_of(s)
+        dT = T_b - T_s
+        return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped, T_s + m * dT
+
+    out = solve(T_s_of)
+    over = (flux > 0.5) & (held > 0.5) & (capped > 0.5) & (out[1] > cap)
+    return jax.lax.cond(over, lambda: solve(lambda s: T_s_flux(cap, s)), lambda: out)
 
 
 def convective_base_flux(dT, k, rho, cp, alpha, g, eta, ra_crit):
