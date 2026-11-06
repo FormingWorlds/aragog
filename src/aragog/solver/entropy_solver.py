@@ -3167,10 +3167,14 @@ class EntropySolver:
         Raises
         ------
         ValueError
-            With ``lid_mush_base`` and a live lid over a top cell below the floor.
+            With ``lid_mush_base`` and a live lid over a top cell below the floor. A set or
+            carried lid passed the step check, so it starts down to half the floor gap, as that
+            check accepts; the phantom lid needs the full gap.
         """
+        kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
-        floor = self._lid_S_sol + _lid.LID_FLOOR_GAP if self._lid_mush else -math.inf
+        gap = 0.5 * _lid.LID_FLOOR_GAP if kept else _lid.LID_FLOOR_GAP
+        floor = self._lid_S_sol + gap if self._lid_mush else -math.inf
         if start[0] != 0.0 and S_top < floor:
             raise ValueError(
                 f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, below the floor '

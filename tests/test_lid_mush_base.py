@@ -612,12 +612,30 @@ class TestRestore:
         st.floats(min_value=1.0e-6, max_value=500.0), st.floats(min_value=1.0, max_value=1e4)
     )
     def test_a_resume_with_a_live_lid_below_the_floor_is_refused(self, solver, dS, delta):
+        """A set lid over a top cell below the slack of the step check is refused."""
         solver.set_initial_lid(delta, 1.0e6)
         try:
             with pytest.raises(ValueError, match='below the floor'):
-                solver._lid_start(solver._lid_S_sol + sl.LID_FLOOR_GAP - dS)
+                solver._lid_start(solver._lid_S_sol + 0.5 * sl.LID_FLOOR_GAP - dS)
         finally:
             solver.set_initial_lid(None)
+
+    def test_a_kept_lid_starts_where_the_step_check_accepts_it(self, solver):
+        """A set or carried lid passed the step check, which accepts a top cell down to half
+        the floor gap; there it starts unchanged, while the phantom start still needs the gap."""
+        S_top = solver._lid_S_sol + 0.75 * sl.LID_FLOOR_GAP
+        solver.set_initial_lid(2.0, 1.0e6)
+        try:
+            assert np.array_equal(solver._lid_start(S_top), [2.0, 1.0e6])
+        finally:
+            solver.set_initial_lid(None)
+        with pytest.raises(ValueError, match='below the floor'):
+            solver._lid_start(S_top)
+        run = _solver(entropy_eos_copy(EOS_DIR), end=0.1)
+        run.solve()
+        carried = run._previous_lid()
+        assert carried is not None and carried[0] > 0.0
+        assert np.array_equal(run._lid_start(S_top), carried)
 
     def test_a_handed_over_state_may_resume_below_the_floor(self, solver):
         solver.set_initial_lid(0.0, 0.0)
