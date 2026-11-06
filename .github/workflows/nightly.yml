@@ -121,8 +121,9 @@ jobs:
           # --deselect matches by id prefix: main must drop exactly the tests this job runs
           set -o pipefail
           ids() { pytest "$@" -m "unit or smoke or integration or slow" --collect-only -q -p no:xdist -o "addopts=" | grep '::' | sort; }
-          dropped="$(comm -23 <(ids tests) <(ids tests $(printf -- '--deselect=%s ' $CORE_SOLVES)))"
-          test "$dropped" = "$(ids $CORE_SOLVES)" || { printf 'main deselects:\n%s\n' "$dropped"; exit 1; }
+          all="$(ids tests)"; kept="$(ids tests $(printf -- '--deselect=%s ' $CORE_SOLVES))"; core="$(ids $CORE_SOLVES)"
+          dropped="$(comm -23 <(echo "$all") <(echo "$kept"))"
+          test -n "$core" && test "$dropped" = "$core" || { printf 'main deselects:\n%s\nthis job runs:\n%s\n' "$dropped" "$core"; exit 1; }
           pytest $CORE_SOLVES -m "unit or smoke or integration or slow" \
             -p no:xdist -o "addopts=" -ra --timeout=2700 --timeout-method=thread --durations=10 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
