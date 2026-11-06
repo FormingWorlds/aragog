@@ -441,16 +441,19 @@ def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
     tolerances; with every tolerance 1000 times tighter each of the first 3 calls closes to 1e-5
     and its residual falls at least 2.5 times, which an energy leak independent of the
     tolerance would not do (measured: 78, 51 and 4.9 times)."""
-    residuals = {}
+    residuals, scales = {}, {}
     for sf in (1.0, 1.0e-3):
-        state, residuals[sf] = None, []
+        state, residuals[sf], scales[sf] = None, [], []
         for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
             out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf)
-            assert out.step_core_tol_J > 0.0
+            scales[sf].append(out.step_core_tol_J / out.step_dE_F_cmb_J)
             residuals[sf].append(
                 (out.step_dE_core_J + out.step_dE_F_cmb_J) / out.step_dE_F_cmb_J
             )
     assert abs(residuals[1.0][0]) > 1e-5
+    assert (
+        scales[1.0][0] > 50.0 * scales[1.0e-3][0] > 0.0
+    )  # step_core_tol_J follows the call (198x)
     for loose, tight in zip(residuals[1.0], residuals[1.0e-3]):
         assert abs(tight) < 1e-5, residuals
         assert abs(loose) > 2.5 * abs(tight), residuals
