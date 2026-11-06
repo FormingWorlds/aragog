@@ -158,6 +158,7 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'M_mantle_solid': out.M_mantle_solid,
             'RF_depth': out.RF_depth,
             'E_th': out.E_th,
+            'step_core_tol_J': out.step_core_tol_J,
             'E_state': out.E_state,
             'E_state_cons': out.E_state_cons,
             'Cp_eff': out.Cp_eff,

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -417,7 +416,7 @@ def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
 
 
-def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0):
+def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0, rtol_sf=1.0):
     """A call of a core that starts at the temperature of a molten mantle base (zero CMB flux
     at the start, as in a coupled run), from ``state`` (T_core, S) or the start state."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
@@ -429,6 +428,7 @@ def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0):
     solver.set_initial_core_temperature(state[0])
     solver.set_initial_entropy(state[1])
     solver._atol_sf = atol_sf
+    solver.parameters.solver.rtol *= rtol_sf
     solver.solve()
     y = np.asarray(solver._solution.y)
     return solver.get_state(), (float(y[n + 1, -1]), y[:n, -1])
@@ -438,52 +438,38 @@ def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0):
 @pytest.mark.physics_invariant
 def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
     """A zero-flux start leaves 1.2e-4 of the first call's CMB heat unbooked at the default
-    tolerances; with every tolerance 1000 times tighter each of the first 3 calls closes to 1e-5
-    and its residual falls at least 2.5 times, which an energy leak independent of the
-    tolerance would not do (measured: 78, 51 and 4.9 times)."""
+    tolerances; with atol and rtol 1000 times tighter each of the first 3 calls closes to 1e-5,
+    its residual falls at least 20 times (measured 111, 121, 143) and step_core_tol_J falls with
+    it. A leak independent of the tolerance of 3e-7 of the CMB heat or more, of either sign,
+    fails the fall."""
     residuals, scales = {}, {}
     for sf in (1.0, 1.0e-3):
         state, residuals[sf], scales[sf] = None, [], []
         for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
-            out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf)
-            scales[sf].append(out.step_core_tol_J / out.step_dE_F_cmb_J)
-            residuals[sf].append(
-                (out.step_dE_core_J + out.step_dE_F_cmb_J) / out.step_dE_F_cmb_J
-            )
+            out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf, rtol_sf=sf)
+            cmb = out.step_dE_F_cmb_J
+            scales[sf].append(out.step_core_tol_J / cmb)
+            residuals[sf].append((out.step_dE_core_J + cmb) / cmb)
     assert abs(residuals[1.0][0]) > 1e-5
-    assert (
-        scales[1.0][0] > 50.0 * scales[1.0e-3][0] > 0.0
-    )  # step_core_tol_J follows the call (198x)
-    for loose, tight in zip(residuals[1.0], residuals[1.0e-3]):
+    for loose, tight, s_loose, s_tight in zip(*residuals.values(), *scales.values()):
         assert abs(tight) < 1e-5, residuals
-        assert abs(loose) > 2.5 * abs(tight), residuals
+        assert abs(loose) > 20.0 * abs(tight), residuals
+        assert s_loose > 20.0 * s_tight > 0.0, scales
 
 
-def test_the_core_heat_tolerance_sums_the_node_tolerances():
-    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start, plus
-    the float spacing of the 2 heat contents."""
-    from aragog.solver import EntropySolver
-
-    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
-    t_core = np.array([4000.0, 3999.0, 3990.0])
-    c_eff = np.array([7.0, 2.0e27, 3.0e27])
-    content = [1.0e31, 2.0e31]
-    got = EntropySolver._core_heat_tolerance(s, None, t_core, content, c_eff)
-    expected = (
-        2.0e27 * (1.0e-6 + 1.0e-4) + 3.0e27 * (1.0e-6 + 1.0e-3) + sum(map(np.spacing, content))
-    )
-    assert got == pytest.approx(expected, rel=1e-14)
-
-
+@needs_cvode
 def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
     """The solve keeps the absolute tolerance at 1e-8 at least and says so once."""
-    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
-    solver.parameters.solver.atol = 1.0e-11
-    with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
-        solver.solve()
-        solver.solve()
-    hits = [r for r in caplog.records if 'below the floor 1e-8' in r.getMessage()]
-    assert len(hits) == 1
+    for atol, n_warned in ((1.0e-8, 0), (1.0e-11, 1)):
+        caplog.clear()
+        solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+        solver.parameters.solver.atol = atol
+        with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+            solver.solve()
+            solver.solve()
+        hits = [r for r in caplog.records if 'below the floor 1e-8' in r.getMessage()]
+        assert len(hits) == n_warned
+        assert solver._call_tol[0] == 1.0e-8
 
 
 @needs_cvode

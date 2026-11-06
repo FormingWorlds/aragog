@@ -1078,8 +1078,26 @@ def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
         assert float(ds['step_dE_core_J'][...]) == pytest.approx(out.step_dE_core_J)
 
 
+def test_the_core_heat_tolerance_sums_the_node_tolerances():
+    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start, plus
+    the float spacing of the 2 heat contents; the start node, with a weight that would move the
+    sum by 3e-3, is left out."""
+    from types import SimpleNamespace
+
+    from aragog.solver import entropy_solver as es
+
+    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
+    t_core = np.array([4000.0, 3999.0, 3990.0])
+    c_eff = np.array([1.0e28, 2.0e27, 3.0e27])
+    content = [1.0e31, 2.0e31]
+    got = es.EntropySolver._core_heat_tolerance(s, None, t_core, content, c_eff)
+    nodes = 2.0e27 * (1.0e-6 + 1.0e-4) + 3.0e27 * (1.0e-6 + 1.0e-3)
+    assert got == pytest.approx(nodes + sum(map(np.spacing, content)), rel=1e-14)
+    assert abs(got - (nodes + 1.0e28 * 1.0e-6)) > 1e-3 * nodes
+
+
 def test_solver_output_to_netcdf_step_core_tol_J(tmp_path):
-    """SolverOutput.to_netcdf writes the tolerance bound of the core energy change in J."""
+    """SolverOutput.to_netcdf writes the tolerance scale of the core energy change in J."""
     import dataclasses
 
     import netCDF4 as nc
@@ -1089,7 +1107,7 @@ def test_solver_output_to_netcdf_step_core_tol_J(tmp_path):
     out = dataclasses.replace(_make_output(), step_core_tol_J=3.25e19)
     out.to_netcdf(tmp_path / 'test.nc')
     with nc.Dataset(tmp_path / 'test.nc') as ds:
-        assert float(ds['step_core_tol_J'][...]) == 3.25e19
+        assert float(ds['step_core_tol_J'][...]) == pytest.approx(3.25e19, rel=1e-15)
         assert ds['step_core_tol_J'].units == 'J'
 
 
