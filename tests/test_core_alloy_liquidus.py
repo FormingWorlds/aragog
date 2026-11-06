@@ -156,10 +156,10 @@ def _multi_by_hand(p, comp):
 
 
 @pytest.mark.reference_pinned
-@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1751.0)])
+@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1749.0)])
 def test_the_harmonic_rule_gives_the_stated_depressions(p_gpa, expected, validation_plot):
     """For S 2, C 0.5, O 3 wt% the harmonic rule lowers the melting point by 641 K at 135 GPa and
-    1751 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
+    1749 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
     far smaller depression."""
     p = p_gpa * 1e9
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.03}
@@ -425,25 +425,35 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
     assert float(just_past.t_melt(p)) == pytest.approx(t_e, rel=1e-12)
 
 
+# eutectic composition 20 GPa above the end of the data and from 40 GPa above it on
+CONTINUED = {
+    'S': (0.048395340909090916, 0.048098181818181825),
+    'C': (0.032836250000000004, 0.03271333333333334),
+    'O': (0.15250250000000004, 0.15284000000000006),
+}
+
+
 @pytest.mark.physics_invariant
 def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
-    """Above the end of the data the eutectic composition is held at its end value (5 wt% S,
-    3.35 wt% C, 15.068 wt% O); from the end plus the fade length the eutectic temperature keeps
-    its ratio to the pure-iron curve, taken 20 GPa above the end; the flag marks the
+    """Above the end of the data the eutectic composition continues the last segment of its table
+    while the slope fades over 40 GPa: 4.840, 3.284 and 15.25 wt% S, C and O 20 GPa above the
+    end, held from 40 GPa above it at 4.810, 3.271 and 15.28 wt%; the eutectic temperature keeps
+    its ratio to the pure-iron curve taken 20 GPa above the end; the flag marks the
     extrapolation."""
     for el in ('S', 'C', 'O'):
         hi = alloy._data()['range'][el][1]
         t_end, w_end = (float(v) for v in eutectic(el, hi * 1e9))
         h = 0.5 * alloy.HOMOLOGOUS_FADE_GPA
         t_fade = float(eutectic(el, (hi + 2.0 * h) * 1e9)[0])
-        for p_gpa in (hi + 1e-3, hi + 1.0, hi + h, hi + 2.0 * h, 500.0):
-            assert float(eutectic(el, p_gpa * 1e9)[1]) == pytest.approx(w_end, rel=1e-12)
+        w_fade, w_far = CONTINUED[el]
+        assert float(eutectic(el, (hi + h) * 1e9)[1]) == pytest.approx(w_fade, rel=1e-12)
+        for p_gpa in (hi + 2.0 * h, 500.0):
+            assert float(eutectic(el, p_gpa * 1e9)[1]) == pytest.approx(w_far, rel=1e-12)
+        assert w_end == pytest.approx(alloy._table(f'fe_{el.lower()}_composition')[-1, 1])
         for p_gpa in (hi + 2.0 * h, 500.0):
             ratio = float(eutectic(el, p_gpa * 1e9)[0]) / float(T_FE(p_gpa * 1e9))
             assert ratio == pytest.approx(t_fade / float(T_FE((hi + 2.0 * h) * 1e9)), rel=1e-12)
         assert t_fade / float(T_FE((hi + 2.0 * h) * 1e9)) != t_end / float(T_FE(hi * 1e9))
-    assert float(eutectic('S', 600e9)[1]) == pytest.approx(0.05, rel=1e-12)
-    assert float(eutectic('C', 600e9)[1]) == pytest.approx(0.0335, rel=1e-12)
     s = AlloyLiquidus({'S': 0.02}).status(np.array([135e9, 500e9]))
     assert s['extrapolated'].tolist() == [False, True]
     assert AlloyLiquidus({'Si': 0.02}).status(np.array([500e9]))['extrapolated'].tolist() == [
@@ -600,27 +610,15 @@ def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
-    ('comp', 'step_325', 'step_330'),
-    [
-        ({'S': 0.048}, 0.0, 3.671),
-        ({'C': 0.01}, 0.0, 1.273),
-        ({'C': 0.03}, 0.0, 2.693),
-        ({'O': 0.1}, -1.587, 0.0),
-        ({'S': 0.02, 'C': 0.005, 'O': 0.03}, -0.404, 2.333),
-    ],
+    'comp',
+    [{'S': 0.048}, {'C': 0.01}, {'C': 0.03}, {'O': 0.1}, {'S': 0.02, 'C': 0.005, 'O': 0.03}],
 )
-def test_the_held_eutectic_composition_steps_the_slope_at_the_end_of_the_data(
-    comp, step_325, step_330
-):
-    """The eutectic composition stops changing at the end of the data (325 GPa for O, 330 GPa for
-    S and C), so the liquidus slope steps there by the stated K/GPa between points 0.1 GPa apart,
-    down where the eutectic composition rose (O) and up where it fell (S, C); elsewhere over 325
-    to 380 GPa it moves by under 0.015 K/GPa (measured at most 0.0116), the fade of the
-    temperature ratio included."""
+def test_the_end_of_the_data_adds_no_slope_step(comp):
+    """Into the homologous rule above the end of the data the slope changes smoothly: between
+    neighbouring points 0.1 GPa apart over 325 to 380 GPa it moves by under 0.1 K/GPa (measured
+    at most 0.025; a held eutectic composition steps it by up to 3.7 K/GPa)."""
     g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(325e9, 380e9, 551))) * 1e9
-    d = np.diff(g)
-    assert (d[0], d[50]) == pytest.approx((step_325, step_330), abs=0.01)
-    assert np.abs(np.delete(d, [0, 50])).max() < 0.015
+    assert np.max(np.abs(np.diff(g))) < 0.1
 
 
 @pytest.mark.physics_invariant
@@ -790,37 +788,50 @@ def test_a_huge_fraction_is_refused_as_a_mass_fraction():
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize(('el', 'w_table'), [('S', 0.05), ('C', 0.0335), ('O', 0.15068)])
-def test_an_alloy_at_its_end_eutectic_stays_inside_it_above_the_data(el, w_table):
-    """With the eutectic composition held, an alloy at the end value of its binary's data (the
-    table's last row) is not past its eutectic at any pressure from the end of the data to
-    600 GPa, and one 0.1 % richer is past it at every one."""
-    hi = alloy._data()['range'][el][1]
-    w_end = float(eutectic(el, hi * 1e9)[1])
-    assert w_end == pytest.approx(w_table, rel=1e-12)
-    p = np.linspace(hi, 600.0, 2 * int(600.0 - hi) + 1) * 1e9
-    assert not AlloyLiquidus({el: w_end}).status(p)['past_eutectic'].any()
-    assert AlloyLiquidus({el: 1.001 * w_end}).status(p)['past_eutectic'].all()
+@pytest.mark.parametrize(
+    ('comp', 'p_cross'),
+    [
+        ({'S': 0.0485}, 347.99),
+        ({'S': 0.049}, 340.90),
+        ({'S': 0.0495}, 335.28),
+        ({'C': 0.033}, 343.55),
+        ({'S': 0.048}, None),
+        ({'C': 0.0325}, None),
+    ],
+)
+def test_alloys_near_the_end_eutectic_cross_it_above_the_data(comp, p_cross):
+    """The continued S and C eutectic compositions fall above 330 GPa, so an alloy between the
+    held value 20 GPa above the end and the end value crosses its eutectic there, at the stated
+    pressure, and stays past it to 600 GPa; 4.8 wt% S and 3.25 wt% C do not cross."""
+    p = np.arange(330.0, 600.0, 0.01) * 1e9
+    past = AlloyLiquidus(comp).status(p)['past_eutectic']
+    if p_cross is None:
+        assert not past.any()
+    else:
+        k = int(np.argmax(past))
+        assert past[k] and past[k:].all()
+        assert p[k] / 1e9 == pytest.approx(p_cross, abs=0.02)
 
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('w_c', 'slope_min', 'p_from', 'p_to'),
     [
-        (0.0329, None, None, None),
-        (0.0330, -0.0070, 329.64, 330.0),
-        (0.0335, -0.0861, 325.46, 330.0),
+        (0.0327, None, None, None),
+        (0.0328, -0.0112, 331.45, 334.19),
+        (0.0330, -0.0430, 329.64, 335.34),
+        (0.0334, -0.1051, 326.29, 332.54),
         (0.0337, -0.0213, 323.80, 324.91),
         (0.0338, None, None, None),
     ],
 )
-def test_the_fe_c_liquidus_falls_below_the_end_of_its_data_for_3_3_to_3_37_wt_percent(
+def test_the_fe_c_liquidus_falls_near_the_end_of_its_data_for_3_28_to_3_37_wt_percent(
     w_c, slope_min, p_from, p_to
 ):
-    """Inside the eutectic and below 330 GPa, the liquidus of 3.30 to 3.37 wt% C falls with
-    pressure (least slope -0.086 K/GPa at 3.35 wt%, from 323.8 GPa at 3.37 wt%); 3.29 and
-    3.38 wt% C do not fall."""
-    p = np.arange(300.0, 340.0, 0.01) * 1e9
+    """Inside the eutectic, the liquidus of 3.28 to 3.37 wt% C falls with pressure between 323.8
+    and 336 GPa, where the continued Fe-C table falls (least slope -0.105 K/GPa at 3.34 wt%);
+    3.27 and 3.38 wt% C do not fall."""
+    p = np.arange(300.0, 380.0, 0.01) * 1e9
     liq = AlloyLiquidus({'C': w_c})
     inside = ~liq.status(p)['past_eutectic']
     g = np.asarray(liq.gradient(p)) * 1e9
