@@ -1078,6 +1078,21 @@ def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
         assert float(ds['step_dE_core_J'][...]) == pytest.approx(out.step_dE_core_J)
 
 
+def test_solver_output_to_netcdf_step_core_tol_J(tmp_path):
+    """SolverOutput.to_netcdf writes the tolerance bound of the core energy change in J."""
+    import dataclasses
+
+    import netCDF4 as nc
+
+    from tests.test_solver_output_netcdf import _make_output
+
+    out = dataclasses.replace(_make_output(), step_core_tol_J=3.25e19)
+    out.to_netcdf(tmp_path / 'test.nc')
+    with nc.Dataset(tmp_path / 'test.nc') as ds:
+        assert float(ds['step_core_tol_J'][...]) == 3.25e19
+        assert ds['step_core_tol_J'].units == 'J'
+
+
 def test_get_current_core_temperature():
     """get_current_core_temperature returns None or the last T_core state value."""
     from scipy.optimize import OptimizeResult

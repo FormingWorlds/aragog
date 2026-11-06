@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -435,31 +436,40 @@ def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0):
 
 @needs_cvode
 @pytest.mark.physics_invariant
-def test_a_zero_flux_start_closes_each_call_within_its_tolerance_bound(shared_eos):
-    """A core that starts at the mantle base temperature moves only about 2e-3 K in its first
-    1-yr call, so the T_core error control (atol 1e-8 K per node) leaves 1.2e-4 of the call heat
-    unbooked; each call closes within step_core_tol_J, the bound that error control sets."""
-    state, ratios = None, []
-    for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
-        out, state = _zero_flux_start(shared_eos, start, end, state)
-        residual = out.step_dE_core_J + out.step_dE_F_cmb_J
-        assert out.step_core_tol_J > 0.0
-        ratios.append(residual / out.step_core_tol_J)
-        if start == 0.0:
-            assert abs(residual) > 1e-5 * out.step_dE_F_cmb_J  # a 1e-6 bound alone would fail
-    assert max(abs(r) for r in ratios) < 1.0, ratios
+def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
+    """A zero-flux start leaves 1.2e-4 of the first call's CMB heat unbooked at the default
+    tolerances; with every tolerance 1000 times tighter each of the first 3 calls closes to 1e-5
+    and its residual falls at least 2.5 times, which an energy leak independent of the
+    tolerance would not do (measured: 78, 51 and 4.9 times)."""
+    residuals = {}
+    for sf in (1.0, 1.0e-3):
+        state, residuals[sf] = None, []
+        for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
+            out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf)
+            assert out.step_core_tol_J > 0.0
+            residuals[sf].append(
+                (out.step_dE_core_J + out.step_dE_F_cmb_J) / out.step_dE_F_cmb_J
+            )
+    assert abs(residuals[1.0][0]) > 1e-5
+    for loose, tight in zip(residuals[1.0], residuals[1.0e-3]):
+        assert abs(tight) < 1e-5, residuals
+        assert abs(loose) > 2.5 * abs(tight), residuals
 
 
-@needs_cvode
-@pytest.mark.physics_invariant
-def test_a_looser_core_tolerance_breaks_the_default_bound(shared_eos):
-    """With every tolerance of the call 1000 times looser, the first call misses the bound of
-    the default call by more than a factor 2; the same call with the factor 1 stays inside it."""
-    default, _ = _zero_flux_start(shared_eos, 0.0, 1.0)
-    for factor, inside in ((1.0, True), (1.0e3, False)):
-        out, _ = _zero_flux_start(shared_eos, 0.0, 1.0, atol_sf=factor)
-        ratio = abs(out.step_dE_core_J + out.step_dE_F_cmb_J) / default.step_core_tol_J
-        assert (ratio < 1.0) if inside else (ratio > 2.0), (factor, ratio)
+def test_the_core_heat_tolerance_sums_the_node_tolerances():
+    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start, plus
+    the float spacing of the 2 heat contents."""
+    from aragog.solver import EntropySolver
+
+    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
+    t_core = np.array([4000.0, 3999.0, 3990.0])
+    c_eff = np.array([7.0, 2.0e27, 3.0e27])
+    content = [1.0e31, 2.0e31]
+    got = EntropySolver._core_heat_tolerance(s, None, t_core, content, c_eff)
+    expected = (
+        2.0e27 * (1.0e-6 + 1.0e-4) + 3.0e27 * (1.0e-6 + 1.0e-3) + sum(map(np.spacing, content))
+    )
+    assert got == pytest.approx(expected, rel=1e-14)
 
 
 def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
