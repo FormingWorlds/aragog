@@ -1,16 +1,16 @@
 # source: Buono & Walker 2011, GCA 75, 2072-2087, doi:10.1016/j.gca.2011.01.030, Fig. 6 (p. 2079): Fe-FeS liquidus points at 1 bar of Friedrich (1910, triangles) and Miyazaki (1928, squares), as compiled by Hansen & Anderko (1958)
 # read A: vector marker centres (bbox centre of the marker outline); x from the axis ends (X_FeS 0 at 127.06 pt, 1 at 484.14 pt), y from the 6 major ticks (1000 K at 326.507 pt, 2000 K at 98.721 pt)
-# read B: 600 dpi raster; a filled 38 px marker template matched within 15 px of the read A position, the 2 overlapping triangle pairs at X_FeS 0.2 and 0.4 from the apex column; axes from the raster major ticks (fit residual max 3.4 K and 0.0001)
+# read B: 600 dpi raster, without read A; markers found over the plot frame (legend excluded) by matching pursuit with a filled 38 px square and triangle: the best normalised correlation over the pixels no marker has taken yet is a marker when it adds new ink to at least half its template (real markers 0.60 to 1.00; 1 residue between 2 triangles 0.37), stop below 0.55; 9 squares and 14 triangles, paired with read A by kind and least distance; axes from the raster major ticks (fit residual max 3.4 K and 0.0001)
 # figure scale: x 357.08 pt per unit X_FeS, y 0.22779 pt per K; marker 4.5 pt; reads held to 0.5 pt
 source,X_FeS_readA,T_K_readA,X_FeS_readB,T_K_readB
 Friedrich 1910,0.0000,1800.0,-0.0002,1798.9
 Friedrich 1910,0.0300,1769.0,0.0300,1768.9
 Friedrich 1910,0.0500,1743.2,0.0502,1742.1
-Friedrich 1910,0.1000,1702.1,0.0999,1701.1
-Friedrich 1910,0.2000,1657.1,0.1999,1656.4
-Friedrich 1910,0.2000,1664.1,0.1999,1663.2
-Friedrich 1910,0.4000,1614.2,0.3998,1613.2
-Friedrich 1910,0.4000,1626.1,0.3998,1627.4
+Friedrich 1910,0.1000,1702.1,0.1003,1701.1
+Friedrich 1910,0.2000,1657.1,0.2001,1656.4
+Friedrich 1910,0.2000,1664.1,0.2001,1663.7
+Friedrich 1910,0.4000,1614.2,0.4003,1613.2
+Friedrich 1910,0.4000,1626.1,0.4000,1625.3
 Friedrich 1910,0.5000,1600.0,0.4998,1599.0
 Friedrich 1910,0.6000,1545.0,0.5999,1544.4
 Friedrich 1910,0.6000,1563.2,0.5999,1562.8
@@ -25,4 +25,4 @@ Miyazaki 1928,0.4091,1629.0,0.4091,1628.0
 Miyazaki 1928,0.5149,1608.0,0.5149,1606.9
 Miyazaki 1928,0.6134,1568.0,0.6134,1567.0
 Miyazaki 1928,0.7139,1448.0,0.7139,1447.6
-Miyazaki 1928,0.8084,1308.0,0.8086,1307.7
+Miyazaki 1928,0.8084,1308.0,0.8083,1307.7

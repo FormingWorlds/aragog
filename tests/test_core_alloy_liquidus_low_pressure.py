@@ -193,12 +193,14 @@ def test_the_unit_blend_adds_the_stated_slope(w, added, top):
 
 @pytest.mark.physics_invariant
 def test_the_fe3s_units_hold_the_eutectic_from_the_start_of_the_blend():
-    """At 18 GPa w_e is 15.96 wt% S, below the 16.06 wt% that Fe3S units can hold, so the Fe3S form
-    is defined over the whole blend; its x_Fe at the eutectic is 0.022 there."""
+    """At 18 GPa w_e is 15.96 wt% S, below the 16.06 wt% that Fe3S units can hold (w_e crosses it
+    at 17.83 GPa), and it stays below over the whole blend, so the Fe3S form is defined there; its
+    x_Fe at the eutectic is 0.022 at 18 GPa."""
     cap = MOLAR['S'] / (3.0 * MOLAR['Fe'] + MOLAR['S'])
     w_e = _w_e('S')(18.0)
     assert w_e == pytest.approx(0.15962, abs=1e-5)
-    assert w_e < cap
+    assert _w_e('S')(17.82) > cap > _w_e('S')(17.84)
+    assert all(_w_e('S')(p) < cap for p in np.linspace(*alloy.S_UNIT_BLEND_GPA, 81))
     u = w_e / MOLAR['S']
     free = (1.0 - w_e) / MOLAR['Fe'] - 3.0 * u
     assert free / (free + u) == pytest.approx(0.0221, abs=2e-4)
@@ -217,38 +219,36 @@ def test_a_low_pressure_alloy_has_a_nan_free_gradient(comp):
 
 
 def _liquidus_points():
-    """Measured liquidus points (P GPa, w, T K) below 15 GPa: read A of the 1 bar points of Buono &
-    Walker (2011, Fig. 6) on the Fe-rich side of the shipped eutectic, their Table 1 at 6 GPa without
-    the eutectic run, and read A of Chen et al. (2008, Fig. 1) at 10 and 14 GPa."""
+    """Measured liquidus points (P GPa, w, T K) below 15 GPa with S and on the Fe-rich side of the
+    shipped eutectic: read A of the 1 bar points of Buono & Walker (2011, Fig. 6), their Table 1 at
+    6 GPa, and read A of Chen et al. (2008, Fig. 1) at 10 and 14 GPa."""
     one_bar = [
         (0.0, _w_s(float(x)), float(t))
         for _, x, t, *_ in _csv('buono_walker2011_fig6_1bar.csv')
     ]
     bw = [
-        (6.0, _w_s(float(x)), float(t))
-        for run, t, x in _csv('buono_walker2011_table1_6GPa.csv')
-        if run != 'BB-888'
+        (6.0, _w_s(float(x)), float(t)) for _, t, x in _csv('buono_walker2011_table1_6GPa.csv')
     ]
     chen = [
         (float(p), float(w) / 100.0, float(t))
         for p, kind, w, t, *_ in _csv('chen2008_fig1_liquidus.csv')
         if kind == 'liquid'
     ]
-    fe_rich = [r for r in one_bar if r[1] < _w_e('S')(0.0)]
-    return fe_rich + bw + chen
+    return [(p, w, t) for p, w, t in one_bar + bw + chen if 0.0 < w < _w_e('S')(p)]
 
 
 @pytest.mark.reference_pinned
-@pytest.mark.physics_invariant
 def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
-    """Read A (vector marker centres) and read B (600 dpi raster) of the 23 points of Buono & Walker
-    (2011, Fig. 6) agree within 0.5 pt of the figure (357.08 pt per unit X_FeS, 0.22779 pt per K);
-    the 2 points past the shipped 1 bar eutectic (X_FeS 0.81 and 0.86) are left out of the misfit."""
+    """Read A (vector marker centres) and read B (600 dpi raster, markers found without read A) of
+    the 23 points of Buono & Walker (2011, Fig. 6) agree within 0.5 pt of the figure (357.08 pt per
+    unit X_FeS, 0.22779 pt per K); the 2 pure-iron points and the 2 points past the shipped 1 bar
+    eutectic (X_FeS 0.81 and 0.86) are left out of the misfit."""
     rows = [(s, *map(float, r)) for s, *r in _csv('buono_walker2011_fig6_1bar.csv')]
     assert len(rows) == 23
     for _, xa, ta, xb, tb in rows:
         assert abs(xa - xb) * 357.08 < 0.5 and abs(ta - tb) * 0.22779 < 0.5
     assert sum(_w_s(xa) >= _w_e('S')(0.0) for _, xa, *_ in rows) == 2
+    assert sum(xa == 0.0 for _, xa, *_ in rows) == 2
 
     def figure():
         import matplotlib.pyplot as plt
@@ -273,19 +273,28 @@ def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('p_gpa', 'n', 'rms', 'mean'),
-    [(0.0, 21, 75.0, -28.4), (6.0, 23, 141.4, -130.6), (10.0, 7, 89.0, -82.6)]
-    + [(14.0, 4, 150.9, -12.4)],
+    [(0.0, 19, 78.60, -33.32), (6.0, 22, 142.14, -130.99), (10.0, 7, 88.95, -82.55)]
+    + [(14.0, 4, 150.90, -12.45)],
 )
 def test_the_low_pressure_liquidus_misses_the_measured_points_as_stated(p_gpa, n, rms, mean):
     """The ideal form on FeS units lies below the measured non-ideal liquidus: RMS and mean misfit
     [K] at 1 bar (Friedrich 1910 and Miyazaki 1928 in Buono & Walker 2011, Fig. 6), at 6 GPa
-    (Buono & Walker 2011, Table 1) and at 10 and 14 GPa (Chen et al. 2008), not growing by more
-    than 1 K."""
+    (Buono & Walker 2011, Table 1) and at 10 and 14 GPa (Chen et al. 2008), to 0.05 K."""
     pts = [(w, t) for p, w, t in _liquidus_points() if p == p_gpa]
     res = np.array([float(AlloyLiquidus({'S': w}).t_melt(p_gpa * 1e9)) - t for w, t in pts])
     assert len(pts) == n
-    assert math.sqrt(np.mean(res**2)) < rms + 1.0
-    assert res.mean() == pytest.approx(mean, abs=1.0)
+    assert math.sqrt(np.mean(res**2)) == pytest.approx(rms, abs=0.05)
+    assert res.mean() == pytest.approx(mean, abs=0.05)
+
+
+@pytest.mark.reference_pinned
+def test_the_two_reads_of_the_chen_points_agree():
+    """Read A (vector symbols) and read B (600 dpi raster) of the 11 points of Chen et al. (2008,
+    Fig. 1) read twice agree to 0.28 wt% and 3.2 K."""
+    both = [r for r in _csv('chen2008_fig1_liquidus.csv') if r[4]]
+    assert len(both) == 11
+    for _, _, wa, ta, wb, tb in both:
+        assert abs(float(wa) - float(wb)) <= 0.28 and abs(float(ta) - float(tb)) <= 3.2
 
 
 @pytest.mark.reference_pinned
@@ -293,13 +302,8 @@ def test_the_low_pressure_liquidus_misses_the_measured_points_as_stated(p_gpa, n
 def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot):
     """Between 10 and 14 GPa the measured liquidus of Chen et al. (2008, linear between their
     points and their pure-Fe point) falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the
-    ideal form changes by +3.0, -14.5 and -26.9 K/GPa. The 2 reads of the 11 points read twice agree
-    to 0.28 wt% and 3.2 K."""
+    ideal form changes by +3.0, -14.5 and -26.9 K/GPa."""
     rows = _csv('chen2008_fig1_liquidus.csv')
-    both = [r for r in rows if r[4]]
-    assert len(both) == 11
-    for _, _, wa, ta, wb, tb in both:
-        assert abs(float(wa) - float(wb)) <= 0.28 and abs(float(ta) - float(tb)) <= 3.2
 
     def data(p, w):
         pts = sorted((float(r[2]), float(r[3])) for r in rows if float(r[0]) == p)
@@ -519,7 +523,8 @@ def _harmonic_by_hand(p_gpa, comp, s_unit):
 @pytest.mark.physics_invariant
 def test_a_mixture_takes_the_sulfur_units_of_its_pressure():
     """A mixture of 2 wt% S, 0.5 wt% C and 1 wt% O, not past its eutectic, follows the harmonic rule
-    on FeS units at 10 GPa, on Fe3S units at 40 GPa and their mean at 22 GPa, written out by hand."""
+    on FeS units at 10 GPa, on Fe3S units at 40 GPa and their smootherstep blend at 20, 22 and
+    24 GPa, written out by hand."""
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.01}
     liq = AlloyLiquidus(comp)
     assert not liq.status(np.array([10e9, 22e9, 40e9]))['past_eutectic'].any()
@@ -529,8 +534,13 @@ def test_a_mixture_takes_the_sulfur_units_of_its_pressure():
     assert float(liq.t_melt(40e9)) == pytest.approx(
         _harmonic_by_hand(40.0, comp, FE3S), rel=1e-12
     )
-    mid = 0.5 * (_harmonic_by_hand(22.0, comp, FES) + _harmonic_by_hand(22.0, comp, FE3S))
-    assert float(liq.t_melt(22e9)) == pytest.approx(mid, rel=1e-12)
+    for p in (20.0, 22.0, 24.0):
+        z = (p - 18.0) / 8.0
+        b = z**3 * (10.0 - 15.0 * z + 6.0 * z**2)
+        hand = (1.0 - b) * _harmonic_by_hand(p, comp, FES) + b * _harmonic_by_hand(
+            p, comp, FE3S
+        )
+        assert float(liq.t_melt(p * 1e9)) == pytest.approx(hand, rel=1e-12)
     assert abs(_harmonic_by_hand(22.0, comp, FES) - _harmonic_by_hand(22.0, comp, FE3S)) > 10.0
 
 
@@ -550,14 +560,6 @@ def test_below_1_bar_the_eutectic_is_held_homologous_and_flagged(el):
 
 
 @pytest.mark.physics_invariant
-def test_the_fe3s_units_hold_the_eutectic_from_17_83_gpa():
-    """w_e reaches the 16.06 wt% that Fe3S units hold at 17.83 GPa, 0.17 GPa below the blend start."""
-    cap = MOLAR['S'] / (3.0 * MOLAR['Fe'] + MOLAR['S'])
-    assert _w_e('S')(17.82) > cap > _w_e('S')(17.84)
-    assert alloy.S_UNIT_BLEND_GPA[0] - 17.83 == pytest.approx(0.17, abs=0.01)
-
-
-@pytest.mark.physics_invariant
 def test_the_joins_and_blends_sit_where_the_data_need_them():
     """The S unit blend ends below the C unit blend starts, so the 2 act one at a time; the S join
     ends at the Simon reference pressure, the Mori composition table starts inside it, and the
@@ -566,6 +568,6 @@ def test_the_joins_and_blends_sit_where_the_data_need_them():
         alloy.S_UNIT_BLEND_GPA[1] * 1e9
         < alloy.C_UNIT_SWITCH_PA - alloy.C_UNIT_BLEND_HALF_WIDTH_PA
     )
-    assert alloy.S_JOIN_GPA[1] == alloy._SIMON['S'][1]
-    assert alloy.S_JOIN_GPA[0] < alloy._table('fe_s_composition')[0, 0] < alloy.S_JOIN_GPA[1]
+    start = alloy._table('fe_s_composition')[0, 0]
+    assert alloy.S_JOIN_START_GPA < start < alloy._SIMON['S'][1]
     assert alloy._table('fe_c_composition')[0, 0] == alloy._SIMON['C'][1]

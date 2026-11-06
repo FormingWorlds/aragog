@@ -1,16 +1,16 @@
-"""Liquidus of the core alloy: ideal-solution Fe-X binaries joined by a harmonic mean of their A.
+"""Liquidus of the core alloy: ideal-solution Fe-X binaries joined by a harmonic mean of A.
 
-Each Fe-X binary follows the ideal-solution liquidus of Mori et al. (2017, Eq. 3) and Mashino
-et al. (2019): ``x_Fe = exp[A (1 - T_Fe / T)]``, with ``x_Fe`` the mole fraction of free Fe among
+Each Fe-X binary follows the ideal-solution liquidus of Mori et al. (2017, Eq. 3) and Mashino et
+al. (2019): ``x_Fe = exp[A (1 - T_Fe / T)]``, with ``x_Fe`` the mole fraction of free Fe among
 Fe and the Fe_k X_m units of the alloy, ``T_Fe`` the pure-iron curve of
 :class:`aragog.core.melting.IronMeltingCurve`, and ``A`` fixed at each pressure by the binary
 eutectic point (``w_e``, ``T_e``). The units are FeO for O; for S they are FeS below 18 GPa and
-Fe3S above 26 GPa, and for C Fe3C below 255 GPa and Fe7C3 above, each pair joined by a C2 blend of
-the two liquidus temperatures (over 18 to 26 GPa and 230 to 280 GPa). With several elements,
-``x_Fe = 1 - sum x_i`` and ``1/A = sum (x_i/X) / A_i``, which keeps the dilute limit of each binary, ``dT ~ T_Fe sum x_i / A_i``. Si is treated as
-lowering no melting point: its atoms count with the Fe solvent, so an Fe-Si alloy melts like Fe.
-H and N have no liquidus data at core pressures and leave the mole count: an alloy melts like the
-same alloy without them.
+Fe3S above 26 GPa, and for C Fe3C below 255 GPa and Fe7C3 above, each pair joined by a C2 blend
+of the two liquidus temperatures (over 18 to 26 GPa and 230 to 280 GPa). With several elements,
+``x_Fe = 1 - sum x_i`` and ``1/A = sum (x_i/X) / A_i``, which keeps the dilute limit of each
+binary, ``dT ~ T_Fe sum x_i / A_i``. Si is treated as lowering no melting point: its atoms count
+with the Fe solvent, so an Fe-Si alloy melts like Fe. H and N have no liquidus data at core
+pressures and leave the mole count: an alloy melts like the same alloy without them.
 
 The eutectic compositions and the Fe-O eutectic temperature are tables read from the papers'
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
@@ -20,11 +20,11 @@ Fe-S eutectic is linear between the nodes of Fei et al. (1997) at 1 bar, 10 and 
 smootherstep over 18 to 21 GPa; the Fe-C eutectic is the cubic from 1 bar (1416.15 K, 4.3 wt%)
 with zero curvature there and the value and slope of the fit and the table at 5 GPa. Above the
 data, the tables are read at an effective pressure ``q`` whose slope fades from 1 to 0 by a
-smootherstep over the 40 GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic temperature is its value
-at ``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve at ``q``, and the
-composition and Fe-O temperature tables continue along their last segment up to ``q``. A
-composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
-boundary.
+smootherstep over the 40 GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic
+temperature is its value at ``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve
+at ``q``, and the composition and Fe-O temperature tables continue along their last segment up
+to ``q``. A composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is
+evaluated at its boundary.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ C_UNIT_BLEND_HALF_WIDTH_PA = 25.0e9
 HOMOLOGOUS_FADE_GPA = 40.0
 # Simon fits of the eutectic temperature, T_ref [K], P_ref [GPa], a [GPa], c.
 _SIMON = {'S': (1348.0, 21.0, 36.5, 2.07), 'C': (1513.0, 5.0, 8.4, 4.1)}
-S_JOIN_GPA = (18.0, _SIMON['S'][1])
+S_JOIN_START_GPA = 18.0
 
 
 def _table(name: str) -> np.ndarray:
@@ -124,10 +124,9 @@ def _eutectic_in_data(el: str, q):
     t_ref, p_ref, a, c = _SIMON[el]
     t_fit, w_fit = t_ref * ((q - p_ref) / a + 1.0) ** (1.0 / c), _interp(q, comp)
     if el == 'S':
-        p0, p1 = S_JOIN_GPA
         t_low = _interp(q, np.vstack([low[:, :2], [p_ref, t_ref]]))
         w_low = _interp(q, np.vstack([low[:, [0, 2]], comp[:1]]))
-        b = _smootherstep((q - p0) / (p1 - p0))
+        b = _smootherstep((q - S_JOIN_START_GPA) / (p_ref - S_JOIN_START_GPA))
         return (1.0 - b) * t_low + b * t_fit, (1.0 - b) * w_low + b * w_fit
     span, x = p_ref - low[0, 0], q - low[0, 0]
     w_slope = (comp[1, 1] - comp[0, 1]) / (comp[1, 0] - comp[0, 0])
