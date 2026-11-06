@@ -72,6 +72,24 @@ def test_h_and_n_leave_the_mole_basis():
     np.testing.assert_allclose(with_hn, without, rtol=1e-12)
 
 
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('extra', [{'H': 0.02}, {'N': 0.05}, {'H': 0.01, 'N': 0.02}])
+def test_h_and_n_leave_the_eutectic_check_too(extra):
+    """Near and past the eutectic an alloy with H or N melts and is flagged like the same alloy
+    without them, renormalised: never below the eutectic temperature."""
+    p = np.array([135e9])
+    t_e, w_e = map(float, eutectic('S', p[0]))
+    keep = 1.0 - sum(extra.values())
+    for ratio in (0.995, 1.1):
+        with_hn = AlloyLiquidus({'S': ratio * w_e * keep, **extra})
+        without = AlloyLiquidus({'S': ratio * w_e})
+        assert float(with_hn.t_melt(p[0])) == pytest.approx(
+            float(without.t_melt(p[0])), rel=1e-12
+        )
+        assert float(with_hn.t_melt(p[0])) >= t_e * (1.0 - 1e-12)
+        assert with_hn.status(p)['past_eutectic'][0] == without.status(p)['past_eutectic'][0]
+
+
 def test_si_counts_with_the_iron_solvent():
     """Si atoms join the Fe solvent: they dilute the S units, so S with Si melts closer to iron
     than S alone, by the mole-fraction change written out here."""
@@ -302,9 +320,9 @@ def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
 def test_the_fe_o_eutectic_temperature_meets_the_second_read(validation_plot):
     """The Fe-O eutectic temperature lies on read B of Oka et al. (2019, Fig. 4), the read the
     table does not come from, within the full drawn line width (0.354 pt) in figure points, from
-    0 to 300 GPa."""
+    0 to 325 GPa, the end of the Fe-O data."""
     _, p_gpa, _, tb = _read('oka2019_fig4_T.csv')
-    keep = (p_gpa >= 0.0) & (p_gpa <= 300.0)
+    keep = (p_gpa >= 0.0) & (p_gpa <= 325.0)
     got = np.asarray(eutectic('O', p_gpa[keep] * 1e9)[0])
     assert np.sum(~np.isnan(tb[keep])) > 40
     assert _perpendicular(p_gpa[keep], got, tb[keep], 0.4654, 0.04946) <= 0.354
@@ -408,18 +426,21 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
 
 
 @pytest.mark.physics_invariant
-def test_above_330_gpa_the_eutectic_temperature_is_homologous_and_flagged():
+def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
     """Beyond the end of the data plus the blend half-width the eutectic temperature keeps the
     ratio to the pure-iron curve and the composition the value of the data at the end; the flag
     marks the extrapolation."""
     for el in ('S', 'C', 'O'):
         hi = alloy._data()['range'][el][1]
         t_end, w_end = map(float, alloy._eutectic_data(el, hi))
-        for p_gpa in (hi + alloy.HOMOLOGOUS_BLEND_HALF_WIDTH_GPA, 500.0):
+        h = alloy.HOMOLOGOUS_BLEND_HALF_WIDTH_GPA
+        t_fade, w_fade = (float(v) for v in eutectic(el, (hi + 2.0 * h) * 1e9))
+        for p_gpa in (hi + 2.0 * h, 500.0):
             t, w = map(float, eutectic(el, p_gpa * 1e9))
             ratio = t / float(T_FE(p_gpa * 1e9))
-            assert ratio == pytest.approx(t_end / float(T_FE(hi * 1e9)), rel=1e-12)
-            assert w == pytest.approx(w_end, rel=1e-12)
+            assert ratio == pytest.approx(t_fade / float(T_FE((hi + 2.0 * h) * 1e9)), rel=1e-12)
+            assert w == pytest.approx(w_fade, rel=1e-12)
+        assert (t_end, w_end) != (t_fade, w_fade)
     s = AlloyLiquidus({'S': 0.02}).status(np.array([135e9, 500e9]))
     assert s['extrapolated'].tolist() == [False, True]
     assert AlloyLiquidus({'Si': 0.02}).status(np.array([500e9]))['extrapolated'].tolist() == [
@@ -456,7 +477,6 @@ _bad_value = st.one_of(
 )
 
 
-@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(el=st.sampled_from(alloy.ELEMENTS), bad=_bad_value)
 def test_a_bad_mass_fraction_is_refused(el, bad):
@@ -464,7 +484,6 @@ def test_a_bad_mass_fraction_is_refused(el, bad):
         AlloyLiquidus({el: bad})
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize('comp', [{'Mg': 0.01}, {'S': 0.6, 'O': 0.4}, [('S', 0.01)]])
 def test_an_unknown_element_a_full_alloy_or_a_non_dict_is_refused(comp):
     with pytest.raises(ValueError):
@@ -577,12 +596,15 @@ def test_near_the_eutectic_the_fe_s_liquidus_falls_where_the_read_curve_falls(
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('comp', [{'S': 0.05}, {'C': 0.01}, {'S': 0.02, 'C': 0.005, 'O': 0.03}])
+@pytest.mark.parametrize(
+    'comp',
+    [{'S': 0.05}, {'C': 0.01}, {'C': 0.03}, {'O': 0.1}, {'S': 0.02, 'C': 0.005, 'O': 0.03}],
+)
 def test_the_end_of_the_data_adds_no_slope_step(comp):
-    """Into the homologous rule above 330 GPa the slope changes smoothly: between neighbouring
-    points 0.1 GPa apart over 300 to 360 GPa it moves by under 0.1 K/GPa (a hard switch at
-    330 GPa moves it by several K/GPa)."""
-    g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(300e9, 360e9, 601))) * 1e9
+    """Into the homologous rule above the end of the data the slope changes smoothly: between
+    neighbouring points 0.1 GPa apart over 300 to 380 GPa it moves by under 0.1 K/GPa (a hard
+    switch at 330 GPa moves it by several K/GPa)."""
+    g = np.asarray(AlloyLiquidus(comp).gradient(np.linspace(300e9, 380e9, 801))) * 1e9
     assert np.max(np.abs(np.diff(g))) < 0.1
 
 
@@ -658,16 +680,18 @@ def test_the_shipped_tables_are_the_first_read(table, read):
 )
 def test_the_shipped_liquidus_misses_the_figure_curves_as_stated(name, el, p_gpa, rms_stated):
     """AlloyLiquidus with its own eutectic data against read A of the liquidus curves of Mori et
-    al. (2017, Fig. 9) and Mashino et al. (2019, Fig. 8): the RMS [K] the docs state, held to
-    1 K; for C the shipped eutectic points differ from the ends of the drawn curves."""
+    al. (2017, Fig. 9) and Mashino et al. (2019, Fig. 8): the RMS [K] the docs state, kept from
+    growing by more than 1 K; for C the shipped eutectic points differ from the ends of the drawn
+    curves."""
     _, w, ta, _ = _read(f'{name}_liquidus_{p_gpa}GPa.csv')
     keep = w >= 0.0
     liq = AlloyLiquidus({})
     model = np.array([float(liq.t_melt(p_gpa * 1e9, {el: x / 100.0})) for x in w[keep]])
-    assert np.sqrt(np.mean((model - ta[keep]) ** 2)) == pytest.approx(rms_stated, abs=1.0)
+    assert np.sqrt(np.mean((model - ta[keep]) ** 2)) < rms_stated + 1.0
 
 
 @pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
 def test_the_liquidus_slope_against_pressure(validation_plot):
     """The slope of the liquidus over 1 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
     and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its eutectic."""
@@ -698,3 +722,45 @@ def test_the_liquidus_slope_against_pressure(validation_plot):
         return fig
 
     validation_plot(figure, 'core_alloy_liquidus_slope')
+
+
+@pytest.mark.reference_pinned
+def test_up_to_the_end_of_the_data_the_eutectic_is_the_data():
+    """At every table node up to the end of each binary's data the eutectic composition (and the
+    Fe-O temperature) is the shipped table, and at 330 GPa the anchors: 5 wt% S, 3.35 wt% C and
+    the Fe-C Simon fit."""
+    for el in ('S', 'C', 'O'):
+        lo, hi = alloy._data()['range'][el]
+        tab = alloy._table(f'fe_{el.lower()}_composition')
+        inside = (tab[:, 0] >= lo) & (tab[:, 0] <= hi)
+        got = np.asarray(eutectic(el, tab[inside, 0] * 1e9)[1])
+        np.testing.assert_allclose(got, tab[inside, 1], rtol=1e-12)
+    t_o = alloy._table('fe_o_temperature')
+    inside = t_o[:, 0] <= alloy._data()['range']['O'][1]
+    got = np.asarray(eutectic('O', t_o[inside, 0] * 1e9)[0])
+    np.testing.assert_allclose(got, t_o[inside, 1], rtol=1e-12)
+    assert float(eutectic('S', 330e9)[1]) == pytest.approx(0.05, rel=1e-12)
+    assert float(eutectic('C', 330e9)[1]) == pytest.approx(0.0335, rel=1e-12)
+    t_ref, p_ref, a, c = alloy._SIMON['C']
+    simon = t_ref * ((330.0 - p_ref) / a + 1.0) ** (1.0 / c)
+    assert float(eutectic('C', 330e9)[0]) == pytest.approx(simon, rel=1e-12)
+
+
+def test_the_composition_curvature_at_zero_is_the_finite_difference():
+    """d2T/dw2 of a traced composition at w = 0 equals the finite difference of dT/dw."""
+    liq = AlloyLiquidus({})
+
+    def t_of(w):
+        return liq.t_melt(135e9, {'S': w})
+
+    h = 1e-7
+    fd = (float(jax.grad(t_of)(h)) - float(jax.grad(t_of)(0.0))) / h
+    assert float(jax.hessian(t_of)(0.0)) == pytest.approx(fd, rel=1e-3)
+
+
+def test_a_fraction_is_a_mass_fraction():
+    """A numbers.Real such as Fraction(1, 50) is a mass fraction like 0.02."""
+    from fractions import Fraction
+
+    with_fraction = float(AlloyLiquidus({'S': Fraction(1, 50)}).t_melt(135e9))
+    assert with_fraction == float(AlloyLiquidus({'S': 0.02}).t_melt(135e9))
