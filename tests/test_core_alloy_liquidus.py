@@ -156,16 +156,16 @@ def _multi_by_hand(p, comp):
 
 
 @pytest.mark.reference_pinned
-@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 641.0), (330.0, 1749.0)])
+@pytest.mark.parametrize(('p_gpa', 'expected'), [(135.0, 640.7), (330.0, 1748.6)])
 def test_the_harmonic_rule_gives_the_stated_depressions(p_gpa, expected, validation_plot):
     """For S 2, C 0.5, O 3 wt% the harmonic rule lowers the melting point by 641 K at 135 GPa and
-    1749 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
+    1748.6 K at 330 GPa (the values the docs state, pinned); the composition-weighted rule gives a
     far smaller depression."""
     p = p_gpa * 1e9
     comp = {'S': 0.02, 'C': 0.005, 'O': 0.03}
     depression = float(T_FE(p) - AlloyLiquidus(comp).t_melt(p))
     harmonic, weighted, binaries, _ = _multi_by_hand(p, comp)
-    assert depression == pytest.approx(expected, abs=1.0)
+    assert depression == pytest.approx(expected, abs=0.1)
     assert depression == pytest.approx(harmonic, rel=1e-12)
     assert depression - weighted > 100.0
     assert weighted < depression < binaries
@@ -425,14 +425,6 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
     assert float(just_past.t_melt(p)) == pytest.approx(t_e, rel=1e-12)
 
 
-# eutectic composition 20 GPa above the end of the data and from 40 GPa above it on
-CONTINUED = {
-    'S': (0.048395340909090916, 0.048098181818181825),
-    'C': (0.032836250000000004, 0.03271333333333334),
-    'O': (0.15250250000000004, 0.15284000000000006),
-}
-
-
 @pytest.mark.physics_invariant
 def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
     """Above the end of the data the eutectic composition continues the last segment of its table
@@ -445,11 +437,13 @@ def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
         t_end, w_end = (float(v) for v in eutectic(el, hi * 1e9))
         h = 0.5 * alloy.HOMOLOGOUS_FADE_GPA
         t_fade = float(eutectic(el, (hi + 2.0 * h) * 1e9)[0])
-        w_fade, w_far = CONTINUED[el]
-        assert float(eutectic(el, (hi + h) * 1e9)[1]) == pytest.approx(w_fade, rel=1e-12)
-        for p_gpa in (hi + 2.0 * h, 500.0):
-            assert float(eutectic(el, p_gpa * 1e9)[1]) == pytest.approx(w_far, rel=1e-12)
-        assert w_end == pytest.approx(alloy._table(f'fe_{el.lower()}_composition')[-1, 1])
+        # the last table segment at q = hi + 16.875 GPa (P = hi + 20) and q = hi + 20 (P >= hi + 40)
+        tab = alloy._table(f'fe_{el.lower()}_composition')
+        slope = (tab[-1, 1] - tab[-2, 1]) / (tab[-1, 0] - tab[-2, 0])
+        assert (tab[-1, 0], w_end) == (hi, pytest.approx(tab[-1, 1], rel=1e-12))
+        for p_gpa, q in ((hi + h, hi + 16.875), (hi + 2.0 * h, hi + h), (500.0, hi + h)):
+            expected = tab[-1, 1] + slope * (q - hi)
+            assert float(eutectic(el, p_gpa * 1e9)[1]) == pytest.approx(expected, rel=1e-12)
         for p_gpa in (hi + 2.0 * h, 500.0):
             ratio = float(eutectic(el, p_gpa * 1e9)[0]) / float(T_FE(p_gpa * 1e9))
             assert ratio == pytest.approx(t_fade / float(T_FE((hi + 2.0 * h) * 1e9)), rel=1e-12)
@@ -789,28 +783,39 @@ def test_a_huge_fraction_is_refused_as_a_mass_fraction():
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
-    ('comp', 'p_cross'),
+    ('comp', 'p_cross', 'step'),
     [
-        ({'S': 0.0485}, 347.99),
-        ({'S': 0.049}, 340.90),
-        ({'S': 0.0495}, 335.28),
-        ({'C': 0.033}, 343.55),
-        ({'S': 0.048}, None),
-        ({'C': 0.0325}, None),
+        ({'S': 0.0485}, 347.99, 2.33),
+        ({'S': 0.049}, 340.91, 3.35),
+        ({'S': 0.0495}, 335.29, 3.72),
+        ({'S': 0.05}, 330.01, 3.73),
+        ({'C': 0.033}, 343.56, 2.28),
+        ({'C': 0.0335}, 330.01, 2.80),
+        ({'S': 0.04, 'C': 0.0065}, 333.40, 3.60),
+        ({'O': 0.152}, 337.94, 1.72),
+        ({'O': 0.1528}, 354.24, 0.28),
+        ({'S': 0.048}, None, None),
+        ({'C': 0.0325}, None, None),
+        ({'O': 0.1529}, None, None),
     ],
 )
-def test_alloys_near_the_end_eutectic_cross_it_above_the_data(comp, p_cross):
-    """The continued S and C eutectic compositions fall above 330 GPa, so an alloy between the
-    held value 20 GPa above the end and the end value crosses its eutectic there, at the stated
-    pressure, and stays past it to 600 GPa; 4.8 wt% S and 3.25 wt% C do not cross."""
+def test_alloys_near_the_end_eutectic_cross_it_above_the_data(comp, p_cross, step):
+    """The continued eutectic compositions move above the data, so an alloy whose sum of w_i /
+    w_e,i passes 1 there crosses its eutectic once, at the stated pressure: S and C alloys and
+    their mixtures into it (the S and C tables fall), O alloys out of it (the O table rises).
+    The liquidus slope steps up there by the stated K/GPa; 4.8 wt% S, 3.25 wt% C and 15.29 wt% O
+    do not cross up to 600 GPa."""
     p = np.arange(330.0, 600.0, 0.01) * 1e9
-    past = AlloyLiquidus(comp).status(p)['past_eutectic']
+    liq = AlloyLiquidus(comp)
+    past = liq.status(p)['past_eutectic']
+    flips = np.flatnonzero(past[1:] != past[:-1])
     if p_cross is None:
-        assert not past.any()
-    else:
-        k = int(np.argmax(past))
-        assert past[k] and past[k:].all()
-        assert p[k] / 1e9 == pytest.approx(p_cross, abs=0.02)
+        assert flips.size == 0
+        return
+    assert flips.size == 1 and past[0] == ('O' in comp)
+    assert p[flips[0] + 1] / 1e9 == pytest.approx(p_cross, abs=0.02)
+    g = [float(liq.gradient((p_cross + dp) * 1e9)) * 1e9 for dp in (-0.06, 0.05)]
+    assert g[1] - g[0] == pytest.approx(step, abs=0.1)
 
 
 @pytest.mark.physics_invariant
