@@ -1,0 +1,27 @@
+# source: Buono & Walker 2011, GCA 75, 2072-2087, doi:10.1016/j.gca.2011.01.030, Table 1 (p. 2075): 6 GPa runs, T +- 25 K, liquid composition as mole fraction FeS (microprobe)
+# typed from the PDF table; run labels as printed (TT-662 and TT-665 appear twice); BB-888 is the eutectic run (1263 +- 25 K, X 0.604 +- 0.005 in the eutectic rows)
+run,T_K,X_FeS
+BB-874,1873,0.158
+BB-882,1473,0.529
+BB-885,1423,0.548
+BB-886,1853,0.237
+BB-888,1273,0.604
+BB-896,1923,0.119
+BB-897,1948,0.122
+BB-898,1973,0.079
+BB-899,1553,0.493
+BB-900,1733,0.258
+BB-961,1623,0.376
+BB-962,1323,0.588
+TT-661,1623,0.365
+TT-662,1673,0.351
+TT-662,1673,0.359
+TT-663,1723,0.229
+TT-665,1823,0.165
+TT-682,1573,0.387
+TT-664,1373,0.573
+TT-665,1523,0.420
+TT-687,1873,0.109
+TT-688,1893,0.231
+TT-762,1773,0.280
+TT-763,1473,0.519

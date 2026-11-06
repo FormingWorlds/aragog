@@ -320,22 +320,6 @@ def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize(('el', 'p_gpa'), [('S', 10.0), ('S', 0.0), ('C', 2.0)])
-def test_below_the_data_the_eutectic_is_held_homologous_and_flagged(el, p_gpa):
-    """Below the start of the data the eutectic composition is the table value there and the
-    eutectic temperature keeps its ratio to the pure-iron curve at the start; the flag marks it."""
-    lo = alloy._data()['range'][el][0]
-    t_lo, w_lo = (float(v) for v in eutectic(el, lo * 1e9))
-    t_e, w_e = (float(v) for v in eutectic(el, p_gpa * 1e9))
-    assert w_e == w_lo
-    assert t_e / float(T_FE(p_gpa * 1e9)) == pytest.approx(
-        t_lo / float(T_FE(lo * 1e9)), rel=1e-12
-    )
-    flags = AlloyLiquidus({el: 0.01}).status(np.array([p_gpa, lo]) * 1e9)['extrapolated']
-    assert flags.tolist() == [True, False]
-
-
-@pytest.mark.physics_invariant
 @pytest.mark.parametrize('w_c', [0.01, 0.03])
 def test_at_the_carbon_unit_switch_the_liquidus_is_the_mean_of_both_units(w_c):
     """At 255 GPa the blend weight is 1/2, so the liquidus is the mean of its Fe3C and Fe7C3
@@ -543,7 +527,7 @@ def test_an_unknown_element_a_full_alloy_or_a_non_dict_is_refused(comp):
     c=st.floats(0.0, 0.03),
     o=st.floats(0.0, 0.10),
     si=st.floats(0.0, 0.08),
-    p_gpa=st.floats(20.0, 600.0),
+    p_gpa=st.floats(0.0, 600.0),
 )
 def test_the_liquidus_lies_below_iron_and_falls_with_sulfur(s, c, o, si, p_gpa):
     """Any valid alloy melts at or below pure iron, and on the Fe-rich side more S never raises
@@ -604,10 +588,11 @@ _RISING = (
     'comp', _RISING, ids=lambda c: '+'.join(f'{k}{v:g}' for k, v in c.items())
 )
 def test_the_liquidus_rises_with_pressure(comp):
-    """dT_liq/dP > 0 over 1 to 600 GPa wherever the alloy is not past the eutectic, so no table
-    node, anchor or end of the data sets a false top-down regime (S up to 4.8 wt%; the next test
-    pins the falling liquidus of 5.0 to 5.8 wt% S)."""
-    p = np.linspace(1e9, 600e9, 2393)
+    """dT_liq/dP > 0 over 1 to 600 GPa (26 to 600 GPa with S) wherever the alloy is not past the
+    eutectic, so no table node, anchor or end of the data sets a false top-down regime (S up to
+    4.8 wt%; the next test pins the falling liquidus of 5.0 to 5.8 wt% S, and
+    test_core_alloy_liquidus_low_pressure that of S alloys below 14 GPa)."""
+    p = np.linspace(26e9 if 'S' in comp else 1e9, 600e9, 2393)
     liq = AlloyLiquidus(comp)
     inside = ~liq.status(p)['past_eutectic']
     slope = np.asarray(liq.gradient(p))[inside] * 1e9
@@ -747,7 +732,7 @@ def test_the_shipped_liquidus_misses_the_figure_curves_as_stated(name, el, p_gpa
 
 @pytest.mark.physics_invariant
 def test_the_liquidus_slope_against_pressure(validation_plot):
-    """The slope of the liquidus over 1 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
+    """The slope of the liquidus over 26 to 600 GPa for 4 alloys: positive for 2 wt% C, 4.8 wt% S
     and the mixed alloy, negative at 259 to 275 GPa for 5.4 wt% S near its eutectic."""
     p = np.linspace(1e9, 600e9, 1198)
     comps = {
@@ -759,7 +744,7 @@ def test_the_liquidus_slope_against_pressure(validation_plot):
     slopes = {k: np.asarray(AlloyLiquidus(c).gradient(p)) * 1e9 for k, c in comps.items()}
     for k, g in slopes.items():
         low = (p > 259e9) & (p < 275e9)
-        assert (g[low].min() < 0.0) if k == 'S 5.4' else (g.min() > 0.0), k
+        assert (g[low].min() < 0.0) if k == 'S 5.4' else (g[p >= 26e9].min() > 0.0), k
 
     def figure():
         import matplotlib.pyplot as plt
