@@ -34,7 +34,7 @@ for p_gpa in (135.0, 330.0):
 
 ```text
 135 GPa: pure Fe 4180 K, alloy 3567 K, depression 613 K
-330 GPa: pure Fe 6229 K, alloy 4544 K, depression 1685 K
+330 GPa: pure Fe 6229 K, alloy 4542 K, depression 1687 K
 ```
 
 ## 3. Slope and flags
@@ -56,8 +56,8 @@ print(f"12 wt% S at 135 GPa: {float(rich.t_melt(135e9)):.0f} K, "
 
 ```text
 135 GPa: dT/dP 7.69 K/GPa, past eutectic False, extrapolated False
-330 GPa: dT/dP 3.60 K/GPa, past eutectic False, extrapolated True
-500 GPa: dT/dP 5.71 K/GPa, past eutectic False, extrapolated True
+330 GPa: dT/dP 3.20 K/GPa, past eutectic False, extrapolated True
+500 GPa: dT/dP 5.76 K/GPa, past eutectic False, extrapolated True
 12 wt% S at 135 GPa: 2672 K, past eutectic True
 ```
 

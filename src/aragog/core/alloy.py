@@ -16,11 +16,10 @@ The eutectic compositions and the Fe-O eutectic temperature are tables read from
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Outside the
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
-ratio (homologous) and the eutectic composition is held; over the 40 GPa above the end of the
-data the tables continue along their last segment while their pressure slopes fade to zero by a
-smootherstep, so the held values are those of the continued tables 20 GPa above the end. A
-composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
-boundary.
+ratio (homologous) and the eutectic composition holds its value at the end of the data; over
+the 40 GPa above the end the eutectic temperature is taken at a pressure whose slope fades to
+zero by a smootherstep, so its ratio is that 20 GPa above the end. A composition past the
+Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
 """
 
 from __future__ import annotations
@@ -105,14 +104,13 @@ def _eutectic_data(el: str, p_gpa):
 def eutectic(el: str, pressure):
     """Eutectic temperature [K] and composition (mass fraction of ``el``) of the Fe-``el`` binary.
 
-    The data are taken at an effective pressure ``q`` [GPa]: ``q = max(P, lo)`` up to the end of
-    the data ``hi``, ``q = hi + h`` above ``hi + 2h`` and, in between,
+    The temperature is taken at an effective pressure ``q`` [GPa]: ``q = max(P, lo)`` up to the
+    end of the data ``hi``, ``q = hi + h`` above ``hi + 2h`` and, in between,
     ``q = hi + 2h (z - z^4 (5/2 - 3z + z^2))`` with ``z = (P - hi) / 2h``, so that
-    ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3``: the data are kept up to
-    ``hi`` and their slopes fade to zero over ``2h`` above it (``2h`` =
-    :data:`HOMOLOGOUS_FADE_GPA`), the tables continued along their last segment. The
-    temperature keeps its ratio to the pure-iron curve at ``q`` (homologous outside the data)
-    and the composition its value at ``q``.
+    ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3`` (``2h`` =
+    :data:`HOMOLOGOUS_FADE_GPA`; the Fe-O table continued along its last segment). It keeps
+    its ratio to the pure-iron curve at ``q`` (homologous outside the data). The composition is
+    the data at ``min(q, hi)``: it holds its end value above ``hi``, where its slope stops.
     """
     lo, hi = _data()['range'][el]
     h = 0.5 * HOMOLOGOUS_FADE_GPA
@@ -124,7 +122,8 @@ def eutectic(el: str, pressure):
         jnp.where(p_gpa < lo, lo, p_gpa),
         jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded),
     )
-    t_e, w_e = _eutectic_data(el, q)
+    t_e = _eutectic_data(el, q)[0]
+    w_e = _eutectic_data(el, jnp.where(q > hi, hi, q))[1]
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
     return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
 

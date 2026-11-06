@@ -109,7 +109,7 @@ The form misses the curves by an RMS of 48.7, 110.1, 120.8, 114.5 and 101.5 K at
 
 **How to read the plot.** The x-axis is the total S + C + O content in wt% at a fixed ratio of 4 : 1 : 6 by mass, the y-axis the depression in K, at 135 GPa (top) and 330 GPa (bottom). The solid line is the harmonic rule of Aragog, the dashed lines 3 other rules. All rules agree at small content; the harmonic rule stays close to the sum of the binaries and far from the composition-weighted rule.
 
-The depression is 640.7 K at 135 GPa and 1748.6 K at 330 GPa. The composition-weighted rule gives 488.7 and 886.6 K, the sum of the binaries 664.2 and 1983.4 K, the dilute sum 679.6 and 2207.9 K. Scaled down by 10, 100 and 1000, the depression over the dilute sum is 0.99462, 0.99947 and 0.99995.
+The depression is 640.7 K at 135 GPa and 1750.6 K at 330 GPa. The composition-weighted rule gives 488.7 and 891.7 K, the sum of the binaries 664.2 and 1986.6 K, the dilute sum 679.6 and 2211.4 K. Scaled down by 10, 100 and 1000, the depression over the dilute sum is 0.99462, 0.99947 and 0.99995.
 
 ??? info "Test details"
     - Reference: the 4 rules and the dilute limit, written out in the test (analytical).
@@ -132,14 +132,14 @@ The depression is 640.7 K at 135 GPa and 1748.6 K at 330 GPa. The composition-we
 
 **How to read the plot.** The x-axis is the pressure in GPa, the y-axis the slope $dT/dP$ in K/GPa, for 2 wt% C, 4.8 and 5.4 wt% S and the mixed alloy of the tutorial (S 2, C 0.5, O 3, Si 4 wt%). The dashed line is 0. A pass means that every line except 5.4 wt% S stays above 0; 5.4 wt% S dips below 0 at 259 to 275 GPa. The small kinks are the 5 GPa nodes of the composition tables; above 330 GPa the slopes join the homologous rule without a step.
 
-The least slope of 3.2 wt% C is +0.12 K/GPa, and over 325 to 380 GPa the slope changes by at most 0.025 K/GPa (3 wt% C) between points 0.1 GPa apart. Across the C blend the slope falls at most 0.76 K/GPa (2 wt% C) below its edge value; a 10 GPa blend would fall 3.7 to 8.9 K/GPa.
+The least slope of 3.2 wt% C is +0.16 K/GPa. Over 325 to 380 GPa, between points 0.1 GPa apart, the slope steps at the end of the data, where the eutectic composition stops changing, by 0.40 to 3.67 K/GPa for the 5 alloys tested, and elsewhere changes by at most 0.012 K/GPa. Across the C blend the slope falls at most 0.76 K/GPa (2 wt% C) below its edge value; a 10 GPa blend would fall 3.7 to 8.9 K/GPa.
 
-**Known limit.** Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa), 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa); outside the tests also 4.9, 6 and 7 wt% S between 209 and 275 GPa and 3.3 wt% C at 330 to 335 GPa ($-0.04$ K/GPa).
+**Known limit.** Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast: 5.0 wt% S at 272 to 275 GPa (least slope $-0.16$ K/GPa), 5.4 wt% at 259 to 275 GPa ($-0.64$ K/GPa), 5.8 wt% at 244 to 261 GPa ($-0.51$ K/GPa), 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa); outside the tests also 4.9, 6 and 7 wt% S between 209 and 275 GPa and 3.3 wt% C at 329.6 to 330 GPa ($-0.007$ K/GPa).
 
 ??? info "Test details"
     - Reference: the sign of the slope (physical); for 5.0 to 5.8 wt% S, pinned values of the read curve of Mori et al. (2017, Fig. 5).
-    - Tolerance: slope above 0; step below 0.1 K/GPa; blend dip below 1 K/GPa; pinned least slope within 0.01 K/GPa and the negative range within 0.2 GPa.
-    - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
+    - Tolerance: slope above 0; step at the end of the data equal to the pinned value to 0.01 K/GPa and below 0.1 K/GPa elsewhere; blend dip below 1 K/GPa; pinned least slope within 0.01 K/GPa and the negative range within 0.2 GPa.
+    - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_held_eutectic_composition_steps_the_slope_at_the_end_of_the_data`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls"`
 
 ## The 2 reads of each figure curve
