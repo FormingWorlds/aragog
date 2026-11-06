@@ -433,7 +433,7 @@ def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
     extrapolation."""
     for el in ('S', 'C', 'O'):
         hi = alloy._data()['range'][el][1]
-        t_end, w_end = map(float, alloy._eutectic_data(el, hi))
+        t_end, w_end = (float(v) for v in eutectic(el, hi * 1e9))
         h = 0.5 * alloy.HOMOLOGOUS_FADE_GPA
         t_fade = float(eutectic(el, (hi + 2.0 * h) * 1e9)[0])
         for p_gpa in (hi + 1e-3, hi + 1.0, hi + h, hi + 2.0 * h, 500.0):
@@ -788,11 +788,43 @@ def test_a_huge_fraction_is_refused_as_a_mass_fraction():
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize(('el', 'w_end'), [('S', 0.05), ('C', 0.0335), ('O', 0.15068)])
-def test_an_alloy_at_its_end_eutectic_stays_inside_it_above_the_data(el, w_end):
-    """With the eutectic composition held, an alloy at the end value of its binary's data is not
-    past its eutectic at any pressure from the end of the data to 600 GPa, and one 0.1 % richer
-    is past it at every one."""
-    p = np.linspace(331e9, 600e9, 270)
+@pytest.mark.parametrize(('el', 'w_table'), [('S', 0.05), ('C', 0.0335), ('O', 0.15068)])
+def test_an_alloy_at_its_end_eutectic_stays_inside_it_above_the_data(el, w_table):
+    """With the eutectic composition held, an alloy at the end value of its binary's data (the
+    table's last row) is not past its eutectic at any pressure from the end of the data to
+    600 GPa, and one 0.1 % richer is past it at every one."""
+    hi = alloy._data()['range'][el][1]
+    w_end = float(eutectic(el, hi * 1e9)[1])
+    assert w_end == pytest.approx(w_table, rel=1e-12)
+    p = np.linspace(hi, 600.0, 2 * int(600.0 - hi) + 1) * 1e9
     assert not AlloyLiquidus({el: w_end}).status(p)['past_eutectic'].any()
     assert AlloyLiquidus({el: 1.001 * w_end}).status(p)['past_eutectic'].all()
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('w_c', 'slope_min', 'p_from', 'p_to'),
+    [
+        (0.0329, None, None, None),
+        (0.0330, -0.0070, 329.64, 330.0),
+        (0.0335, -0.0861, 325.46, 330.0),
+        (0.0337, -0.0213, 323.80, 324.91),
+        (0.0338, None, None, None),
+    ],
+)
+def test_the_fe_c_liquidus_falls_below_the_end_of_its_data_for_3_3_to_3_37_wt_percent(
+    w_c, slope_min, p_from, p_to
+):
+    """Inside the eutectic and below 330 GPa, the liquidus of 3.30 to 3.37 wt% C falls with
+    pressure (least slope -0.086 K/GPa at 3.35 wt%, from 323.8 GPa at 3.37 wt%); 3.29 and
+    3.38 wt% C do not fall."""
+    p = np.arange(300.0, 340.0, 0.01) * 1e9
+    liq = AlloyLiquidus({'C': w_c})
+    inside = ~liq.status(p)['past_eutectic']
+    g = np.asarray(liq.gradient(p)) * 1e9
+    falling = p[inside & (g < 0.0)] / 1e9
+    if slope_min is None:
+        assert falling.size == 0
+    else:
+        assert g[inside].min() == pytest.approx(slope_min, abs=1e-3)
+        assert (falling[0], falling[-1]) == pytest.approx((p_from, p_to), abs=0.02)
