@@ -48,6 +48,16 @@ def test_floor_weight_limits_and_smoothness():
         assert abs(y1 - y0) / h < 1e-6
 
 
+def test_floor_weight_rises_from_1_to_6_j_per_kg_k_above_the_solidus():
+    """The documented ramp: 0 up to S_sol + 1 J/kg/K, 0.5 at S_sol + 3.5, 1 from S_sol + 6."""
+    S_sol = 2000.0
+    assert sl.floor_weight(S_sol + 1.0, S_sol) == 0.0
+    assert sl.floor_weight(S_sol + 1.05, S_sol) > 0.0
+    assert sl.floor_weight(S_sol + 3.5, S_sol) == pytest.approx(0.5, abs=1e-14)
+    assert sl.floor_weight(S_sol + 5.95, S_sol) < 1.0
+    assert sl.floor_weight(S_sol + 6.0, S_sol) == 1.0
+
+
 @settings(max_examples=60, deadline=None)
 @given(st.floats(allow_nan=False, allow_infinity=False, min_value=-1e6, max_value=1e6))
 def test_floor_weight_stays_in_range(x):
@@ -179,9 +189,9 @@ class TestSolver:
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
         y[-2:] = s._lid_start(3050.0)
-        y[-2] = sl.LID_HANDOVER_FRAC * s._lid_h_top * (1.0 - 1e-6)
+        y[-2] = 0.7 * s._lid_h_top * (1.0 - 1e-6)
         assert s._lid_root_value(0.0, y) < 0.0
-        y[-2] = sl.LID_HANDOVER_FRAC * s._lid_h_top * (1.0 + 1e-6)
+        y[-2] = 0.7 * s._lid_h_top * (1.0 + 1e-6)
         assert s._lid_root_value(0.0, y) > 0.0
         y[-2] = 0.0
         assert s._lid_root_value(0.0, y) == -1.0
@@ -247,7 +257,8 @@ class TestSolver:
 
 
 def test_flux_surface_state_carries_the_prescribed_flux():
-    """A lid under a prescribed flux: T_s from the conduction, F_s = F_atm; clipped at 1 K."""
+    """A lid under a prescribed flux: T_s from the conduction, F_s = F_atm; clipped at 1 K and
+    at 1 K below the base."""
     hv = sl.LidEnthalpy.linear(3000.0, 1200.0, 1400.0, 0.0)
     delta, F_atm = 10.0, 60.0
     E = delta * hv.profile_heat(0.0, 1400.0 - F_atm * delta / 4.0, 1400.0)
@@ -257,6 +268,11 @@ def test_flux_surface_state_carries_the_prescribed_flux():
     hot = sl.flux_surface_state(delta, E, 1400.0, 4.0, 1e6, sl.LID_DELTA_FLOOR, hv)
     assert hot.T_s == 1.0
     assert hot.F_s < 1e6
+    for F_cold in (0.0, -5.0):
+        assert (
+            sl.flux_surface_state(delta, E, 1400.0, 4.0, F_cold, sl.LID_DELTA_FLOOR, hv).T_s
+            == 1399.0
+        )
 
 
 @pytest.mark.parametrize(
