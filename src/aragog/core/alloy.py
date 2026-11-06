@@ -112,19 +112,19 @@ def eutectic(el: str, pressure):
     along its last segment above ``hi``.
     """
     lo, hi = _data()['range'][el]
-    h = 0.5 * HOMOLOGOUS_FADE_GPA
+    fade = HOMOLOGOUS_FADE_GPA
     p_gpa = jnp.asarray(pressure) / 1e9
-    z = 0.5 * (p_gpa - hi) / h
-    faded = hi + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
+    z = (p_gpa - hi) / fade
+    faded = hi + fade * (z - z**4 * (2.5 - 3.0 * z + z * z))
     p_in = jnp.where(p_gpa < lo, lo, jnp.where(p_gpa > hi, hi, p_gpa))
-    q = jnp.where(p_gpa <= hi, p_in, jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded))
+    q = jnp.where(p_gpa <= hi, p_in, jnp.where(p_gpa >= hi + fade, hi + 0.5 * fade, faded))
     t_e = _eutectic_temperature(el, q)
     w_e = _interp(q, _data()['composition'][el])
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
     return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
 
 
-def _units(w: dict, units: dict):
+def _mole_numbers(w: dict, units: dict):
     """Solvent moles (free Fe plus the Si atoms) and the mole numbers of the Fe_k X_m units, per
     unit mass of alloy, for a composition without H and N (see :func:`_without_h_n`)."""
     free = (1.0 - sum(w.values())) / _MOLAR['Fe'] + sum(w[el] / _MOLAR[el] for el in SOLVENT)
@@ -168,7 +168,7 @@ def _liquidus(t_fe, eut: dict, w: dict, c_unit):
     scale = jnp.where(excess > 1.0, 1.0 / jnp.maximum(excess, 1.0), 1.0)
     ws = {el: (w[el] * scale if el in DEPRESSING else w[el]) for el in ELEMENTS}
     units = {**_UNITS, 'C': c_unit}
-    free, u = _units(ws, units)
+    free, u = _mole_numbers(ws, units)
     total = free + sum(u.values())
     x = {el: u[el] / total for el in DEPRESSING}
     big_x = sum(x.values())
