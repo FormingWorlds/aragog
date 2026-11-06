@@ -1,5 +1,6 @@
 # eutectic temperature of the Fe-FeO binary vs pressure
 # source: Oka et al. 2019, Am. Mineral. 104, 1603-1607, doi:10.2138/am-2019-7081, Fig. 4 (red curve, this study); read from the vector path of the curve (figlab read A), checked by a second raster read
+# validation read: tests/validation/data/core_eutectics/oka2019_fig4_T.csv (reads A and B, figure scale in its header)
 # grid: 5 GPa, linear interpolation of the read
 P_GPa,T_e_K
 0,1802.8

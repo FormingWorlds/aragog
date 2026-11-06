@@ -1,5 +1,6 @@
 # eutectic liquid composition of the Fe-O binary, mass fraction w_e of O, vs pressure
 # source: Oka et al. 2019, Am. Mineral. 104, 1603-1607, doi:10.2138/am-2019-7081, Fig. 3 (eutectic liquid composition, Fe-FeO); read from the vector path of the curve (figlab read A), checked by a second raster read
+# validation read: tests/validation/data/core_eutectics/oka2019_fig3_O.csv (reads A and B, figure scale in its header)
 # grid: 5 GPa, linear interpolation of the read
 P_GPa,w_e
 0,0.00332

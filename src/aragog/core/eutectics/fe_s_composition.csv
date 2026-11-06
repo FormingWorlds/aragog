@@ -1,5 +1,6 @@
 # eutectic liquid composition of the Fe-S binary, mass fraction w_e of S, vs pressure
 # source: Mori et al. 2017, EPSL 464, 135-141, doi:10.1016/j.epsl.2017.02.021, Fig. 5 (eutectic liquid composition, Fe-Fe3S); read from the vector path of the curve (figlab read A), checked by a second raster read
+# validation read: tests/validation/data/core_eutectics/mori2017_fig5_S.csv (reads A and B, figure scale in its header)
 # grid: 5 GPa, linear interpolation of the read
 # last row: Hirose et al. 2021, Nat. Rev. Earth Environ. 2, 645-658, doi:10.1038/s43017-021-00203-6, PDF p. 5: about 5 wt% S at 330 GPa; linear between the end of the curve and this anchor
 P_GPa,w_e

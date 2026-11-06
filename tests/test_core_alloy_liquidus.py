@@ -311,7 +311,7 @@ def test_the_fe_c_misfit_against_mashino_stays_as_stated(validation_plot):
 )
 def test_the_eutectic_temperatures_meet_the_papers(el, p_gpa, expected, tol):
     """Fe-S 3550 K at 254 GPa (Mori et al. 2017, run 11) and Fe-C about 3750 K at 330 GPa (Mashino
-    et al. 2019, p. 6, a comparison); Fe-C is the Simon fit 1513 K ((P - 5)/8.4 + 1)^(1/4.1) of
+    et al. 2019, p. 140, a comparison); Fe-C is the Simon fit 1513 K ((P - 5)/8.4 + 1)^(1/4.1) of
     Mashino et al. (2019), retyped here, to 1e-3."""
     t_e = float(eutectic(el, p_gpa * 1e9)[0])
     assert t_e == pytest.approx(expected, abs=tol)
@@ -524,12 +524,14 @@ _bad_value = st.one_of(
 @example(el='S', bad=-0.01)
 @example(el='C', bad=-1e-12)
 def test_a_bad_mass_fraction_is_refused(el, bad):
+    """A boolean, string, None, NaN, infinite, negative or complex fraction is refused."""
     with pytest.raises(ValueError, match='mass fraction'):
         AlloyLiquidus({el: bad})
 
 
 @pytest.mark.parametrize('comp', [{'Mg': 0.01}, {'S': 0.6, 'O': 0.4}, [('S', 0.01)]])
 def test_an_unknown_element_a_full_alloy_or_a_non_dict_is_refused(comp):
+    """An element outside the list, fractions that sum to 1 and a non-dict are refused."""
     with pytest.raises(ValueError):
         AlloyLiquidus(comp)
 
@@ -613,20 +615,22 @@ def test_the_liquidus_rises_with_pressure(comp):
     assert slope.min() > 0.0, (p[inside][slope.argmin()] / 1e9, slope.min())
 
 
-@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('comp', 'slope_min', 'p_from', 'p_to'),
-    [({'S': 0.050}, -0.161, 272.3, 274.9), ({'S': 0.054}, -0.637, 259.0, 274.9)]
-    + [({'S': 0.058}, -0.508, 243.9, 261.4), ({'S': 0.04, 'C': 0.01}, -0.372, 270.0, 273.4)],
+    [({'S': 0.049}, -0.036, 274.4, 274.9), ({'S': 0.050}, -0.161, 272.3, 274.9)]
+    + [({'S': 0.054}, -0.637, 259.0, 274.9), ({'S': 0.058}, -0.508, 243.9, 261.4)]
+    + [({'S': 0.060}, -0.435, 238.5, 252.1), ({'S': 0.070}, -0.072, 208.9, 209.9)]
+    + [({'S': 0.04, 'C': 0.01}, -0.372, 270.0, 273.4)],
     ids=lambda v: '+'.join(f'{k}{x:g}' for k, x in v.items()) if isinstance(v, dict) else None,
 )
 def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
     comp, slope_min, p_from, p_to
 ):
     """The eutectic composition of Mori et al. (2017, Fig. 5) falls by 0.021 wt%/GPa at 250 to
-    275 GPa, so near the eutectic, with dT/dP ~ dT_e/dP - |dT/dw| |dw_e/dP|, the liquidus of 5.0
-    to 5.8 wt% S, and of S with C near their eutectic, falls with pressure there; the pinned
-    interval [GPa] and least slope [K/GPa] show a later change of the data or the code."""
+    275 GPa, so near the eutectic, with dT/dP ~ dT_e/dP - |dT/dw| |dw_e/dP|, the liquidus of 4.9
+    to 7 wt% S, and of S with C near their eutectic, falls with pressure there and rises outside
+    the pinned interval [GPa]; the interval and least slope [K/GPa] pin the code's own output."""
     p = np.linspace(200e9, 320e9, 1201)
     liq = AlloyLiquidus(comp)
     inside = ~liq.status(p)['past_eutectic']
@@ -634,7 +638,7 @@ def test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls(
     falling = p[inside & (g <= 0.0)] / 1e9
     assert g[inside].min() == pytest.approx(slope_min, abs=0.01)
     assert (falling[0], falling[-1]) == pytest.approx((p_from, p_to), abs=0.2)
-    assert np.all(g[inside & ((p < 240e9) | (p > 280e9))] > 0.0)
+    assert np.all(g[inside & ((p < (p_from - 1.0) * 1e9) | (p > (p_to + 1.0) * 1e9))] > 0.0)
 
 
 @pytest.mark.parametrize('comp', [{'Si': 0.05}, {'H': 0.01, 'N': 0.002}, {}])
