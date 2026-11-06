@@ -91,7 +91,7 @@ Fe-C eutectic at 20 GPa: 1942 K, 4.06 wt% C
 8 wt% S at 30 GPa: 2253 K, dT/dP 13.6 K/GPa
 ```
 
-The Fe-S eutectic falls from 1 bar to 14 GPa, and so does the liquidus of 8 wt% S: in a core at these pressures iron starts to freeze at the top, not at the centre. At 22 GPa the liquidus is steep because the unit blend adds to its slope, with no data behind it; the [validation](../Validation/core_alloy_liquidus.md) states how far the liquidus is from the measured points below 15 GPa.
+The Fe-S eutectic falls from 1 bar to 14 GPa, and the liquidus of 8 wt% S falls from 5.5 to 14 GPa: in a core at these pressures iron starts to freeze at the top, not at the centre. At 22 GPa the liquidus is steep because the unit blend adds to its slope, with no data behind it; the [validation](../Validation/core_alloy_liquidus.md) states how far the liquidus is from the measured points below 15 GPa.
 
 ## 5. Adding a binary
 

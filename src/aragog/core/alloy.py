@@ -6,8 +6,8 @@ Fe and the Fe_k X_m units of the alloy, ``T_Fe`` the pure-iron curve of
 :class:`aragog.core.melting.IronMeltingCurve`, and ``A`` fixed at each pressure by the binary
 eutectic point (``w_e``, ``T_e``). The units are FeO for O; for S they are FeS below 18 GPa and
 Fe3S above 26 GPa, and for C Fe3C below 255 GPa and Fe7C3 above, each pair joined by a C2 blend of
-the two liquidus temperatures (over 18 to 26 GPa and 230 to 280 GPa). With several elements, ``x_Fe = 1 - sum x_i`` and ``1/A = sum (x_i/X) / A_i``,
-which keeps the dilute limit of each binary, ``dT ~ T_Fe sum x_i / A_i``. Si is treated as
+the two liquidus temperatures (over 18 to 26 GPa and 230 to 280 GPa). With several elements,
+``x_Fe = 1 - sum x_i`` and ``1/A = sum (x_i/X) / A_i``, which keeps the dilute limit of each binary, ``dT ~ T_Fe sum x_i / A_i``. Si is treated as
 lowering no melting point: its atoms count with the Fe solvent, so an Fe-Si alloy melts like Fe.
 H and N have no liquidus data at core pressures and leave the mole count: an alloy melts like the
 same alloy without them.
@@ -19,8 +19,8 @@ Fe-S eutectic is linear between the nodes of Fei et al. (1997) at 1 bar, 10 and 
 1348 K at 21 GPa and the composition table at 20 GPa, joined into the fit and the table by a
 smootherstep over 18 to 21 GPa; the Fe-C eutectic is the cubic from 1 bar (1416.15 K, 4.3 wt%)
 with zero curvature there and the value and slope of the fit and the table at 5 GPa. Above the
-data, the tables are read at an effective pressure ``q`` whose slope fades from 1 to 0 by a smootherstep over the
-40 GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic temperature is its value
+data, the tables are read at an effective pressure ``q`` whose slope fades from 1 to 0 by a
+smootherstep over the 40 GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic temperature is its value
 at ``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve at ``q``, and the
 composition and Fe-O temperature tables continue along their last segment up to ``q``. A
 composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
@@ -60,16 +60,16 @@ _UNIT_O = (1.0, 1.0)
 _UNITS_S = ((1.0, 1.0), (3.0, 1.0))
 _UNITS_C = ((3.0, 1.0), (7.0, 3.0))
 S_UNIT_BLEND_GPA = (18.0, 26.0)
-S_JOIN_GPA = (18.0, 21.0)
 C_UNIT_SWITCH_PA = 255.0e9
 C_UNIT_BLEND_HALF_WIDTH_PA = 25.0e9
 HOMOLOGOUS_FADE_GPA = 40.0
 # Simon fits of the eutectic temperature, T_ref [K], P_ref [GPa], a [GPa], c.
 _SIMON = {'S': (1348.0, 21.0, 36.5, 2.07), 'C': (1513.0, 5.0, 8.4, 4.1)}
+S_JOIN_GPA = (18.0, _SIMON['S'][1])
 
 
 def _table(name: str) -> np.ndarray:
-    """Two-column table of ``aragog/core/eutectics/<name>.csv``, pressure in GPa first."""
+    """Table of ``aragog/core/eutectics/<name>.csv``, all columns, pressure in GPa first."""
     path = importlib.resources.files('aragog.core').joinpath('eutectics', f'{name}.csv')
     rows = [
         ln for ln in path.read_text(encoding='utf-8').splitlines() if not ln.startswith('#')
@@ -107,12 +107,6 @@ def _smootherstep(z):
     return z * z * z * (z * (z * 6.0 - 15.0) + 10.0)
 
 
-def _simon(el: str, p_gpa):
-    """Simon fit of the Fe-``el`` eutectic temperature [K] at ``p_gpa`` [GPa]."""
-    t_ref, p_ref, a, c = _SIMON[el]
-    return t_ref * ((p_gpa - p_ref) / a + 1.0) ** (1.0 / c)
-
-
 def _natural_cubic(x, span, y0, y1, s1):
     """Cubic through ``y0`` at ``x = 0`` with zero curvature there, and ``y1`` with slope ``s1``
     at ``x = span``."""
@@ -127,14 +121,14 @@ def _eutectic_in_data(el: str, q):
     if el == 'O':
         return _interp(q, _data()['t_o']), _interp(q, comp)
     low = _data()['low'][el]
-    t_fit, w_fit = _simon(el, q), _interp(q, comp)
+    t_ref, p_ref, a, c = _SIMON[el]
+    t_fit, w_fit = t_ref * ((q - p_ref) / a + 1.0) ** (1.0 / c), _interp(q, comp)
     if el == 'S':
         p0, p1 = S_JOIN_GPA
-        t_low = _interp(q, np.vstack([low[:, :2], [p1, _simon('S', p1)]]))
+        t_low = _interp(q, np.vstack([low[:, :2], [p_ref, t_ref]]))
         w_low = _interp(q, np.vstack([low[:, [0, 2]], comp[:1]]))
         b = _smootherstep((q - p0) / (p1 - p0))
         return (1.0 - b) * t_low + b * t_fit, (1.0 - b) * w_low + b * w_fit
-    t_ref, p_ref, a, c = _SIMON['C']
     span, x = p_ref - low[0, 0], q - low[0, 0]
     w_slope = (comp[1, 1] - comp[0, 1]) / (comp[1, 0] - comp[0, 0])
     t_cubic = _natural_cubic(x, span, low[0, 1], t_ref, t_ref / (a * c))
@@ -201,7 +195,7 @@ def _without_h_n(w: dict) -> dict:
     return {el: (0.0 if el in ('H', 'N') else w[el] / keep) for el in ELEMENTS}
 
 
-def _liquidus(t_fe, eut: dict, w: dict, c_unit, s_unit=_UNITS_S[1]):
+def _liquidus(t_fe, eut: dict, w: dict, c_unit, s_unit):
     """Alloy liquidus [K] for one C and one S unit choice, from the pure-iron curve, the eutectic
     points and the composition without H and N; the composition is scaled back to the Fe-rich
     boundary where ``sum w_i / w_e,i`` exceeds one."""
@@ -291,12 +285,13 @@ class AlloyLiquidus:
         s0, s1 = S_UNIT_BLEND_GPA
         c_s = _smootherstep((p / 1e9 - s0) / (s1 - s0))
         c_c = _smootherstep(0.5 * ((p - C_UNIT_SWITCH_PA) / C_UNIT_BLEND_HALF_WIDTH_PA + 1.0))
-        fe3s = (jnp.where(c_s > 0.0, _UNITS_S[1][0], _UNITS_S[0][0]), _UNITS_S[1][1])
+        # S units of the upper blend end: Fe3S, or FeS at zero weight below 18 GPa (finite there)
+        s_hi = (jnp.where(c_s > 0.0, _UNITS_S[1][0], _UNITS_S[0][0]), _UNITS_S[1][1])
         t_fe = IronMeltingCurve.t_melt_pure(p)
         eut = {el: eutectic(el, p) for el in DEPRESSING}
         t_s, a_s = _liquidus(t_fe, eut, w, _UNITS_C[0], _UNITS_S[0])
-        t3, a3 = _liquidus(t_fe, eut, w, _UNITS_C[0], fe3s)
-        t7, a7 = _liquidus(t_fe, eut, w, _UNITS_C[1], fe3s)
+        t3, a3 = _liquidus(t_fe, eut, w, _UNITS_C[0], s_hi)
+        t7, a7 = _liquidus(t_fe, eut, w, _UNITS_C[1], s_hi)
         t_liq = (1.0 - c_s) * t_s + c_s * ((1.0 - c_c) * t3 + c_c * t7)
         if not isinstance(t_liq, jax.core.Tracer):
             _assert_invariants(p, t_liq, a_s, a3, a7)

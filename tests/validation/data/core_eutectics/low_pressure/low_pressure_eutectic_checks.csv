@@ -1,15 +1,15 @@
 # eutectic points below 25 GPa that set no node of the shipped tables: checks of the low-pressure eutectic (sources and pages in the first column)
-# Kamada et al. 2010: their linear fit; the error adds the intercept and slope errors (40 + 0.7 P K); Chudinovskikh & Boehler 2007: quench runs with a liquid, an upper bound of T_e
+# Kamada et al. 2010: their linear fit; the error adds the intercept and slope errors (40 + 0.7 P K); Chudinovskikh & Boehler 2007: quench runs with a liquid, an upper bound of T_e, and its liquid on the Fe-rich liquidus, a lower bound of w_e; anchor: the temperature is the reference point of a Simon fit (Fe-S 21 GPa, Fe-C 5 GPa), only the composition is a check
 source,element,P_GPa,T_K,T_err_K,composition,composition_err,composition_unit,kind
 Buono & Walker 2011 Table 1,S,6,1263,25,0.604,0.005,X_FeS,measured
 Ryzhenko & Kennedy 1973 via Buono & Walker 2011 Table 1,S,6,1263,15,0.6,0.05,X_FeS,measured
 Usselman 1975 via Buono & Walker 2011 Table 1,S,6,1259,12,0.669,0.005,X_FeS,measured
 Morard et al. 2007 via Buono & Walker 2011 Table 1,S,6,1140,170,0.647,,X_FeS,measured
-Fei et al. 2000 p. 1831,S,21,1348,,15.4,,wt%,measured
+Fei et al. 2000 p. 1831,S,21,1348,,15.4,,wt%,anchor
 Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P,S,21,1311.4,54.7,,,,fit
 Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P,S,25,1365.0,57.5,,,,fit
 Chudinovskikh & Boehler 2007 Table 1,S,21.9,1512,19,13.0,1.1,wt%,upper_bound_T
 Chudinovskikh & Boehler 2007 Table 1,S,23.0,1450,30,,,,upper_bound_T
 Lord et al. 2009 p. 158 (after Chipman 1972),C,0,1420,,4.3,,wt%,measured
-Fei & Brosh 2014 p. 158,C,5,1513,10,4.0,0.3,wt%,measured
+Fei & Brosh 2014 p. 158,C,5,1513,10,4.0,0.3,wt%,anchor
 Fei & Brosh 2014 p. 158,C,10,1618,,3.7,,wt%,measured
