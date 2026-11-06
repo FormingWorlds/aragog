@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from scipy.optimize import brentq
 
 from aragog import surface_lid as sl
 from aragog.solver.entropy_solver import SECS_PER_YEAR
@@ -330,7 +332,7 @@ class TestFluxSolver:
         assert float(s.state._heat_flux[-1]) == pytest.approx(200.0, rel=1e-6)
         assert ev.surf.T_s < ev.T_b
 
-    def test_short_run_closes_energy_and_reports_the_crust_surface(self, eos):
+    def test_short_run_closes_energy_and_reports_the_crust_surface(self, eos, monkeypatch):
         s = self._s(eos, end=2.0)
         s.solve()
         sol = s._solution
@@ -346,6 +348,20 @@ class TestFluxSolver:
         assert st.lid_conductance == pytest.approx(
             s._lid_k * max(sl.shape(ev.surf.s)[0], 0.1) / ev.delta, rel=1e-12
         )
+        # the surface slope of the conductance is at least 0.1
+        rhs = s._dSdt_single
+        for slope in (0.15, 0.05):
+            v = brentq(lambda x: sl.shape(x)[0] - slope, sl.LID_SHAPE_MIN, -1.0)
+
+            def thinning(t, y, v=v):
+                out = rhs(t, y)
+                surf = dataclasses.replace(s._lid_last.surf, s=v)
+                s._lid_last = dataclasses.replace(s._lid_last, surf=surf)
+                return out
+
+            monkeypatch.setattr(s, '_dSdt_single', thinning)
+            G = s.get_state().lid_conductance
+            assert G == pytest.approx(s._lid_k * max(slope, 0.1) / ev.delta, rel=1e-9)
 
     def test_jax_flux_mode_matches_numpy(self, eos):
         from aragog.jax import surface_lid as jl
