@@ -424,8 +424,21 @@ class CoreEnergyBudget:
         The integral of the effective capacity, equal to ``heat_content(t_cmb + d_t) -
         heat_content(t_cmb)`` but without that difference of 2 contents near 1e30 J, whose float
         spacing (about 1e15 J) can exceed the change of a short call: the secular term is
-        ``d_t C_secular`` and the released energy is integrated from ``u = sqrt(T_onset - T)``
-        at both ends, taken from the same ``T_onset - t_cmb``.
+        ``d_t C_secular`` and the released energy is integrated over ``u = sqrt(T_onset - T)``
+        with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
+        ``T_freeze - t_cmb``.
+
+        Parameters
+        ----------
+        t_cmb : float
+            CMB temperature at the start [K].
+        d_t : float
+            Change of the CMB temperature [K].
+
+        Returns
+        -------
+        float
+            Heat change [J], negative when the core cools.
 
         Raises
         ------
@@ -437,29 +450,34 @@ class CoreEnergyBudget:
                 'heat_change is the full-core change; a stratified budget evolves '
                 'only its convecting volume'
             )
-        secular = float(d_t) * float(self.secular_capacity())
-        if self.capacity_mode == 'legacy':
+        t0, dt = float(t_cmb), float(d_t)
+        secular = dt * float(self.secular_capacity())
+        s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
+        if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
-        s0, s1 = (
-            max(x, 0.0)
-            for x in (self.t_onset - float(t_cmb), self.t_onset - float(t_cmb) - float(d_t))
-        )
+        if min(s0, s1) < self.t_onset - self.t_freeze < max(s0, s1):
+            d_freeze = self.t_freeze - t0  # exact: a difference of 2 close floats
+            return self.heat_change(t0, d_freeze) + self.heat_change(
+                self.t_freeze, dt - d_freeze
+            )
         u0, u1 = float(_np.sqrt(s0)), float(_np.sqrt(s1))
-        # u1 - u0 = (s1 - s0)/(u0 + u1); s1 - s0 = -d_t exactly when both ends are below onset
-        width = (-float(d_t) if s0 > 0.0 and s1 > 0.0 else s1 - s0) / max(u0 + u1, 1e-300)
+        width = (-dt if s0 > 0.0 and s1 > 0.0 else s1 - s0) / (u0 + u1)
         return secular - self._released(u0, u1, width)
 
     def _released(self, u_lo, u_hi, width=None) -> float:
         """Latent and gravitational energy [J] released from ``u_lo`` to ``u_hi``, ``u = sqrt(
-        T_onset - T)``, over a panel of ``width`` (default ``u_hi - u_lo``); one Gauss-Legendre
-        panel per side of the freeze-out jump."""
-        width = u_hi - u_lo if width is None else width
-        if width < 0.0:
-            return -self._released(u_hi, u_lo, -width)
-        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
-        if u_lo < u_freeze < u_hi:
-            return self._released(u_lo, u_freeze) + self._released(u_freeze, u_hi)
-        boundary = jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
+        T_onset - T)``, over a panel of signed ``width`` (default ``u_hi - u_lo``, then one
+        Gauss-Legendre panel per side of the freeze-out jump)."""
+        if width is None:
+            u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
+            if u_lo < u_freeze < u_hi:
+                return self._released(u_lo, u_freeze) + self._released(u_freeze, u_hi)
+            width = u_hi - u_lo
+        boundary = getattr(self, '_boundary_capacity', None)
+        if boundary is None:
+            boundary = self._boundary_capacity = jax.jit(
+                jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
+            )
         u = u_lo + 0.5 * width * (_GL_X + 1.0)
         return 0.5 * width * float(jnp.sum(_GL_W * boundary(self.t_onset - u**2) * 2.0 * u))
 

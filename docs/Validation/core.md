@@ -375,6 +375,8 @@ With the boundary layer's properties at its mean temperature, the `core_module` 
 
 ### Core ledger closure
 
+The core ledger meets V9 in this form: from the fourth call of nonzero length on, each call closes to $10^{-6}$ of its CMB heat; each of the first 3 calls has a residual that falls at least 20 times when `atol` and `rtol` are 1000 times smaller and is then below $10^{-5}$; and the first call closes to $3 \times 10^{-4}$ at the default tolerances. `tests/test_entropy_solver_core_module_smoke.py::test_chained_cvode_calls_close_the_core_ledger` holds each call of a hot start to $10^{-6}$, `::test_the_core_ledger_residual_converges_with_the_tolerance` the first 3 calls of a zero-flux start, and the table below the cumulative residual of coupled runs.
+
 The table gives the cumulative residual of the core ledger relative to the cumulative CMB heat, the share of the summed absolute call residuals that comes from the call from 22 to 122 yr, and the bound for each run. The bound applies to the cumulative residual after the first kyr and at the end.
 
 | Run | residual at the end | largest after 1 kyr | share of the call from 22 to 122 yr | bound |
@@ -516,7 +518,7 @@ At a relative tolerance of 1e-8<!--k:13.rtol_loose--> the comparison has not con
 
 The heat rates of the core and the shell sum to the CMB flow at every sample to 5.0e-16<!--k:13.erosion_identity--> of the conducted adiabatic flow or better, in every case; this is a property of the discretisation (the shell fluxes telescope and the core uses one effective capacity), not of the integration.
 
-Coupled to the mantle solver, a 5 yr CVODE call that heats a stratified core from above closes its heat against the CMB heat, in runs separate from the script, to $2 \times 10^{-8}$, also under a relative change of $10^{-15}$ in the core conductivity; `tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-5}$.
+Coupled to the mantle solver, a 5 yr CVODE call that heats a stratified core from above closes its heat against the CMB heat, in runs separate from the script, to $2 \times 10^{-8}$, also under a relative change of $10^{-15}$ in the core conductivity; `tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-7}$.
 
 ### Erosion case
 

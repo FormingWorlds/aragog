@@ -5765,15 +5765,15 @@ class EntropySolver:
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:
-                sol.y = sol_y * _state_scale[:, np.newaxis] + _offset[:, np.newaxis]
                 sol.energy_change = sol_y * _state_scale[:, np.newaxis]
+                sol.y = sol.energy_change + _offset[:, np.newaxis]
             else:
                 sol.y = sol_y * _state_scale + _offset
         trace = sol.get('energy_trace')
         if trace is not None:
-            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
             # the integrated temperatures without their start offset, for the core heat change
-            sol.energy_change = self._physical_trace(trace, t_ref, _state_scale)[1]
+            t_trace, sol.energy_change = self._physical_trace(trace, t_ref, _state_scale)
+            sol.energy_trace = (t_trace, sol.energy_change + np.reshape(_offset, (-1, 1)))
         # a handed-over lid (thickness 0) has energy 0, not the round-off of its offset
         if self._n_lid:
             for y in (sol.y, *(() if trace is None else sol.energy_trace[1:])):
@@ -6188,6 +6188,12 @@ class EntropySolver:
             change = sol.get('energy_change')
             d_arr = np.atleast_2d(change) if change is not None else None
             if d_arr is None or d_arr.shape != y_arr.shape:
+                if not getattr(self, '_change_fallback_logged', False):
+                    self._change_fallback_logged = True
+                    logger.warning(
+                        'EntropySolver: the call has no energy_change; its core heat is booked '
+                        'from the states, to the float spacing of the absolute temperatures'
+                    )
                 d_arr = y_arr - y_arr[:, :1]
             step_dE_core, c_eff_vals = self._core_heat_change(
                 self._core_module_budget, y_arr, d_arr - d_arr[:, :1]
@@ -6226,7 +6232,8 @@ class EntropySolver:
         change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
         c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
         start as the solver integrates them: an absolute temperature near 5000 K holds a change
-        only to its float spacing, 9e-13 K, which times C_eff is about 1e14 J.
+        only to its float spacing, 9e-13 K, which times C_eff (1.5e26 to 2e27 J/K) is 1e14 to
+        2e15 J.
 
         Parameters
         ----------
@@ -6236,6 +6243,11 @@ class EntropySolver:
             Node states in physical units.
         d_arr : ndarray, shape (n_state, n_nodes)
             Node state changes from the call start.
+
+        Returns
+        -------
+        tuple of (float, ndarray)
+            Heat change [J] and C_eff [J/K] at the nodes.
         """
         import jax
 
