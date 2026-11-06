@@ -4533,9 +4533,8 @@ class EntropySolver:
         trace: tuple[npt.NDArray, npt.NDArray],
         t_ref: float,
         state_scale: npt.NDArray,
-        state_offset: npt.NDArray | float = 0.0,
     ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Energy quadrature nodes in years and physical units, strictly increasing in time.
+        """Energy quadrature nodes in years and scaled states, strictly increasing in time.
 
         Distinct nondimensional times can round to the same year at large t; of each run of
         equal times the last node is kept, so the call's end state stays the last node. Nodes
@@ -4549,16 +4548,15 @@ class EntropySolver:
             Time scale [yr].
         state_scale : ndarray
             State scale per row (or scalar).
-        state_offset : ndarray or float
-            State offset per row (or scalar), added after the scale.
 
         Returns
         -------
         tuple of ndarray
-            Node times [yr] and node states in physical units.
+            Node times [yr] and node states times their scale, without the state offset: the
+            change from the call start of an offset row (add the offset for the state).
         """
         t = trace[0] * t_ref
-        y = trace[1] * np.reshape(state_scale, (-1, 1)) + np.reshape(state_offset, (-1, 1))
+        y = trace[1] * np.reshape(state_scale, (-1, 1))
         keep = np.append((np.diff(t) > 0) | (np.diff(trace[0]) == 0), True)
         return t[keep], y[:, keep]
 
@@ -5917,7 +5915,9 @@ class EntropySolver:
             keep[0] = True  # a failed call holds the states before the first one outside
             sol.t, sol.y = sol.t[keep], sol.y[:, keep]
             sol.pop('energy_trace', None)
-            sol.pop('energy_change', None)
+            change = sol.pop('energy_change', None)
+            if change is not None and np.shape(change)[1:] == keep.shape:
+                sol.energy_change = np.asarray(change)[:, keep]
             sol.status, sol.success, sol.cvode_flag_name = -1, False, 'EOS_TABLE_GUARD'
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
@@ -6191,8 +6191,9 @@ class EntropySolver:
                 if not getattr(self, '_change_fallback_logged', False):
                     self._change_fallback_logged = True
                     logger.warning(
-                        'EntropySolver: the call has no energy_change; its core heat is booked '
-                        'from the states, to the float spacing of the absolute temperatures'
+                        'EntropySolver: the call has %s energy_change; its core heat is booked '
+                        'from the states, to the float spacing of the absolute temperatures',
+                        'no' if d_arr is None else 'a mismatched',
                     )
                 d_arr = y_arr - y_arr[:, :1]
             step_dE_core, c_eff_vals = self._core_heat_change(
@@ -6232,8 +6233,8 @@ class EntropySolver:
         change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
         c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
         start as the solver integrates them: an absolute temperature near 5000 K holds a change
-        only to its float spacing, 9e-13 K, which times C_eff (1.5e26 to 2e27 J/K) is 1e14 to
-        2e15 J.
+        only to its float spacing, 9e-13 K, which times C_eff (about 1e26 to 1e28 J/K) is about
+        1e14 to 1e16 J.
 
         Parameters
         ----------

@@ -455,24 +455,31 @@ class CoreEnergyBudget:
         s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
         if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
+        pieces = [(t0, dt)]
         if min(s0, s1) < self.t_onset - self.t_freeze < max(s0, s1):
             d_freeze = self.t_freeze - t0  # exact: a difference of 2 close floats
-            return self.heat_change(t0, d_freeze) + self.heat_change(
-                self.t_freeze, dt - d_freeze
-            )
-        u0, u1 = float(_np.sqrt(s0)), float(_np.sqrt(s1))
-        width = (-dt if s0 > 0.0 and s1 > 0.0 else s1 - s0) / (u0 + u1)
-        return secular - self._released(u0, u1, width)
+            pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
+        released = 0.0
+        for t_a, d_a in pieces:
+            s_a, s_b = max(self.t_onset - t_a, 0.0), max(self.t_onset - t_a - d_a, 0.0)
+            u_a, u_b = float(_np.sqrt(s_a)), float(_np.sqrt(s_b))
+            if u_a + u_b > 0.0:
+                width = (-d_a if s_a > 0.0 and s_b > 0.0 else s_b - s_a) / (u_a + u_b)
+                released += self._released_panel(u_a, width)
+        return secular - released
 
-    def _released(self, u_lo, u_hi, width=None) -> float:
-        """Latent and gravitational energy [J] released from ``u_lo`` to ``u_hi``, ``u = sqrt(
-        T_onset - T)``, over a panel of signed ``width`` (default ``u_hi - u_lo``, then one
-        Gauss-Legendre panel per side of the freeze-out jump)."""
-        if width is None:
-            u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
-            if u_lo < u_freeze < u_hi:
-                return self._released(u_lo, u_freeze) + self._released(u_freeze, u_hi)
-            width = u_hi - u_lo
+    def _released(self, u_lo, u_hi) -> float:
+        """Latent and gravitational energy [J] released from ``u_lo`` to ``u_hi >= u_lo``, ``u =
+        sqrt(T_onset - T)``; one Gauss-Legendre panel per side of the freeze-out jump."""
+        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
+        if u_lo < u_freeze < u_hi:
+            return self._released_panel(u_lo, u_freeze - u_lo) + self._released_panel(
+                u_freeze, u_hi - u_freeze
+            )
+        return self._released_panel(u_lo, u_hi - u_lo)
+
+    def _released_panel(self, u_lo, width) -> float:
+        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``."""
         boundary = getattr(self, '_boundary_capacity', None)
         if boundary is None:
             boundary = self._boundary_capacity = jax.jit(
