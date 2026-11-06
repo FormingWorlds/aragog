@@ -215,8 +215,13 @@ def test_a_low_pressure_alloy_has_a_nan_free_gradient(comp):
 
 
 def _liquidus_points():
-    """Measured liquidus points (P GPa, w, T K) below 15 GPa: Buono & Walker (2011, Table 1) at
-    6 GPa without the eutectic run, and read A of Chen et al. (2008, Fig. 1) at 10 and 14 GPa."""
+    """Measured liquidus points (P GPa, w, T K) below 15 GPa: read A of the 1 bar points of Buono &
+    Walker (2011, Fig. 6) on the Fe-rich side of the shipped eutectic, their Table 1 at 6 GPa without
+    the eutectic run, and read A of Chen et al. (2008, Fig. 1) at 10 and 14 GPa."""
+    one_bar = [
+        (0.0, _w_s(float(x)), float(t))
+        for _, x, t, *_ in _csv('buono_walker2011_fig6_1bar.csv')
+    ]
     bw = [
         (6.0, _w_s(float(x)), float(t)) for _, t, x in _csv('buono_walker2011_table1_6GPa.csv')
     ]
@@ -225,18 +230,51 @@ def _liquidus_points():
         for p, kind, w, t, *_ in _csv('chen2008_fig1_liquidus.csv')
         if kind == 'liquid'
     ]
-    return [r for r in bw if r[1] < _w_s(0.604)] + chen
+    fe_rich = [r for r in one_bar if r[1] < _w_e('S')(0.0)]
+    return fe_rich + [r for r in bw if r[1] < _w_s(0.604)] + chen
+
+
+@pytest.mark.reference_pinned
+def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
+    """Read A (vector marker centres) and read B (600 dpi raster) of the 23 points of Buono & Walker
+    (2011, Fig. 6) agree within 0.5 pt of the figure (357.08 pt per unit X_FeS, 0.22779 pt per K);
+    the 2 points past the shipped 1 bar eutectic (X_FeS 0.81 and 0.86) are left out of the misfit."""
+    rows = [(s, *map(float, r)) for s, *r in _csv('buono_walker2011_fig6_1bar.csv')]
+    assert len(rows) == 23
+    for _, xa, ta, xb, tb in rows:
+        assert abs(xa - xb) * 357.08 < 0.5 and abs(ta - tb) * 0.22779 < 0.5
+    assert sum(_w_s(xa) >= _w_e('S')(0.0) for _, xa, *_ in rows) == 2
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.6, 3.6))
+        w = np.linspace(0.0, _w_e('S')(0.0), 12)
+        liq = AlloyLiquidus({})
+        ax.plot(100 * w, [float(liq.t_melt(0.0, {'S': x})) for x in w], label='Aragog')
+        for src, mark in (('Friedrich 1910', '^'), ('Miyazaki 1928', 's')):
+            pts = np.array([(100 * _w_s(xa), ta) for s, xa, ta, *_ in rows if s == src]).T
+            ax.plot(*pts, mark, ms=4, mfc='none', label=src)
+        ax.set(xlabel='S [wt%]', ylabel='Liquidus at 1 bar [K]')
+        opaque_legend(ax, loc='upper left', bbox_to_anchor=(1.02, 1.0))
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'core_alloy_liquidus_one_bar')
 
 
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize(
     ('p_gpa', 'n', 'rms', 'mean'),
-    [(6.0, 23, 141.4, -130.6), (10.0, 7, 89.0, -82.6), (14.0, 4, 150.9, -12.4)],
+    [(0.0, 21, 75.0, -28.4), (6.0, 23, 141.4, -130.6), (10.0, 7, 89.0, -82.6)]
+    + [(14.0, 4, 150.9, -12.4)],
 )
 def test_the_low_pressure_liquidus_misses_the_measured_points_as_stated(p_gpa, n, rms, mean):
     """The ideal form on FeS units lies below the measured non-ideal liquidus: RMS and mean misfit
-    [K] at 6 GPa (Buono & Walker 2011) and at 10 and 14 GPa (Chen et al. 2008), not growing by
-    more than 1 K."""
+    [K] at 1 bar (Friedrich 1910 and Miyazaki 1928 in Buono & Walker 2011, Fig. 6), at 6 GPa
+    (Buono & Walker 2011, Table 1) and at 10 and 14 GPa (Chen et al. 2008), not growing by more
+    than 1 K."""
     pts = [(w, t) for p, w, t in _liquidus_points() if p == p_gpa]
     res = np.array([float(AlloyLiquidus({'S': w}).t_melt(p_gpa * 1e9)) - t for w, t in pts])
     assert len(pts) == n
