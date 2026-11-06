@@ -110,20 +110,18 @@ def eutectic(el: str, pressure):
     ``dq/dP = 1 - b(z)`` with the smootherstep ``b = 6z^5 - 15z^4 + 10z^3`` (``2h`` =
     :data:`HOMOLOGOUS_FADE_GPA`; the Fe-O table continued along its last segment). It keeps
     its ratio to the pure-iron curve at ``q`` (homologous outside the data). The composition is
-    the data at ``min(q, hi)``: it holds its end value above ``hi``, where its slope stops.
+    the data at ``P`` clipped to ``[lo, hi]``, independent of the fade: it holds its end value
+    above ``hi``, where its slope stops.
     """
     lo, hi = _data()['range'][el]
     h = 0.5 * HOMOLOGOUS_FADE_GPA
     p_gpa = jnp.asarray(pressure) / 1e9
     z = 0.5 * (p_gpa - hi) / h
     faded = hi + 2.0 * h * (z - z**4 * (2.5 - 3.0 * z + z * z))
-    q = jnp.where(
-        p_gpa <= hi,
-        jnp.where(p_gpa < lo, lo, p_gpa),
-        jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded),
-    )
+    p_in = jnp.where(p_gpa < lo, lo, jnp.where(p_gpa > hi, hi, p_gpa))
+    q = jnp.where(p_gpa <= hi, p_in, jnp.where(p_gpa >= hi + 2.0 * h, hi + h, faded))
     t_e = _eutectic_data(el, q)[0]
-    w_e = _eutectic_data(el, jnp.where(q > hi, hi, q))[1]
+    w_e = _interp(p_in, _data()['composition'][el])
     t_fe = IronMeltingCurve.t_melt_pure(p_gpa * 1e9)
     return t_e * t_fe / IronMeltingCurve.t_melt_pure(q * 1e9), w_e
 

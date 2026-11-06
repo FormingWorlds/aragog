@@ -61,7 +61,7 @@ print(f"12 wt% S at 135 GPa: {float(rich.t_melt(135e9)):.0f} K, "
 12 wt% S at 135 GPa: 2672 K, past eutectic True
 ```
 
-At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eutectic composition is read up to 325 GPa.
+At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eutectic composition is read up to 325 GPa. 330 GPa is also the end of the S and C data, where the slope steps because the eutectic composition stops changing: the value printed there is the side inside the data, and at 330.001 GPa the slope is 5.48 K/GPa.
 
 ## 4. Adding a binary
 
