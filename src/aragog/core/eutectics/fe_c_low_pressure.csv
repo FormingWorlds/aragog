@@ -1,0 +1,4 @@
+# eutectic of the Fe-C binary (Fe-graphite) at 1 bar, written as 0 GPa: temperature T_e [K] and liquid composition w_e (mass fraction of C)
+# source: Nakajima et al. 2009, PEPI 174, 202, doi:10.1016/j.pepi.2008.05.014, p. 207: 1143 C and 4.3 wt% C, after Benz & Elliott 1961; Lord et al. 2009, EPSL 284, 157, doi:10.1016/j.epsl.2009.04.017, p. 158, give 1420 K
+P_GPa,T_e_K,w_e
+0,1416.15,0.043

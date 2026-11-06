@@ -267,27 +267,36 @@ def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot
 
     def figure():
         import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
 
-        fig, axes = plt.subplots(1, 3, figsize=(7.6, 3.0), sharey=True)
-        pts = _liquidus_points()
-        for ax, p_gpa in zip(axes, (6.0, 10.0, 14.0)):
-            w = np.linspace(0.0, max(x for p, x, _ in pts if p == p_gpa) + 0.01, 40)
-            liq = AlloyLiquidus({})
-            ax.plot(
-                100 * w, [float(liq.t_melt(p_gpa * 1e9, {'S': x})) for x in w], label='Aragog'
-            )
-            meas = np.array([(100 * x, t) for p, x, t in pts if p == p_gpa])
-            ax.errorbar(
-                *meas.T,
-                yerr=25.0 if p_gpa == 6.0 else None,
-                fmt='o',
-                ms=3,
+        fig, ax = plt.subplots(figsize=(5.6, 3.6))
+        pts, liq = _liquidus_points(), AlloyLiquidus({})
+        for p_gpa in (6.0, 10.0, 14.0):
+            w = np.linspace(0.0, float(eutectic('S', p_gpa * 1e9)[1]), 12)
+            t = [float(liq.t_melt(p_gpa * 1e9, {'S': x})) for x in w]
+            (line,) = ax.plot(100 * w, t, label=f'{p_gpa:g}')
+            meas = np.array([(100 * x, t) for p, x, t in pts if p == p_gpa]).T
+            ax.plot(*meas, 'o', ms=3, mfc='none', color=line.get_color())
+        ink = plt.rcParams['text.color']
+        keys = [
+            Line2D([], [], color=ink, alpha=0.55, label='Aragog'),
+            Line2D(
+                [],
+                [],
+                color=ink,
+                alpha=0.55,
+                ls='none',
+                marker='o',
                 mfc='none',
+                ms=3,
                 label='measured',
-            )
-            ax.set(xlabel='S [wt%]', title=f'{p_gpa:g} GPa')
-        axes[0].set_ylabel('Liquidus [K]')
-        opaque_legend(axes[-1], loc='upper left', bbox_to_anchor=(1.04, 1.0))
+            ),
+        ]
+        handles = ax.get_legend_handles_labels()[0] + keys
+        opaque_legend(
+            ax, handles=handles, title='P [GPa]', loc='upper left', bbox_to_anchor=(1.02, 1.0)
+        )
+        ax.set(xlabel='S [wt%]', ylabel='Liquidus [K]')
         fig.tight_layout()
         assert_legend_clear(fig)
         return fig
@@ -331,44 +340,53 @@ def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
             ref = _w_s(float(comp)) if unit == 'X_FeS' else float(comp) / 100.0
             assert 100.0 * (w_e - ref) == pytest.approx(dw, abs=0.002), src
 
-    def figure():
+    p = np.unique(np.r_[0.0:40.0:2.0, 3.0:5.0:0.5, 10.0, 14.0, 18.0:21.0:0.5, 40.0])
+    fei = np.array([tuple(map(float, r)) for r in _csv('fei1997_fig2_eutectic.csv')])
+    nodes = (fei[:, 1:3].mean(1) + 273.15, fei[:, 3:5].mean(1))
+
+    def figure(col):
         import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(1, 3, figsize=(7.6, 3.0))
-        p = np.linspace(0.0, 40.0, 81)
-        nodes = [tuple(map(float, r)) for r in _csv('fei1997_fig2_eutectic.csv')]
-        for ax, el, col, lim in (
-            (axes[0], 'S', 0, 40.0),
-            (axes[1], 'S', 1, 40.0),
-            (axes[2], 'C', 0, 12.0),
-        ):
-            q = p[p <= lim]
-            scale = 1.0 if col == 0 else 100.0
-            ax.plot(q, [scale * float(eutectic(el, x * 1e9)[col]) for x in q], label='Aragog')
-            if el == 'S':
-                node = [
-                    (n[0], 0.5 * (n[1] + n[2]) + 273.15 if col == 0 else 0.5 * (n[3] + n[4]))
-                    for n in nodes
-                ]
-                ax.plot(*zip(*node), 'o', ms=4, label='nodes')
-            chk = [r for r in rows if r[1] == el and (r[3] if col == 0 else r[5])]
-            for r in chk:
-                y = (
-                    float(r[3])
-                    if col == 0
-                    else (100 * _w_s(float(r[5])) if r[7] == 'X_FeS' else float(r[5]))
-                )
-                err = (float(r[4]) if r[4] else None) if col == 0 else None
-                ax.errorbar(float(r[2]), y, yerr=err, fmt='s', ms=3, mfc='none', color='C2')
-            ax.set(
-                xlabel='P [GPa]',
-                ylabel=('T_e [K]' if col == 0 else 'w_e [wt%]'),
-                title=f'Fe-{el}',
+        fig, ax = plt.subplots(figsize=(5.0, 3.2))
+        scale = 1.0 if col == 0 else 100.0
+        for el in ('S', 'C'):
+            (line,) = ax.plot(
+                p, [scale * float(eutectic(el, x * 1e9)[col]) for x in p], label=f'Fe-{el}'
             )
+            chk = [r for r in rows if r[1] == el and r[3 + 2 * col]]
+            y = [
+                float(r[3])
+                if col == 0
+                else 100 * _w_s(float(r[5]))
+                if r[7] == 'X_FeS'
+                else float(r[5])
+                for r in chk
+            ]
+            err = [float(r[4]) if r[4] and col == 0 else 0.0 for r in chk]
+            ax.errorbar(
+                [float(r[2]) for r in chk],
+                y,
+                yerr=err,
+                fmt='s',
+                ms=3,
+                mfc='none',
+                color=line.get_color(),
+                alpha=0.7,
+            )
+        ax.plot(fei[:, 0], nodes[col], 'o', ms=4, color='C0', label='nodes')
+        ax.errorbar(
+            [], [], yerr=[], fmt='s', ms=3, mfc='none', color='C0', alpha=0.7, label='checks'
+        )
+        ax.set(
+            xlabel='P [GPa]', ylabel='Eutectic T [K]' if col == 0 else 'Eutectic liquid [wt%]'
+        )
+        opaque_legend(ax, loc='upper left', bbox_to_anchor=(1.02, 1.0))
         fig.tight_layout()
+        assert_legend_clear(fig)
         return fig
 
-    validation_plot(figure, 'core_alloy_liquidus_low_pressure_eutectic')
+    validation_plot(lambda: figure(0), 'core_alloy_liquidus_low_pressure_eutectic_t')
+    validation_plot(lambda: figure(1), 'core_alloy_liquidus_low_pressure_eutectic_w')
 
 
 @pytest.mark.physics_invariant
