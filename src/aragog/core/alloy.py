@@ -18,8 +18,9 @@ temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019).
 pressures of each binary's data, the eutectic temperature follows the pure-iron curve at a fixed
 ratio (homologous) and the eutectic composition is held; over the 40 GPa above the end of the
 data the tables continue along their last segment while their pressure slopes fade to zero by a
-smootherstep, so the held values are those of the continued tables 20 GPa above the end. A composition past the Fe-rich
-side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
+smootherstep, so the held values are those of the continued tables 20 GPa above the end. A
+composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
+boundary.
 """
 
 from __future__ import annotations
