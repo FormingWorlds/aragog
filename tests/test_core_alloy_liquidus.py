@@ -80,7 +80,7 @@ def test_h_and_n_leave_the_eutectic_check_too(extra):
     p = np.array([135e9])
     t_e, w_e = map(float, eutectic('S', p[0]))
     keep = 1.0 - sum(extra.values())
-    for ratio in (0.995, 1.1):
+    for ratio in (0.995, 1.01, 1.1):  # 1.01: past the eutectic only without H and N
         with_hn = AlloyLiquidus({'S': ratio * w_e * keep, **extra})
         without = AlloyLiquidus({'S': ratio * w_e})
         assert float(with_hn.t_melt(p[0])) == pytest.approx(
@@ -427,13 +427,13 @@ def test_a_composition_past_the_eutectic_is_held_at_its_boundary():
 
 @pytest.mark.physics_invariant
 def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
-    """Beyond the end of the data plus the blend half-width the eutectic temperature keeps the
-    ratio to the pure-iron curve and the composition the value of the data at the end; the flag
-    marks the extrapolation."""
+    """From the end of the data plus the fade length the eutectic temperature keeps its ratio to the
+    pure-iron curve and the composition its value there, 4.810 wt% S and 3.271 wt% C (the table
+    continued along its last segment); the flag marks the extrapolation."""
     for el in ('S', 'C', 'O'):
         hi = alloy._data()['range'][el][1]
         t_end, w_end = map(float, alloy._eutectic_data(el, hi))
-        h = alloy.HOMOLOGOUS_BLEND_HALF_WIDTH_GPA
+        h = 0.5 * alloy.HOMOLOGOUS_FADE_GPA
         t_fade, w_fade = (float(v) for v in eutectic(el, (hi + 2.0 * h) * 1e9))
         for p_gpa in (hi + 2.0 * h, 500.0):
             t, w = map(float, eutectic(el, p_gpa * 1e9))
@@ -441,6 +441,9 @@ def test_beyond_the_fade_the_eutectic_temperature_is_homologous_and_flagged():
             assert ratio == pytest.approx(t_fade / float(T_FE((hi + 2.0 * h) * 1e9)), rel=1e-12)
             assert w == pytest.approx(w_fade, rel=1e-12)
         assert (t_end, w_end) != (t_fade, w_fade)
+        held = {'S': 0.0481, 'C': 0.032713}
+        if el in held:
+            assert w_fade == pytest.approx(held[el], abs=1e-5)
     s = AlloyLiquidus({'S': 0.02}).status(np.array([135e9, 500e9]))
     assert s['extrapolated'].tolist() == [False, True]
     assert AlloyLiquidus({'Si': 0.02}).status(np.array([500e9]))['extrapolated'].tolist() == [
@@ -762,3 +765,11 @@ def test_a_fraction_is_a_mass_fraction():
 
     with_fraction = float(AlloyLiquidus({'S': Fraction(1, 50)}).t_melt(135e9))
     assert with_fraction == float(AlloyLiquidus({'S': 0.02}).t_melt(135e9))
+
+
+def test_a_huge_fraction_is_refused_as_a_mass_fraction():
+    """A numbers.Real too large for a float is refused with the mass-fraction error."""
+    from fractions import Fraction
+
+    with pytest.raises(ValueError, match='mass fraction'):
+        AlloyLiquidus({'S': Fraction(10**400)})
