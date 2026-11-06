@@ -438,23 +438,28 @@ def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0, rtol_sf=1.
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
-    """A zero-flux start leaves 1.2e-4 of the first call's CMB heat unbooked at the default
-    tolerances; with atol and rtol 1000 times tighter each of the first 3 calls closes to 1e-5,
-    its residual falls at least 20 times (measured 111, 121, 143) and step_core_tol_J falls with
-    it. A leak independent of the tolerance of 3e-7 of the CMB heat or more, of either sign,
-    fails the fall; the first call alone, at the tight tolerances within 3e-6 (measured 1.1e-6),
-    fails from a leak of 4.1e-6 in that call."""
+    """V9 for a zero-flux start. The first call closes to 3e-4 of its CMB heat at the default
+    tolerances (measured 1.2e-4); with atol and rtol 1000 times tighter each of the first 3 calls
+    closes to 1e-5, its residual falls at least 20 times (measured 111, 121, 143) and
+    step_core_tol_J falls with it. From the fourth call on each call closes to 2e-6 at the
+    default tolerances and its residual falls at least 20 times at 1000 times tighter tolerances
+    (calls 4 and 5: 1.3e-7 and 1.6e-6, falling 62 and 154 times). A leak independent of the
+    tolerance of 3e-7 of the CMB heat or more fails the fall of call 3; the first call alone,
+    at the tight tolerances within 3e-6 (measured 1.1e-6), fails from a leak of 4.1e-6."""
     residuals, scales = {}, {}
     for sf in (1.0, 1.0e-3):
         state, residuals[sf], scales[sf] = None, [], []
-        for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0)):
+        for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0, 22.0, 122.0)):
             out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf, rtol_sf=sf)
             cmb = out.step_dE_F_cmb_J
             scales[sf].append(out.step_core_tol_J / cmb)
             residuals[sf].append((out.step_dE_core_J + cmb) / cmb)
     assert 1e-5 < abs(residuals[1.0][0]) < 3e-4
     assert abs(residuals[1.0e-3][0]) < 3e-6, residuals
-    for loose, tight, s_loose, s_tight in zip(*residuals.values(), *scales.values()):
+    for loose, tight in zip(residuals[1.0][3:], residuals[1.0e-3][3:]):
+        assert abs(loose) < 2e-6 and abs(loose) > 20.0 * abs(tight), residuals
+    first_3 = [v[:3] for v in (*residuals.values(), *scales.values())]
+    for loose, tight, s_loose, s_tight in zip(*first_3):
         assert abs(tight) < 1e-5, residuals
         assert abs(loose) > 20.0 * abs(tight), residuals
         assert s_loose > 20.0 * s_tight > 0.0, scales
