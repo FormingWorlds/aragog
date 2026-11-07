@@ -17,6 +17,7 @@ cross-checked against with every feature off.
 from __future__ import annotations
 
 import functools
+import logging
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,8 @@ import numpy as _np
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.stratification import _q_ad
+
+logger = logging.getLogger('fwl.' + __name__)
 
 jax.config.update('jax_enable_x64', True)
 
@@ -473,7 +476,7 @@ class CoreEnergyBudget:
 
     @functools.cached_property
     def _boundary(self):
-        """Latent plus gravitational capacity [J/K] at CMB temperatures, vectorised, jitted once."""
+        """Latent plus gravitational capacity [J/K] at CMB temperatures, jitted once."""
         return jax.jit(
             jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
         )
@@ -483,21 +486,25 @@ class CoreEnergyBudget:
         """The last frozen and the first liquid float [K] of the capacity jump at freeze-out.
 
         The float sign test of the superheat puts the jump a few floats from ``t_freeze``, on
-        either side; a scan of 16 floats each way finds it, and without one jump in the scan the
-        edges are ``t_freeze`` and the next float.
+        either side; a scan of 16 floats each way finds it. Without one jump in the scan the
+        edges are ``t_freeze`` and the next float, with a warning when the scan holds liquid
+        capacity.
         """
         ts = [self.t_freeze]
         for _ in range(16):
             ts = [_np.nextafter(ts[0], -_np.inf), *ts, _np.nextafter(ts[-1], _np.inf)]
         liquid = _np.asarray(self._boundary(jnp.asarray(ts))) > 0.0
         k = int(_np.argmax(liquid))
-        i = k - 1 if k > 0 and liquid[k:].all() else 16
+        one_jump = k > 0 and bool(liquid[k:].all())
+        if not one_jump and liquid.any():
+            logger.warning('no single freeze-out capacity jump within 16 floats of T_freeze')
+        i = k - 1 if one_jump else 16
         return float(ts[i]), float(ts[i + 1])
 
     def _released_panel(self, u_lo, width, above) -> float:
-        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``, its
-        node temperatures clipped to the side of the freeze-out jump that ``above`` names, so that
-        a node rounding across the jump keeps the capacity of its piece."""
+        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``,
+        its node temperatures clipped to the side of the freeze-out jump that ``above`` names,
+        so that a node rounding across the jump keeps the capacity of its piece."""
         u = u_lo + 0.5 * width * (_GL_X + 1.0)
         lo, hi = self._freeze_out_edges
         t = self.t_onset - u**2

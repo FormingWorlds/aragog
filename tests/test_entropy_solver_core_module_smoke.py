@@ -475,9 +475,10 @@ def _assert_converges(loose, tight, s_loose, s_tight):
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('stratified', [False, True])
 def test_a_call_across_the_onset_converges_with_the_tolerance(shared_eos, stratified):
-    """A 3 yr call of a core 0.5 K above the onset over a liquid base, with the default entropy
-    of fusion, crosses the onset: its ledger residual falls at least 20 times to below 1e-5 at
-    1000 times tighter tolerances (measured -6.2e-6 to -6.3e-8, stratified -2.4e-6 to -2.4e-8)."""
+    """A 3 yr call of a core 0.5 K above the onset over a liquid base, with the entropy of
+    fusion of the test cores (170 J/kg/K), crosses the onset to 0.22 K below it: its ledger
+    residual falls at least 20 times to below 1e-5 at 1000 times tighter tolerances (measured
+    -6.2e-6 to -6.3e-8, stratified -2.4e-6 to -2.4e-8)."""
     params = UNENRICHED_PARAMS | dict(
         melting_curve='quadratic', t_m0=1.0, t_m1=2.55e-12, t_m2=0.0
     )
