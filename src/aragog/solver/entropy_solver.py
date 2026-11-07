@@ -3172,13 +3172,14 @@ class EntropySolver:
         Raises
         ------
         ValueError
-            With ``lid_mush_base`` and a live lid over a top cell below the floor. A set or
-            carried lid passed the step check, so it starts down to half the floor gap, as that
-            check accepts; the phantom lid needs the full gap.
+            With ``lid_mush_base`` and a live lid over a top cell below the floor. A carried
+            lid passed the step check, so it starts down to ``S_sol + LID_FLOOR_SLACK``, as that
+            check accepts; a lid set by ``set_initial_lid`` takes the same floor without a check,
+            and the phantom lid needs the full gap.
         """
         kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
-        gap = 0.5 * _lid.LID_FLOOR_GAP if kept else _lid.LID_FLOOR_GAP
+        gap = _lid.LID_FLOOR_SLACK if kept else _lid.LID_FLOOR_GAP
         floor = self._lid_S_sol + gap if self._lid_mush else -math.inf
         if start[0] != 0.0 and S_top < floor:
             raise ValueError(
@@ -3229,8 +3230,9 @@ class EntropySolver:
         return None if bc5 is None else float(bc5[1])
 
     def _lid_handover_armed(self) -> bool:
-        """True when the lid can hand over: the solid rheology runs the 'lid' stress closure,
-        whose stagnant-lid state gives the lid-base isotherm."""
+        """True when the isotherm hand-over of the 'lid' stress closure is armed: the solid
+        rheology runs that closure, whose stagnant-lid state gives the lid-base isotherm. The
+        mush base and a run without the rheology hand over by their own roots."""
         rheo = self._solid_rheology() if self._rheology_enabled else None
         return rheo is not None and rheo.stress_closure_mode == 'lid'
 
@@ -3479,8 +3481,7 @@ class EntropySolver:
                 f'sub-grid lid: at t={time_yr:.6e} yr the lid carries {ev.surf.F_s:.6g} W/m^2 '
                 'at a limit of its profile, which can differ from the flux of the atmosphere',
             )
-        slack = 0.5 * _lid.LID_FLOOR_GAP
-        if self._lid_mush and ev.S_f < self._lid_S_sol + slack:
+        if self._lid_mush and ev.S_f < self._lid_S_sol + _lid.LID_FLOOR_SLACK:
             raise RuntimeError(
                 f'lid invariant violated at step {step_idx}, t={time_yr:.6e} yr: top cell entropy '
                 f'{ev.S_f:.6g} J/kg/K below the floor, solidus {self._lid_S_sol:.6g} J/kg/K'
@@ -3673,7 +3674,8 @@ class EntropySolver:
         """Lid rates and top-cell fluxes at the current RHS state.
 
         Reads the lid states set by ``_dSdt_single``; sets the surface flux the planet loses
-        in ``state._heat_flux[-1]`` and returns the flux out of the fluid and its volume.
+        in ``state._heat_flux[-1]`` and returns the flux out of the fluid and its volume. With
+        the mush base the weight is ``1 - g (1 - w)``, with ``g`` the floor weight.
         """
         delta, E = float(self._lid_y[0]), float(self._lid_y[1])
         ph = self.state.phase_staggered
@@ -5605,7 +5607,8 @@ class EntropySolver:
         jac_sparsity = self._build_jac_sparsity()
 
         # Hand-over root of the sub-grid lid (nondimensional): the stagnant-lid isotherm of the
-        # 'lid' closure, or the solidus of the top cell without the solid rheology.
+        # 'lid' closure, the solidus of the top cell without the solid rheology, or 0.7 of the
+        # top-cell width with the mush base.
         lid_g = None
         if self._n_lid and (
             self._lid_handover_armed() or self._lid_rheo is None or self._lid_mush
@@ -6261,7 +6264,7 @@ class EntropySolver:
                             f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
                         )
                     if self._lid_mush:  # the floor check of _check_lid_step at every node
-                        floor = self._lid_S_sol + 0.5 * _lid.LID_FLOOR_GAP
+                        floor = self._lid_S_sol + _lid.LID_FLOOR_SLACK
                         bad = np.flatnonzero((y_pts[-2] != 0.0) & (S_f < floor))
                         if bad.size:
                             k = int(bad[0])

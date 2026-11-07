@@ -312,9 +312,9 @@ class TestSolver:
         y[-2] = 0.0
         assert s._lid_root_value(0.0, y) == -1.0
 
-    def test_short_run_closes_energy_and_keeps_the_floor(self, eos):
-        """A short mush-base run closes its energy budget and its top cell stays above the
-        solidus; the hold at the floor itself is tested by the blend tests at g = 0."""
+    def test_short_run_closes_energy(self, eos):
+        """A short mush-base run closes its energy budget; the hold at the floor is tested by
+        the blend tests at g = 0."""
         s = _solver(eos, end=5.0)
         s.solve()
         sol = s._solution
@@ -323,8 +323,27 @@ class TestSolver:
         budget = ei['F_int'] + ei['F_cmb'] + ei['Q_radio'] + ei['Q_tidal']
         assert abs(ei['solver_residual']) <= 1e-10 * abs(ei['F_int'])
         assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
-        S_f = np.asarray(sol.y)[s._n_stag - 1]
-        assert np.all(S_f >= s._lid_S_sol)
+
+    def test_t_magma_is_the_blend_on_the_grey_body_boundary(self, eos, monkeypatch):
+        """On outer boundary 1, as on boundary 4, the output T_magma is w T_b + (1 - w) T_node
+        of the lid, at a partial and at a full weight."""
+        s = _solver(eos, end=0.1)
+        s.solve()
+        assert s._outer_bc_kind == 1
+        rhs = s._dSdt_single
+        for w in (0.37, 1.0):
+
+            def weighted(t, y, w=w):
+                out = rhs(t, y)
+                rates = dataclasses.replace(s._lid_last.rates, w=w)
+                s._lid_last = dataclasses.replace(s._lid_last, rates=rates)
+                return out
+
+            monkeypatch.setattr(s, '_dSdt_single', weighted)
+            T_w = s.get_state().T_magma
+            T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
+            assert T_w == pytest.approx(w * s._lid_last.T_b + (1.0 - w) * T_node, rel=1e-12)
+            assert abs(T_w - T_node) > 1.0
 
     def test_jax_lid_top_matches_numpy(self, eos):
         """The JAX mush base flux and the JAX lid (surface loss, fluid flux and volume, rates,
@@ -391,9 +410,11 @@ class TestSolver:
 
 @pytest.mark.smoke
 @needs_eos
-def test_an_intermediate_state_below_the_floor_fails_the_jax_batch_path():
+@pytest.mark.parametrize(('frac', 'refused'), [(0.25, True), (0.75, False)])
+def test_an_intermediate_state_below_the_floor_fails_the_jax_batch_path(frac, refused):
     """The JAX batch path refuses an accepted state in the middle of the trace whose top cell
-    lies below the slack of the floor, as the NumPy loop refuses it at every node."""
+    lies below the slack of the floor (S_sol + LID_FLOOR_SLACK), as the NumPy loop refuses it
+    at every node, and accepts one above it."""
     from aragog.solver import entropy_solver as es
     from tests.test_subgrid_lid_jax_rhs import _factory_rhs
 
@@ -408,12 +429,21 @@ def test_an_intermediate_state_below_the_floor_fails_the_jax_batch_path():
     t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
     k, i = t.size // 2, s._n_stag - 1
     assert t.size >= 3 and y[-2, k] > 0.0
-    target = s._lid_S_sol + 0.25 * sl.LID_FLOOR_GAP
+    target = s._lid_S_sol + frac * sl.LID_FLOOR_GAP
     y[i, k] -= s._stag_entropy(y[:, k])[-1] - target
     assert s._stag_entropy(y[:, k])[-1] == pytest.approx(target, abs=1e-9)
     sol.energy_trace = (t, y)
-    with pytest.raises(RuntimeError, match=f'at step {k},.*below the floor'):
-        s._compute_step_energy_integrals()
+    if refused:
+        with pytest.raises(RuntimeError, match=f'at step {k},.*below the floor'):
+            s._compute_step_energy_integrals()
+    else:
+        try:
+            s._compute_step_energy_integrals()
+            refusal = None
+        except RuntimeError as err:
+            refusal = str(err)
+        assert refusal is None
+        assert np.isfinite(sol.energy_integrals['F_int'])
 
 
 @pytest.mark.unit
@@ -818,7 +848,8 @@ class TestFluxLidKnownAnswers:
         assert k * (T_b - surf.T_s) / F == pytest.approx(delta, rel=1e-2)
 
     def test_a_crust_off_the_linear_profile_relaxes_to_the_conduction_law(self, s):
-        """A crust off the linear profile relaxes to zero surface slope and the conduction law."""
+        """A crust off the linear profile relaxes to the linear profile (shape s = 0, surface
+        slope 1) and the conduction law."""
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         F, delta0 = 5.0, 100.0
         E0 = delta0 * float(hv.profile_heat(1.0, T_b - 2.0 * F * delta0 / k, T_b))

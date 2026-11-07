@@ -906,8 +906,15 @@ def test_lid_below_the_melt_back_stop_by_the_solver_precision_passes(
     else:
         run = s._compute_step_energy_integrals
     if raises:
-        with pytest.raises(RuntimeError, match='lid invariant violated .* thickness'):
+        from aragog.solver.entropy_solver import _LID_CAP_SLACK
+
+        with pytest.raises(RuntimeError, match='lid invariant violated .* thickness') as err:
             run()
+        cap = sl.LID_CAP_FRAC * s._lid_h_top
+        lo = s._lid_lo_bound(s._lid_delta_lo)
+        assert f'outside [{lo:.6g}, {cap * (1.0 + _LID_CAP_SLACK):.6g}] m (stops ' in str(
+            err.value
+        )
     else:
         run()
 
