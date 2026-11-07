@@ -291,11 +291,11 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 ## 9. A CVODE solve across the inner-core onset
 
-**What is tested.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset, where the latent capacity rises as a square root. The check compares the core heat change that the solver books with the CMB heat that it books.
+**Why this check exists.** Where the inner core starts to grow, the latent heat capacity of the core rises as a square root of the undercooling. A solver that steps badly over this onset books a core heat change that does not match the heat through the core-mantle boundary (CMB).
 
-**Reference.** The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The bound is $10^{-6}$ for a core without a layer solved alone.
+**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
 
-**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 244<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
+**How we know the right answer.** Energy conservation: the core heat change of the call must equal its CMB heat ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)). The bound is $10^{-6}$ for a core without a layer solved alone. The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 244<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
 
 The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.5 and then 2.0, the order of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
 
@@ -303,15 +303,19 @@ The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the 
 |---|---|---|---|
 | Error of the reconstructed CMB heat | 2.3e-3 | 7.9e-4 | 1.9e-4 |
 
+**Why it matters.** The core energy ledger of a `core_module` run rests on this closure.
+
 ![CVODE solve across the onset](../figures/vv/fig_16_cvode_onset_ledger.png)
 
-**Figure 9.** A CVODE solve through the inner-core onset. (a) Core temperature against time, with the onset temperature. (b) Core heat lost from the heat-content difference and from the time integral of the CMB heat flow. (c) Relative difference between the two curves in (b).
+**How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow; the 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**What the figure shows.** In (a) the core temperature crosses the onset temperature during the call. In (b) the two curves of the heat lost lie on each other, and (c) gives their difference, which is the sampling error of the trapezoid rule over the output times and is largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b). The core energy ledger of a `core_module` run rests on this closure.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
-**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
-
-**Pinned by** `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset` and `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`.
+??? info "Test details"
+    - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.
+    - Tolerance: $10^{-6}$ of the CMB heat at an rtol of $10^{-10}$.
+    - Test id: `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset`, `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`
+    - Command: `pytest -o "addopts=" tests/test_entropy_solver_core_module_smoke.py tests/test_core_verification_page.py -k "crosses_the_inner_core_onset or onset_closes_its_heat"`
 
 ## 10. A core thermal history against thermal_history
 
@@ -381,9 +385,9 @@ With the boundary layer's properties at its mean temperature, the `core_module` 
 
 ### Core ledger closure
 
-The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the CMB. The residual of a call is the difference, relative to the CMB heat of the call. The tests below run without radiogenic heat (`q_radio = 0`).
+**Why this check exists.** A leak in the core ledger, or an error that does not fall with the solver tolerance, would let the core gain or lose heat that no flux carries.
 
-**The rule.** `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance` starts a core at the temperature of a molten mantle base, as in a coupled run. It makes 5 calls: from 0 to 1, 1 to 2, 2 to 12, 12 to 22 and 22 to 122 yr (calls 1 to 5). It runs them once at the default tolerances and once at the tolerance scale factor $10^{-3}$. The scale factor makes `rtol` and the absolute tolerance, after its floor of $10^{-8}$, 1000 times smaller. The test holds this rule:
+**What it tests.** `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance` starts a core at the temperature of a molten mantle base, as in a coupled run. It makes 5 calls: from 0 to 1, 1 to 2, 2 to 12, 12 to 22 and 22 to 122 yr (calls 1 to 5). It runs them once at the default tolerances and once at the tolerance scale factor $10^{-3}$. The scale factor makes `rtol` and the absolute tolerance, after its floor of $10^{-8}$, 1000 times smaller. The test holds this rule:
 
 1. Call 1 closes to $3 \times 10^{-4}$ of its CMB heat at the default tolerances.
 2. The residual of each of calls 1 to 3 falls at least 20 times at the scale factor $10^{-3}$. It is then below $10^{-5}$, and call 1 is below $3 \times 10^{-6}$.
@@ -404,7 +408,16 @@ The core ledger checks one balance per call: the heat the core loses, plus its r
 
 `::test_a_call_across_the_onset_converges_with_the_tolerance` makes the 2 onset rows. It runs a 3 yr call from 0.5 K above the onset to 0.22 K below it, for a core without and with a stratified layer. It uses the entropy of fusion of the test cores, 170 J kg$^{-1}$ K$^{-1}$, and the finite-difference Jacobian of CVODE.
 
-**A leak the test catches.** A leak independent of the tolerance adds a share $L$ of the CMB heat to the residual of every call. It acts as a factor $1 - L$ on the rate of the core temperature. The test fails from these shares on, measured on the residuals and tolerance scales of the 5 calls:
+Other tests check the booking itself. `step_core_tol_J` gives the error scale of each call as a diagnostic. These tests check the booking at tolerances 1000 times smaller:
+
+- `::test_a_stratified_call_books_the_core_heat_from_the_temperature_changes` closes a 5 yr call of a stratified core to $10^{-8}$ of its CMB heat.
+- `::test_a_low_flux_call_books_the_core_heat_below_its_float_spacing` closes a 5 yr call of an unstratified core to $10^{-6}$. The CMB heat of that call is 3.5 float spacings of the absolute core heat.
+
+Both tests book the core heat from the integrated temperature changes. Both also assert that the booking from the stored states misses their bounds. `::test_chained_cvode_calls_close_the_core_ledger` makes calls that end at the same times on a core 300 K above its mantle base, a hot start. It closes each call to $10^{-6}$.
+
+**How we know the right answer.** Energy conservation: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the CMB. The residual of a call is the difference, relative to the CMB heat of the call. The tests run without radiogenic heat (`q_radio = 0`). A residual that comes from the solver tolerance falls when the tolerance falls; a leak does not.
+
+A leak independent of the tolerance adds a share $L$ of the CMB heat to the residual of every call. It acts as a factor $1 - L$ on the rate of the core temperature. The test fails from these shares on, measured on the residuals and tolerance scales of the 5 calls:
 
 | Call | 1 (0 to 1 yr) | 2 (1 to 2 yr) | 3 (2 to 12 yr) | 4 (12 to 22 yr) | 5 (22 to 122 yr) |
 |---|---|---|---|---|---|
@@ -413,7 +426,7 @@ The core ledger checks one balance per call: the heat the core loses, plus its r
 
 Calls 1 to 3 catch a leak through 3 bounds: the fall of their residual, its bound at the tight tolerances, and twice `step_core_tol_J` at both tolerances. A leak of $10^{-6}$ therefore passes calls 1 and 2 alone, and from call 3 on it fails. A narrow band of smaller positive leaks also fails calls 1 to 3. The band lies near $1.1 \times 10^{-6}$, $2.4 \times 10^{-7}$ and $3.0 \times 10^{-8}$, where the residual of the call passes through zero and falls below 1/1000 of its scale.
 
-**Coupled runs.** The table gives, for each run, the cumulative residual of the core ledger relative to the cumulative CMB heat. It also gives the share of the summed absolute call residuals that comes from the call from 22 to 122 yr, and the bound. The bound applies to the cumulative residual after the first kyr and at the end.
+The table gives, for each run, the cumulative residual of the core ledger relative to the cumulative CMB heat. It also gives the share of the summed absolute call residuals that comes from the call from 22 to 122 yr, and the bound. The bound applies to the cumulative residual after the first kyr and at the end.
 
 | Run | residual at the end | largest after 1 kyr | share of the call from 22 to 122 yr | bound |
 |---|---|---|---|---|
@@ -424,14 +437,17 @@ Calls 1 to 3 catch a leak through 3 bounds: the fall of their residual, its boun
 
 The call from 22 to 122 yr gives 4 to 9 percent of the summed call residuals. The bound is $5 \times 10^{-6}$ for the last two runs of the table. It is $10^{-6}$ for the 1 Earth-mass runs and for a core without a layer solved alone (section 9).
 
-The stored coupled runs book the core heat of a call as the difference of the heat contents at its start and end. They use the solver `rtol` of the table and `atol` at its floor. Their first call of nonzero length, from 1 to 2 yr, closes to 1.5e-04<!--k:11.closure_first_call_1me--> of its own CMB heat at 1 Earth mass and to 1.0e-04<!--k:11.closure_first_call_1me_rtol1e-10--> to 1.1e-04<!--k:11.closure_first_call_5me--> in the other runs. The bounds of the table are checked on these stored runs, not on the current solver. The convergence test above checks the ledger of the current solver, which books the integrated change of the core temperature.
+**Why it matters.** The core temperature of a coupled run follows from these booked heat changes over many calls, so an error in each call adds up over the run.
 
-**Other ledger tests.** `step_core_tol_J` gives the error scale of each call as a diagnostic. These tests check the booking at tolerances 1000 times smaller:
+This case has no plot of its own: its results are the residual tables above, and Figure 9 shows the closure of one call.
 
-- `::test_a_stratified_call_books_the_core_heat_from_the_temperature_changes` closes a 5 yr call of a stratified core to $10^{-8}$ of its CMB heat.
-- `::test_a_low_flux_call_books_the_core_heat_below_its_float_spacing` closes a 5 yr call of an unstratified core to $10^{-6}$. The CMB heat of that call is 3.5 float spacings of the absolute core heat.
+**Known limit.** The stored coupled runs book the core heat of a call as the difference of the heat contents at its start and end. They use the solver `rtol` of the table and `atol` at its floor. Their first call of nonzero length, from 1 to 2 yr, closes to 1.5e-04<!--k:11.closure_first_call_1me--> of its own CMB heat at 1 Earth mass and to 1.0e-04<!--k:11.closure_first_call_1me_rtol1e-10--> to 1.1e-04<!--k:11.closure_first_call_5me--> in the other runs. The bounds of the table are checked on these stored runs, not on the current solver. The convergence test above checks the ledger of the current solver, which books the integrated change of the core temperature.
 
-Both tests book the core heat from the integrated temperature changes. Both also assert that the booking from the stored states misses their bounds. `::test_chained_cvode_calls_close_the_core_ledger` makes calls that end at the same times on a core 300 K above its mantle base, a hot start. It closes each call to $10^{-6}$.
+??? info "Test details"
+    - Reference: energy conservation of the core ledger ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)).
+    - Tolerance: the rule above; the cumulative bounds of the coupled-runs table.
+    - Test id: `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance`, `::test_a_call_across_the_onset_converges_with_the_tolerance`, `::test_chained_cvode_calls_close_the_core_ledger`, `::test_a_stratified_call_books_the_core_heat_from_the_temperature_changes`, `::test_a_low_flux_call_books_the_core_heat_below_its_float_spacing`
+    - Command: `pytest -o "addopts=" tests/test_entropy_solver_core_module_smoke.py -k "ledger or converges or books_the_core_heat"`
 
 ### Cores without an inner core and the top-down case
 

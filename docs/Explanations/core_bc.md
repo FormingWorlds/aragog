@@ -346,7 +346,7 @@ In aragog `SolverOutput`, the per-call core energy change is recorded in `step_d
 
 ## Energy conservation and core closure
 
-The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the core-mantle boundary (CMB). From `SolverOutput`, the core closure residual of a call compares the heat change of the core with the CMB heat transport:
+How does Aragog check that the core conserves energy in each call? The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the core-mantle boundary (CMB). From `SolverOutput`, the core closure residual of a call compares the heat change of the core with the CMB heat transport:
 
 $$
 r_\text{core} = \frac{|\Delta E_\text{core} + \Delta E_\text{cmb} - Q_R\, \Delta t|}{\max(|\Delta E_\text{core}|, |\Delta E_\text{cmb}|)}
@@ -373,6 +373,8 @@ Two smoke tests hold the residual:
 - `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` has a core that cools by about 1.3 K over a partly molten base. It holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
 
 The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along the entropy path of each cell. It uses a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, because $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes. The other modes use 16 points.
+
+**Where this is checked.** [Core ledger closure](../Validation/core.md#core-ledger-closure) and [a CVODE solve across the inner-core onset](../Validation/core.md#9-a-cvode-solve-across-the-inner-core-onset).
 
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
 [^cite-deschamps2000]: Deschamps, F. & Sotin, C., *[Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity](https://doi.org/10.1046/j.1365-246x.2000.00228.x)*, Geophysical Journal International, 143, 204-218, 2000. [SciX](https://scixplorer.org/abs/2000GeoJI.143..204D/abstract).
