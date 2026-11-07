@@ -543,9 +543,13 @@ def flux_weight(
     T_eq: float,
     delta_on: float,
 ) -> float:
-    """Weight [0, 1] of the lid under the surface of the atmosphere: :func:`existence_weight`,
-    which does not read the flux, and 0 where that surface ``T_s`` is at or above ``T_b``."""
-    return 0.0 if T_s >= T_b else existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on)
+    """Weight [0, 1] of the lid under the surface ``T_s`` of the atmosphere.
+
+    It is :func:`existence_weight` of the steady crust under that surface,
+    ``delta_eq = k (T_b - T_s) / F_b``: 0 for ``T_s`` at or above ``T_b``, 1 for ``F_b <= 0``.
+    The weight falls to 0 as ``T_s`` rises to ``T_b``, so the lid has no step at the onset.
+    """
+    return existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on, T_surf=T_s)
 
 
 @dataclass(frozen=True)

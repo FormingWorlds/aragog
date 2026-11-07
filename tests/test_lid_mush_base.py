@@ -626,6 +626,9 @@ class TestFluxSolver:
             (7.0, T_b),
             (7.0, T_b + 3.0),
             (s._lid_k * 100.0 / on, T_b - 100.0),
+            (3.0e4, T_b - 3.0e4 * on / s._lid_k),
+            (3.0e4, T_b - 1.0e-3),
+            (50.0, 300.0),
         ):
             assert float(
                 jl.flux_weight(F_b, T_b, T_s, s._lid_k, 1.0, 255.0, on)
@@ -914,17 +917,49 @@ class TestFluxLidKnownAnswers:
         assert surf.T_s == T_b - sl.LID_DT_MIN
         assert sl.flux_weight(10.0, T_b, T_b, k, 1.0, 255.0, s._lid_delta_on) == 0.0
 
-    def test_weight_does_not_read_the_flux_of_the_atmosphere(self, s):
-        """The surface temperature matters only at or above ``T_b``; below it the weight is the
-        grey body weight, so a steady crust has ``w = 1`` at any surface flux."""
+    def test_weight_is_the_steady_crust_under_the_surface(self, s):
+        """Below ``T_b`` the weight is the existence weight of the steady crust under that surface,
+        ``delta_eq = k (T_b - T_s) / F_b``: 0.5 where ``delta_eq = delta_on``."""
         k, T_b, on = s._lid_k, s._lid_T_sol, s._lid_delta_on
-        grey = sl.existence_weight(50.0, T_b, k, 1.0, 255.0, on)
-        for T_s in (1.0, 300.0, T_b - 1.0e-6):
-            assert sl.flux_weight(50.0, T_b, T_s, k, 1.0, 255.0, on) == grey
-        assert grey > 0.99999
+        for T_s in (1.0, 300.0, T_b - 30.0, T_b - 1.0e-3):
+            want = sl.existence_weight(50.0, T_b, k, 1.0, 255.0, on, T_surf=T_s)
+            assert sl.flux_weight(50.0, T_b, T_s, k, 1.0, 255.0, on) == want
+        F_b = k * 100.0 / on
+        T_half = T_b - 100.0
+        assert sl.flux_weight(F_b, T_b, T_half, k, 1.0, 255.0, on) == pytest.approx(
+            0.5, abs=1e-12
+        )
+        # no grey-body crust: a large surface drop under a small delivery carries a full lid
+        assert sl.flux_weight(50.0, T_b, 300.0, k, 1.0, 255.0, on) > 0.99999
         assert sl.flux_weight(50.0, T_b, T_b, k, 1.0, 255.0, on) == 0.0
-        assert sl.flux_weight(1.0e7, T_b, 300.0, k, 1.0, 255.0, on) == 0.0
         assert sl.flux_weight(-3.0, T_b, T_b - 1.0, k, 1.0, 255.0, on) == 1.0
+
+    def test_weight_has_no_step_at_the_base_temperature(self, s):
+        """As the surface warms to ``T_b`` the weight falls to 0 without a step."""
+        k, T_b, on = s._lid_k, s._lid_T_sol, s._lid_delta_on
+        F_b = 3.0e4
+        ws = [
+            sl.flux_weight(F_b, T_b, T_b - dT, k, 1.0, 255.0, on)
+            for dT in (100.0, 30.0, 10.0, 3.0, 1e-3)
+        ]
+        assert all(a >= b for a, b in zip(ws, ws[1:]))
+        assert ws[-1] == 0.0
+        assert sl.flux_weight(F_b, T_b, T_b - 1e-3, k, 1.0, 255.0, on) < 1e-9
+
+    @given(dT1=st.floats(1e-6, 2000.0), dT2=st.floats(1e-6, 2000.0), F_b=st.floats(1e-3, 1e6))
+    @settings(
+        max_examples=200,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_weight_falls_as_the_surface_warms(self, s, dT1, dT2, F_b):
+        """A warmer held surface (smaller drop below ``T_b``) never carries a larger weight."""
+        k, T_b, on = s._lid_k, s._lid_T_sol, s._lid_delta_on
+        lo, hi = sorted((dT1, dT2))
+        hi, lo = min(hi, T_b - 1.0), min(lo, T_b - 1.0)
+        w_warm = sl.flux_weight(F_b, T_b, T_b - lo, k, 1.0, 255.0, on)
+        w_cold = sl.flux_weight(F_b, T_b, T_b - hi, k, 1.0, 255.0, on)
+        assert 0.0 <= w_warm <= w_cold <= 1.0
 
 
 def _mush_states(s):
@@ -1236,7 +1271,10 @@ class TestHeldSurface:
         s = _held_solver(eos, 1000.0, F_atm=5.0e4, thin=True)
         n = s._n_stag
         y = np.empty(n + 2)
-        y[:n] = np.asarray(eos.solidus_entropy(s._P_stag_flat), float).ravel() + 90.0
+        # entropy above the solidus and bracket with one balance at partial weight per form:
+        # parallel 3 balances (w 0.97, 0.71, 0.10) and the bracket takes w 0.71; series 1 at w 0.60
+        dS, lo, hi = (67.0, 850.0, 950.0) if form == 'parallel' else (78.0, T_eq + 1.0, 1400.0)
+        y[:n] = np.asarray(eos.solidus_entropy(s._P_stag_flat), float).ravel() + dS
         y[-2:] = (0.6, 0.6 * float(s._lid_hv.profile_heat(0.0, 1000.0, s._lid_T_sol)))
         bc = s.parameters.boundary_conditions
 
@@ -1255,9 +1293,9 @@ class TestHeldSurface:
                 F = (T_melt - T_held) / (w / G_lid + (1.0 - w) / G_skin)
             return w, G_lid, T_b, T_node, F
 
-        T = brentq(
-            lambda v: sig * (v**4 - T_eq**4) - balance(v)[4], T_eq + 1.0, 1400.0, xtol=1e-9
-        )
+        g = lambda v: sig * (v**4 - T_eq**4) - balance(v)[4]  # noqa: E731
+        assert g(lo) * g(hi) < 0.0
+        T = brentq(g, lo, hi, xtol=1e-9)
         w, G_lid, T_b, T_node, F_atm = balance(T)
         assert 0.1 < w < 0.9  # the balance sits at a partial weight
         assert F_atm == pytest.approx(sig * (T**4 - T_eq**4), rel=1e-6)
