@@ -2,7 +2,7 @@
 
 ## What this is and why it matters
 
-The liquidus of an alloy is the temperature at which it starts to freeze as it cools. In a planet's core, the inner core grows where the core adiabat meets the liquidus of the core alloy. The adiabat is the temperature profile at constant entropy, which a well-mixed convecting liquid follows. Light elements such as sulfur, carbon and oxygen lower the liquidus of iron, so they move the inner-core boundary. The slope of the liquidus, compared with the slope of the adiabat, also decides whether the core freezes from the centre or from the top.
+At what temperature does an iron core with light elements start to freeze? The liquidus of an alloy is the temperature at which it starts to freeze as it cools. In a planet's core, the inner core grows where the core adiabat meets the liquidus of the core alloy. The adiabat is the temperature profile at constant entropy, which a well-mixed convecting liquid follows. Light elements such as sulfur, carbon and oxygen lower the liquidus of iron, so they move the inner-core boundary. The slope of the liquidus, compared with the slope of the adiabat, also decides whether the core freezes from the centre or from the top.
 
 ## A sketch of the liquidus
 
@@ -22,6 +22,8 @@ S, C and O lower the melting point of iron. Si, H and N are treated as if they d
 The `core_module` configuration selects the `iron` or `quadratic` curve. `AlloyLiquidus` is used through the Python API ([tutorial](../Tutorials/core_alloy_liquidus.md)).
 
 ## One binary
+
+How does one light element lower the melting point of iron? On the iron-rich side the liquidus falls from the melting point of pure iron to the eutectic. Aragog writes it as an ideal solution through these 2 points, with one constant $A$ per binary and pressure. For example, at the core-mantle boundary of the Earth, 136 GPa, iron with 2 wt% S (percent by mass) melts 264 K below pure iron (note 1 of the figure).
 
 ### The ideal-solution form
 
@@ -71,15 +73,7 @@ The dilute limit is the limit of a vanishing light-element content, $w \to 0$. O
 ??? note "Details"
     Between the end points the two forms differ by up to 357.7 K at 21 GPa (9.15 wt% S). At 18 GPa they differ by 457.7 K (10.32 wt% S), but there the Fe$_3$S form has zero weight.
 
-    Near 22 GPa the blend adds to the slope of the liquidus as follows:
-
-    | S content | Slope added by the blend | Peak slope of the liquidus |
-    |---|---|---|
-    | 2 wt% | up to 29.6 K/GPa | 51.4 K/GPa |
-    | 4 wt% | up to 53.6 K/GPa | 73.9 K/GPa |
-    | 8 wt% | up to 81.5 K/GPa | 98.4 K/GPa |
-    | 10 wt% | up to 81.8 K/GPa | 96.7 K/GPa |
-    | 12 wt% | up to 67.4 K/GPa | 80.0 K/GPa |
+    The slope it adds near 22 GPa, up to 81.8 K/GPa, is listed per S content in the case [The low-pressure eutectic](../Validation/core_alloy_liquidus.md#the-low-pressure-eutectic).
 
 ### Where the form misses the Fe-S data at low pressure
 
@@ -87,33 +81,13 @@ From 1 bar to 15 GPa the measured Fe-S liquidus is not ideal (Buono & Walker 201
 
 Between 10 and 14 GPa the measured liquidus falls faster than the ideal form at 4 and 8 wt% S. The code also puts the onset of top-down freezing at a higher S content than the data. A non-ideal liquidus below 21 GPa, such as the model of Buono & Walker (2011[^cite-buono2011]), is not implemented.
 
-??? note "Details"
-    The misfit of the ideal form on FeS units:
+The form misses the measured points by 79 to 153 K RMS from 1 bar to 14 GPa. The misfit at each pressure and the change of the liquidus from 10 to 14 GPa are in the case [The Fe-S liquidus from 1 bar to 15 GPa](../Validation/core_alloy_liquidus.md#the-fe-s-liquidus-from-1-bar-to-15-gpa).
 
-    | Pressure | Points | RMS misfit | Mean misfit |
-    |---|---|---|---|
-    | 1 bar | 19 (Friedrich 1910[^cite-friedrich1910] and Miyazaki 1928[^cite-miyazaki1928]) | 78.60 K | $-33.32$ K |
-    | 6 GPa | 21 | 153.15 K | $-141.36$ K |
-    | 10 GPa | 7 | 88.95 K | $-82.55$ K |
-    | 14 GPa | 4 | 150.90 K | $-12.45$ K |
-
-    At 1 bar the form lies above the points up to 11 wt% S and below them from 16 wt% S. These sets hold the points with S on the Fe-rich side of the eutectic.
-
-    The 2 pure-iron points at 1 bar, 1800 and 1809 K, lie 22.4 and 13.4 K below the pure-iron curve at 1 bar (1822.4 K). They test that curve, not the form.
-
-    The change of the liquidus between 10 and 14 GPa. The measured values are linear between the points of Chen et al. (2008[^cite-chen2008]).
-
-    | S content | Measured | Ideal form |
-    |---|---|---|
-    | 4 wt% | $-42.05$ K/GPa | $+3.05$ K/GPa |
-    | 8 wt% | $-39.06$ K/GPa | $-14.49$ K/GPa |
-    | 12 wt% | $-15.53$ K/GPa | $-26.89$ K/GPa |
-
-    The code liquidus falls from 10 to 14 GPa from 4.61 wt% S. The measured one falls from 1.01 wt% S. This value is linear between the 10 GPa pure-Fe point and the first liquid point at 7.05 wt%. The code therefore puts the onset of top-down freezing at a higher S content than the data.
-
-    The pure iron of the code melts 12.9 and 35.0 K above the pure-Fe points of Chen et al. (2008[^cite-chen2008]) at 10 and 14 GPa.
+**Where this is checked.** [The end points of each binary](../Validation/core_alloy_liquidus.md#the-end-points-of-each-binary), [the Fe-S liquidus curves of Mori et al. (2017)](../Validation/core_alloy_liquidus.md#the-fe-s-liquidus-curves-of-mori-et-al-2017), [the Fe-C liquidus curves of Mashino et al. (2019)](../Validation/core_alloy_liquidus.md#the-fe-c-liquidus-curves-of-mashino-et-al-2019) and [the Fe-S liquidus from 1 bar to 15 GPa](../Validation/core_alloy_liquidus.md#the-fe-s-liquidus-from-1-bar-to-15-gpa).
 
 ## Several elements
+
+How do several light elements combine? Aragog keeps one ideal-solution form and combines the binary constants as a harmonic mean, weighted by the mole fractions. For a dilute alloy the depression is then the sum of the binary depressions. For example, the alloy of the tutorial (2 wt% S, 0.5 wt% C, 3 wt% O and 4 wt% Si) melts 613 K below pure iron at 135 GPa.
 
 With several elements the mole fraction of free Fe is $x_\mathrm{Fe} = 1 - X$, with $X = \sum_i x_i$. The constant is a harmonic mean of the binary constants, weighted by the mole fractions:
 
@@ -129,7 +103,11 @@ For a dilute alloy this gives $T_\mathrm{Fe} - T \approx T_\mathrm{Fe} \sum_i x_
 
 **Past the eutectic.** A composition past the Fe-rich side of the eutectic, $\sum_i w_i / w_{e,i} > 1$, would crystallise a compound, not iron. There the liquidus is held at its value on the boundary, with the composition scaled to $\sum_i w_i / w_{e,i} = 1$. `AlloyLiquidus.status` flags the pressure (`past_eutectic`).
 
+**Where this is checked.** [Several light elements](../Validation/core_alloy_liquidus.md#several-light-elements).
+
 ## Eutectic data
+
+Where do the eutectic points come from? Each binary needs its eutectic temperature and composition at every pressure. Aragog reads them from measured points at low pressure and from fits and figure curves at high pressure, and continues them above the data by a rule.
 
 Each binary needs $T_e$ and $w_e$ at every pressure. The data come from different sources at low pressure and at high pressure. Above the data, a rule continues them. The [data sources](#data-sources) table lists every source.
 
@@ -204,17 +182,7 @@ The continued compositions move above the data. An alloy whose $\sum_i w_i / w_{
 
     The slope of the liquidus changes smoothly into the homologous rule. Between points 0.1 GPa apart over 325 to 380 GPa, it moves by at most 0.025 K/GPa for the alloys tested.
 
-    S and C alloys and their mixtures enter their eutectic above the data, since the S and C tables fall:
-
-    | Alloy | Pressure of the crossing |
-    |---|---|
-    | 4.85 wt% S | 348 GPa |
-    | 4.9 wt% S | 341 GPa |
-    | 4.95 wt% S | 335 GPa |
-    | 5 wt% S (the end value) | just above 330 GPa |
-    | 3.35 wt% C (the end value) | just above 330 GPa |
-    | 3.3 wt% C | 344 GPa |
-    | 4 wt% S with 0.65 wt% C | 333 GPa |
+    S and C alloys and their mixtures enter their eutectic above the data, since the S and C tables fall. The pressures of the crossings are listed in the case [The slope of the liquidus](../Validation/core_alloy_liquidus.md#the-slope-of-the-liquidus).
 
     O alloys between 15.07 and 15.28 wt% leave it, since the O table rises: 15.2 wt% at 338 GPa, 15.28 wt% at 354 GPa.
 
@@ -230,6 +198,8 @@ The continued compositions move above the data. An alloy whose $\sum_i w_i / w_{
 
     - The alloy of the tutorial is past its eutectic boundary ($\sum_i w_i / w_{e,i} > 1$), with three quarters of the sum from O. It leaves it at 20.54 GPa, where the slope steps from 27.97 to 41.49 K/GPa.
     - 10 wt% O leaves it at 49.75 GPa, where the slope steps from 10.24 to 15.90 K/GPa.
+
+**Where this is checked.** [Eutectic temperatures](../Validation/core_alloy_liquidus.md#eutectic-temperatures), [the low-pressure eutectic](../Validation/core_alloy_liquidus.md#the-low-pressure-eutectic), [the slope of the liquidus](../Validation/core_alloy_liquidus.md#the-slope-of-the-liquidus) and [the 2 reads of each figure curve](../Validation/core_alloy_liquidus.md#the-2-reads-of-each-figure-curve).
 
 ## Data sources
 
@@ -251,6 +221,14 @@ The continued compositions move above the data. An alloy whose $\sum_i w_i / w_{
 The data cover 1 bar to 330 GPa for Fe-S and Fe-C, and 0 to 325 GPa for Fe-O.
 
 The curves were read from the vector paths of the published figures. A second read from a raster image checked them. The tables are in `aragog/core/eutectics/`, each with its source in the header.
+
+## Bounds and what happens outside them
+
+- **Composition.** The mass fractions must be finite real numbers, not negative, of the known elements (S, C, O, Si, H, N), and sum below 1. Otherwise `AlloyLiquidus` raises a `ValueError`.
+- **Past the eutectic.** A composition with $\sum_i w_i / w_{e,i} > 1$ over S, C and O is held at the eutectic value. `AlloyLiquidus.status` flags the pressure (`past_eutectic`).
+- **Above the data.** Above 330 GPa (S, C) or 325 GPa (O) the eutectic keeps its ratio to the pure-iron curve. `AlloyLiquidus.status` flags the pressure (`extrapolated`) for each depressing element in the alloy.
+- **Below 1 bar.** The eutectic keeps its ratio to the pure-iron curve at 1 bar and is flagged `extrapolated`.
+- **Result.** A liquidus that is not finite, not above 0 K or above the pure-iron curve, or a binary with $A \le 0$, raises a `ValueError`.
 
 ## Limits
 
@@ -274,23 +252,11 @@ The curves were read from the vector paths of the published figures. A second re
 
 - Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast, down to $-0.64$ K/GPa. A core in this state freezes from the top, which the core module treats as a regime it does not model ([crystallisation regimes](core_bc.md)).
 
-    ??? note "Details"
-        Near the eutectic, $dT/dP \approx dT_e/dP - |\partial T/\partial w|\,|dw_e/dP|$. The liquidus falls with pressure in these cases:
-
-        - Every S content tested from 4.9 to 7 wt%, between 209 and 275 GPa (down to $-0.64$ K/GPa), along the read curve of Mori et al. (2017[^cite-mori2017], Fig. 5).
-        - 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa).
-        - 3.28 to 3.37 wt% C between 323.8 and 336 GPa (down to $-0.105$ K/GPa for 3.34 wt%), where the Fe-C table and its continuation fall.
+    Near the eutectic, $dT/dP \approx dT_e/dP - |\partial T/\partial w|\,|dw_e/dP|$. The cases where the liquidus falls are listed in [The slope of the liquidus](../Validation/core_alloy_liquidus.md#the-slope-of-the-liquidus).
 
 - Below 14 GPa the Fe-S eutectic temperature falls with pressure (Fei et al. 1997[^cite-fei1997]), and so does the liquidus of S alloys from about 4 wt%, down to $-29.4$ K/GPa.
 
-    ??? note "Details"
-        | S content | Pressures where the liquidus falls | Least slope |
-        |---|---|---|
-        | 4.8 wt% | 10.78 to 13.79 GPa | $-2.4$ K/GPa |
-        | 8 wt% | 4.99 to 15.57 GPa | $-16.4$ K/GPa |
-        | 12 wt% | 1.74 to 16.41 GPa | $-29.4$ K/GPa |
-
-        Alloys with 1 and 3 wt% S keep rising (least slopes 19.5 and 7.2 K/GPa). The liquidus rises with pressure up to 600 GPa, where the alloy is not past its eutectic, for: up to 4.8 wt% S from 26 GPa, 3.2 wt% C and 10 wt% O from 1 GPa, and the 2 mixtures tested.
+    The ranges are listed in [The low-pressure eutectic](../Validation/core_alloy_liquidus.md#the-low-pressure-eutectic).
 
 - Only the end points of each binary are data, and the liquidus between them follows the form: from 1 bar to 15 GPa the form misses the measured Fe-S liquidus by 79 to 153 K RMS (see [One binary](#one-binary)).
 - The blend of the FeS and Fe$_3$S units over 18 to 26 GPa has no data behind it. Near 22 GPa it adds up to 81.8 K/GPa to the slope of the liquidus (see [One binary](#one-binary)).
@@ -318,12 +284,10 @@ The curves were read from the vector paths of the published figures. A second re
 [^cite-fei1997]: Fei, Y., Bertka, C.M. & Finger, L.W., *[High-Pressure Iron-Sulfur Compound, Fe$_3$S$_2$, and Melting Relations in the Fe-FeS System](https://doi.org/10.1126/science.275.5306.1621)*, Science, 275, 1621-1623, 1997.
 [^cite-fei2000]: Fei, Y., Li, J., Bertka, C.M. et al., *[Structure type and bulk modulus of Fe$_3$S, a new iron-sulfur compound](https://doi.org/10.2138/am-2000-11-1229)*, American Mineralogist, 85, 1830-1833, 2000. [SciX](https://scixplorer.org/abs/2000AmMin..85.1830F/abstract).
 [^cite-fei2014]: Fei, Y. & Brosh, E., *[Experimental study and thermodynamic calculations of phase relations in the Fe-C system at high pressure](https://doi.org/10.1016/j.epsl.2014.09.044)*, Earth and Planetary Science Letters, 408, 155-162, 2014. [SciX](https://scixplorer.org/abs/2014E%26PSL.408..155F/abstract).
-[^cite-friedrich1910]: Friedrich, K., Metallurgie, 9, 33-48, 1910.
 [^cite-fritsch1980]: Fritsch, F.N. & Carlson, R.E., *[Monotone Piecewise Cubic Interpolation](https://doi.org/10.1137/0717021)*, SIAM Journal on Numerical Analysis, 17, 238-246, 1980. [SciX](https://scixplorer.org/abs/1980SJNA...17..238F/abstract).
 [^cite-hirose2021]: Hirose, K., Wood, B. & Vočadlo, L., *[Light elements in the Earth's core](https://doi.org/10.1038/s43017-021-00203-6)*, Nature Reviews Earth & Environment, 2, 645-658, 2021. [SciX](https://scixplorer.org/abs/2021NRvEE...2..645H/abstract).
 [^cite-lord2009]: Lord, O.T., Walter, M.J., Dasgupta, R. et al., *[Melting in the Fe-C system to 70 GPa](https://doi.org/10.1016/j.epsl.2009.04.017)*, Earth and Planetary Science Letters, 284, 157-167, 2009. [SciX](https://scixplorer.org/abs/2009E%26PSL.284..157L/abstract).
 [^cite-mashino2019]: Mashino, I., Miozzi, F., Hirose, K. et al., *[Melting experiments on the Fe-C binary system up to 255 GPa: Constraints on the carbon content in the Earth's core](https://doi.org/10.1016/j.epsl.2019.03.020)*, Earth and Planetary Science Letters, 515, 135-144, 2019. [SciX](https://scixplorer.org/abs/2019E%26PSL.515..135M/abstract).
-[^cite-miyazaki1928]: Miyazaki, K., Science Reports of the Tohoku Imperial University, 17, 877-881, 1928.
 [^cite-mori2017]: Mori, Y., Ozawa, H., Hirose, K. et al., *[Melting experiments on Fe-Fe$_3$S system to 254 GPa](https://doi.org/10.1016/j.epsl.2017.02.021)*, Earth and Planetary Science Letters, 464, 135-141, 2017. [SciX](https://scixplorer.org/abs/2017E%26PSL.464..135M/abstract).
 [^cite-nakajima2009]: Nakajima, Y., Takahashi, E., Suzuki, T. et al., *["Carbon in the core" revisited](https://doi.org/10.1016/j.pepi.2008.05.014)*, Physics of the Earth and Planetary Interiors, 174, 202-211, 2009. [SciX](https://scixplorer.org/abs/2009PEPI..174..202N/abstract).
 [^cite-oka2019]: Oka, K., Hirose, K., Tagawa, S. et al., *[Melting in the Fe-FeO system to 204 GPa: Implications for oxygen in Earth's core](https://doi.org/10.2138/am-2019-7081)*, American Mineralogist, 104, 1603-1607, 2019. [SciX](https://scixplorer.org/abs/2019AmMin.104.1603O/abstract).
