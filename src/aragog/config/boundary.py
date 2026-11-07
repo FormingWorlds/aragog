@@ -113,7 +113,8 @@ def check_subgrid_lid(
     ``subgrid_lid`` must be a bool; ``lid_delta_on`` [m] and ``lid_ra_crit`` finite and
     positive; ``lid_delta_lo`` [m] None or finite with ``0 < lid_delta_lo < lid_delta_on``;
     ``lid_handover_cells`` an integer of at least 1. With the lid on, the outer boundary must
-    be the grey body (1) or the fixed surface temperature (5), the core boundary neither
+    be the grey body (1) or the fixed surface temperature (5), or the prescribed flux (4) with
+    ``lid_mush_base``, the core boundary neither
     ``'gradient'`` nor ``'bower2018'``, and ``param_utbl`` off, because the lid replaces the
     surface flux the correction acts on. The check against the top-cell width needs the mesh
     and runs at solver setup.
@@ -234,7 +235,8 @@ class BoundaryConfig:
         energy per area); ``aragog.surface_lid``. Off by default.
     lid_delta_on : float
         Quasi-steady crust thickness [m] above which the lid acts; a thinner crust is left to
-        the mesh. Must stay below 0.8 of the top-cell width (checked at solver setup).
+        the mesh. Must stay below 0.8 of the top-cell width, and below 0.7 of it with
+        ``lid_mush_base`` (checked at solver setup).
     lid_delta_lo : float or None
         Thickness [m] of the hidden (phantom) lid and of the melt-back stop; None gives
         ``lid_delta_on / 2``.
@@ -250,7 +252,8 @@ class BoundaryConfig:
     lid_mush_base : bool
         With the solid rheology on: the lid base lies at the solidus, the mush gives the lid
         the floor flux plus the boundary-layer flux, the top cell stays above the solidus and
-        the lid hands over at ``LID_HANDOVER_FRAC`` of the top cell. Off by default.
+        the lid hands over at ``LID_HANDOVER_FRAC`` of the top cell. It needs
+        ``kappah_floor > 0`` and the entropy EOS tables. Off by default.
     lid_surface_temperature : float or None
         With ``outer_boundary_condition = 4`` and ``lid_mush_base``: the surface temperature
         of the lid [K], held through a call; the caller sets it from the atmosphere between
