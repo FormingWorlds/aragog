@@ -493,8 +493,9 @@ def floor_weight(S_f: float, S_sol: float) -> float:
 def floor_flux(phi_integral: float, h_top: float, delta: float) -> float:
     """Steady flux [W/m^2] of the eddy-diffusivity floor from the fluid to the lid base.
 
-    ``F = Phi / (0.5 (h_top - delta))``, with ``Phi(S) = int_{S_sol}^{S} rho T kappa dS'``
-    [W/m], the Kirchhoff integral of the floor over entropy, across half of the fluid part of
+    ``F = Phi / (0.5 (h_top - delta))``, with
+    ``Phi(S) = int_{S_sol}^{S} rho T kappa_floor f(phi) dS'`` [W/m], the Kirchhoff integral of
+    the floor over entropy (``f`` its melt-fraction weight), across half of the fluid part of
     the top cell. Lengths in m.
     """
     return phi_integral / (0.5 * max(h_top - delta, 1.0e-3))
