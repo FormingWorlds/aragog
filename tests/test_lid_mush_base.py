@@ -1308,6 +1308,47 @@ class TestHeldSurface:
             assert abs(F_int - F_atm) > 0.05 * F_atm
             assert F_int - F_atm == pytest.approx(w * (G_lid * (T_b - T) - F_atm), rel=1e-6)
 
+    def test_rows_follow_the_branch_of_the_previous_row(self, eos):
+        """Under the lagged weight one row maps the held surface to the next: w from the held
+        surface, then the atmosphere balance at that fixed w. On a state with 3 fixed points the
+        rows converge to the stable one on the side of the start; the middle one is unstable."""
+        from scipy.optimize import brentq
+
+        sig, T_eq, G_skin = 5.670374419e-8, 255.0, 200.0
+        s = _held_solver(eos, 1000.0, F_atm=5.0e4, thin=True)
+        n = s._n_stag
+        y = np.empty(n + 2)
+        y[:n] = np.asarray(eos.solidus_entropy(s._P_stag_flat), float).ravel() + 67.0
+        y[-2:] = (0.6, 0.6 * float(s._lid_hv.profile_heat(0.0, 1000.0, s._lid_T_sol)))
+        bc = s.parameters.boundary_conditions
+
+        def row(T_held):
+            """Surface temperature and weight of the next row."""
+            bc.lid_surface_temperature = T_held
+            s._dSdt_single(0.0, y)
+            ev = s._lid_last
+            w, T_b = float(ev.rates.w), float(ev.T_b)
+            G_lid = s._lid_k * max(sl.shape(ev.surf.s)[0], 0.1) / ev.delta
+            T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
+
+            def f(v):
+                return sig * (v**4 - T_eq**4) - (
+                    w * G_lid * (T_b - v) + (1.0 - w) * G_skin * (T_node - v)
+                )
+
+            return brentq(f, T_eq + 1e-6, 2000.0, xtol=1e-10), w
+
+        def settle(T):
+            for _ in range(40):
+                T, w = row(T)
+            return w
+
+        assert settle(880.0) == pytest.approx(0.967, abs=5e-3)
+        assert settle(910.0) == pytest.approx(0.100, abs=5e-3)
+        mid = brentq(lambda v: row(v)[0] - v, 850.0, 950.0, xtol=1e-8)
+        slope = (row(mid + 0.05)[0] - row(mid - 0.05)[0]) / 0.1
+        assert slope > 1.0
+
     def test_coupled_budget_closes_and_reports_the_difference_from_the_atmosphere(self, eos):
         """Steps under a grey balance: the state heat of each call equals the integrated powers,
         and the mean lid flux differs from the flux of the atmosphere only by the crust change
