@@ -1,0 +1,102 @@
+name: Claude PR review
+
+# Reviews a pull request when it opens, reopens or becomes ready for review, and again on
+# a PR comment with "@claude" ("@claude deep-review" runs the larger model). The job can
+# read the repository and write PR comments; it cannot push or commit.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude PR review
+    if: >-
+      (github.event_name == 'pull_request'
+        && !github.event.pull_request.draft
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && github.event.pull_request.user.type != 'Bot')
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && contains(github.event.comment.body, '@claude')
+        && github.event.comment.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+      MODEL: ${{ (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude deep-review')) && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
+    steps:
+      - name: Skip draft and fork pull requests on a comment
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft,isCrossRepository)
+          echo "$pr"
+          if [ "$(jq -r '.isDraft or .isCrossRepository' <<<"$pr")" = true ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the pull request merge commit
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/merge
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Review the pull request
+        id: claude
+        if: steps.gate.outputs.run == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ env.PR_NUMBER }}
+
+            Review this pull request of aragog, the interior evolution module of PROTEUS.
+            First read AGENTS.md and tests/AGENTS.md of the repository. Then read the diff
+            with `gh pr diff ${{ env.PR_NUMBER }}` and the files it touches.
+
+            Report only real items:
+            - a wrong result or a crash if the change is merged, with the input or state
+              that triggers it;
+            - a physics or unit error;
+            - a test or guard that the change removes or weakens;
+            - a doc or docstring that states wrong behaviour.
+            Do not comment on style, naming, formatting or comment length.
+
+            Report at most 5 findings. For each, give the file, the line and a concrete
+            input or state that fails. Put a finding on its line with the inline comment
+            tool when the line is in the diff. Then post one short summary comment with
+            `gh pr comment ${{ env.PR_NUMBER }} --body "..."`. If you find nothing real,
+            say so in one line in that comment. Write in plain, short sentences.
+          claude_args: |
+            --model ${{ env.MODEL }}
+            --max-turns 30
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --disallowedTools "Edit,Write,NotebookEdit"
+
+      - name: Report model, turns and time
+        if: always() && steps.claude.outputs.execution_file != ''
+        env:
+          EXEC: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          jq -r --arg m "$MODEL" '[.[] | select(.type == "result")] | last
+            | "model \($m), turns \(.num_turns), wall \(.duration_ms / 1000) s, API \(.duration_api_ms / 1000) s"' "$EXEC" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
