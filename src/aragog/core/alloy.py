@@ -123,7 +123,8 @@ def _hermite(q, x, y, d):
     x, y, d = jnp.asarray(x), jnp.asarray(y), jnp.asarray(d)
     i = jnp.clip(jnp.searchsorted(x, q, side='right') - 1, 0, len(x) - 2)
     x0, h, y0, y1, d0, d1 = x[i], x[i + 1] - x[i], y[i], y[i + 1], d[i], d[i + 1]
-    t = jnp.clip((q - x0) / h, 0.0, 1.0)
+    # where, not clip: a clip edge would give a node half the derivative of its segment
+    t = jnp.where(q < x[0], 0.0, jnp.where(q > x[-1], 1.0, (q - x0) / h))
     inside = (
         (1.0 + 2.0 * t) * (1.0 - t) ** 2 * y0
         + t * (1.0 - t) ** 2 * h * d0
