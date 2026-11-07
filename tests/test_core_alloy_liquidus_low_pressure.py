@@ -286,6 +286,58 @@ def test_the_dilute_depression_of_s_falls_over_the_unit_blend():
     assert dil[0] / dil[1] == pytest.approx(3.46, abs=0.005)
 
 
+def _a(el, p_gpa, unit):
+    """A of the Fe-``el`` ideal form on ``unit`` through pure Fe and the shipped eutectic."""
+    t_e, w_e = (float(v) for v in eutectic(el, p_gpa * 1e9))
+    return float(alloy._binary_a(el, float(T_FE(p_gpa * 1e9)), t_e, w_e, unit))
+
+
+@pytest.mark.physics_invariant
+def test_the_stated_forms_a_values_dilute_slopes_and_crossings():
+    """The numbers the docs state: the Fe3S and FeS forms differ by up to 457.7 K (10.32 wt% S)
+    at 18 GPa and 357.7 K (9.15 wt%) at 21 GPa; A is 3.497 and 0.454 for S on FeS at 1 bar and
+    21 GPa, 2.467, 1.788 and 0.213 on Fe3S at 18, 21 and 330 GPa, at most 1.728 (16 GPa) and
+    0.503 (17 GPa) for C on Fe3C and Fe7C3 (0.401 and 0.122 at 330 GPa), 1.074 for O at 1 bar
+    and at most 3.449 (50 GPa); the dilute slopes (T_Fe - T) per wt% at 1e-6 wt%; the tutorial
+    alloy and 10 wt% O leave their eutectic at 20.535 and 49.752 GPa, the slope stepping from
+    27.97 to 41.49 and from 10.24 to 15.90 K/GPa."""
+    for p, diff, w_at in ((18.0, 457.7, 10.32), (21.0, 357.7, 9.15)):
+        w = np.linspace(0.001, _w_e('S')(p), 2000)
+        d = np.abs([_form(x, p, FE3S) - _form(x, p, FES) for x in w])
+        assert (d.max(), 100 * w[d.argmax()]) == pytest.approx((diff, w_at), abs=0.05)
+    stated = [(0, (1, 1), 3.497), (21, (1, 1), 0.454), (18, (3, 1), 2.467), (21, (3, 1), 1.788)]
+    for p, unit, a in stated + [(330, (3, 1), 0.213)]:
+        assert _a('S', p, unit) == pytest.approx(a, abs=5e-4)
+    grid = np.arange(5.0, 330.01, 1.0)
+    for unit, top, p_top, end in (((3, 1), 1.728, 16, 0.401), ((7, 3), 0.503, 17, 0.122)):
+        a = np.array([_a('C', x, unit) for x in grid])
+        assert (a.max(), grid[a.argmax()], a[-1]) == pytest.approx((top, p_top, end), abs=5e-4)
+    a = np.array([_a('O', x, (1, 1)) for x in np.arange(0.0, 325.01, 1.0)])
+    assert (a[0], a.max(), float(a.argmax())) == pytest.approx((1.074, 3.449, 50.0), abs=5e-4)
+    table = {
+        'S': (9.1, 73.5, 124.7, 510.4),
+        'O': (59.3, 33.0, 66.8, 137.7),
+        'C': (54.7, 65.7, 226.9, 792.0),
+    }
+    for el, row in table.items():
+        for p, stated_k in zip((0.0, 21.0, 135.0, 330.0), row):
+            t = float(AlloyLiquidus({el: 1e-6}).t_melt(p * 1e9))
+            assert (float(T_FE(p * 1e9)) - t) / 1e-4 == pytest.approx(stated_k, abs=0.05)
+    crossings = (
+        ({'S': 0.02, 'C': 0.005, 'O': 0.03, 'Si': 0.04}, (20.0, 21.0), 20.535, 27.97, 41.49),
+        ({'O': 0.10}, (49.0, 50.5), 49.752, 10.24, 15.90),
+    )
+    for comp, bracket, p_x, before, after in crossings:
+        liq = AlloyLiquidus(comp)
+        x = brentq(
+            lambda q: float(liq.status(np.array([q * 1e9]))['past_eutectic'][0]) - 0.5,
+            *bracket,
+            xtol=1e-6,
+        )
+        g = np.asarray(liq.gradient(np.array([x - 1e-3, x + 1e-3]) * 1e9)) * 1e9
+        assert (x, *g) == pytest.approx((p_x, before, after), abs=0.005)
+
+
 @pytest.mark.physics_invariant
 def test_the_fe3s_units_hold_the_eutectic_from_the_start_of_the_blend():
     """At 18 GPa w_e is 15.50 wt% S, below the 16.06 wt% that Fe3S units can hold (w_e crosses
