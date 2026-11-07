@@ -19,13 +19,13 @@ Fe-S eutectic is the monotone cubic Hermite (Fritsch & Carlson 1980) through the
 al. (1997) at 1 bar, 10 and 14 GPa, towards 1348 K at 21 GPa and the composition table at 20
 GPa, with no slope step at the nodes, joined into the fit and the table by a smootherstep over
 18 to 21 GPa; the Fe-C eutectic is the cubic from 1 bar (1416.15 K, 4.3 wt%) with zero curvature
-there and the value and slope of the fit and the table at 5 GPa. Above the data, the tables are
-read at an effective pressure ``q`` whose slope fades from 1 to 0 by a smootherstep over the 40
-GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic temperature is its value at
-``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve at ``q``, and the
-composition and Fe-O temperature tables continue along their last segment up to ``q``. A
-composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
-boundary.
+there, the value of the fit and the table at 5 GPa and, at 5 GPa, the slope of the fit for T_e
+and 0 for w_e, so both are monotone. Above the data, the tables are read at an effective
+pressure ``q`` whose slope fades from 1 to 0 by a smootherstep over the 40 GPa above the end, so
+``q`` stops 20 GPa above the end: the eutectic temperature is its value at ``q`` times ``T_Fe(P)
+/ T_Fe(q)``, homologous to the pure-iron curve at ``q``, and the composition and Fe-O
+temperature tables continue along their last segment up to ``q``. A composition past the Fe-rich
+side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its boundary.
 """
 
 from __future__ import annotations
@@ -165,8 +165,9 @@ def _eutectic_in_data(el: str, q):
         return (1.0 - b) * t_low + b * t_fit, (1.0 - b) * w_low + b * w_fit
     span, x = p_ref - low[0, 0], q - low[0, 0]
     w_slope = (comp[1, 1] - comp[0, 1]) / (comp[1, 0] - comp[0, 0])
+    w_end = w_slope if w_slope * (comp[0, 1] - low[0, 2]) > 0.0 else 0.0  # monotone w_e
     t_cubic = _natural_cubic(x, span, low[0, 1], t_ref, t_ref / (a * c))
-    w_cubic = _natural_cubic(x, span, low[0, 2], comp[0, 1], w_slope)
+    w_cubic = _natural_cubic(x, span, low[0, 2], comp[0, 1], w_end)
     return jnp.where(q < p_ref, t_cubic, t_fit), jnp.where(q < p_ref, w_cubic, w_fit)
 
 
@@ -311,8 +312,8 @@ class AlloyLiquidus:
         pure-iron curve and each binary's A.
 
         The S blend (FeS to Fe3S, 18 to 26 GPa) ends below the C blend (230 to 280 GPa), so the
-        two act one at a time. Below 18 GPa, where Fe3S units cannot hold the eutectic liquid, FeS
-        units stand in for them at zero weight.
+        two act one at a time. Below 18 GPa, where the Fe3S units have zero weight and cannot hold
+        the eutectic liquid below 17.14 GPa, FeS units stand in for them.
         """
         w = _without_h_n(_checked(self.composition if composition is None else composition))
         p = jnp.asarray(pressure, dtype=float)
