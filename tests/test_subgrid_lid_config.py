@@ -201,3 +201,28 @@ def test_lid_keys_of_a_toml_file_are_checked(tmp_path, lines, word):
 def test_lid_accepted_with_a_fixed_surface_temperature():
     """The lid runs under a fixed surface temperature (outer boundary 5)."""
     BoundaryConfig(**{**BASE, 'outer_boundary_condition': 5}, **GOOD)
+
+
+def test_the_mush_base_and_held_surface_keys_reach_the_config_from_a_toml_file(tmp_path):
+    """lid_mush_base, lid_surface_temperature and lid_surface_flux_cap of a TOML file reach the
+    boundary config with outer boundary 4, and a cap without a held surface fails naming it."""
+    from importlib.resources import files
+
+    from aragog.parser import Parameters
+
+    text = files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    assert text.count('outer_boundary_condition = 1\n') == 1
+    text = text.replace('outer_boundary_condition = 1\n', 'outer_boundary_condition = 4\n')
+
+    def parse(*lines):
+        path = tmp_path / 'held.toml'
+        head = '[boundary_conditions]\n'
+        path.write_text(text.replace(head, head + ''.join(f'{v}\n' for v in lines)))
+        return Parameters.from_file(str(path)).boundary_conditions
+
+    lid = ('subgrid_lid = true', 'lid_mush_base = true')
+    bc = parse(*lid, 'lid_surface_temperature = 800.0', 'lid_surface_flux_cap = 1000.0')
+    assert bc.lid_mush_base is True
+    assert (bc.lid_surface_temperature, bc.lid_surface_flux_cap) == (800.0, 1000.0)
+    with pytest.raises(ValueError, match='lid_surface_flux_cap'):
+        parse(*lid, 'lid_surface_flux_cap = 1000.0')
