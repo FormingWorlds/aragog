@@ -52,18 +52,12 @@ jobs:
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
           echo "head=$(jq -r .headRefOid <<<"$pr")" >> "$GITHUB_OUTPUT"
-          if sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" --jq .object.sha); then
-            echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          else
-            echo "sha=$(jq -r .headRefOid <<<"$pr")" >> "$GITHUB_OUTPUT"
-            echo "No merge commit (merge conflict): the review reads the head commit." >> "$GITHUB_STEP_SUMMARY"
-          fi
 
-      - name: Check out the pull request
+      - name: Check out the head commit of the pull request
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v6
         with:
-          ref: ${{ steps.gate.outputs.sha }}
+          ref: ${{ steps.gate.outputs.head }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -78,12 +72,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ steps.gate.outputs.head }}
         run: |
           python -m pip install --quiet ruff
-          git fetch --quiet --depth=1 origin "$HEAD_SHA"
-          git worktree add --quiet --detach "$RUNNER_TEMP/head" "$HEAD_SHA"
-          cd "$RUNNER_TEMP/head"
           python - <<'PY'
           import os, re, subprocess
           added, out = {}, []
@@ -128,7 +118,7 @@ jobs:
           except Exception as err:
               out.append(f'lint step failed: {err!r}')
           text = '\n'.join(out) or 'no lint items in the changed lines'
-          with open(os.path.join(os.environ['GITHUB_WORKSPACE'], '.review_lint.txt'), 'w') as fh:
+          with open('.review_lint.txt', 'w') as fh:
               fh.write(text + '\n')
           print(text)
           PY
