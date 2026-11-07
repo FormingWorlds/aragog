@@ -2,7 +2,7 @@
 
 This page checks the `core_module` core boundary condition ([core_bc.md](../Explanations/core_bc.md)) and the `aragog.core` model behind it against analytic results, published values, an independent core evolution code and coupled runs. Each section states the physics a check tests, the reference and where it comes from, the value aragog gives, a figure and what it shows, the limits of the check where it has any, and the tests that pin it. A check shows that the code solves the stated equations to the stated accuracy; whether the equations describe a real core is a separate question, which the literature comparisons in sections 5 to 8 and the limits stated with each check address.
 
-Every number in sections 1 to 13 and every figure there is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about eight minutes on one core. Sections 9 and 12 and the solver tests use the aragog test tables that CI uses, `spider_eos_test_data.tar.gz` of release `test-data-v1` (sha256 `e3842bc494969571428d7f978d8f70972d40a3bc5d6ac2c09f6a96808f4079fb`), 500 pressures from 0 to 150 GPa by 200 entropies; their numbers hold for these tables. Other tables give other values. One kind of number comes from a separate measurement and says so where it appears: the closures of the stratified call heated from above (section 13), held by its smoke test. Nimmo (2015) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
+Every number in sections 1 to 13 and every figure there is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about eight minutes on one core. Sections 9 and 12 and the solver tests use the aragog test tables that CI uses, `spider_eos_test_data.tar.gz` of release `test-data-v1` (sha256 `e3842bc494969571428d7f978d8f70972d40a3bc5d6ac2c09f6a96808f4079fb`), 500 pressures from 0 to 150 GPa by 200 entropies; their numbers hold for these tables. Other tables give other values. One kind of number comes from a separate measurement and says so where it appears: the closures of the stratified call heated from above (section 13), held by its smoke test. Nimmo (2015[^cite-nimmo2015a]) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
 
 ## 1. Gaussian core structure
 
@@ -30,7 +30,7 @@ $$
 T_a(r) = T_\mathrm{cmb} \exp\left(\frac{r_\mathrm{cmb}^2 - r^2}{D^2}\right), \qquad D^2 = \frac{3 c_p}{2\pi \alpha \rho_\mathrm{cen} G},
 $$
 
-(Labrosse et al. 2001, eqs. 7 and 11, the adiabat to the same order in radius as their density and gravity, eq. 8) holds for gravity linear in $r$; Nimmo (2015) and thermal_history use it, so sections 5, 6, 7, 10 and 13 do too. Mass and gravity are closed-form integrals of the density; the pressure is the hydrostatic integral of $\rho g$ from the CMB inward, by 32-point Gauss-Legendre quadrature (`pressure_mode = "quadrature"`), or the third-order expansion in $r/L$ that Labrosse et al. (2001, eq. 8) use for gravity (`pressure_mode = "labrosse"`).
+(Labrosse et al. 2001[^cite-labrosse2001], eqs. 7 and 11, the adiabat to the same order in radius as their density and gravity, eq. 8) holds for gravity linear in $r$; Nimmo (2015[^cite-nimmo2015a]) and thermal_history use it, so sections 5, 6, 7, 10 and 13 do too. Mass and gravity are closed-form integrals of the density; the pressure is the hydrostatic integral of $\rho g$ from the CMB inward, by 32-point Gauss-Legendre quadrature (`pressure_mode = "quadrature"`), or the third-order expansion in $r/L$ that Labrosse et al. (2001[^cite-labrosse2001], eq. 8) use for gravity (`pressure_mode = "labrosse"`).
 
 **Reference.** The checks run on the Earth-like test core ($\rho_\mathrm{cen} = 12500$ kg m$^{-3}$, $L = 7200$ km, $r_\mathrm{cmb} = 3480$ km). The references are an independent adaptive quadrature of the density, the linear limit of gravity near the centre, $4\pi G \rho_\mathrm{cen} r/3$, and hydrostatic balance, $dP/dr = -\rho g$.
 
@@ -71,7 +71,7 @@ the solver books the core heat change from it, so this identity is what ties the
 
 **Reference.** The reference is the integral of $\tilde C$ by a trapezoid rule on 40001 points, on the test core of section 1 with the iron-alloy curve. The comparison covers 150 K on either side of the growth band, the CMB temperatures from the onset to the freeze-out, where the inner core grows.
 
-**Result.** For the iron-alloy curve on the test core, onset is at 4146.7<!--k:2.t_onset--> K and freeze-out at 3688.9<!--k:2.t_freeze--> K. The heat-content difference matches the integral of $\tilde C$ to 6.6e-07<!--k:2.content_vs_integral_max_rel--> of the total; the residual above the onset is the trapezoid error of that reference at the square-root cusp of the latent term, not an error of $H$. At freeze-out the capacity drops by a factor of 3.143<!--k:2.quadratic_freeze_out_ratio--> for the Nimmo (2015) quadratic curve and by 50.5 %<!--k:2.iron_freeze_out_drop:-100--> for the iron-alloy curve, without the gravitational term.
+**Result.** For the iron-alloy curve on the test core, onset is at 4146.7<!--k:2.t_onset--> K and freeze-out at 3688.9<!--k:2.t_freeze--> K. The heat-content difference matches the integral of $\tilde C$ to 6.6e-07<!--k:2.content_vs_integral_max_rel--> of the total; the residual above the onset is the trapezoid error of that reference at the square-root cusp of the latent term, not an error of $H$. At freeze-out the capacity drops by a factor of 3.143<!--k:2.quadratic_freeze_out_ratio--> for the Nimmo (2015[^cite-nimmo2015b]) quadratic curve and by 50.5 %<!--k:2.iron_freeze_out_drop:-100--> for the iron-alloy curve, without the gravitational term.
 
 ![Energy identities](../figures/vv/fig_09_core_energy_identities.png)
 
@@ -89,7 +89,7 @@ $$
 q = \frac{k\, \Delta T}{\min(\Delta r_{1/2},\, \delta)}, \qquad \delta = \left(\frac{\kappa\, \eta\, Ra_\mathrm{crit}}{\rho\, g\, \alpha\, \Delta T}\right)^{1/3},
 $$
 
-where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to the bottom mantle cell and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016, eq. 20 and the text below it; Thiriet et al. 2019, eqs. 13 and 14). On the convective branch $q \propto \Delta T^{4/3}$; a core colder than the mantle gains heat by conduction across the half cell only, so the flux always has the sign of $\Delta T$.
+where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to the bottom mantle cell and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016[^cite-foley2016], eq. 20 and the text below it; Thiriet et al. 2019[^cite-thiriet2019], eqs. 13 and 14). On the convective branch $q \propto \Delta T^{4/3}$; a core colder than the mantle gains heat by conduction across the half cell only, so the flux always has the sign of $\Delta T$.
 
 **Reference.** The law is evaluated for a bottom cell with constant properties, over a liquid and a solid base:
 
@@ -104,7 +104,7 @@ where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to th
 | Viscosity $\eta$ of the liquid base | 0.1 Pa s |
 | Viscosity $\eta$ of the solid base | $10^{21}$ Pa s |
 
-The default $Ra_\mathrm{crit} = 450$ is the critical value Thiriet et al. (2019, Table 2) use for the upper boundary layer of their mantle; for the lower boundary layer they scale it with the internal Rayleigh number (their eq. 16), so here it is a parameter, `ra_crit_cmb`.
+The default $Ra_\mathrm{crit} = 450$ is the critical value Thiriet et al. (2019[^cite-thiriet2019], Table 2) use for the upper boundary layer of their mantle; for the lower boundary layer they scale it with the internal Rayleigh number (their eq. 16), so here it is a parameter, `ra_crit_cmb`.
 
 **Result.** The convective branch has the slope 1.333<!--k:3.convective_slope--> in log-log and $Ra_\mathrm{crit} = 1800$ lowers the flux by the factor 0.630<!--k:3.ra_crit_ratio_1800_450--> $= (450/1800)^{1/3}$. At a 100 K contrast the flux is 5.55e+04<!--k:3.q_liquid_100K--> W m$^{-2}$ over the liquid base and 0.04<!--k:3.q_solid_100K--> W m$^{-2}$ over a solid base, where conduction across the half cell sets it; a colder core conducts at the same rate over either base, to 4.2e-15<!--k:3.cold_core_flux_equals_solid_base-->.
 
@@ -144,7 +144,7 @@ $r_\mathrm{icb}^2$ grows at a finite rate per kelvin, and $dr_\mathrm{icb}/dT_\m
 
 **What is tested.** The energy and entropy terms of the budget, the cooling rate and the inner-core growth rate, on a published parameter set for Earth's core.
 
-**Reference.** Nimmo (2015, Table 2, p. 42) gives one parameter set for Earth's core:
+**Reference.** Nimmo (2015[^cite-nimmo2015a], Table 2, p. 42) gives one parameter set for Earth's core:
 
 | Input | Value |
 |---|---|
@@ -163,7 +163,7 @@ Table 4 (p. 46) gives the present-day energy and entropy budget at $T_c = 4180$ 
 
 At 15.2 TW and 4180 K:
 
-| quantity | Nimmo (2015) | aragog |
+| quantity | Nimmo (2015[^cite-nimmo2015a]) | aragog |
 |---|---|---|
 | $Q_s$, $Q_L$, $Q_g$ (TW) | 6.1, 5.7, 3.4 | 6.06<!--k:5.Qs_15.2TW-->, 5.71<!--k:5.QL_15.2TW-->, 3.43<!--k:5.Qg_15.2TW--> |
 | $Q_k$ (TW) | 15.0 | 14.97<!--k:5.Qk_15.2TW--> |
@@ -187,19 +187,19 @@ The bound is 2 percent on every energy and entropy term of Table 4 and on the co
 
 ![Nimmo (2015) budget](../figures/vv/fig_12_nimmo_budget.png)
 
-**Figure 5.** Ratio of aragog to Nimmo (2015, Table 4) at $T_c = 4180$ K for 15.2 and 12 TW: the energy and entropy terms, the cooling and inner-core growth rates and the inner-core age. Filled circles give aragog's age as the integral of its capacity to the onset, open circles as the drop since the onset over the present cooling rate.
+**Figure 5.** Ratio of aragog to Nimmo (2015[^cite-nimmo2015a], Table 4) at $T_c = 4180$ K for 15.2 and 12 TW: the energy and entropy terms, the cooling and inner-core growth rates and the inner-core age. Filled circles give aragog's age as the integral of its capacity to the onset, open circles as the drop since the onset over the present cooling rate.
 
 **What the figure shows.** The points of the eight energy and entropy terms and of the cooling rate lie close to the line at 1, at both heat flows; the growth rate lies above it. The filled circles of the age lie far below 1 and the open circles close to it: in our reading of the chapter, the gap comes from the definition of the age, not from the budget terms. A wrong term of the budget would move its point away from 1. These terms are computed from the capacities of the `core_module` budget, which set the core cooling and the inner-core growth of a run.
 
 **Limits.** Four quantities are documented exceptions to the bound, each held at its measured value: the inner-core growth rate (1.024<!--k:5.growth_ratio_15.2TW--> of Table 4, from $C_r$ and the cooling rate above), the inner-core age (0.786<!--k:5.age_ratio_15.2TW--> and 0.783<!--k:5.age_ratio_12TW--> of Table 4, which divides the drop by the present cooling rate), and $W_s$ and $W_\mathrm{tot}$ (0.947<!--k:5.Ws_ratio--> and 0.967<!--k:5.Wtot_ratio--> of Table 5, from the chapter's own secular capacity above). Like the chapter, these numbers use the small-radius adiabat of section 1 (`adiabat_mode = "small_radius"`); the solver default integrates the exact gravity.
 
-**Pinned by** `tests/test_core_nimmo_benchmarks.py` (the adiabat length scale, ICB state and adiabatic heat flow of the two models in Nimmo 2015, ch. 9.08, Table 2, their $C_r$ from the caption of Figure 3, p. 211 (the value of model 2 is that of ch. 8.02, Table 2), and the ICB pressure and $\tilde Q_T$ of ch. 8.02), `tests/test_core_verification_page.py::test_the_earth_budget_meets_nimmo_tables_4_and_5` and `::test_page_numbers_match_the_values`.
+**Pinned by** `tests/test_core_nimmo_benchmarks.py` (the adiabat length scale, ICB state and adiabatic heat flow of the two models in Nimmo 2015[^cite-nimmo2015b], ch. 9.08, Table 2, their $C_r$ from the caption of Figure 3, p. 211 (the value of model 2 is that of ch. 8.02, Table 2), and the ICB pressure and $\tilde Q_T$ of ch. 8.02), `tests/test_core_verification_page.py::test_the_earth_budget_meets_nimmo_tables_4_and_5` and `::test_page_numbers_match_the_values`.
 
 ## 6. Budget terms against thermal_history
 
 **What is tested.** The secular, latent and gravitational capacities and the conduction entropy sink, each against an independent core evolution code along one thermal history.
 
-**Reference.** The `leeds` core model of thermal_history (Greenwood et al. 2021) computes the same budget with polynomial profiles, a trapezoid quadrature on a radial grid and its own inner-core growth. The comparison runs it on the Nimmo (2015, Table 2) core, with:
+**Reference.** The `leeds` core model of thermal_history (Greenwood et al. 2021[^cite-greenwood2021]) computes the same budget with polynomial profiles, a trapezoid quadrature on a radial grid and its own inner-core growth. The comparison runs it on the Nimmo (2015[^cite-nimmo2015a], Table 2) core, with:
 
 - the Gaussian density and adiabat given to it as the first 8 terms of their Taylor series in $r^2$ (degree 14);
 - the same quadratic melting curve without a light-element depression;
@@ -219,7 +219,7 @@ A core-only history starts at a CMB temperature of 4400 K under a fixed CMB heat
 
 **Limits.** aragog holds the composition of the outer core fixed, so its gravitational term differs from that of a model with enrichment by the amount above. The stratified layer is compared with thermal_history in [section 13](#13-stable-layer-against-thermal_history).
 
-**Pinned by** `tests/test_core_verification_page.py::test_budget_terms_match_the_thermal_history_table`, and on the Nimmo (2015) state by `tests/test_core_nimmo_benchmarks.py::test_budget_terms_match_thermal_history_cross_check` and `tests/test_core_entropy.py::test_entropy_capacities_match_thermal_history`.
+**Pinned by** `tests/test_core_verification_page.py::test_budget_terms_match_the_thermal_history_table`, and on the Nimmo (2015[^cite-nimmo2015a]) state by `tests/test_core_nimmo_benchmarks.py::test_budget_terms_match_thermal_history_cross_check` and `tests/test_core_entropy.py::test_entropy_capacities_match_thermal_history`.
 
 ## 7. Dynamo criterion and field strength
 
@@ -229,7 +229,7 @@ $$
 \Delta E = E_s + E_L + E_g + E_R - E_k,
 $$
 
-positive when the core can sustain a dynamo. The field strength follows the energy-flux scaling of Christensen et al. (2009, eq. 2),
+positive when the core can sustain a dynamo. The field strength follows the energy-flux scaling of Christensen et al. (2009[^cite-christensen2009], eq. 2),
 
 $$
 \frac{\langle B \rangle^2}{2\mu_0} = c\, f_\mathrm{ohm}\, \langle \rho \rangle^{1/3} (F q_o)^{2/3},
@@ -245,23 +245,23 @@ the first for a constant total heat flow $4\pi r^2 q_c$, the second for a convec
 
 **Reference.** The references are the two efficiency factors that Christensen et al. print for their Earth inputs ($\alpha = 1.35\times10^{-5}$ K$^{-1}$, $g = 10.7$ m s$^{-2}$, $R = 3480$ km, $c_p = 840$ J kg$^{-1}$ K$^{-1}$), Nimmo's (2015, p. 46) minimum heat flow for a present-day dynamo without radiogenic heat, and the internal field of Earth from Christensen et al.'s dipole field of 0.26 mT at the dynamo surface and their ratio of about 7 between the total and the dipole field (p. 168).
 
-**Result.** With Christensen et al.'s Earth inputs the two factors are 0.527<!--k:7.F_const_flux_printed_inputs--> and 0.269<!--k:7.F_zero_outer_printed_inputs-->, against the printed 0.52 and 0.27; on the Nimmo (2015) core the constant-flux factor is 0.484<!--k:7.F_const_flux_profile-->, lower mainly through the lower expansivity ($1.25\times10^{-5}$ K$^{-1}$; the CMB gravity, 10.6 m s$^{-2}$, accounts for under 1 percent). On that core at $T_\mathrm{cmb} = 4180$ K the adiabatic heat flow is 14.97<!--k:7.Q_k_TW--> TW and the entropy margin vanishes at 5.14<!--k:7.dynamo_threshold_TW--> TW, against Nimmo's minimum of about 5 TW. Between these two heat flows the margin is positive but no flux is superadiabatic, so the field estimate is zero although the entropy budget allows a dynamo. At 17 TW the core field is 1.10<!--k:7.b_rms_17TW_mT--> mT, the order of magnitude of the 1.82<!--k:7.earth_internal_field_mT--> mT for Earth.
+**Result.** With Christensen et al.'s Earth inputs the two factors are 0.527<!--k:7.F_const_flux_printed_inputs--> and 0.269<!--k:7.F_zero_outer_printed_inputs-->, against the printed 0.52 and 0.27; on the Nimmo (2015[^cite-nimmo2015a]) core the constant-flux factor is 0.484<!--k:7.F_const_flux_profile-->, lower mainly through the lower expansivity ($1.25\times10^{-5}$ K$^{-1}$; the CMB gravity, 10.6 m s$^{-2}$, accounts for under 1 percent). On that core at $T_\mathrm{cmb} = 4180$ K the adiabatic heat flow is 14.97<!--k:7.Q_k_TW--> TW and the entropy margin vanishes at 5.14<!--k:7.dynamo_threshold_TW--> TW, against Nimmo's minimum of about 5 TW. Between these two heat flows the margin is positive but no flux is superadiabatic, so the field estimate is zero although the entropy budget allows a dynamo. At 17 TW the core field is 1.10<!--k:7.b_rms_17TW_mT--> mT, the order of magnitude of the 1.82<!--k:7.earth_internal_field_mT--> mT for Earth.
 
 ![Dynamo scaling](../figures/vv/fig_14_dynamo_scaling.png)
 
-**Figure 7.** Dynamo criterion and field strength on the Nimmo (2015) core at $T_\mathrm{cmb} = 4180$ K. (a) Entropy margin against CMB heat flow, with the threshold where it vanishes. (b) Volume-averaged core field from Christensen et al. (2009, eq. 2), with Earth's estimated internal field. The field is zero up to the adiabatic heat flow $Q_k$, 15.0<!--k:7.Q_k_TW--> TW, so also from 5.1<!--k:7.dynamo_threshold_TW--> TW, where the margin turns positive, to $Q_k$.
+**Figure 7.** Dynamo criterion and field strength on the Nimmo (2015[^cite-nimmo2015a]) core at $T_\mathrm{cmb} = 4180$ K. (a) Entropy margin against CMB heat flow, with the threshold where it vanishes. (b) Volume-averaged core field from Christensen et al. (2009[^cite-christensen2009], eq. 2), with Earth's estimated internal field. The field is zero up to the adiabatic heat flow $Q_k$, 15.0<!--k:7.Q_k_TW--> TW, so also from 5.1<!--k:7.dynamo_threshold_TW--> TW, where the margin turns positive, to $Q_k$.
 
 **What the figure shows.** In (a) the margin rises with the CMB heat flow and crosses zero at the threshold. In (b) the field is zero up to $Q_k$ and rises steeply above it, and crosses the dashed line of Earth's estimate inside the plotted range. A wrong sign of the conduction sink $E_k$ would move the zero crossing in (a), and a field computed from the total heat flow would be nonzero below $Q_k$ in (b). The entropy margin and the field strength that PROTEUS writes for a `core_module` run come from the two relations of this section.
 
 **Limits.** Christensen et al. derive the efficiency factors for Earth's core with an inner core of 0.35 of the core radius, $L = D$, constant density and thermodynamic properties and gravity linear in radius (pp. 167 and 168); aragog applies them at every inner-core size. Their $q_o$ is the effective convected flux at the inner boundary, compositional driving included, scaled to the outer radius (p. 167); aragog takes the superadiabatic part of the CMB heat flow over the CMB area, a thermal flux only, so here $q_o$ departs from their definition. With $q_o$ defined differently, the field comparison is an order-of-magnitude check only.
 
-Without the resolved shell (`stratification = false`) the efficiency factors of $\Delta E$ use $T_\mathrm{cmb}$, the convecting adiabat extended to the CMB. Under a stratified layer the reference of the whole-core entropy balance is the actual CMB temperature (Greenwood et al. 2021, eq. 4 and p. 9), which aragog does not resolve without the shell and which lies between $T_\mathrm{cmb}$ and $T_a(r_s)$ at the base of the layer; $\Delta E$ is then the upper end of that bracket. With the resolved shell the reference is the temperature of the top shell cell ([core_bc.md](../Explanations/core_bc.md#resolved-stable-layer-experimental)).
+Without the resolved shell (`stratification = false`) the efficiency factors of $\Delta E$ use $T_\mathrm{cmb}$, the convecting adiabat extended to the CMB. Under a stratified layer the reference of the whole-core entropy balance is the actual CMB temperature (Greenwood et al. 2021[^cite-greenwood2021], eq. 4 and p. 9), which aragog does not resolve without the shell and which lies between $T_\mathrm{cmb}$ and $T_a(r_s)$ at the base of the layer; $\Delta E$ is then the upper end of that bracket. With the resolved shell the reference is the temperature of the top shell cell ([core_bc.md](../Explanations/core_bc.md#resolved-stable-layer-experimental)).
 
 **Pinned by** `tests/test_core_entropy.py::test_chr09_efficiency_factors_reproduce_printed_values`, `::test_field_scaling_bounds_and_earth_magnitude` and `::test_dynamo_threshold_and_margin`.
 
 ## 8. Iron melting curve
 
-**What is tested.** The pure-iron melting curve is the two-branch Simon-Glatzel fit of Anzellini et al. (2013, eqs. 2 and 3, p. 466); this is the PALEOS prescription. On the $\gamma$-Fe branch, with $T_0 = 1991$ K and $P_0 = 5.2$ GPa,
+**What is tested.** The pure-iron melting curve is the two-branch Simon-Glatzel fit of Anzellini et al. (2013[^cite-anzellini2013], eqs. 2 and 3, p. 466); this is the PALEOS prescription. On the $\gamma$-Fe branch, with $T_0 = 1991$ K and $P_0 = 5.2$ GPa,
 
 $$
 \frac{P - P_0}{27.39} = \left(\frac{T_m}{T_0}\right)^{2.38} - 1,
@@ -281,7 +281,7 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 ![Iron melting curve](../figures/vv/fig_15_iron_melting_curve.png)
 
-**Figure 8.** Iron melting curve. (a) Pure-iron and alloy melting temperature against pressure, with the triple point marked. (b) Blended curve minus the unblended Anzellini et al. (2013) branches around the triple point; the jump is that of the unblended fit.
+**Figure 8.** Iron melting curve. (a) Pure-iron and alloy melting temperature against pressure, with the triple point marked. (b) Blended curve minus the unblended Anzellini et al. (2013[^cite-anzellini2013]) branches around the triple point; the jump is that of the unblended fit.
 
 **What the figure shows.** In (a) both curves rise smoothly through the triple point, and the alloy curve lies below the pure-iron curve at every pressure. In (b) the difference from the unblended branches is zero outside the blend and largest on both sides of the triple point; its jump there is the jump of the unblended fit, so the blended curve is continuous. Without the blend, the melting temperature would jump at the triple point, and so would the inner-core radius of a core whose inner-core boundary passes that pressure. The onset temperature and the inner-core radius of a `core_module` run with the iron curve follow from it.
 
@@ -291,21 +291,33 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 ## 9. A CVODE solve across the inner-core onset
 
-**What is tested.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset, where the latent capacity rises as a square root. The check compares the core heat change that the solver books with the CMB heat that it books.
+**Why this check exists.** Where the inner core starts to grow, the latent heat capacity of the core rises as a square root of the undercooling. A solver that steps badly over this onset books a core heat change that does not match the heat through the core-mantle boundary (CMB).
 
-**Reference.** The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The bound is $10^{-6}$ for a core without a layer solved alone.
+**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
 
-**Result.** The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K, and grows an inner core of 244<!--k:9.r_icb_end_km--> km. At a solver rtol of $10^{-10}$ (atol stays at its floor of $10^{-8}$) the solver books the core heat change as the heat-content difference, and that change matches the CMB heat it books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound. The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->, the error of that sampling: with 65, 130 and 260 output intervals (`item9_cvode_onset(output_points=...)`) it is 2.3e-3, 7.9e-4 and 1.9e-4, so it falls with order 1.5 and then 2.0, the order of the trapezoid rule.
+**How we know the right answer.** Energy conservation: the core heat change of the call must equal its CMB heat ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)). The bound is $10^{-6}$ for a core without a layer solved alone.
+
+The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 244<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
+
+The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.5 and then 2.0, the order of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
+
+| Output intervals | 65 | 130 | 260 |
+|---|---|---|---|
+| Error of the reconstructed CMB heat | 2.3e-3 | 7.9e-4 | 1.9e-4 |
+
+**Why it matters.** The core energy ledger of a `core_module` run rests on this closure.
 
 ![CVODE solve across the onset](../figures/vv/fig_16_cvode_onset_ledger.png)
 
-**Figure 9.** A CVODE solve through the inner-core onset. (a) Core temperature against time, with the onset temperature. (b) Core heat lost from the heat-content difference and from the time integral of the CMB heat flow. (c) Relative difference between the two curves in (b).
+**How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow. The 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**What the figure shows.** In (a) the core temperature crosses the onset temperature during the call. In (b) the two curves of the heat lost lie on each other, and (c) gives their difference, which is the sampling error of the trapezoid rule over the output times and is largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b). The core energy ledger of a `core_module` run rests on this closure.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
-**Limits.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
-
-**Pinned by** `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset` and `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`.
+??? info "Test details"
+    - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.
+    - Tolerance: $10^{-6}$ of the CMB heat at an rtol of $10^{-10}$.
+    - Test id: `tests/test_entropy_solver_core_module_smoke.py::test_core_module_cvode_solve_crosses_the_inner_core_onset`, `tests/test_core_verification_page.py::test_a_cvode_solve_across_the_onset_closes_its_heat`
+    - Command: `pytest -o "addopts=" tests/test_entropy_solver_core_module_smoke.py tests/test_core_verification_page.py -k "crosses_the_inner_core_onset or onset_closes_its_heat"`
 
 ## 10. A core thermal history against thermal_history
 
@@ -352,14 +364,14 @@ The coupled tables of the plotted columns are in `tools/verification/data/`, eac
 
 ### Flux sign
 
-With `core_module` no row of the 1 Earth-mass run has a CMB flux against the core-mantle temperature contrast. The same holds for the 3 and 5 Earth-mass runs and for a 1 Earth-mass run with the Wolf and Bower (2018) mantle. The table gives the rows of each run, the rows with a flux against the contrast (wrong sign), the largest contrast, the rows with zero flux and the contrast of those rows:
+With `core_module` no row of the 1 Earth-mass run has a CMB flux against the core-mantle temperature contrast. The same holds for the 3 and 5 Earth-mass runs and for a 1 Earth-mass run with the Wolf and Bower (2018[^cite-wolf2018]) mantle. The table gives the rows of each run, the rows with a flux against the contrast (wrong sign), the largest contrast, the rows with zero flux and the contrast of those rows:
 
 | Run | Rows | Wrong sign | Largest contrast (K) | Zero flux | Contrast at zero flux (K) |
 |---|---|---|---|---|---|
 | 1 $M_\oplus$ | 661<!--k:11.rows_core_module--> | 0<!--k:11.wrong_sign_rows_core_module--> | 823<!--k:11.contrast_max_K_core_module--> | 1<!--k:11.zero_flux_rows_core_module--> | 4.8e-08<!--k:11.zero_flux_contrast_max_K_core_module--> |
 | 3 $M_\oplus$ | 795<!--k:11.rows_3me--> | 0<!--k:11.wrong_sign_rows_3me--> | 1928<!--k:11.contrast_max_K_3me--> | 1<!--k:11.zero_flux_rows_3me--> | 0<!--k:11.zero_flux_contrast_max_K_3me--> |
 | 5 $M_\oplus$ | 695<!--k:11.rows_5me--> | 0<!--k:11.wrong_sign_rows_5me--> | 2428<!--k:11.contrast_max_K_5me--> | 1<!--k:11.zero_flux_rows_5me--> | 1.0e-06<!--k:11.zero_flux_contrast_max_K_5me--> |
-| 1 $M_\oplus$, Wolf and Bower (2018) mantle | 217<!--k:11.rows_wb_1me--> | 0<!--k:11.wrong_sign_rows_wb_1me--> | 712<!--k:11.contrast_max_K_wb_1me--> | 1<!--k:11.zero_flux_rows_wb_1me--> | 0<!--k:11.zero_flux_contrast_max_K_wb_1me--> |
+| 1 $M_\oplus$, Wolf and Bower (2018[^cite-wolf2018]) mantle | 217<!--k:11.rows_wb_1me--> | 0<!--k:11.wrong_sign_rows_wb_1me--> | 712<!--k:11.contrast_max_K_wb_1me--> | 1<!--k:11.zero_flux_rows_wb_1me--> | 0<!--k:11.zero_flux_contrast_max_K_wb_1me--> |
 
 `coupled_flux_<case>.csv` holds the rows of the last three runs.
 
@@ -375,7 +387,48 @@ With the boundary layer's properties at its mean temperature, the `core_module` 
 
 ### Core ledger closure
 
-The table gives the cumulative residual of the core ledger relative to the cumulative CMB heat, the share of the summed absolute call residuals that comes from the call from 22 to 122 yr, and the bound for each run. The bound applies to the cumulative residual after the first kyr and at the end.
+**Why this check exists.** A leak in the core ledger, or an error that does not fall with the solver tolerance, would let the core gain or lose heat that no flux carries.
+
+**What it tests.** `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance` starts a core at the temperature of a molten mantle base, as in a coupled run. It makes 5 calls: from 0 to 1, 1 to 2, 2 to 12, 12 to 22 and 22 to 122 yr (calls 1 to 5). It runs them once at the default tolerances and once at the tolerance scale factor $10^{-3}$. The scale factor makes `rtol` and the absolute tolerance, after its floor of $10^{-8}$, 1000 times smaller. The test holds this rule:
+
+1. Call 1 closes to $3 \times 10^{-4}$ of its CMB heat at the default tolerances.
+2. The residual of each of calls 1 to 3 falls at least 20 times at the scale factor $10^{-3}$. It is then below $10^{-5}$, and call 1 is below $3 \times 10^{-6}$.
+3. Calls 4 and 5 close to $2 \times 10^{-6}$ at the default tolerances, and their residuals fall at least 20 times.
+4. A call that crosses the inner-core onset follows the rule of calls 1 to 3.
+5. Every other call after call 3 follows the rule of calls 4 and 5.
+6. Each of calls 1 to 3 and the onset call stays below twice its `step_core_tol_J` at both tolerances.
+
+| Call | Rule tested | Measured residuals |
+|---|---|---|
+| 1 (0 to 1 yr) | below $3 \times 10^{-4}$ at the default tolerances; falls at least 20 times to below $3 \times 10^{-6}$ | not stated |
+| 2 (1 to 2 yr) | falls at least 20 times to below $10^{-5}$ | not stated |
+| 3 (2 to 12 yr) | falls at least 20 times to below $10^{-5}$ | not stated |
+| 4 (12 to 22 yr) | below $2 \times 10^{-6}$ at the default tolerances; falls at least 20 times | $1.3 \times 10^{-7}$; falls 62 times |
+| 5 (22 to 122 yr) | below $2 \times 10^{-6}$ at the default tolerances; falls at least 20 times | $1.6 \times 10^{-6}$; falls 154 times |
+| Across the onset, no layer | falls at least 20 times to below $10^{-5}$ | $-6.2 \times 10^{-6}$ and $-6.3 \times 10^{-8}$ |
+| Across the onset, with a layer | falls at least 20 times to below $10^{-5}$ | $-2.4 \times 10^{-6}$ and $-2.4 \times 10^{-8}$ |
+
+`::test_a_call_across_the_onset_converges_with_the_tolerance` makes the 2 onset rows. It runs a 3 yr call from 0.5 K above the onset to 0.22 K below it, for a core without and with a stratified layer. It uses the entropy of fusion of the test cores, 170 J kg$^{-1}$ K$^{-1}$, and the finite-difference Jacobian of CVODE.
+
+Other tests check the booking itself. `step_core_tol_J` gives the error scale of each call as a diagnostic. These tests check the booking at tolerances 1000 times smaller:
+
+- `::test_a_stratified_call_books_the_core_heat_from_the_temperature_changes` closes a 5 yr call of a stratified core to $10^{-8}$ of its CMB heat.
+- `::test_a_low_flux_call_books_the_core_heat_below_its_float_spacing` closes a 5 yr call of an unstratified core to $10^{-6}$. The CMB heat of that call is 3.5 float spacings of the absolute core heat.
+
+Both tests book the core heat from the integrated temperature changes. Both also assert that the booking from the stored states misses their bounds. `::test_chained_cvode_calls_close_the_core_ledger` makes calls that end at the same times on a core 300 K above its mantle base, a hot start. It closes each call to $10^{-6}$.
+
+**How we know the right answer.** Energy conservation: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the CMB. The residual of a call is the signed difference $(\Delta E_\text{core} + \Delta E_\text{cmb}) / \Delta E_\text{cmb}$, relative to the CMB heat of the call. The [core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure) form divides the absolute value by the larger of the 2 heats; for a residual $r$ the 2 sizes agree to a relative $r$. The tests run without radiogenic heat (`q_radio = 0`). A residual that comes from the solver tolerance falls when the tolerance falls; a leak does not.
+
+A leak independent of the tolerance adds a share $L$ of the CMB heat to the residual of every call. It acts as a factor $1 - L$ on the rate of the core temperature. The convergence test fails from these shares on, measured on the residuals and tolerance scales of the 5 calls:
+
+| Call | 1 (0 to 1 yr) | 2 (1 to 2 yr) | 3 (2 to 12 yr) | 4 (12 to 22 yr) | 5 (22 to 122 yr) |
+|---|---|---|---|---|---|
+| $L > 0$ | $4.1 \times 10^{-6}$ | $1.5 \times 10^{-6}$ | $1.3 \times 10^{-7}$ | $8.0 \times 10^{-9}$ | $7.3 \times 10^{-8}$ |
+| $L < 0$ | $-1.9 \times 10^{-6}$ | $-1.0 \times 10^{-6}$ | $-6.8 \times 10^{-8}$ | $-4.5 \times 10^{-9}$ | $-8.6 \times 10^{-8}$ |
+
+Calls 1 to 3 catch a leak through 3 bounds: the fall of their residual, its bound at the tight tolerances, and twice `step_core_tol_J` at both tolerances. A leak of $10^{-6}$ therefore passes calls 1 and 2 alone, and from call 3 on it fails. A narrow band of smaller positive leaks also fails calls 1 to 3. The band lies near $1.1 \times 10^{-6}$, $2.4 \times 10^{-7}$ and $3.0 \times 10^{-8}$, where the residual of the call passes through zero and falls below 1/1000 of its scale.
+
+The next table gives, for each stored coupled PROTEUS run of this section, the cumulative residual of the core ledger relative to the cumulative CMB heat. It also gives the share of the summed absolute call residuals that comes from the call from 22 to 122 yr, and the bound. The bound applies to the cumulative residual after the first kyr and at the end.
 
 | Run | residual at the end | largest after 1 kyr | share of the call from 22 to 122 yr | bound |
 |---|---|---|---|---|
@@ -384,9 +437,19 @@ The table gives the cumulative residual of the core ledger relative to the cumul
 | 3 $M_\oplus$, rtol $10^{-8}$ | 1.8e-07<!--k:11.closure_end_3me--> | 2.4e-07<!--k:11.closure_max_after_1kyr_3me--> | 0.06<!--k:11.share_22_122yr_3me--> | $5 \times 10^{-6}$ |
 | 5 $M_\oplus$, rtol $10^{-8}$ | 1.5e-07<!--k:11.closure_end_5me--> | 2.0e-07<!--k:11.closure_max_after_1kyr_5me--> | 0.09<!--k:11.share_22_122yr_5me--> | $5 \times 10^{-6}$ |
 
-The call from 22 to 122 yr gives 4 to 9 percent of the summed call residuals. The bound is $5 \times 10^{-6}$ for the last two runs of the table and $10^{-6}$ for the 1 Earth-mass runs and for a core without a layer solved alone (section 9).
+The call from 22 to 122 yr gives 4 to 9 percent of the summed call residuals. The bound is $5 \times 10^{-6}$ for the last two runs of the table. It is $10^{-6}$ for the 1 Earth-mass runs and for a core without a layer solved alone (section 9).
 
-The first call of nonzero length, from 1 to 2 yr, closes to 1.5e-04<!--k:11.closure_first_call_1me--> of its own CMB heat at 1 Earth mass and to 1.0e-04<!--k:11.closure_first_call_1me_rtol1e-10--> to 1.1e-04<!--k:11.closure_first_call_5me--> in the other runs; the source of this error is not established, and the test holds it below $3 \times 10^{-4}$. `tests/test_entropy_solver_core_module_smoke.py::test_chained_cvode_calls_close_the_core_ledger` makes calls ending at the same times on a core solved alone and closes each to $10^{-6}$; it does not reproduce this error, and the bounds of the table are checked on the stored runs, not on the current solver.
+**Why it matters.** The core temperature of a coupled run follows from these booked heat changes over many calls, so an error in each call adds up over the run.
+
+This case has no plot of its own: its results are the residual tables above, and Figure 9 shows the closure of one call.
+
+**Known limit.** The stored coupled runs book the core heat of a call as the difference of the heat contents at its start and end. They use the solver `rtol` of the table and `atol` at its floor. Their first call of nonzero length, from 1 to 2 yr, closes to 1.5e-04<!--k:11.closure_first_call_1me--> of its own CMB heat at 1 Earth mass and to 1.0e-04<!--k:11.closure_first_call_1me_rtol1e-10--> to 1.1e-04<!--k:11.closure_first_call_5me--> in the other runs. The bounds of the table are checked on these stored runs, not on the current solver. The convergence test above checks the ledger of the current solver, which books the integrated change of the core temperature.
+
+??? info "Test details"
+    - Reference: energy conservation of the core ledger ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)).
+    - Tolerance: call 1 below $3 \times 10^{-4}$ at the default tolerances and $3 \times 10^{-6}$ at the scale factor $10^{-3}$; calls 1 to 3 and the onset calls fall at least 20 times to below $10^{-5}$ and stay below twice `step_core_tol_J`; calls 4 and 5 below $2 \times 10^{-6}$, falling at least 20 times; the stratified booking to $10^{-8}$, the low-flux booking and the chained calls to $10^{-6}$; the cumulative residuals of the coupled runs below $10^{-6}$ (1 $M_\oplus$) and $5 \times 10^{-6}$ (3 and 5 $M_\oplus$), their first call below $3 \times 10^{-4}$.
+    - Test id: `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance`, `::test_a_call_across_the_onset_converges_with_the_tolerance`, `::test_chained_cvode_calls_close_the_core_ledger`, `::test_a_stratified_call_books_the_core_heat_from_the_temperature_changes`, `::test_a_low_flux_call_books_the_core_heat_below_its_float_spacing`, `tests/test_core_verification_page.py::test_coupled_tables_reproduce_the_page`
+    - Command: `pytest -o "addopts=" tests/test_entropy_solver_core_module_smoke.py -k "ledger or converges or books_the_core_heat"`; the coupled runs: `pytest -o "addopts=" tests/test_core_verification_page.py -k coupled_tables`
 
 ### Cores without an inner core and the top-down case
 
@@ -410,7 +473,7 @@ With the Earth values of the thermal expansivity and the heat capacity in the co
 | 3 $M_\oplus$ | 298<!--k:11.p_cmb_GPa_3me--> | 1045<!--k:11.p_cen_GPa_3me--> |
 | 5 $M_\oplus$ | 516<!--k:11.p_cmb_GPa_5me--> | 1837<!--k:11.p_cen_GPa_5me--> |
 
-The structure EOS of the core is the PALEOS iron table, which spans pressures up to 100 TPa and so covers these. The melting curve is the fit of section 8, to melting points that Anzellini et al. (2013) measured from 50 to 200 GPa: it is an extrapolation at the centre of every run and at the CMB of the 3 and 5 Earth-mass runs, and so are the onset and freeze-out temperatures that follow from it there. The budget uses the Earth values of the thermal expansivity, $1.35 \times 10^{-5}$ K$^{-1}$, and the heat capacity, 840 J kg$^{-1}$ K$^{-1}$, at every mass.
+The structure EOS of the core is the PALEOS iron table, which spans pressures up to 100 TPa and so covers these. The melting curve is the fit of section 8, to melting points that Anzellini et al. (2013[^cite-anzellini2013]) measured from 50 to 200 GPa: it is an extrapolation at the centre of every run and at the CMB of the 3 and 5 Earth-mass runs, and so are the onset and freeze-out temperatures that follow from it there. The budget uses the Earth values of the thermal expansivity, $1.35 \times 10^{-5}$ K$^{-1}$, and the heat capacity, 840 J kg$^{-1}$ K$^{-1}$, at every mass.
 
 ### Mesh dependence of the CMB flux
 
@@ -475,7 +538,7 @@ Both liquid-mantle comparisons stay at rounding, because neither path reads the 
 
 ## 13. Stable layer against thermal_history
 
-**What is tested.** The resolved layer of `stratification = true` is compared with the `leeds_thermal` model of thermal_history (Greenwood et al. 2021) on the core of section 6, which starts on the adiabat at a CMB temperature of 4400<!--k:13.t_cmb_start_K--> K. The conducted adiabatic flow at the CMB is 15.8<!--k:13.q_k_TW--> TW. Under a CMB flow below it, the top of the core takes up more heat by conduction along the adiabat than the CMB removes, and a warm stable layer forms; the CMB removes 8 or 12 TW, adds 2 TW, or removes nothing. Under a flow above it, an existing layer erodes.
+**What is tested.** The resolved layer of `stratification = true` is compared with the `leeds_thermal` model of thermal_history (Greenwood et al. 2021[^cite-greenwood2021]) on the core of section 6, which starts on the adiabat at a CMB temperature of 4400<!--k:13.t_cmb_start_K--> K. The conducted adiabatic flow at the CMB is 15.8<!--k:13.q_k_TW--> TW. Under a CMB flow below it, the top of the core takes up more heat by conduction along the adiabat than the CMB removes, and a warm stable layer forms; the CMB removes 8 or 12 TW, adds 2 TW, or removes nothing. Under a flow above it, an existing layer erodes.
 
 **Reference.** aragog resolves the outer core above 0.4<!--k:13.shell_base_fraction--> $r_\text{cmb}$ in 64<!--k:13.shell_cells--> cells with the default mixing constants; mixing acts only where the temperature falls outward faster than the adiabat, so a subadiabatic region conducts only. `leeds_thermal` instead moves the base of its layer by a stability check after each step. The layer depth is defined the same way on both sides: the depth below the CMB where the excess over the convecting adiabat falls to 0.1 of its value at the top, which for aragog is the centre of its top cell. The CMB temperature of aragog that is compared with `leeds_thermal` is the temperature of that cell (`core_T_top`), not the state $T_\text{cmb}$ of the convecting adiabat. aragog integrates the convecting core and the shell alone with SciPy BDF at a relative tolerance of 1e-11<!--k:13.rtol-->.
 
@@ -516,7 +579,7 @@ At a relative tolerance of 1e-8<!--k:13.rtol_loose--> the comparison has not con
 
 The heat rates of the core and the shell sum to the CMB flow at every sample to 5.0e-16<!--k:13.erosion_identity--> of the conducted adiabatic flow or better, in every case; this is a property of the discretisation (the shell fluxes telescope and the core uses one effective capacity), not of the integration.
 
-Coupled to the mantle solver, a 5 yr CVODE call that heats a stratified core from above closes its heat against the CMB heat, in runs separate from the script, to $1.9 \times 10^{-6}$ or $8.2 \times 10^{-6}$, a choice a rounding-level change of the input makes ($7.7 \times 10^{-6}$ or $8.2 \times 10^{-6}$ with the exact adiabat and the boundary-layer properties at the mean temperature), because the stratified core rate moves by $1.5 \times 10^{-6}$ of itself under a $10^{-14}$ change of the shell temperatures; `tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-5}$.
+Coupled to the mantle solver, a 5 yr CVODE call that heats a stratified core from above closes its heat against the CMB heat, in runs separate from the script, to $2 \times 10^{-8}$, also under a relative change of $10^{-15}$ in the core conductivity; `tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-7}$.
 
 ### Erosion case
 
@@ -544,7 +607,7 @@ The two mixing constants are a model uncertainty, not a fitted quantity. Changin
 
 This section states the setup and the tolerances its test asserts; it quotes no run result, so the page test has no number of it to check.
 
-A fixed deficit $\Delta F$ of the CMB flow below the conducted adiabatic flow, per unit area of the CMB, heats a conducting half space as $\Delta T(z, t) = (2 \Delta F / k) \sqrt{\kappa t}\, \mathrm{ierfc}(z / 2\sqrt{\kappa t})$, with $z$ the depth below the CMB and $\mathrm{ierfc}(x) = e^{-x^2}/\sqrt{\pi} - x\,\mathrm{erfc}(x)$. This is the constant-flux solution of a planar half space, the short-time counterpart of the fixed-gradient sphere of Greenwood et al. (2021, eq. 27). The test runs the shell with weak mixing (`k_mix = 1e-3`) under a CMB flow of 8 TW, adds to the solution the cooling that the divergence of the adiabatic conduction sets, and compares the temperature rise of the cells within $z < 6\sqrt{\kappa t}$ after 0.03 and 0.1 Myr.
+A fixed deficit $\Delta F$ of the CMB flow below the conducted adiabatic flow, per unit area of the CMB, heats a conducting half space as $\Delta T(z, t) = (2 \Delta F / k) \sqrt{\kappa t}\, \mathrm{ierfc}(z / 2\sqrt{\kappa t})$, with $z$ the depth below the CMB and $\mathrm{ierfc}(x) = e^{-x^2}/\sqrt{\pi} - x\,\mathrm{erfc}(x)$. This is the constant-flux solution of a planar half space, the short-time counterpart of the fixed-gradient sphere of Greenwood et al. (2021[^cite-greenwood2021], eq. 27). The test runs the shell with weak mixing (`k_mix = 1e-3`) under a CMB flow of 8 TW, adds to the solution the cooling that the divergence of the adiabatic conduction sets, and compares the temperature rise of the cells within $z < 6\sqrt{\kappa t}$ after 0.03 and 0.1 Myr.
 
 ![Temperature rise below the CMB after 0.1 Myr and its difference from the ierfc solution](../assets/validation/core_layer_erfc_half_space_0p1myr.svg#only-light){ width="80%" }
 ![Temperature rise below the CMB after 0.1 Myr and its difference from the ierfc solution](../assets/validation/core_layer_erfc_half_space_0p1myr_dark.svg#only-dark){ width="80%" }
@@ -557,14 +620,12 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 - Test id: `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`
 - Command: `pytest tests/test_core_layer.py -k erfc` (add `--validation-plots` to write the plot pairs)
 
-## References
-
-- Anzellini, S., Dewaele, A., Mezouar, M., Loubeyre, P., & Morard, G. (2013). Melting of iron at Earth's inner core boundary based on fast X-ray diffraction. *Science*, 340(6131), 464-466. https://doi.org/10.1126/science.1233514
-- Christensen, U. R., Holzwarth, V., & Reiners, A. (2009). Energy flux determines magnetic field strength of planets and stars. *Nature*, 457(7226), 167-169. https://doi.org/10.1038/nature07626
-- Foley, B. J., & Driscoll, P. E. (2016). Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution. *Geochemistry, Geophysics, Geosystems*, 17(5), 1885-1914. https://doi.org/10.1002/2015GC006210
-- Greenwood, S., Davies, C. J., & Mound, J. E. (2021). On the evolution of thermally stratified layers at the top of Earth's core. *Physics of the Earth and Planetary Interiors*, 318, 106763. https://doi.org/10.1016/j.pepi.2021.106763
-- Labrosse, S., Poirier, J.-P., & Le Mouël, J.-L. (2001). The age of the inner core. *Earth and Planetary Science Letters*, 190(3-4), 111-123. https://doi.org/10.1016/S0012-821X(01)00387-9
-- Nimmo, F. (2015). Energetics of the Core. In *Treatise on Geophysics* (2nd ed., Vol. 8, pp. 27-55). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00139-1
-- Nimmo, F. (2015). Thermal and Compositional Evolution of the Core. In *Treatise on Geophysics* (2nd ed., Vol. 9, ch. 9.08, pp. 201-219). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00160-3
-- Thiriet, M., Breuer, D., Michaut, C., & Plesa, A.-C. (2019). Scaling laws of convection for cooling planets in a stagnant lid regime. *Physics of the Earth and Planetary Interiors*, 286, 138-153. https://doi.org/10.1016/j.pepi.2018.11.003
-- Wolf, A. S., & Bower, D. J. (2018). An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt. *Physics of the Earth and Planetary Interiors*, 278, 59-74. https://doi.org/10.1016/j.pepi.2018.02.004
+[^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-christensen2009]: Christensen, U.R., Holzwarth, V. & Reiners, A., *[Energy flux determines magnetic field strength of planets and stars](https://doi.org/10.1038/nature07626)*, Nature, 457, 167-169, 2009. [SciX](https://scixplorer.org/abs/2009Natur.457..167C/abstract).
+[^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
+[^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
+[^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
+[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
+[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
+[^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
+[^cite-wolf2018]: Wolf, A.S. & Bower, D.J., *[An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO$_3$ melt](https://doi.org/10.1016/j.pepi.2018.02.004)*, Physics of the Earth and Planetary Interiors, 278, 59-74, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..278...59W/abstract).
