@@ -1096,7 +1096,97 @@ def test_lid_surface_flux_cap_needs_the_held_surface(C, bc, mush, T_held):
             check_lid_surface_flux_cap(C, bc, mush, T_held)
 
 
-def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=None):
+@pytest.mark.unit
+@settings(max_examples=60, deadline=None)
+@given(
+    st.one_of(
+        st.floats(max_value=-1.0e-300),
+        st.just(float('nan')),
+        st.just(float('inf')),
+        st.booleans(),
+        st.text(max_size=3),
+    )
+)
+def test_lid_surface_flux_slope_refuses_every_other_value(value):
+    """A lid_surface_flux_slope that is not a finite number of 0 or above is refused by name."""
+    from aragog.config.boundary import check_lid_surface_flux_slope
+
+    with pytest.raises(ValueError, match='lid_surface_flux_slope'):
+        check_lid_surface_flux_slope(value, 1.0e3)
+
+
+@pytest.mark.unit
+@settings(max_examples=60, deadline=None)
+@given(st.floats(min_value=0.0, max_value=1.0e5), st.one_of(st.none(), st.just(1.0e3)))
+def test_lid_surface_flux_slope_needs_the_cap(Fp, cap):
+    """lid_surface_flux_slope needs lid_surface_flux_cap."""
+    from aragog.config.boundary import check_lid_surface_flux_slope
+
+    assert check_lid_surface_flux_slope(None, cap) is None
+    if cap is not None:
+        assert check_lid_surface_flux_slope(Fp, cap) is None
+    else:
+        with pytest.raises(ValueError, match='lid_surface_flux_slope'):
+            check_lid_surface_flux_slope(Fp, cap)
+
+
+_HV_LIN = sl.LidEnthalpy.linear(3000.0, 1200.0, 1400.0, 0.0)
+
+
+def _robin_args(delta=100.0, T_s0=600.0, C=None, T_held=500.0):
+    """A linear lid at a held 500 K surface and a cap half its held flux."""
+    E = delta * float(_HV_LIN.profile_heat(0.0, T_s0, 1400.0))
+    held = sl.fixed_surface_state(delta, E, 1400.0, 3.0, T_held, sl.LID_DELTA_FLOOR, _HV_LIN)
+    return delta, E, (0.5 * held.F_s if C is None else C), T_held
+
+
+@pytest.mark.unit
+def test_robin_state_with_zero_slope_is_the_cap_state():
+    """F' = 0 gives the state of the flux cap, field for field."""
+    delta, E, C, T_held = _robin_args()
+    a = sl.robin_surface_state(
+        delta, E, 1400.0, 3.0, C, 0.0, T_held, sl.LID_DELTA_FLOOR, _HV_LIN
+    )
+    b = sl.flux_surface_state(delta, E, 1400.0, 3.0, C, sl.LID_DELTA_FLOOR, _HV_LIN)
+    assert a == b
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('Fp', [1.0, 30.0, 300.0])
+def test_robin_state_carries_the_cap_plus_the_slope(Fp):
+    """The surface carries ``C + F' (T_s - T_held)`` by conduction, at a surface above the held one."""
+    delta, E, C, T_held = _robin_args()
+    r = sl.robin_surface_state(
+        delta, E, 1400.0, 3.0, C, Fp, T_held, sl.LID_DELTA_FLOOR, _HV_LIN
+    )
+    assert r.clipped == 0
+    assert T_held < r.T_s < 1400.0 - sl.LID_DT_MIN
+    assert r.F_s == pytest.approx(C + Fp * (r.T_s - T_held), rel=1e-9)
+    assert r.F_s > C
+
+
+@pytest.mark.unit
+@settings(max_examples=100, deadline=None)
+@given(
+    Fp1=st.floats(0.0, 1.0e3),
+    Fp2=st.floats(0.0, 1.0e3),
+    frac=st.floats(0.05, 0.95),
+    delta=st.floats(1.0, 1.0e4),
+)
+def test_robin_surface_is_cooler_for_a_steeper_slope(Fp1, Fp2, frac, delta):
+    """Above the held surface a larger slope never gives a warmer surface."""
+    lo, hi = sorted((Fp1, Fp2))
+    d, E, _, T_held = _robin_args(delta=delta)
+    held = sl.fixed_surface_state(d, E, 1400.0, 3.0, T_held, sl.LID_DELTA_FLOOR, _HV_LIN)
+    C = frac * held.F_s
+    a = sl.robin_surface_state(d, E, 1400.0, 3.0, C, lo, T_held, sl.LID_DELTA_FLOOR, _HV_LIN)
+    b = sl.robin_surface_state(d, E, 1400.0, 3.0, C, hi, T_held, sl.LID_DELTA_FLOOR, _HV_LIN)
+    assert b.T_s <= a.T_s + 1e-9 * a.T_s
+
+
+def _held_solver(
+    eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=None, slope=None
+):
     return _solver(
         eos,
         end=end,
@@ -1106,6 +1196,7 @@ def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=
         thin=thin,
         lid_surface_temperature=T_held,
         lid_surface_flux_cap=cap,
+        lid_surface_flux_slope=slope,
     )
 
 
@@ -1164,6 +1255,42 @@ class TestHeldSurface:
         assert ev.surf.T_s > 500.0
         assert float(s.state._heat_flux[-1]) == pytest.approx(C, rel=1e-9)
 
+    def test_a_cap_with_a_slope_takes_the_robin_flux(self, eos):
+        """With a slope the capped lid carries ``C + F' (T_s - T_held)``; a slope of 0 is the cap
+        state bit for bit."""
+        s = _held_solver(eos, 500.0)
+        y = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y)
+        C = 0.5 * float(s._lid_last.surf.F_s)
+        out = []
+        for slope in (None, 0.0):
+            s = _held_solver(eos, 500.0, cap=C, slope=slope)
+            out.append(np.asarray(s._dSdt_single(0.0, y), dtype=float))
+        np.testing.assert_array_equal(out[0], out[1])
+        s = _held_solver(eos, 500.0, cap=C, slope=30.0)
+        s._dSdt_single(0.0, y)
+        ev = s._lid_last
+        assert ev.surf.T_s > 500.0
+        assert ev.surf.F_s == pytest.approx(C + 30.0 * (ev.surf.T_s - 500.0), rel=1e-9)
+        assert ev.surf.F_s > C
+        assert float(s.state._heat_flux[-1]) == pytest.approx(float(ev.surf.F_s), rel=1e-9)
+
+    def test_change_of_the_slope_between_calls_is_read(self, eos):
+        """A slope set between calls takes effect; a negative slope set later is refused at the solve."""
+        s = _held_solver(eos, 500.0)
+        y = self._state(s, 100.0, 500.0)
+        s._dSdt_single(0.0, y)
+        C = 0.5 * float(s._lid_last.surf.F_s)
+        s.parameters.boundary_conditions.lid_surface_flux_cap = C
+        s._dSdt_single(0.0, y)
+        F0 = float(s._lid_last.surf.F_s)
+        s.parameters.boundary_conditions.lid_surface_flux_slope = 30.0
+        s._dSdt_single(0.0, y)
+        assert float(s._lid_last.surf.F_s) > F0
+        s.parameters.boundary_conditions.lid_surface_flux_slope = -1.0
+        with pytest.raises(ValueError, match='lid_surface_flux_slope'):
+            s.solve()
+
     def test_change_of_the_cap_between_calls_is_read(self, eos):
         """A cap set between calls takes effect; a negative cap set later is refused at the solve."""
         s = _held_solver(eos, 500.0)
@@ -1177,15 +1304,15 @@ class TestHeldSurface:
         with pytest.raises(ValueError, match='lid_surface_flux_cap'):
             s.solve()
 
-    @pytest.mark.parametrize('frac', [0.5, 2.0])
-    def test_jax_factory_matches_numpy_with_the_cap(self, eos, frac):
+    @pytest.mark.parametrize('frac, slope', [(0.5, None), (2.0, None), (0.5, 30.0), (0.5, 0.0)])
+    def test_jax_factory_matches_numpy_with_the_cap(self, eos, frac, slope):
         """The JAX factory matches NumPy at caps of 0.5 and 2 times the held flux, Jacobian finite."""
         from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
 
         s = _held_solver(eos, 500.0)
         y0 = self._state(s, 100.0, 500.0)
         s._dSdt_single(0.0, y0)
-        s = _held_solver(eos, 500.0, cap=frac * float(s._lid_last.surf.F_s))
+        s = _held_solver(eos, 500.0, cap=frac * float(s._lid_last.surf.F_s), slope=slope)
         rhs_fn, jac, _ = _factory_rhs(s, s.jax_lid_params())
         sc = s._build_nondim_scales()
         f, top = _physical(rhs_fn, sc), s._n_stag - 1

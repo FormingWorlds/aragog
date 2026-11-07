@@ -27,6 +27,7 @@ from aragog.config.boundary import (
     check_core_bc,
     check_lid_mush_base,
     check_lid_surface_flux_cap,
+    check_lid_surface_flux_slope,
     check_lid_surface_temperature,
     check_subgrid_lid,
     check_top_node,
@@ -127,6 +128,7 @@ class _BoundaryConditionsParameters:
     lid_mush_base: bool = False
     lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
+    lid_surface_flux_slope: float | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -164,6 +166,7 @@ class _BoundaryConditionsParameters:
             self.lid_mush_base,
             self.lid_surface_temperature,
         )
+        check_lid_surface_flux_slope(self.lid_surface_flux_slope, self.lid_surface_flux_cap)
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,

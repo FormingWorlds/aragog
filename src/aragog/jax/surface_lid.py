@@ -257,6 +257,7 @@ def surface_state(
     T_held=0.0,
     capped=0.0,
     cap=0.0,
+    slope=0.0,
 ):
     """Grey-body surface of a lid with energy ``E`` [J/m^2], as
     :func:`aragog.surface_lid.surface_state`.
@@ -265,8 +266,8 @@ def surface_state(
     :func:`aragog.surface_lid.flux_surface_state`; with ``held`` above 0.5 as well, the surface
     is at ``T_held``, at most ``T_b``, as :func:`aragog.surface_lid.fixed_surface_state`.
     With ``capped`` above 0.5 too, the surface carries at most ``cap``: where the held surface
-    gives a flux above ``cap``, the lid takes the state of the flux ``cap``, as the NumPy rule
-    (a second root, solved only in that case).
+    gives a flux above ``cap``, the lid takes the state of the flux ``cap + slope (T_s - T_held)``,
+    as the NumPy rule (a second root, solved only in that case).
     The root in ``s`` of ``Q(s) = E / delta`` comes from :func:`_bracket_root` over the shape
     bounds and carries the implicit derivative; at a clipped bound ``s`` is constant.
 
@@ -305,9 +306,15 @@ def surface_state(
         dT = T_b - T_s
         return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped, T_s + m * dT
 
+    def T_s_capped(s):
+        a = d / (k * jnp.maximum(shape(s)[0], 1.0e-30))
+        robin = (T_b - (cap - slope * T_held) * a) / (1.0 + slope * a)
+        robin = jnp.minimum(jnp.maximum(robin, LID_T_S_MIN), T_b - LID_DT_MIN)
+        return jnp.where(slope > 0.0, robin, T_s_flux(cap, s))
+
     out = solve(T_s_of)
     over = (flux > 0.5) & (held > 0.5) & (capped > 0.5) & (out[1] > cap)
-    return jax.lax.cond(over, lambda: solve(lambda s: T_s_flux(cap, s)), lambda: out)
+    return jax.lax.cond(over, lambda: solve(T_s_capped), lambda: out)
 
 
 def convective_base_flux(dT, k, rho, cp, alpha, g, eta, ra_crit):
@@ -391,6 +398,7 @@ class LidParams(NamedTuple):
     T_held: float
     capped: float
     cap: float
+    slope: float
     volume_top: float
     ra_crit: float
     convection: float
@@ -506,6 +514,7 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         lp.T_held,
         lp.capped,
         lp.cap,
+        lp.slope,
     )
     w = jnp.where(
         lp.flux > 0.5,

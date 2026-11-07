@@ -97,6 +97,23 @@ def check_lid_surface_flux_cap(value, outer_boundary_condition, lid_mush_base, T
         )
 
 
+def check_lid_surface_flux_slope(value, cap) -> None:
+    """Refuse a ``lid_surface_flux_slope`` that is not None or a finite number of 0 or above,
+    or one without ``lid_surface_flux_cap``.
+
+    Raises
+    ------
+    ValueError
+        For another value, or for a slope without a cap.
+    """
+    if value is None:
+        return
+    if not _is_real(value) or not math.isfinite(value) or value < 0:
+        raise ValueError(f'lid_surface_flux_slope must be a finite number >= 0, got {value!r}')
+    if cap is None:
+        raise ValueError('lid_surface_flux_slope needs lid_surface_flux_cap')
+
+
 def check_subgrid_lid(
     subgrid_lid,
     lid_delta_on,
@@ -263,6 +280,10 @@ class BoundaryConfig:
         With ``lid_surface_temperature``: the largest surface flux of the lid [W/m^2], the flux
         that the atmosphere gave the lid at that surface; the caller sets it between calls.
         Above it the lid carries the cap, at a surface warmer than the held one. None: no cap.
+    lid_surface_flux_slope : float or None
+        With ``lid_surface_flux_cap``: the slope ``F'`` [W/m^2/K] of the atmosphere flux with the
+        surface temperature. Above the cap the lid then carries ``C + F' (T_s - T_held)``, the flux
+        the atmosphere gives at the warmer surface to first order. None or 0: the cap alone.
     """
 
     outer_boundary_condition: int
@@ -289,6 +310,7 @@ class BoundaryConfig:
     lid_mush_base: bool = False
     lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
+    lid_surface_flux_slope: float | None = None
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
@@ -302,6 +324,7 @@ class BoundaryConfig:
             self.lid_mush_base,
             self.lid_surface_temperature,
         )
+        check_lid_surface_flux_slope(self.lid_surface_flux_slope, self.lid_surface_flux_cap)
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,

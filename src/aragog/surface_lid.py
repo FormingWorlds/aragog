@@ -394,6 +394,39 @@ def flux_surface_state(
     return _surface(s, T_s_of(s), T_b, k, d, clipped)
 
 
+def robin_surface_state(
+    delta: float,
+    E: float,
+    T_b: float,
+    k: float,
+    C: float,
+    Fp: float,
+    T_held: float,
+    delta_floor: float,
+    hv: LidEnthalpy,
+) -> LidSurface:
+    """Lid under the Robin flux ``C + Fp (T_s - T_held)``: for a shape ``s`` the conduction
+    ``k (T_b - T_s) f'(0) / d`` equals that flux, which fixes the surface temperature (in the
+    bounds of :func:`flux_surface_state`), and ``Q(s) = E / delta`` gives the shape. ``C`` is the
+    cap [W/m^2], ``Fp`` the slope of the atmosphere flux [W/m^2/K] and ``T_held`` the held surface
+    [K]. ``Fp = 0`` is :func:`flux_surface_state` at ``C``.
+
+    Parameters and the result as :func:`surface_state`.
+    """
+    if Fp == 0.0:
+        return flux_surface_state(delta, E, T_b, k, C, delta_floor, hv)
+    d = float(np.hypot(delta, delta_floor))
+    q = E / max(delta, delta_floor)
+
+    def T_s_of(v):
+        a = d / (k * max(shape(v)[0], 1.0e-30))
+        T_s = (T_b - (C - Fp * T_held) * a) / (1.0 + Fp * a)
+        return min(max(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
+
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
+    return _surface(s, T_s_of(s), T_b, k, d, clipped)
+
+
 def fixed_surface_state(
     delta: float,
     E: float,

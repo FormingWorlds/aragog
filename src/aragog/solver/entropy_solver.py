@@ -41,6 +41,7 @@ from aragog.config.boundary import (
     _is_real,
     check_lid_mush_base,
     check_lid_surface_flux_cap,
+    check_lid_surface_flux_slope,
     check_lid_surface_temperature,
     check_subgrid_lid,
 )
@@ -3297,6 +3298,7 @@ class EntropySolver:
         rheo, ph = self._lid_rheo, self.state.phase_staggered
         bc_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
         bc_cap = self.evaluator.boundary_conditions._settings.lid_surface_flux_cap
+        bc_slope = self.evaluator.boundary_conditions._settings.lid_surface_flux_slope
         if self._lid_const:
             raise ValueError(
                 'the constant-property lid runs on the NumPy right-hand side only '
@@ -3335,6 +3337,7 @@ class EntropySolver:
             T_held=float(bc_held) if bc_held is not None else 0.0,
             capped=float(bc_held is not None and bc_cap is not None),
             cap=float(bc_cap) if bc_cap is not None else 0.0,
+            slope=float(bc_slope) if bc_cap is not None and bc_slope else 0.0,
             phi_k=jl.enthalpy(self._lid_Phi_table) if self._lid_mush else jl.enthalpy(hs),
             fixed=float(on and rheo.lid_base_mode == 'fixed'),
             T_fixed=float(rheo.lid_base_temperature) if on else 0.0,
@@ -3715,8 +3718,16 @@ class EntropySolver:
                 T_fix = min(T_held, T_b - _lid.LID_DT_MIN)
                 surf = _lid.fixed_surface_state(delta, E, T_b, k, T_fix, floor, self._lid_hv)
                 if cap is not None and surf.F_s > cap:
-                    # rule 3: the lid loses at most the flux the atmosphere gave it
-                    surf = _lid.flux_surface_state(delta, E, T_b, k, cap, floor, self._lid_hv)
+                    # rule 3: the lid loses the flux the atmosphere gives it, C + F' (T_s - T_held)
+                    Fp = bc.lid_surface_flux_slope
+                    if Fp:
+                        surf = _lid.robin_surface_state(
+                            delta, E, T_b, k, cap, Fp, T_held, floor, self._lid_hv
+                        )
+                    else:
+                        surf = _lid.flux_surface_state(
+                            delta, E, T_b, k, cap, floor, self._lid_hv
+                        )
             T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else T_b
             w = _lid.flux_weight(F_b, T_b, T_top, k, eps, T_eq, self._lid_delta_on)
         else:
@@ -5290,6 +5301,7 @@ class EntropySolver:
             self._lid_mush,
             bc_s.lid_surface_temperature,
         )
+        check_lid_surface_flux_slope(bc_s.lid_surface_flux_slope, bc_s.lid_surface_flux_cap)
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
