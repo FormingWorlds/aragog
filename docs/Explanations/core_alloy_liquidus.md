@@ -61,7 +61,7 @@ The data of all 3 binaries start at 1 bar; below it the eutectic temperature wou
     | Fe-C (Fe$_3$C, Fe$_7$C$_3$ at 330 GPa) | 54.7 K | 65.7 K | 226.9 K | 792.0 K |
 
 - Close to its eutectic the liquidus falls with pressure where the eutectic composition falls fast, since there $dT/dP \approx dT_e/dP - |\partial T/\partial w|\,|dw_e/dP|$: for every S content tested from 4.9 to 7 wt%, between 209 and 275 GPa (down to $-0.64$ K/GPa), along the read curve of Mori et al. (2017, Fig. 5), for 4 wt% S with 1 wt% C at 270 to 273 GPa ($-0.37$ K/GPa), and for 3.28 to 3.37 wt% C between 323.8 and 336 GPa (down to $-0.105$ K/GPa for 3.34 wt%), where the Fe-C table and its continuation fall. A core in this state freezes from the top, which the core module treats as a regime it does not model ([crystallisation regimes](core_bc.md)). Below 14 GPa the Fe-S eutectic temperature falls with pressure (Fei et al. 1997), and so does the liquidus of S alloys from about 4 wt%: 4.8 wt% S at 10.78 to 13.79 GPa (least slope $-2.4$ K/GPa), 8 wt% at 4.99 to 15.57 GPa ($-16.4$ K/GPa) and 12 wt% at 1.74 to 16.41 GPa ($-29.4$ K/GPa); 1 and 3 wt% S keep rising (least slopes 19.5 and 7.2 K/GPa). Up to 4.8 wt% S from 26 GPa, 3.2 wt% C and 10 wt% O from 1 GPa, and for the 2 mixtures tested, the liquidus rises with pressure up to 600 GPa where the alloy is not past its eutectic.
-- Only the end points of each binary are data; the liquidus between them follows the form. From 1 bar to 15 GPa the form misses the measured Fe-S liquidus by 75 to 151 K RMS (see above), and the blend of the FeS and Fe$_3$S units over 18 to 26 GPa has no data behind it.
+- Only the end points of each binary are data; the liquidus between them follows the form. From 1 bar to 15 GPa the form misses the measured Fe-S liquidus by 79 to 153 K RMS (see above), and the blend of the FeS and Fe$_3$S units over 18 to 26 GPa has no data behind it.
 - Below 5 GPa the Fe-C eutectic has 2 data points, 1 bar and 5 GPa; the cubic between them is a choice. Lord et al. (2009, p. 158) give 1420 K at 1 bar, 3.85 K above the value used. Nakajima et al. (2009, p. 207) give the 1 bar point as the eutectic between iron and graphite of Bens & Elliott (1961, cited there), and Lord et al. (2009, p. 158) place it there too, "possibly metastable"; the form keeps Fe$_3$C units there. Ternary data (Hirose et al. 2021) are not used to check the harmonic rule.
 - The harmonic rule has no ternary eutectic: a mixture on its eutectic boundary does not melt below the lowest binary eutectic. On a grid of 5151 boundary mixtures of S, C and O the least liquidus is the lowest binary eutectic itself, at the pure binary: 2672 K (S) at 135 GPa and 3713 K (C) at 330 GPa.
 - An alloy past its eutectic is held at the boundary by scaling all its S, C and O by one factor, so the held liquidus depends on the whole composition, not on a path of the phase diagram: at 135 GPa, adding up to 12 wt% O to 11.2 wt% S (past its 9.35 wt% eutectic) raises it by up to 238 K.
@@ -70,19 +70,28 @@ The data of all 3 binaries start at 1 bar; below it the eutectic temperature wou
 - Aragog has no liquidus data for H and N, and they do not enter the liquidus.
 - `AlloyLiquidus` is not a melting curve of the core energy budget yet: the budget takes `iron` or `quadratic`, and its outer-core enrichment guard reads the light-element fraction of those curves.
 - The solid takes up no light element in this liquidus; solid-liquid partitioning belongs to the core energy budget.
-- The slope `AlloyLiquidus.gradient` sets whether a core freezes from the centre: where the liquidus is shallower than the adiabat, iron freezes first at the top ([crystallisation regimes](core_bc.md)). A liquidus that rises with pressure can still be shallower: the adiabat of the default core profile (central density 12500 kg/m$^3$, length scale 7272 km, core radius 3480 km, 136 GPa at the core-mantle boundary) rises by 6.7 K/GPa at 136 GPa and 7.2 K/GPa at 330 GPa for 4137 K at the core-mantle boundary, while the liquidus of 2 and 4.8 wt% S, 2 wt% C and the alloy of the tutorial rises by 2.0 to 5.5 K/GPa at 330 GPa.
+- The slope `AlloyLiquidus.gradient` sets whether a core freezes from the centre: where the liquidus is shallower than the adiabat, iron freezes first at the top ([crystallisation regimes](core_bc.md)). A liquidus that rises with pressure can still be shallower: the adiabat of the default core profile (the core module defaults: central density 12500 kg/m$^3$, length scale 7272 km, thermal expansivity $1.35 \times 10^{-5}$ K$^{-1}$, heat capacity 840 J/kg/K; core radius 3480 km, 136 GPa at the core-mantle boundary) rises by 6.7 K/GPa at 136 GPa and 7.2 K/GPa at 330 GPa for 4137 K at the core-mantle boundary, while the liquidus of 2 and 4.8 wt% S, 2 wt% C and the alloy of the tutorial rises by 2.0 to 5.5 K/GPa at 330 GPa.
 
 ## References
 
 - Anzellini, S. et al. (2013), Science 340, 464.
 - Buono, A. S. and Walker, D. (2011), Geochim. Cosmochim. Acta 75, 2072-2087, doi:10.1016/j.gca.2011.01.030.
+- Chudinovskikh, L. and Boehler, R. (2007), Earth Planet. Sci. Lett. 257, 97-103, doi:10.1016/j.epsl.2007.02.024.
 - Chen, B., Li, J. and Hauck, S. A. (2008), Geophys. Res. Lett. 35, L07201, doi:10.1029/2008GL033311.
 - Fei, Y., Bertka, C. M. and Finger, L. W. (1997), Science 275, 1621-1623, doi:10.1126/science.275.5306.1621.
 - Fei, Y. et al. (2000), Am. Mineral. 85, 1830, doi:10.2138/am-2000-11-1229.
+- Fei, Y. and Brosh, E. (2014), Earth Planet. Sci. Lett. 408, 155-162, doi:10.1016/j.epsl.2014.09.044.
+- Friedrich, K. (1910), Metallurgie 9, 33-48.
 - Fritsch, F. N. and Carlson, R. E. (1980), SIAM J. Numer. Anal. 17, 238-246, doi:10.1137/0717021.
+- Hansen, M. and Anderko, K. (1958), Constitution of Binary Alloys, 2nd ed., McGraw-Hill, New York, p. 1305.
 - Hirose, K. et al. (2021), Nat. Rev. Earth Environ. 2, 645-658, doi:10.1038/s43017-021-00203-6.
+- Kamada, S. et al. (2010), Earth Planet. Sci. Lett. 294, 94-100, doi:10.1016/j.epsl.2010.03.011.
 - Lord, O. T. et al. (2009), Earth Planet. Sci. Lett. 284, 157, doi:10.1016/j.epsl.2009.04.017.
 - Mashino, I. et al. (2019), Earth Planet. Sci. Lett. 515, 135-144, doi:10.1016/j.epsl.2019.03.020.
 - Mori, Y. et al. (2017), Earth Planet. Sci. Lett. 464, 135-141, doi:10.1016/j.epsl.2017.02.021.
+- Miyazaki, K. (1928), Sci. Rep. Tohoku Imp. Univ. 17, 877-881.
+- Morard, G. et al. (2007), Earth Planet. Sci. Lett. 263, 128-139.
 - Nakajima, Y. et al. (2009), Phys. Earth Planet. Inter. 174, 202, doi:10.1016/j.pepi.2008.05.014.
 - Oka, K. et al. (2019), Am. Mineral. 104, 1603-1607, doi:10.2138/am-2019-7081.
+- Ryzhenko, B. and Kennedy, G. C. (1973), Am. J. Sci. 273, 803-810.
+- Usselman, T. M. (1975), Am. J. Sci. 275, 278-290.

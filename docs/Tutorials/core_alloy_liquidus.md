@@ -65,7 +65,7 @@ At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eute
 
 ## 4. Below 21 GPa
 
-The core of a planet smaller than the Earth lies at lower pressures. There the Fe-S eutectic comes from measured points at 1 bar, 10 and 14 GPa, joined into the fit over 18 to 21 GPa, and the S units change from FeS to Fe$_3$S over 18 to 26 GPa; the Fe-C eutectic runs from its 1 bar value into the fit at 5 GPa.
+Below 21 GPa the Fe-S eutectic comes from measured points at 1 bar, 10 and 14 GPa, joined into the fit over 18 to 21 GPa, and the S units change from FeS to Fe$_3$S over 18 to 26 GPa; the Fe-C eutectic runs from its 1 bar value into the fit at 5 GPa.
 
 ```python
 for el in ('S', 'C'):
