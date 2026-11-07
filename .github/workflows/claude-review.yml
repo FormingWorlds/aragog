@@ -102,6 +102,7 @@ jobs:
 
       - name: Report model, turns and time
         if: always() && steps.claude.outputs.execution_file != ''
+        continue-on-error: true
         env:
           EXEC: ${{ steps.claude.outputs.execution_file }}
         run: |
