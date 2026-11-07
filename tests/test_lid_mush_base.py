@@ -222,6 +222,43 @@ class TestSolver:
         mismatch = (s._area_flat[-1] - s._area_flat[-2]) * F_in
         assert abs(dS) / SECS_PER_YEAR * cap < 1.0e-6 * mismatch
 
+    @pytest.mark.parametrize(
+        ('bc', 'holds'),
+        [
+            (dict(F_atm=200.0, lid_surface_temperature=500.0), True),
+            (
+                dict(F_atm=200.0, lid_surface_temperature=500.0, lid_surface_flux_cap=1.0e3),
+                True,
+            ),
+            (dict(F_atm=200.0), False),
+            (dict(F_atm=-50.0), False),
+        ],
+        ids=['held', 'held and capped', 'flux', 'negative flux'],
+    )
+    def test_floor_under_a_prescribed_surface(self, eos, bc, holds):
+        """On outer boundary 4 the lid acts with weight 1 at g = 0. Under a held surface it grows
+        and the fluid entropy of the top cell holds; under a prescribed flux below the flux from
+        below it stays at the melt-back stop and the cell warms by exactly the flux difference."""
+        s = _solver(eos, outer=4, **bc)
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[n - 1] = s._lid_S_sol + sl.LID_FLOOR_GAP
+        y[-2:] = s._lid_start(y[n - 1])
+        dS = np.asarray(s._dSdt_single(0.0, y)).ravel()[n - 1]
+        ev = s._lid_last
+        F_in = float(s.state._heat_flux[-2])
+        assert ev.rates.w == pytest.approx(1.0, abs=1e-15)
+        ph = s.state.phase_staggered
+        cap = float(np.ravel(ph.density())[-1] * np.ravel(ph.temperature())[-1]) * ev.V_fluid
+        gain = F_in * s._area_flat[-2] - ev.rates.F_fluid * s._area_flat[-1]
+        if holds:
+            mismatch = (s._area_flat[-1] - s._area_flat[-2]) * F_in
+            assert ev.rates.ddelta > 0.0
+            assert abs(dS) / SECS_PER_YEAR * cap < 1.0e-6 * mismatch
+        else:
+            assert ev.rates.ddelta == pytest.approx(0.0, abs=1e-300) and gain > 0.0
+            assert dS / SECS_PER_YEAR * cap == pytest.approx(gain, rel=1e-9)
+
     @pytest.mark.parametrize('dS', [-1.0, 0.0, 0.49 * sl.LID_FLOOR_GAP])
     def test_invariant_refuses_an_accepted_state_below_the_floor(self, eos, dS):
         """The step check raises 'below the floor' for a top cell under solidus plus half the gap."""
