@@ -10,6 +10,7 @@ from pathlib import Path
 import jax
 import numpy as np
 import pytest
+from scipy.optimize import brentq
 
 from aragog.core import alloy
 from aragog.core.alloy import AlloyLiquidus, binary_liquidus, eutectic
@@ -252,12 +253,14 @@ def test_the_sulfur_units_are_fes_below_18_and_fe3s_above_26_gpa(w):
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
-    ('w', 'added', 'top'), [(0.02, 29.6, 51.4), (0.04, 53.6, 73.9), (0.08, 81.5, 98.4)]
+    ('w', 'added', 'top'),
+    [(0.02, 29.6, 51.4), (0.04, 53.6, 73.9), (0.08, 81.5, 98.4), (0.10, 81.8, 96.7)]
+    + [(0.12, 67.4, 80.0)],
 )
 def test_the_unit_blend_adds_the_stated_slope(w, added, top):
     """Over 18 to 26 GPa the blend adds c'(P) (T_Fe3S - T_FeS) to the weighted slope of the 2
-    unit forms, at most 29.6, 53.6 and 81.5 K/GPa near 22 GPa for 2, 4 and 8 wt% S; the liquidus
-    slope peaks at 51.4, 73.9 and 98.4 K/GPa."""
+    unit forms, at most 29.6, 53.6, 81.5, 81.8 and 67.4 K/GPa near 22 GPa for 2, 4, 8, 10 and 12
+    wt% S; the liquidus slope peaks at 51.4, 73.9, 98.4, 96.7 and 80.0 K/GPa."""
     p = np.linspace(18.001, 25.999, 801)
     g = np.asarray(AlloyLiquidus({'S': w}).gradient(p * 1e9)) * 1e9
     c = np.array([_smootherstep((x - 18.0) / 8.0) for x in p])
@@ -269,6 +272,18 @@ def test_the_unit_blend_adds_the_stated_slope(w, added, top):
     assert extra.max() == pytest.approx(added, abs=0.2)
     assert abs(p[extra.argmax()] - 22.0) < 0.2
     assert g.max() == pytest.approx(top, abs=0.2)
+
+
+@pytest.mark.physics_invariant
+def test_the_dilute_depression_of_s_falls_over_the_unit_blend():
+    """The depression of the liquidus per wt% S in the dilute limit, (T_Fe - T) / w at 0.01 wt%,
+    falls from 92.72 K at 18 GPa (FeS units) to 26.80 K at 26 GPa (Fe3S units), 3.46 times."""
+    dil = [
+        (float(T_FE(p * 1e9)) - float(AlloyLiquidus({'S': 1e-4}).t_melt(p * 1e9))) / 0.01
+        for p in (18.0, 26.0)
+    ]
+    assert dil == pytest.approx([92.72, 26.80], abs=0.01)
+    assert dil[0] / dil[1] == pytest.approx(3.46, abs=0.005)
 
 
 @pytest.mark.physics_invariant
@@ -379,15 +394,32 @@ def test_the_two_reads_of_the_chen_points_agree():
 
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
-def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot):
-    """Between 10 and 14 GPa the measured liquidus of Chen et al. (2008, linear between their
-    points and their pure-Fe point) falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the
-    ideal form changes by +3.05, -14.49 and -26.89 K/GPa."""
+def test_from_10_to_14_gpa_the_liquidus_falls_from_a_higher_s_content_than_the_data(
+    validation_plot,
+):
+    """From 10 to 14 GPa the measured liquidus of Chen et al. (2008, linear between their points
+    and their pure-Fe point) changes by -42.05, -39.06 and -15.53 K/GPa at 4, 8 and 12 wt% S,
+    the ideal form by +3.05, -14.49 and -26.89 K/GPa. The liquidus falls from 10 to 14 GPa from
+    4.61 wt% S in the code and from 1.01 wt% S in the data, where the 10 GPa data are the chord
+    from the pure-Fe point (0.002 wt%) to the first liquid point (7.05 wt%); the code's pure
+    iron melts 12.9 and 35.0 K above the pure-Fe points at 10 and 14 GPa."""
     rows = _csv('chen2008_fig1_liquidus.csv')
 
     def data(p, w):
         pts = sorted((float(r[2]), float(r[3])) for r in rows if float(r[0]) == p)
         return np.interp(w, *zip(*pts))
+
+    def code(w):
+        liq = AlloyLiquidus({'S': w / 100.0})
+        return (float(liq.t_melt(14e9)) - float(liq.t_melt(10e9))) / 4.0
+
+    assert brentq(code, 1.0, 8.0) == pytest.approx(4.61, abs=0.005)
+    assert brentq(lambda w: data(14.0, w) - data(10.0, w), 0.5, 1.5) == pytest.approx(
+        1.01, abs=0.005
+    )
+    for p, t_fe, offset in ((10.0, 2117.9, 12.9), (14.0, 2203.3, 35.0)):
+        assert data(p, 0.0) == pytest.approx(t_fe, abs=0.05)
+        assert float(T_FE(p * 1e9)) - t_fe == pytest.approx(offset, abs=0.05)
 
     for w, stated_data, stated_code in (
         (4, -42.05, 3.05),
@@ -395,9 +427,7 @@ def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot
         (12, -15.53, -26.89),
     ):
         assert (data(14.0, w) - data(10.0, w)) / 4.0 == pytest.approx(stated_data, abs=0.005)
-        liq = AlloyLiquidus({'S': w / 100.0})
-        code = (float(liq.t_melt(14e9)) - float(liq.t_melt(10e9))) / 4.0
-        assert code == pytest.approx(stated_code, abs=0.05)
+        assert code(w) == pytest.approx(stated_code, abs=0.05)
 
     def figure():
         import matplotlib.pyplot as plt
@@ -461,7 +491,8 @@ def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
     """Eutectic points that set no node, code minus source: T_e [K] and w_e [wt%]; the 6 GPa
     eutectic is 42 K and 1.4 wt% below Buono & Walker (2011), Kamada et al. (2010) lie inside
     their fit errors, the 21.9 and 23.0 GPa quench runs (upper bounds of T_e) lie above, the liquid
-    at 21.9 GPa (on the Fe-rich liquidus) holds less S than w_e, and Fe-C at 10 GPa is the Mashino
+    at 21.9 GPa (on the Fe-rich liquidus) holds less S than w_e and lies 55.62 K below the
+    liquidus at its 13 wt% S, and Fe-C at 10 GPa is the Mashino
     fit, 77.5 K above Fei & Brosh (2014). The 2 anchors of the fits (Fei et al. 2000 at 21 GPa,
     Fei & Brosh 2014 at 5 GPa) check the composition only."""
     rows = _csv('low_pressure_eutectic_checks.csv')
@@ -476,6 +507,9 @@ def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
         if kind == 'upper_bound_T':
             assert t_e < float(t), src
             assert not comp or w_e > float(comp) / 100.0, src
+            if comp:  # the liquid on the Fe-rich liquidus: the liquidus at its S content
+                liq = float(AlloyLiquidus({'S': float(comp) / 100.0}).t_melt(float(p) * 1e9))
+                assert liq - float(t) == pytest.approx(55.62, abs=0.02), src
         if comp:
             ref = _w_s(float(comp)) if unit == 'X_FeS' else float(comp) / 100.0
             assert 100.0 * (w_e - ref) == pytest.approx(dw, abs=0.002), src
