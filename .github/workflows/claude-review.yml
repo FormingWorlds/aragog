@@ -42,33 +42,28 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMENT_AT: ${{ github.event.comment.created_at }}
         run: |
-          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,headRefOid)
+          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository)
           echo "$pr"
           if [ "$(jq -r '.state != "OPEN" or .isDraft or .isCrossRepository' <<<"$pr")" = true ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No review: the pull request is closed, a draft or from a fork." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          head=$(jq -r .headRefOid <<<"$pr")
-          if [ -n "$COMMENT_AT" ]; then
-            committed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head" --jq .commit.committer.date)
-            if [ "$(jq -n --arg c "$committed" --arg r "$COMMENT_AT" '($c | fromdate) > ($r | fromdate)')" = true ]; then
-              echo "run=false" >> "$GITHUB_OUTPUT"
-              echo "No review: new commits after the request; comment @claude again." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
+          if ! sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" --jq .object.sha); then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No review: GitHub has no merge commit for this pull request (merge conflict, or not yet computed); comment @claude to retry." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
-          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Check out the head commit of the pull request
+      - name: Check out the merge commit of the pull request
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v6
         with:
-          ref: ${{ steps.gate.outputs.head }}
-          fetch-depth: 1
+          ref: ${{ steps.gate.outputs.sha }}
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Set up Python
@@ -80,15 +75,13 @@ jobs:
       - name: Lint the changed lines
         if: steps.gate.outputs.run == 'true'
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python -m pip install --quiet ruff
           python - <<'PY'
           import os, re, subprocess
           added, out = {}, []
           try:
-              diff = subprocess.run(['gh', 'pr', 'diff', os.environ['PR_NUMBER']],
+              diff = subprocess.run(['git', 'diff', 'HEAD^1', 'HEAD'],
                                     capture_output=True, check=True).stdout
               f, n, header = None, 0, False
               for line in diff.decode('utf-8', 'replace').splitlines():
