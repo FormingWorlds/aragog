@@ -882,3 +882,12 @@ def test_the_fe_c_liquidus_falls_near_the_end_of_its_data_for_3_28_to_3_37_wt_pe
     else:
         assert g[inside].min() == pytest.approx(slope_min, abs=1e-3)
         assert (falling[0], falling[-1]) == pytest.approx((p_from, p_to), abs=0.02)
+
+
+def test_the_gradient_takes_a_pressure_array_of_any_shape():
+    """gradient() returns dT/dP in the shape of its pressure input, a 2-D array included."""
+    liq = AlloyLiquidus({'S': 0.02, 'C': 0.005})
+    p = np.linspace(10e9, 300e9, 6)
+    flat = np.asarray(liq.gradient(p))
+    np.testing.assert_allclose(np.asarray(liq.gradient(p.reshape(2, 3))), flat.reshape(2, 3))
+    assert np.shape(liq.gradient(50e9)) == ()
