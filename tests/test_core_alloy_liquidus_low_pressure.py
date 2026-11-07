@@ -741,3 +741,34 @@ def test_the_joins_and_blends_sit_where_the_data_need_them():
     start = alloy._table('fe_s_composition')[0, 0]
     assert alloy.S_UNIT_BLEND_GPA[0] < start < alloy._SIMON['S'][1]
     assert alloy._table('fe_c_composition')[0, 0] == alloy._SIMON['C'][1]
+
+
+def _table_nodes():
+    """Pressures [GPa] of every node and join of the eutectic tables, the blends and the fade."""
+    data, nodes = alloy._data(), set()
+    for el in ('S', 'C'):
+        nodes |= set(data['low'][el][:, 0]) | {alloy._SIMON[el][1]}
+    for el in alloy.DEPRESSING:
+        lo, hi = data['range'][el]
+        nodes |= set(data['composition'][el][:, 0]) | {lo, hi, hi + alloy.HOMOLOGOUS_FADE_GPA}
+    nodes |= set(data['t_o'][:, 0]) | set(alloy.S_UNIT_BLEND_GPA)
+    c, half = alloy.C_UNIT_SWITCH_PA / 1e9, alloy.C_UNIT_BLEND_HALF_WIDTH_PA / 1e9
+    return sorted(nodes | {c - 2 * half, c, c + half})
+
+
+@pytest.mark.parametrize(
+    'w', [{'S': 0.02}, {'S': 0.08}, {'C': 0.02}, {'S': 0.04, 'C': 0.01, 'O': 0.02}]
+)
+def test_the_gradient_at_a_table_node_is_a_one_sided_gradient(w):
+    """At every node and join of the tables the gradient equals the gradient just below or just
+    above it (1e-6 GPa away; at 1 bar only above), so a node takes the slope of a segment, never a
+    mean of 2."""
+    p = np.array(_table_nodes())
+    grad = AlloyLiquidus(w).gradient
+    at, below, above = (
+        np.asarray(grad(q * 1e9)) * 1e9 for q in (p, np.maximum(p - 1e-6, 0.0), p + 1e-6)
+    )
+    off = np.where(
+        p > 1e-6, np.minimum(np.abs(at - below), np.abs(at - above)), np.abs(at - above)
+    )
+    assert np.all(off <= 1e-4 + 1e-6 * np.abs(at)), dict(zip(p[off > 1e-4], at[off > 1e-4]))
