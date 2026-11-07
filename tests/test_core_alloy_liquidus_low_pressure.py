@@ -155,7 +155,7 @@ def test_the_fe_s_eutectic_is_the_monotone_hermite_through_the_nodes():
     [
         ('S', 18.0, 41.746026, -0.0058937),
         ('S', 21.0, 1348.0 / (2.07 * 36.5), -0.000592),
-        ('C', 5.0, 1513.0 / (4.1 * 8.4), -0.000212),
+        ('C', 5.0, 1513.0 / (4.1 * 8.4), None),
     ],
 )
 def test_the_eutectic_joins_the_fits_with_a_continuous_slope(el, p_gpa, t_slope, w_slope):
@@ -163,6 +163,8 @@ def test_the_eutectic_joins_the_fits_with_a_continuous_slope(el, p_gpa, t_slope,
     [K/GPa] and w_e [1/GPa] are continuous: the low-pressure Hermite at 18 GPa, the Simon fit
     and the first segment of the table at 21 and 5 GPa."""
     for f, slope, tol in ((_t_e(el), t_slope, 2e-3), (_w_e(el), w_slope, 2e-7)):
+        if slope is None:
+            continue
         left, right = _slopes(f, p_gpa)
         assert left == pytest.approx(right, abs=tol)
         assert right == pytest.approx(slope, abs=tol)
@@ -184,25 +186,43 @@ def test_the_fe_s_eutectic_inside_the_join_is_the_smootherstep_mean():
 
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
-def test_the_fe_c_eutectic_below_5_gpa_is_the_natural_cubic():
-    """From 1 bar (1416.15 K, 4.3 wt% C: Nakajima et al. 2009, p. 207) to the Mashino fit at
-    5 GPa, T_e and w_e are the cubic with zero curvature at 1 bar and the value and slope of the
-    fit and the table at 5 GPa: 1416.15, 1423.73, 1450.68, 1475.95, 1513.00 K at 0, 1, 3, 4, 5
-    GPa, rising by 7.09 to 43.93 K/GPa; Lord et al. (2009) give 1420 K at 1 bar."""
+def test_the_fe_c_eutectic_below_5_gpa_is_the_monotone_cubic():
+    """From 1 bar (1416.15 K, 4.3 wt% C: the Fe-graphite eutectic of Bens & Elliott 1961 as
+    Nakajima et al. 2009, p. 207 give it) to the Mashino fit at 5 GPa, T_e and w_e are the cubic
+    with zero curvature at 1 bar and the value of the fit and the table at 5 GPa, with the slope
+    of the fit (43.93 K/GPa) and, for w_e, the slope 0, since the table falls where the chord
+    rises: both are monotone (Fritsch-Carlson). T_e is 1416.15, 1423.73, 1450.68, 1475.95,
+    1513.00 K at 0, 1, 3, 4, 5 GPa, rising by 7.09 to 43.93 K/GPa, 2.1 times the 21.0 K/GPa of
+    Fei & Brosh (2014) from 5 to 10 GPa at the top; Lord et al. (2009) give 1420 K at 1 bar. The
+    w_e slope steps from 0 to the table at 5 GPa, and the liquidus slope of 2 wt% C with it
+    (36.56 to 34.93 K/GPa)."""
     tab = alloy._table('fe_c_composition')
 
     def cubic(p, y0, y1, s1):
         d = (s1 * 5.0 - (y1 - y0)) / 250.0
         return y0 + (s1 - 75.0 * d) * p + d * p**3
 
-    s_w = (tab[1, 1] - tab[0, 1]) / (tab[1, 0] - tab[0, 0])
     for p, t_stated in ((0.0, 1416.15), (1.0, 1423.73), (3.0, 1450.68), (4.0, 1475.95)):
         t_e, w_e = (float(v) for v in eutectic('C', p * 1e9))
         assert t_e == pytest.approx(cubic(p, 1416.15, 1513.0, 1513.0 / 34.44), rel=1e-12)
         assert t_e == pytest.approx(t_stated, abs=0.01)
-        assert w_e == pytest.approx(cubic(p, 0.043, tab[0, 1], s_w), rel=1e-12)
+        assert w_e == pytest.approx(cubic(p, 0.043, tab[0, 1], 0.0), rel=1e-12)
+    w = np.array([_w_e('C')(p) for p in np.linspace(0.0, 5.0, 501)])
+    assert np.all(np.diff(w) >= 0.0)
+    assert _slopes(_w_e('C'), 5.0) == pytest.approx(
+        (0.0, (tab[1, 1] - tab[0, 1]) / (tab[1, 0] - tab[0, 0])), abs=2e-7
+    )
+    liq = AlloyLiquidus({'C': 0.02})
+    left_right = _slopes(lambda p: float(liq.t_melt(p * 1e9)), 5.0, 1e-4)
+    assert left_right == pytest.approx((36.56, 34.93), abs=0.01)
     slopes = np.diff([_t_e('C')(p) for p in np.linspace(0.0, 5.0, 501)]) / 0.01
     assert slopes.min() > 7.0 and slopes.max() < 43.94
+    fei = [
+        (float(r[2]), float(r[3]))
+        for r in _csv('low_pressure_eutectic_checks.csv')
+        if r[0].startswith('Fei & Brosh')
+    ]
+    assert (fei[1][1] - fei[0][1]) / (fei[1][0] - fei[0][0]) == pytest.approx(21.0, abs=1e-9)
     assert abs(_t_e('C')(0.0) - 1420.0) < 4.0
 
 
