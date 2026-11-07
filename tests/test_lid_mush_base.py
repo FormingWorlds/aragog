@@ -825,6 +825,37 @@ class TestRestore:
             solver.set_initial_lid(None)
         assert np.array_equal(start, [0.0, 0.0])
 
+    def test_a_kept_lid_where_the_heat_jump_is_below_its_floor_is_refused(self):
+        """On a thin top cell (solidus near 1440 K) a set lid above the slack of the step check
+        but where (W(S_top) - W(S_sol)) / rho_b < LID_DH_MIN is refused; just above it starts."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        rho_b = s._lid_base_state(s._lid_T_sol, 0.0, s._lid_S_sol)['rho']
+
+        def dh(dS):
+            S = s._lid_S_sol + dS
+            return float(s._lid_W(S) - s._lid_W(s._lid_S_sol)) / rho_b
+
+        assert dh(0.6) < sl.LID_DH_MIN < dh(0.8) and 0.6 > sl.LID_FLOOR_SLACK
+        s.set_initial_lid(2.0, 1.0e6)
+        try:
+            with pytest.raises(ValueError, match='heat jump of the lid base'):
+                s._lid_start(s._lid_S_sol + 0.6)
+            assert np.array_equal(s._lid_start(s._lid_S_sol + 0.8), [2.0, 1.0e6])
+        finally:
+            s.set_initial_lid(None)
+
+    def test_a_refused_lid_start_leaves_the_state_unchanged(self):
+        """A lid start that set_initial_entropy refuses leaves the state vector as it was, so the
+        next start and solve take a valid state."""
+        run = _solver(entropy_eos_copy(EOS_DIR), end=0.1)
+        run.solve()
+        before = run._S0.copy()
+        with pytest.raises(ValueError, match='below the floor'):
+            run.set_initial_entropy(run._lid_S_sol - 10.0)
+        assert np.array_equal(run._S0, before)
+        run.set_initial_entropy(3050.0)
+        assert run._S0.size == before.size
+
 
 def _flux_lid_run(hv, T_b, k, delta0, E0, F_atm, F_b, t_yr, H=None, w_of=None):
     """Lid states of the flux mode against time at a fixed flux from the atmosphere and a fixed

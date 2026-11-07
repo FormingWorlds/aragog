@@ -2949,6 +2949,8 @@ class EntropySolver:
         # structure re-solve changed the mass grid (no-op otherwise, and
         # always consumes the cached pre-resolve grid).
         S_arr = self._remap_entropy_to_current_mesh(S_arr)
+        # the lid start can refuse the state, so it runs before the state changes
+        lid_start = self._initial_lid(float(S_arr[-1])) if _lid_slots(self) else None
 
         # Prefer the cached _core_bc from _initialize_internals.
         if hasattr(self, '_core_bc') and self._core_bc is not None:
@@ -3092,8 +3094,8 @@ class EntropySolver:
                 S_arr.min(),
                 S_arr.max(),
             )
-        if _lid_slots(self):
-            self._S0 = np.concatenate([self._S0, self._initial_lid(float(S_arr[-1]))])
+        if lid_start is not None:
+            self._S0 = np.concatenate([self._S0, lid_start])
 
     @property
     def _n_lid(self) -> int:
@@ -3195,7 +3197,9 @@ class EntropySolver:
             With ``lid_mush_base`` and a live lid over a top cell below the floor. A carried
             lid passed the step check, so it starts down to ``S_sol + LID_FLOOR_SLACK``, as that
             check accepts; a lid set by ``set_initial_lid`` takes the same floor without a check,
-            and the phantom lid needs the full gap.
+            and the phantom lid needs the full gap. Also where the heat jump of the lid base
+            ``(W(S_top) - W(S_sol)) / rho_b`` is below ``LID_DH_MIN``: there the Stefan rate runs
+            at the floor, so the top cell does not hold its entropy at a floor weight of 0.
         """
         kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
@@ -3206,6 +3210,17 @@ class EntropySolver:
                 f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, below the floor '
                 f'{floor:.6g} J/kg/K; a run that starts solid needs the present lid base'
             )
+        if start[0] != 0.0 and self._lid_mush:
+            rho_b = self._lid_base_state(self._lid_T_sol, 0.0, self._lid_S_sol)['rho']
+            dh = float(self._lid_W(S_top) - self._lid_W(self._lid_S_sol)) / rho_b
+            if dh < _lid.LID_DH_MIN:
+                raise ValueError(
+                    f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, where the heat '
+                    f'jump of the lid base is {dh:.6g} J/kg, below LID_DH_MIN = {_lid.LID_DH_MIN} '
+                    f'J/kg (the band from the solidus {self._lid_S_sol:.6g} J/kg/K to about '
+                    f'{self._lid_S_sol + _lid.LID_DH_MIN / self._lid_T_sol:.6g} J/kg/K); the top '
+                    'cell does not hold its entropy there'
+                )
         return start
 
     def _lid_start_values(self, S_top: float) -> npt.NDArray:
