@@ -381,7 +381,7 @@ With the boundary layer's properties at its mean temperature, the `core_module` 
 
 ### Core ledger closure
 
-The core ledger checks one balance per call: the heat the core loses equals the heat that crosses the CMB. The residual of a call is the difference of the two, relative to the CMB heat of the call.
+The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the CMB. The residual of a call is the difference, relative to the CMB heat of the call. The tests below run without radiogenic heat (`q_radio = 0`).
 
 **The rule.** `tests/test_entropy_solver_core_module_smoke.py::test_the_core_ledger_residual_converges_with_the_tolerance` starts a core at the temperature of a molten mantle base, as in a coupled run. It makes 5 calls: from 0 to 1, 1 to 2, 2 to 12, 12 to 22 and 22 to 122 yr (calls 1 to 5). It runs them once at the default tolerances and once at the tolerance scale factor $10^{-3}$. The scale factor makes `rtol` and the absolute tolerance, after its floor of $10^{-8}$, 1000 times smaller. The test holds this rule:
 
@@ -390,16 +390,17 @@ The core ledger checks one balance per call: the heat the core loses equals the 
 3. Calls 4 and 5 close to $2 \times 10^{-6}$ at the default tolerances, and their residuals fall at least 20 times.
 4. A call that crosses the inner-core onset follows the rule of calls 1 to 3.
 5. Every other call after call 3 follows the rule of calls 4 and 5.
+6. Each of calls 1 to 3 and the onset call stays below twice its `step_core_tol_J` at both tolerances.
 
-| Call | Default tolerances | Scale factor $10^{-3}$ | Fall of the residual |
-|---|---|---|---|
-| 1 (0 to 1 yr) | below $3 \times 10^{-4}$ | below $3 \times 10^{-6}$ | at least 20 times |
-| 2 (1 to 2 yr) | tested by the fall | below $10^{-5}$ | at least 20 times |
-| 3 (2 to 12 yr) | tested by the fall | below $10^{-5}$ | at least 20 times |
-| 4 (12 to 22 yr) | $1.3 \times 10^{-7}$ | tested by the fall | 62 times |
-| 5 (22 to 122 yr) | $1.6 \times 10^{-6}$ | tested by the fall | 154 times |
-| Across the onset, no layer | $-6.2 \times 10^{-6}$ | $-6.3 \times 10^{-8}$ | at least 20 times |
-| Across the onset, with a layer | $-2.4 \times 10^{-6}$ | $-2.4 \times 10^{-8}$ | at least 20 times |
+| Call | Rule tested | Measured residuals |
+|---|---|---|
+| 1 (0 to 1 yr) | below $3 \times 10^{-4}$ at the default tolerances; falls at least 20 times to below $3 \times 10^{-6}$ | not stated |
+| 2 (1 to 2 yr) | falls at least 20 times to below $10^{-5}$ | not stated |
+| 3 (2 to 12 yr) | falls at least 20 times to below $10^{-5}$ | not stated |
+| 4 (12 to 22 yr) | below $2 \times 10^{-6}$ at the default tolerances; falls at least 20 times | $1.3 \times 10^{-7}$; falls 62 times |
+| 5 (22 to 122 yr) | below $2 \times 10^{-6}$ at the default tolerances; falls at least 20 times | $1.6 \times 10^{-6}$; falls 154 times |
+| Across the onset, no layer | falls at least 20 times to below $10^{-5}$ | $-6.2 \times 10^{-6}$ and $-6.3 \times 10^{-8}$ |
+| Across the onset, with a layer | falls at least 20 times to below $10^{-5}$ | $-2.4 \times 10^{-6}$ and $-2.4 \times 10^{-8}$ |
 
 `::test_a_call_across_the_onset_converges_with_the_tolerance` makes the 2 onset rows. It runs a 3 yr call from 0.5 K above the onset to 0.22 K below it, for a core without and with a stratified layer. It uses the entropy of fusion of the test cores, 170 J kg$^{-1}$ K$^{-1}$, and the finite-difference Jacobian of CVODE.
 
@@ -606,7 +607,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
 [^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
 [^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
-[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, 27-55, 2015.
-[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, 201-219, 2015.
+[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
+[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
 [^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
 [^cite-wolf2018]: Wolf, A.S. & Bower, D.J., *[An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO$_3$ melt](https://doi.org/10.1016/j.pepi.2018.02.004)*, Physics of the Earth and Planetary Interiors, 278, 59-74, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..278...59W/abstract).

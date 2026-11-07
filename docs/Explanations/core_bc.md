@@ -346,7 +346,7 @@ In aragog `SolverOutput`, the per-call core energy change is recorded in `step_d
 
 ## Energy conservation and core closure
 
-The core ledger checks one balance per call: the heat the core loses equals the heat that crosses the core-mantle boundary (CMB). From `SolverOutput`, the core closure residual of a call compares the heat change of the core with the CMB heat transport:
+The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the core-mantle boundary (CMB). From `SolverOutput`, the core closure residual of a call compares the heat change of the core with the CMB heat transport:
 
 $$
 r_\text{core} = \frac{|\Delta E_\text{core} + \Delta E_\text{cmb} - Q_R\, \Delta t|}{\max(|\Delta E_\text{core}|, |\Delta E_\text{cmb}|)}
@@ -354,12 +354,15 @@ $$
 
 where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$.
 
-The solver keeps this residual small in 4 steps:
+The solver books the core heat change of a call in 2 steps:
 
 1. It integrates the core temperature as its change over the call. The state is offset by its value at the start of the call, so the solver tolerance acts on that change, not on the absolute temperature. The shell temperatures of a stratified core are integrated in the same way.
 2. It books the core heat change of a call, $\int \tilde{C}\, dT_\text{cmb}$, from this integrated change of the core temperature. It does not book it as the difference of 2 heat contents or 2 temperatures (see the note below).
-3. Without stratification, the change is the closed form of the integral (`CoreEnergyBudget.heat_change`). It uses 48-point Gauss-Legendre quadrature in $u = \sqrt{T_\text{onset} - T_\text{cmb}}$ on each side of freeze-out. This substitution removes the square-root cusp at nucleation.
-4. With `stratification = true`, the capacity also depends on the layer base. The integral is then a trapezoid rule over the nodes of the energy trace (every accepted step). Where nucleation falls inside a call, this rule does not resolve the square-root cusp of the latent and gravitational terms as the closed form does. The shell adds $c_p \sum_j m_j\, \Delta T_j$ of its cells (`CoreShell.heat_change`).
+
+The integral takes one of 2 forms:
+
+- Without stratification, it is the closed form of the integral (`CoreEnergyBudget.heat_change`). It uses 48-point Gauss-Legendre quadrature in $u = \sqrt{T_\text{onset} - T_\text{cmb}}$ on each side of freeze-out. This substitution removes the square-root cusp at nucleation.
+- With `stratification = true`, the capacity also depends on the layer base. The integral is then a trapezoid rule over the nodes of the energy trace (every accepted step). The shell adds $c_p \sum_j m_j\, \Delta T_j$ of its cells (`CoreShell.heat_change`). A limit: where nucleation falls inside a call, this rule does not resolve the square-root cusp of the latent and gravitational terms as the closed form does.
 
 ??? note "Why not the difference of 2 heat contents"
     A heat content near $10^{31}$ J has a float spacing near $10^{15}$ J. A temperature near 5000 K has a float spacing of $9 \times 10^{-13}$ K. Times $\tilde{C}$, that spacing is about $8 \times 10^{14}$ to $7 \times 10^{15}$ J. Here $\tilde{C}$ is $9 \times 10^{26}$ to $8 \times 10^{27}$ J/K for the core profiles of the tests, with the upper end for an Earth-size core near freeze-out. Either rounding can exceed the CMB heat of a short call.
@@ -376,6 +379,6 @@ The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along t
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
 [^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
 [^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
-[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, 27-55, 2015.
-[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, 201-219, 2015.
+[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
+[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
 [^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
