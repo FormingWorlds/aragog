@@ -60,7 +60,7 @@ jobs:
 
       - name: Check out the merge commit of the pull request
         if: steps.gate.outputs.run == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: ${{ steps.gate.outputs.sha }}
           fetch-depth: 2
@@ -68,7 +68,7 @@ jobs:
 
       - name: Set up Python
         if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: '3.12'
 
@@ -133,7 +133,7 @@ jobs:
       - name: Review the pull request
         id: claude
         if: steps.gate.outputs.run == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe  # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
