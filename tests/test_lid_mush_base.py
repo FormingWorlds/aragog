@@ -92,6 +92,9 @@ def test_floor_flux_constant_diffusivity_hand_value():
     h, delta = 2000.0, 400.0
     want = 3000.0 * 1500.0 * 2.0 * 7.0 / (0.5 * (h - delta))
     assert sl.floor_flux(Phi, h, delta) == pytest.approx(want, rel=1e-14)
+    # a lid that fills the cell keeps a fluid width of 1 mm, so the flux stays finite
+    for d in (h + 5.0, h):
+        assert sl.floor_flux(Phi, h, d) == pytest.approx(Phi / (0.5 * 1.0e-3), rel=1e-14)
 
 
 @pytest.mark.unit
