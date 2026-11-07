@@ -71,6 +71,9 @@ def test_floor_weight_rises_from_1_to_6_j_per_kg_k_above_the_solidus():
     assert sl.floor_weight(S_sol + 1.0, S_sol) == 0.0
     assert sl.floor_weight(S_sol + 1.05, S_sol) > 0.0
     assert sl.floor_weight(S_sol + 3.5, S_sol) == pytest.approx(0.5, abs=1e-14)
+    assert sl.floor_weight(S_sol + 2.25, S_sol) == pytest.approx(
+        0.103515625, abs=1e-14
+    )  # x = 0.25
     assert sl.floor_weight(S_sol + 5.95, S_sol) < 1.0
     assert sl.floor_weight(S_sol + 6.0, S_sol) == 1.0
 
@@ -264,6 +267,8 @@ class TestSolver:
         assert s._lid_root_value(0.0, y) == -1.0
 
     def test_short_run_closes_energy_and_keeps_the_floor(self, eos):
+        """A short mush-base run closes its energy budget and its top cell stays above the
+        solidus; the hold at the floor itself is tested by the blend tests at g = 0."""
         s = _solver(eos, end=5.0)
         s.solve()
         sol = s._solution
