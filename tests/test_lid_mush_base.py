@@ -20,11 +20,35 @@ from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_e
 pytestmark = pytest.mark.timeout(900)
 
 
-def _solver(eos, S0=3050.0, end=1.0, mush=True, rheo=None, n_nodes=10, kappah_floor=None, **bc):
+def _solver(
+    eos,
+    S0=3050.0,
+    end=1.0,
+    mush=True,
+    rheo=None,
+    n_nodes=10,
+    kappah_floor=None,
+    outer=1,
+    F_atm=1500.0,
+    thin=False,
+    **bc,
+):
+    """A solver with the sub-grid lid on outer boundary ``outer`` (value ``F_atm``); ``bc`` sets
+    boundary fields before normalisation, ``thin`` gives a shell with a thin top cell."""
     from aragog.parser import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
-    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=n_nodes, end_time=end)
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=outer,
+        inner_bc=2,
+        n_nodes=n_nodes,
+        end_time=end,
+        outer_bc_value=F_atm,
+    )
+    if thin:  # a shell with a thin top cell, where the floor flux reaches a partial lid weight
+        p.mesh.inner_radius = 6.346e6
+        p.energy.convection = True
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.lid_mush_base = mush
     for name, value in bc.items():
@@ -221,7 +245,8 @@ class TestSolver:
         s._check_lid_step(s._lid_delta_lo, 3, 1.0)
 
     def test_the_solve_watches_the_hand_over_without_the_lid_closure(self, eos, monkeypatch):
-        """With the 'local' stress closure the mush base still installs the hand-over root."""
+        """With the 'local' stress closure the mush base installs the hand-over root at 0.7 of
+        the top cell, and a root that crosses zero hands the lid over at the crossing."""
         s = _solver(eos)
         assert not s._lid_handover_armed()
         calls = []
@@ -230,6 +255,15 @@ class TestSolver:
         s.solve()
         assert s._solution.status == 0
         assert len(calls) > 0
+        y_end, h = s._solution.y[:, -1], s._lid_h_top
+        assert root(1.0, y_end) == pytest.approx((y_end[-2] - 0.7 * h) / h, rel=1e-12)
+        s = _solver(eos)
+        monkeypatch.setattr(
+            s, '_lid_root_value', lambda t, y: -1.0 if y[-2] == 0.0 else (t - 0.4) / 0.4
+        )
+        s.solve()
+        assert s.get_state().lid_handover_time == pytest.approx(0.4, rel=1e-6)
+        assert np.all(s._solution.y[-2:, -1] == 0.0) and s._solution.y[-2, 0] > 0.0
 
     def test_the_onset_thickness_must_lie_below_the_hand_over(self, eos):
         """With the mush base an onset thickness at or above 0.7 of the top cell is refused at
@@ -426,27 +460,7 @@ class TestFluxSolver:
         return entropy_eos_copy(EOS_DIR)
 
     def _s(self, eos, F_atm=200.0, end=1.0, S0=None):
-        from aragog.parser import SolidRheologyParams
-        from aragog.solver.entropy_solver import EntropySolver
-
-        p = _build(
-            core_bc='quasi_steady',
-            outer_bc=4,
-            inner_bc=2,
-            n_nodes=10,
-            end_time=end,
-            outer_bc_value=F_atm,
-        )
-        p.boundary_conditions.subgrid_lid = True
-        p.boundary_conditions.lid_mush_base = True
-        p.boundary_conditions.normalize()
-        p.phase_solid.rheology = SolidRheologyParams(
-            enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
-        )
-        s = EntropySolver(p, entropy_eos=eos)
-        s.initialize()
-        s.set_initial_entropy(3050.0 if S0 is None else S0)
-        return s
+        return _solver(eos, S0=3050.0 if S0 is None else S0, end=end, outer=4, F_atm=F_atm)
 
     @pytest.mark.parametrize('F_atm', [0.0, -50.0])
     def test_the_phantom_start_keeps_a_drop_below_the_base(self, eos, F_atm):
@@ -980,32 +994,16 @@ def test_lid_surface_flux_cap_needs_the_held_surface(C, bc, mush, T_held):
 
 
 def _held_solver(eos, T_held, F_atm=200.0, end=1.0, n_nodes=10, thin=False, cap=None):
-    from aragog.parser import SolidRheologyParams
-    from aragog.solver.entropy_solver import EntropySolver
-
-    p = _build(
-        core_bc='quasi_steady',
-        outer_bc=4,
-        inner_bc=2,
+    return _solver(
+        eos,
+        end=end,
         n_nodes=n_nodes,
-        end_time=end,
-        outer_bc_value=F_atm,
+        outer=4,
+        F_atm=F_atm,
+        thin=thin,
+        lid_surface_temperature=T_held,
+        lid_surface_flux_cap=cap,
     )
-    if thin:  # a shell with a thin top cell, where the floor flux reaches a partial lid weight
-        p.mesh.inner_radius = 6.346e6
-        p.energy.convection = True
-    p.boundary_conditions.subgrid_lid = True
-    p.boundary_conditions.lid_mush_base = True
-    p.boundary_conditions.lid_surface_temperature = T_held
-    p.boundary_conditions.lid_surface_flux_cap = cap
-    p.boundary_conditions.normalize()
-    p.phase_solid.rheology = SolidRheologyParams(
-        enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
-    )
-    s = EntropySolver(p, entropy_eos=eos)
-    s.initialize()
-    s.set_initial_entropy(3050.0)
-    return s
 
 
 @pytest.mark.smoke
