@@ -85,7 +85,10 @@ def test_floor_weight_limits_and_smoothness():
     for end, sign in ((lo, 1.0), (hi, -1.0)):
         y0 = sl.floor_weight(end, S_sol)
         y1 = sl.floor_weight(end + sign * h, S_sol)
+        y2 = sl.floor_weight(end + 2.0 * sign * h, S_sol)
         assert abs(y1 - y0) / h < 1e-6
+        # second difference: about 2e-4 for the quintic, 0.24 for a C1 cubic ramp
+        assert abs(y2 - 2.0 * y1 + y0) / h**2 < 1e-2
 
 
 @pytest.mark.unit
