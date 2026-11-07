@@ -496,14 +496,68 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
 
 
 class _FreezeOutAboveTheJump(CoreEnergyBudget):
-    """A budget whose T_freeze sits 3 floats above its own, 2 floats into the liquid capacity."""
+    """A synthetic budget whose T_freeze sits ``shift`` floats above its own (3: 2 floats into the
+    liquid capacity); no melting curve probed puts the jump below T_freeze."""
+
+    shift = 3
 
     @property
     def t_freeze(self):
         t = super().t_freeze
-        for _ in range(3):
+        for _ in range(self.shift):
             t = float(np.nextafter(t, np.inf))
         return t
+
+
+class _FreezeOutFarAboveTheJump(_FreezeOutAboveTheJump):
+    shift = 20
+
+
+def _float_steps(t_ref, t):
+    """Signed number of floats from ``t_ref`` to ``t``."""
+    n, x = 0, t_ref
+    while x != t:
+        x = float(np.nextafter(x, t))
+        n += 1 if t > t_ref else -1
+    return n
+
+
+@pytest.mark.parametrize(
+    ('fraction', 'depression', 'budget_class', 'steps'),
+    [
+        (0.1, 1.2, CoreEnergyBudget, (0, 1)),
+        (0.05, 1.0, CoreEnergyBudget, (1, 2)),
+        (0.1, 1.2, _FreezeOutAboveTheJump, (-3, -2)),
+    ],
+)
+def test_the_freeze_out_edges_are_the_floats_of_the_capacity_jump(
+    prof, fraction, depression, budget_class, steps, caplog
+):
+    """The edges are the last float with zero latent and gravitational capacity and the first
+    with a positive one, 0 to 3 floats from T_freeze, found without a warning."""
+    curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
+    budget = budget_class(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    with caplog.at_level('WARNING', logger='fwl.aragog.core.budget'):
+        lo, hi = budget._freeze_out_edges
+    assert tuple(_float_steps(budget.t_freeze, t) for t in (lo, hi)) == steps
+    frozen, liquid = (float(v) for v in budget._boundary(jnp.asarray([lo, hi])))
+    assert frozen == 0.0 < liquid
+    assert not caplog.records
+
+
+def test_a_freeze_out_jump_outside_the_scan_is_reported(prof, caplog):
+    """A capacity jump more than 16 floats from T_freeze is outside the scan: the edges fall back
+    to T_freeze and the next float, and the budget says so."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = _FreezeOutFarAboveTheJump(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    with caplog.at_level('WARNING', logger='fwl.aragog.core.budget'):
+        lo, hi = budget._freeze_out_edges
+    assert (lo, hi) == (budget.t_freeze, float(np.nextafter(budget.t_freeze, np.inf)))
+    assert 'freeze-out' in caplog.text
 
 
 @pytest.mark.physics_invariant
@@ -533,7 +587,8 @@ def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(
     """A change of 1e-13 to 1e-10 K that crosses or starts at freeze-out books the capacity above
     and below it times the exact length on each side, to 1e-9, wherever the float jump of the
     capacity sits near T_freeze (1 or 2 floats above it for these curves, 2 below it for the
-    shifted budget): no quadrature node that rounds across the jump takes the other capacity."""
+    synthetic shifted budget): no quadrature node that rounds across the jump takes the other
+    capacity."""
     curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
     budget = budget_class(
         prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
