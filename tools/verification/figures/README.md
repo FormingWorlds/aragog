@@ -19,6 +19,8 @@ Each script is a self-contained verification of one numerical or physical aspect
 
 `sketch_core_module.py` is not a verification: it draws the schematic of the `core_module` core boundary condition for `docs/Explanations/core_bc.md`, in the light and the dark theme, to `docs/figures/core_module_sketch_{light,dark}.{png,pdf}`. It needs `proteus_mpl` (`pip install 'fwl-aragog[verification]'`).
 
+`sketch_alloy_liquidus.py` draws the schematic of the alloy liquidus for `docs/Explanations/core_alloy_liquidus.md`, in the light and the dark theme, to `docs/figures/alloy_liquidus_sketch_{light,dark}.svg`. Its curves come from `AlloyLiquidus` when it runs, and it refuses a figure where a text touches a curve, another text or the frame (`tests/test_alloy_liquidus_sketch.py`).
+
 ## Running
 
 All seven scripts depend on the production aragog environment (numpy, JAX, equinox, scipy; the JAX path uses `jax.config.update('jax_enable_x64', True)` so float64 is required):

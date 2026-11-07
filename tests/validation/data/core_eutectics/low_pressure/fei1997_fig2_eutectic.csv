@@ -1,0 +1,8 @@
+# source: Fei, Bertka & Finger 1997, Science 275, 1621-1623, doi:10.1126/science.275.5306.1621, Fig. 2 (Fe-FeS at 1 bar, 10 and 14 GPa); 1 bar written as 0 GPa
+# read A: native figure image; x fit 0.08114 wt% per px (residual max 0.041 wt%), y fits -3.556/-3.546/-3.543 C per px (residual max 0.59/0.71/1.33 C); T from the eutectic line (1 bar) or the eutectic liquid disc (10, 14 GPa); S from the liquidus branch crossing (1 bar) or the disc
+# read B: 600 dpi render; x residual max 0.035 wt%, y residual max 0.59/0.00/1.65 C; T from the eutectic line, S from the branch crossing (1 bar) or the disc (10 GPa; 14 GPa searched over 10-25 wt% S)
+# the shipped low-pressure nodes (aragog/core/eutectics/fe_s_low_pressure.csv) are the means of A and B
+P_GPa,T_C_readA,T_C_readB,S_wt%_readA,S_wt%_readB
+0,988.2,988.0,31.18,31.17
+10,914.0,915.5,20.58,20.56
+14,862.5,861.7,18.32,18.29

@@ -1,0 +1,17 @@
+# source: Chen, Li & Hauck 2008, GRL 35, L07201, doi:10.1029/2008GL033311, Fig. 1 (Fe-FeS at 10 and 14 GPa), Fe-rich liquidus points and pure Fe
+# read A: vector paths of the symbols (centres); axis fits from the ticks, residual max 0.33 K (T), 0.009 wt% (S)
+# read B: 600 dpi raster (figlab disc centres), residual max 1.02 K, 0.036 wt%; B discs within 0.5 wt% and 10 K of an A point averaged; empty where B has no disc
+P_GPa,kind,S_wt%_readA,T_K_readA,S_wt%_readB,T_K_readB
+10,liquid,7.046,1873.5,6.843,1875.1
+10,liquid,9.800,1773.1,9.904,1775.1
+10,liquid,11.996,1673.7,11.863,1670.8
+10,liquid,13.847,1573.3,13.574,1573.1
+10,liquid,16.927,1473.0,17.043,1474.8
+10,liquid,17.681,1373.3,17.562,1370.2
+10,liquid,19.030,1273.2,18.912,1270.4
+10,pure_Fe,0.002,2117.9,,
+14,liquid,2.774,1873.5,2.592,1872.7
+14,liquid,5.727,1722.9,5.793,1725.9
+14,liquid,12.621,1600.3,12.674,1601.9
+14,liquid,15.974,1399.9,15.966,1399.3
+14,pure_Fe,0.000,2203.3,,
