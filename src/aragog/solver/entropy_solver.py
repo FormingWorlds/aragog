@@ -980,6 +980,16 @@ _STATUS_DESCRIPTION = (
 )
 
 
+def _padded_call(fn, *arrays):
+    """``fn(*arrays)`` on arrays padded to a power-of-2 length with their last value, so a jitted
+    ``fn`` compiles once per size class; the result is cut back to the input length."""
+    n = len(arrays[0])
+    if n == 0:
+        return np.zeros(0)
+    m = 1 << (n - 1).bit_length()
+    return np.asarray(fn(*(np.pad(np.asarray(a), (0, m - n), 'edge') for a in arrays)))[:n]
+
+
 _ZERO_ENERGY_INTEGRALS = {
     'F_int': 0.0,
     'F_cmb': 0.0,
@@ -991,6 +1001,7 @@ _ZERO_ENERGY_INTEGRALS = {
     'solver_residual': 0.0,
     'state_heat': 0.0,
     'core': 0.0,
+    'core_tol': float('nan'),
 }
 
 
@@ -1206,6 +1217,7 @@ class SolverOutput:
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
+    step_core_tol_J: float = float('nan')  # tolerance scale of step_dE_core_J [J]; NaN: none
 
     # Sub-grid lid at the end of the call (NaN with the lid off; thickness and energy 0 after a
     # hand-over): thickness [m], energy [J/m^2], mean, surface and base temperature [K], weight
@@ -1388,6 +1400,13 @@ class SolverOutput:
                 'step_dE_F_cmb_J', self.step_dE_F_cmb_J, 'J', 'Per-call CMB heat-gain energy'
             )
             _scalar('step_dE_core_J', self.step_dE_core_J, 'J', 'Per-call core energy change')
+            _scalar(
+                'step_core_tol_J',
+                self.step_core_tol_J,
+                'J',
+                'Tolerance scale of the per-call core energy change',
+                fill_value_nan=True,
+            )
             _scalar(
                 'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
             )
@@ -4514,9 +4533,8 @@ class EntropySolver:
         trace: tuple[npt.NDArray, npt.NDArray],
         t_ref: float,
         state_scale: npt.NDArray,
-        state_offset: npt.NDArray | float = 0.0,
     ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Energy quadrature nodes in years and physical units, strictly increasing in time.
+        """Energy quadrature nodes in years and scaled states, strictly increasing in time.
 
         Distinct nondimensional times can round to the same year at large t; of each run of
         equal times the last node is kept, so the call's end state stays the last node. Nodes
@@ -4530,16 +4548,15 @@ class EntropySolver:
             Time scale [yr].
         state_scale : ndarray
             State scale per row (or scalar).
-        state_offset : ndarray or float
-            State offset per row (or scalar), added after the scale.
 
         Returns
         -------
         tuple of ndarray
-            Node times [yr] and node states in physical units.
+            Node times [yr] and node states times their scale, without the state offset: the
+            change from the call start of an offset row (add the offset for the state).
         """
         t = trace[0] * t_ref
-        y = trace[1] * np.reshape(state_scale, (-1, 1)) + np.reshape(state_offset, (-1, 1))
+        y = trace[1] * np.reshape(state_scale, (-1, 1))
         keep = np.append((np.diff(t) > 0) | (np.diff(trace[0]) == 0), True)
         return t[keep], y[:, keep]
 
@@ -5128,6 +5145,12 @@ class EntropySolver:
         # front and prevent cumulative integration error during long
         # solidification runs.
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
+        if self.parameters.solver.atol < 1.0e-8:
+            self._warn_once(
+                'atol_floor',
+                f'solver atol {self.parameters.solver.atol:.3e} is below the floor 1e-8; '
+                'it is raised to 1e-8 before the scale factors of the call',
+            )
         rtol = self.parameters.solver.rtol
 
         # Phase-aware atol: tight during crystallization, relaxed by 10 when fully solid
@@ -5365,6 +5388,7 @@ class EntropySolver:
         # 1.0 leaves behaviour unchanged for callers that don't set it.
         atol_sf_external = float(getattr(self, '_atol_sf', 1.0))
         atol = atol_base * atol_scale * atol_sf_external
+        self._call_tol = (atol, rtol)  # physical per-slot tolerances, for the core heat scale
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
@@ -5739,12 +5763,15 @@ class EntropySolver:
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:
-                sol.y = sol_y * _state_scale[:, np.newaxis] + _offset[:, np.newaxis]
+                sol.energy_change = sol_y * _state_scale[:, np.newaxis]
+                sol.y = sol.energy_change + _offset[:, np.newaxis]
             else:
                 sol.y = sol_y * _state_scale + _offset
         trace = sol.get('energy_trace')
         if trace is not None:
-            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
+            # the integrated temperatures without their start offset, for the core heat change
+            t_trace, sol.energy_change = self._physical_trace(trace, t_ref, _state_scale)
+            sol.energy_trace = (t_trace, sol.energy_change + np.reshape(_offset, (-1, 1)))
         # a handed-over lid (thickness 0) has energy 0, not the round-off of its offset
         if self._n_lid:
             for y in (sol.y, *(() if trace is None else sol.energy_trace[1:])):
@@ -5888,6 +5915,7 @@ class EntropySolver:
             keep[0] = True  # a failed call holds the states before the first one outside
             sol.t, sol.y = sol.t[keep], sol.y[:, keep]
             sol.pop('energy_trace', None)
+            sol.pop('energy_change', None)
             sol.status, sol.success, sol.cvode_flag_name = -1, False, 'EOS_TABLE_GUARD'
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
@@ -6152,41 +6180,25 @@ class EntropySolver:
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         # Core energy content change over the call [J] from closed-form C_eff.
-        step_dE_core = 0.0
+        step_dE_core, step_core_tol = 0.0, float('nan')
         y_arr = np.atleast_2d(y_pts)
         if core_bc == 'core_module' and getattr(self, '_core_module_budget', None) is not None:
-            budget = self._core_module_budget
-            t_core_traj = np.asarray(y_arr[n_stag + 1, :], dtype=float)
-            if not budget.stratification:
-                content = [float(budget.heat_content(t_core_traj[i])) for i in (0, -1)]
-                step_dE_core = content[1] - content[0]
-            else:
-                import jax
-
-                shell = budget.shell
-                t_shell_traj = np.asarray(
-                    y_arr[n_stag + 2 : n_stag + 2 + shell.n_cells, :], dtype=float
-                ).T
-                base = np.asarray(jax.vmap(shell.layer_base)(t_shell_traj, t_core_traj))
-
-                def c_eff(t, upper):
-                    return budget.effective_capacity(t, gravitational_upper=upper)
-
-                try:
-                    c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
-                    if c_eff_fn is None:
-                        c_eff_fn = jax.jit(jax.vmap(c_eff))
-                        budget._vmap_effective_capacity = c_eff_fn
-                    c_eff_vals = np.asarray(c_eff_fn(t_core_traj, base))
-                except Exception:
-                    c_eff_vals = np.array(
-                        [float(c_eff(*map(float, a))) for a in zip(t_core_traj, base)]
-                    )
-                dT_core = np.diff(t_core_traj)
-                step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
-                content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
-                step_dE_core += content[1] - content[0]
-                self._check_shell_base(budget, t_core_traj, base)
+            change = sol.get('energy_change')
+            d_arr = np.atleast_2d(change) if change is not None else None
+            if d_arr is None or d_arr.shape != y_arr.shape:
+                self._warn_once(
+                    'energy_change_fallback',
+                    f'EntropySolver: the call has {"no" if d_arr is None else "a mismatched"} '
+                    'energy_change; its core heat is booked from the states, to the float '
+                    'spacing of the absolute temperatures',
+                )
+                d_arr = y_arr
+            d_arr = d_arr - d_arr[:, :1]
+            step_dE_core, c_eff_vals = self._core_heat_change(
+                self._core_module_budget, y_arr, d_arr
+            )
+            if t_pts[-1] > t_pts[0]:  # a call that does not advance has no scale
+                step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -6210,7 +6222,76 @@ class EntropySolver:
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
             'core': step_dE_core,
+            'core_tol': step_core_tol,
         }
+
+    def _core_heat_change(self, budget, y_arr, d_arr) -> tuple[float, npt.NDArray]:
+        """Heat change [J] of the core over a call and C_eff [J/K] at its nodes.
+
+        Unstratified: the closed form :meth:`CoreEnergyBudget.heat_change` of the integrated
+        change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
+        c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
+        start as the solver integrates them: an absolute temperature holds a change only to its
+        float spacing, 4.5e-13 K below 4096 K and 9.1e-13 K above. C_eff of the test cores is
+        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset), 9.0e26 to
+        1.84e27 J/K for the exoplanet profile and 1.5e26 J/K for the convecting volume of the
+        stratified core with the default layer base above onset, so the spacing is about 1.4e14
+        to 8e15 J.
+
+        Parameters
+        ----------
+        budget : CoreEnergyBudget
+            Core energy budget of the call.
+        y_arr : ndarray, shape (n_state, n_nodes)
+            Node states in physical units.
+        d_arr : ndarray, shape (n_state, n_nodes)
+            Node state changes from the call start.
+
+        Returns
+        -------
+        tuple of (float, ndarray)
+            Heat change [J] and C_eff [J/K] at the nodes.
+        """
+        import jax
+
+        n = self._n_stag
+        t_core = np.asarray(y_arr[n + 1], dtype=float)
+        if budget.stratification:
+            shell = budget.shell
+            t_shell = np.asarray(y_arr[n + 2 : n + 2 + shell.n_cells], dtype=float).T
+            base = np.asarray(jax.vmap(shell.layer_base)(t_shell, t_core))
+
+            def c_eff(t, upper):
+                return budget.effective_capacity(t, gravitational_upper=upper)
+
+            try:
+                fn = getattr(budget, '_vmap_effective_capacity', None)
+                if fn is None:
+                    fn = budget._vmap_effective_capacity = jax.jit(jax.vmap(c_eff))
+                c_eff_vals = _padded_call(fn, t_core, base)
+            except Exception:
+                c_eff_vals = np.array([float(c_eff(*map(float, a))) for a in zip(t_core, base)])
+            self._check_shell_base(budget, t_core, base)
+            shell_heat = float(shell.heat_change(d_arr[n + 2 : n + 2 + shell.n_cells, -1]))
+            heat = np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * np.diff(d_arr[n + 1]))
+            return float(heat) + shell_heat, c_eff_vals
+        fn = getattr(budget, '_vmap_capacity', None)
+        if fn is None:
+            fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
+        return budget.heat_change(t_core[0], d_arr[n + 1, -1]), _padded_call(fn, t_core)
+
+    def _core_heat_tolerance(self, d_core, c_eff_vals) -> float:
+        """Error scale [J] of the core heat change of a call from the T_core error control.
+
+        T_core is integrated as its change within the call, so each node allows ``atol + rtol
+        |T - T_0|`` [K], from the changes ``d_core`` [K] of T_core along the call; the scale sums
+        that times C_eff over the nodes after the start. It is a
+        diagnostic, not a limit: CVODE controls a norm over all states, and the CMB heat it is
+        compared with is a trapezoid. NaN without the tolerances of the call.
+        """
+        atol, rtol = getattr(self, '_call_tol', (float('nan'), float('nan')))
+        tol_nodes = atol + rtol * np.abs(d_core[1:] - d_core[0])
+        return float(np.sum(np.asarray(c_eff_vals)[1:] * tol_nodes))
 
     def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
         """Staggered-node entropy of one solver state, in any state layout.
@@ -6915,6 +6996,7 @@ class EntropySolver:
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_core_J=step_integrals['core'],
+            step_core_tol_J=step_integrals['core_tol'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],

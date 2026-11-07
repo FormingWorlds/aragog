@@ -129,7 +129,7 @@ def test_the_default_config_is_bit_equal_to_margin_zero(shared_eos, method):
     b = _drained(shared_eos, S0, margin=0.0, method=method, end_time=1.0)[0]._solution
     assert a.status == b.status == 0 and a.energy_integrals['F_int'] != 0.0
     assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
-    assert a.energy_integrals == b.energy_integrals
+    np.testing.assert_equal(a.energy_integrals, b.energy_integrals)
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
@@ -322,7 +322,7 @@ def test_floor_on_and_off_are_bit_equal_when_it_does_not_fire(
     assert armed_on and armed_off is (phi_step_cap is not None)
     assert on.status == off.status == 0 and not getattr(on, 'cap_fired', False)
     assert np.array_equal(on.t, off.t) and np.array_equal(on.y, off.y)
-    assert on.energy_integrals == off.energy_integrals
+    np.testing.assert_equal(on.energy_integrals, off.energy_integrals)
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)

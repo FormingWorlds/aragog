@@ -978,9 +978,10 @@ def test_set_initial_entropy_core_module_with_and_without_mesh():
     assert s_c._S0[9] == pytest.approx(4500.0)
 
 
-def test_step_energy_stratified_core_module_and_fallback():
+def test_step_energy_stratified_core_module_and_fallback(caplog):
     """A stratified core books the convecting core's trapezoid of C_eff dT_c plus the change of
-    the shell's heat, on the compiled path and on the fallback."""
+    the shell's heat, on the compiled path and on the fallback; a result without the solver's
+    temperature changes is booked from the states and logged once."""
     from types import SimpleNamespace
 
     from scipy.optimize import OptimizeResult
@@ -1017,7 +1018,7 @@ def test_step_energy_stratified_core_module_and_fallback():
     s._solution, s.entropy_eos = sol, object()
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
-    s._stag_entropy = lambda y: y
+    s._stag_entropy, s._warned = (lambda y: y), set()
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
     s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
@@ -1029,13 +1030,71 @@ def test_step_energy_stratified_core_module_and_fallback():
     ]
     content = [float(shell.heat_content(t_shell[:, i])) for i in (0, 1)]
     expected = 0.5 * sum(capacity) * -100.0 + content[1] - content[0]
+    with caplog.at_level('WARNING'):
+        for _ in range(2):
+            assert s._compute_step_energy_integrals()['core'] == pytest.approx(
+                expected, rel=1e-10
+            )
+    assert [r.message for r in caplog.records if 'energy_change' in r.message][0].startswith(
+        'EntropySolver: the call has no energy_change'
+    )
+    assert sum('energy_change' in r.message for r in caplog.records) == 1
+    s._warned.clear()
+    sol.energy_change = sol.y[:, :1]
+    with caplog.at_level('WARNING'):
+        assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+    assert 'has a mismatched energy_change' in caplog.records[-1].message
+    # the booking takes changes relative to the first node, so a shifted change books the same
+    sol.energy_change = sol.y + 7.0
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+    del sol.energy_change
 
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
 
     budget._vmap_effective_capacity = fail_vmap
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_a_call_books_the_core_heat_from_energy_change_not_from_the_states():
+    """A 1e-9 K change of a core at 5000 K (float spacing 9.1e-13 K) is booked as C_eff x 1e-9 K to
+    1e-6 from energy_change taken relative to its first node; the states alone give the change to
+    4.4e-4 only, and an energy_change taken without its start value books its offset too."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(profiles, curve, ds_fusion=170.0, icn_width=10.0)
+    t0, d_t, offset = 5000.0, 1e-9, 2.0**-20
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [t0, t0 + d_t]]),
+        energy_change=np.array([[0.0, 0.0], [offset, offset + d_t]]),
+    )
+    assert abs((t0 + d_t) - t0 - d_t) > 1e-4 * d_t  # the states miss the change
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution, s.entropy_eos = sol, object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+    booked = s._compute_step_energy_integrals()['core']
+    assert booked == pytest.approx(float(budget.effective_capacity(t0)) * d_t, rel=1e-6)
 
 
 def test_check_shell_base_refuses_the_inner_core_and_warns_once(caplog):
@@ -1076,6 +1135,37 @@ def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
     out.to_netcdf(p)
     with nc.Dataset(p) as ds:
         assert float(ds['step_dE_core_J'][...]) == pytest.approx(out.step_dE_core_J)
+
+
+def test_the_core_heat_tolerance_sums_the_node_tolerances():
+    """step_core_tol_J: C_eff times atol + rtol |T - T_0| over the nodes after the start; the
+    start node, with a weight that would move the sum by 3e-3, is left out."""
+    from types import SimpleNamespace
+
+    from aragog.solver import entropy_solver as es
+
+    s = SimpleNamespace(_call_tol=(1.0e-6, 1.0e-4))
+    t_core = np.array([4000.0, 3999.0, 3990.0])
+    c_eff = np.array([1.0e28, 2.0e27, 3.0e27])
+    got = es.EntropySolver._core_heat_tolerance(s, t_core, c_eff)
+    nodes = 2.0e27 * (1.0e-6 + 1.0e-4) + 3.0e27 * (1.0e-6 + 1.0e-3)
+    assert got == pytest.approx(nodes, rel=1e-14)
+    assert abs(got - (nodes + 1.0e28 * 1.0e-6)) > 1e-3 * nodes
+
+
+def test_solver_output_to_netcdf_step_core_tol_J(tmp_path):
+    """SolverOutput.to_netcdf writes the tolerance scale of the core energy change in J."""
+    import dataclasses
+
+    import netCDF4 as nc
+
+    from tests.test_solver_output_netcdf import _make_output
+
+    out = dataclasses.replace(_make_output(), step_core_tol_J=3.25e19)
+    out.to_netcdf(tmp_path / 'test.nc')
+    with nc.Dataset(tmp_path / 'test.nc') as ds:
+        assert float(ds['step_core_tol_J'][...]) == pytest.approx(3.25e19, rel=1e-15)
+        assert ds['step_core_tol_J'].units == 'J'
 
 
 def test_get_current_core_temperature():
@@ -1190,7 +1280,7 @@ def test_step_dE_core_heating_across_onset():
     s.entropy_eos = object()
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
-    s._stag_entropy = lambda y: y
+    s._stag_entropy, s._warned = (lambda y: y), set()
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
     s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
@@ -1258,3 +1348,138 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
     budget = build_core_module_budget({}, r_cmb=3.48e6, p_cmb_fallback=136e9)
     with pytest.raises(ValueError, match='needs k_core'):
         budget.conducted_adiabatic_flow(3.48e6, 4500.0)
+
+
+@pytest.mark.parametrize('n_nodes', [1, 2, 3, 4, 6, 10])
+def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
+    """Without stratification the capacity at the nodes comes from a jit over a power-of-2 padded
+    array and equals a plain loop for every node count, also for a trace of the start alone, in
+    the 64-bit JAX that a real core budget sets on import; the heat change is the budget's
+    heat_change of the integrated T_core change at the end."""
+    from types import SimpleNamespace
+
+    import jax
+
+    import aragog.core.budget  # noqa: F401
+    from aragog.solver import entropy_solver as es
+
+    assert jax.config.jax_enable_x64
+
+    class Budget:
+        stratification = False
+
+        @staticmethod
+        def effective_capacity(t):
+            return 2.0e27 + 1.0e24 * (t - 4000.0)
+
+        @staticmethod
+        def heat_change(t0, dt):
+            return (2.0e27 + 1.0e24 * (t0 - 4000.0 + 0.5 * dt)) * dt
+
+    s = SimpleNamespace(_n_stag=0)
+    t_core = 4000.0 - np.arange(n_nodes) ** 1.5
+    change = t_core - t_core[0] + 1e-9 * np.arange(n_nodes)
+    y = np.vstack([np.zeros(n_nodes), t_core])
+    d = np.vstack([np.zeros(n_nodes), change])
+    heat, c_eff = es.EntropySolver._core_heat_change(s, Budget(), y, d)
+    loop = [Budget.effective_capacity(t) for t in t_core]
+    np.testing.assert_allclose(c_eff, loop, rtol=1e-13)
+    exact = Budget.heat_change(t_core[0], change[-1])
+    assert heat == pytest.approx(exact, rel=1e-13, abs=0.0)
+
+
+def test_a_stratified_call_below_onset_books_the_trapezoid_of_a_varying_capacity():
+    """Below onset with an inner core inside the shell base, C_eff of a stratified core changes
+    by about 60 % over 5 K; the core heat is the trapezoid of C_eff over the temperature changes
+    plus c_p sum m dT of the shell, which a one-sided rule misses."""
+    import functools
+    from types import SimpleNamespace
+
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+    from aragog.solver import entropy_solver as es
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        profiles,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=130.0,
+        layer={'n_cells': 4},
+    )
+    shell = budget.shell
+    t_core = budget.t_onset - np.array([2.0, 4.5, 7.0])
+    t_shell = np.column_stack([shell.adiabatic_profile(t) for t in t_core])
+    y = np.vstack([np.zeros(3), t_core, t_shell])
+    s = SimpleNamespace(_n_stag=0)
+    s._check_shell_base = functools.partial(es.EntropySolver._check_shell_base, s)
+    heat, c_eff = es.EntropySolver._core_heat_change(s, budget, y, y - y[:, :1])
+    cap = np.array(
+        [
+            float(
+                budget.effective_capacity(
+                    t, gravitational_upper=shell.layer_base(t_shell[:, i], t)
+                )
+            )
+            for i, t in enumerate(t_core)
+        ]
+    )
+    np.testing.assert_allclose(c_eff, cap, rtol=1e-12)
+    assert cap[-1] / cap[0] - 1.0 > 0.5
+    d_shell = t_shell[:, -1] - t_shell[:, 0]
+    sensible = profiles.c_p * float(np.sum(np.asarray(shell.mass) * d_shell))
+    trapezoid = float(np.sum(0.5 * (cap[:-1] + cap[1:]) * np.diff(t_core)))
+    assert heat == pytest.approx(trapezoid + sensible, rel=1e-12)
+    left = float(np.sum(cap[:-1] * np.diff(t_core))) + sensible
+    assert abs(left / heat - 1.0) > 0.02
+
+
+def test_without_call_tolerances_the_scale_is_nan():
+    """A scale needs the tolerances of the call; without them it is NaN, not round-off."""
+    from types import SimpleNamespace
+
+    from aragog.solver import entropy_solver as es
+
+    t_core = np.array([4000.0, 3999.0])
+    got = es.EntropySolver._core_heat_tolerance(
+        SimpleNamespace(), t_core, np.array([1.0e27, 1.0e27])
+    )
+    assert np.isnan(got)
+
+
+@pytest.mark.parametrize(
+    ('n_nodes', 'padded'), [(0, None), (1, 1), (2, 2), (3, 4), (5, 8), (8, 8), (9, 16)]
+)
+def test_the_padded_call_pads_to_a_power_of_2_and_keeps_each_value(n_nodes, padded):
+    """_padded_call hands fn every array unchanged in its first entries and padded with its own
+    last value to the next power of 2 (none for an empty trace), and returns fn's values at the
+    input positions, for 2 non-monotone arrays as in the stratified call."""
+    from aragog.solver import entropy_solver as es
+
+    seen = []
+
+    def fn(a, b):
+        seen.append((np.array(a), np.array(b)))
+        return a * b + np.arange(len(a))
+
+    a = np.array([5.0, 1.0, 9.0, 2.0, 7.0, 3.0, 8.0, 4.0, 6.0])[:n_nodes]
+    b = np.array([0.5, 3.0, 1.5, 4.0, 2.5, 0.25, 3.5, 1.0, 2.0])[:n_nodes]
+    got = es._padded_call(fn, a, b)
+    np.testing.assert_array_equal(got, a * b + np.arange(n_nodes))
+    if padded is None:
+        assert seen == []
+        return
+    ((pa, pb),) = seen
+    assert len(pa) == len(pb) == padded
+    np.testing.assert_array_equal(pa[:n_nodes], a)
+    np.testing.assert_array_equal(pb[:n_nodes], b)
+    assert np.all(pa[n_nodes:] == a[-1]) and np.all(pb[n_nodes:] == b[-1])

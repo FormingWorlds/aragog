@@ -409,3 +409,212 @@ def test_heat_content_difference_is_the_capacity_integral(prof):
     assert legacy.heat_content(4000.0) == pytest.approx(
         4000.0 * float(legacy.secular_capacity())
     )
+
+
+@pytest.mark.physics_invariant
+def test_heat_change_is_the_content_difference_without_its_round_off(prof):
+    """heat_change(T0, dT) equals heat_content(T0 + dT) - heat_content(T0) above, across and
+    below nucleation onset and across freeze-out (1e-10), and books a 1e-12 K change as
+    C_eff(T0) dT above and below onset, where the difference of 2 contents of about 1e30 J is a
+    whole multiple of their float spacing."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = budget.t_onset, budget.t_freeze
+    for t0, dt in (
+        (t_on + 200.0, -150.0),
+        (t_on + 50.0, -150.0),
+        (t_on - 40.0, -50.0),
+        (t_on - 100.0, t_fr - 30.0 - t_on + 100.0),
+    ):
+        diff = budget.heat_content(t0 + dt) - budget.heat_content(t0)
+        assert budget.heat_change(t0, dt) == pytest.approx(diff, rel=1e-10)
+    for t0 in (t_on + 10.0, t_on - 40.0):
+        exact = -1e-12 * float(budget.effective_capacity(t0))
+        assert budget.heat_change(t0, -1e-12) == pytest.approx(exact, rel=1e-6)
+        spacing = np.spacing(budget.heat_content(t0))
+        dt = -0.3 * spacing / float(budget.effective_capacity(t0))
+        rounded = budget.heat_content(t0 + dt) - budget.heat_content(t0)
+        assert abs(rounded + 0.3 * spacing) >= 0.25 * spacing
+        assert budget.heat_change(t0, dt) == pytest.approx(-0.3 * spacing, rel=1e-6)
+
+
+@pytest.mark.physics_invariant
+def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, monkeypatch):
+    """heat_change also books a heating call and calls from far above freeze-out to below it
+    (to 1e-10 against the contents, which share their panel below freeze-out; a heating from
+    below freeze-out to below onset checks the second piece), a 1e-12 K heating as C_eff dT, and
+    a 2**-29 K change that starts 2**-31 K above freeze-out as the capacities on its 2 sides
+    times their lengths, to 1e-12; a legacy budget gives C_sec dT, a stratified one refuses, a
+    non-finite start or change gives NaN, and above onset the change is the secular term without
+    the quadrature."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = budget.t_onset, budget.t_freeze
+    for t0, dt in (
+        (t_on - 40.0, 30.0),
+        (t_on - 30.0, 60.0),
+        (t_fr - 30.0, t_on - t_fr + 80.0),
+        (8000.0, -4400.0),
+        (20000.0, -18000.0),
+        (t_fr - 30.0, 60.0),
+    ):
+        diff = budget.heat_content(t0 + dt) - budget.heat_content(t0)
+        assert budget.heat_change(t0, dt) == pytest.approx(diff, rel=1e-10)
+    for t0 in (t_on + 10.0, t_on - 40.0):
+        exact = 1e-12 * float(budget.effective_capacity(t0))
+        assert budget.heat_change(t0, 1e-12) == pytest.approx(exact, rel=1e-6)
+    h = 2.0**-30
+    above, below = (float(budget.effective_capacity(t_fr + x)) for x in (h / 4, -0.75 * h))
+    expected = -0.5 * h * above - 1.5 * h * below
+    assert budget.heat_change(t_fr + 0.5 * h, -2.0 * h) == pytest.approx(expected, rel=1e-12)
+    legacy = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        capacity_mode='legacy',
+        legacy_rho_core=11000.0,
+        legacy_tfac=1.1,
+    )
+    assert legacy.heat_change(t_on - 40.0, -5.0) == -5.0 * float(legacy.secular_capacity())
+    stratified = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, stratification=True, k_core=40.0
+    )
+    with pytest.raises(ValueError, match='stratified'):
+        stratified.heat_change(t_on, -1.0)
+    for b, t0, dt in ((budget, np.nan, -1.0), (budget, t_on, np.nan), (legacy, np.inf, -1.0)):
+        assert np.isnan(b.heat_change(t0, dt))
+
+    monkeypatch.setattr(
+        budget, '_released_panel', lambda *a, **k: pytest.fail('quadrature called above onset')
+    )
+    assert budget.heat_change(t_on + 200.0, -1.0) == -1.0 * float(budget.secular_capacity())
+
+
+class _FreezeOutAboveTheJump(CoreEnergyBudget):
+    """A synthetic budget whose T_freeze sits ``shift`` floats above its own (3: 2 floats into the
+    liquid capacity); no melting curve probed puts the jump below T_freeze."""
+
+    shift = 3
+
+    @property
+    def t_freeze(self):
+        t = super().t_freeze
+        for _ in range(self.shift):
+            t = float(np.nextafter(t, np.inf))
+        return t
+
+
+class _FreezeOutFarAboveTheJump(_FreezeOutAboveTheJump):
+    shift = 20
+
+
+def _float_steps(t_ref, t):
+    """Signed number of floats from ``t_ref`` to ``t``."""
+    n, x = 0, t_ref
+    while x != t:
+        x = float(np.nextafter(x, t))
+        n += 1 if t > t_ref else -1
+    return n
+
+
+@pytest.mark.parametrize(
+    ('fraction', 'depression', 'budget_class', 'steps'),
+    [
+        (0.1, 1.2, CoreEnergyBudget, (0, 1)),
+        (0.05, 1.0, CoreEnergyBudget, (1, 2)),
+        (0.1, 1.2, _FreezeOutAboveTheJump, (-3, -2)),
+    ],
+)
+def test_the_freeze_out_edges_are_the_floats_of_the_capacity_jump(
+    prof, fraction, depression, budget_class, steps, caplog
+):
+    """The edges are the last float with zero latent and gravitational capacity and the first
+    with a positive one, 0 to 3 floats from T_freeze, found without a warning."""
+    curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
+    budget = budget_class(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    with caplog.at_level('WARNING', logger='fwl.aragog.core.budget'):
+        lo, hi = budget._freeze_out_edges
+    assert tuple(_float_steps(budget.t_freeze, t) for t in (lo, hi)) == steps
+    frozen, liquid = (float(v) for v in budget._boundary(jnp.asarray([lo, hi])))
+    assert frozen == 0.0 < liquid
+    assert not caplog.records
+
+
+def test_a_freeze_out_jump_outside_the_scan_is_reported(prof, caplog):
+    """A capacity jump more than 16 floats from T_freeze is outside the scan: the edges fall back
+    to T_freeze and the next float, and the budget says so."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = _FreezeOutFarAboveTheJump(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    with caplog.at_level('WARNING', logger='fwl.aragog.core.budget'):
+        lo, hi = budget._freeze_out_edges
+    assert (lo, hi) == (budget.t_freeze, float(np.nextafter(budget.t_freeze, np.inf)))
+    assert 'freeze-out' in caplog.text
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('offset', 'd_t'),
+    [
+        (0.5e-10, -1e-10),
+        (-0.5e-10, 1e-10),
+        (1e-12, -1e-10),
+        (0.5e-12, -1e-12),
+        (0.0, 1e-10),
+        (0.0, 1e-13),
+        (-1e-12, 1e-12),
+    ],
+)
+@pytest.mark.parametrize(
+    ('fraction', 'depression', 'budget_class'),
+    [
+        (0.1, 1.2, CoreEnergyBudget),
+        (0.05, 1.0, CoreEnergyBudget),
+        (0.1, 1.2, _FreezeOutAboveTheJump),
+    ],
+)
+def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(
+    prof, offset, d_t, fraction, depression, budget_class
+):
+    """A change of 1e-13 to 1e-10 K that crosses or starts at freeze-out books the capacity above
+    and below it times the exact length on each side, to 1e-9, wherever the float jump of the
+    capacity sits near T_freeze (1 or 2 floats above it for these curves, 2 below it for the
+    synthetic shifted budget): no quadrature node that rounds across the jump takes the other
+    capacity."""
+    curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
+    budget = budget_class(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_fr = budget.t_freeze
+    t0 = t_fr + offset
+    liquid, frozen = (float(budget.effective_capacity(t_fr + x)) for x in (1e-9, -1e-9))
+    assert liquid > 1.5 * frozen
+    above = t0 - t_fr if d_t < 0.0 else d_t - (t_fr - t0)
+    expected = np.sign(d_t) * (liquid * above + frozen * (abs(d_t) - above))
+    assert budget.heat_change(t0, d_t) == pytest.approx(expected, rel=1e-9)
+
+
+@pytest.mark.parametrize('k', [0.25, 0.5, 1.0])
+@pytest.mark.parametrize('side', [-1.0, 1.0])
+def test_heat_change_splits_a_crossing_below_the_spacing_of_the_subcooling(prof, k, side):
+    """A step from 1 float beside freeze-out that crosses it by k float spacings of T_onset -
+    T_freeze (below the spacing of the subcooling, which rounds to its freeze-out value) books
+    the same change as the explicit split at T_freeze, heating and cooling, to 1e-12."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_fr = budget.t_freeze
+    t0 = np.nextafter(t_fr, -side * np.inf)
+    d_fr = t_fr - t0
+    d_t = d_fr + side * k * np.spacing(budget.t_onset - t_fr)
+    split = budget.heat_change(t0, d_fr) + budget.heat_change(t_fr, d_t - d_fr)
+    assert budget.heat_change(t0, d_t) == pytest.approx(split, rel=1e-12)

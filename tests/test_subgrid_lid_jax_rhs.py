@@ -710,7 +710,9 @@ def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(end, past, re
         calls = s._batch_powers_calls
         s._compute_step_energy_integrals()
         assert s._batch_powers_calls > calls
-        assert all(math.isfinite(v) for v in sol.energy_integrals.values())
+        ints = sol.energy_integrals
+        assert all(math.isfinite(v) for k, v in ints.items() if k != 'core_tol')
+        assert math.isnan(ints['core_tol'])  # no core tolerance scale outside core_module
 
 
 def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
