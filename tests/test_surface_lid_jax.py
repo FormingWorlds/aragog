@@ -333,3 +333,77 @@ def test_capped_surface_state_matches_numpy_near_the_switch(name, s0):
         )  # fmt: skip
         np.testing.assert_allclose(float(got[2]), want.q_b, rtol=1e-9, err_msg=f'q_b at {eps}')
         np.testing.assert_allclose(float(got[1]), want.F_s, rtol=1e-9, err_msg=f'F_s at {eps}')
+
+
+@pytest.mark.parametrize('name', ['identity', 'kinked'])
+@pytest.mark.parametrize('Fp', [1.0, 30.0, 300.0])
+def test_robin_surface_state_matches_numpy(name, Fp):
+    """With the held surface, the cap and a slope F', the JAX surface equals the NumPy Robin state
+    where the held flux exceeds the cap, and the held state where it does not: q_b and F_s to
+    relative 1e-9, and F_s = C + F' (T_s - T_held) on the capped side."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    hv = _enthalpies()[name]
+    e = jl.enthalpy(hv)
+    delta, T_b, k, T_held, floor = 0.1733, 1440.62788, 4.0, 992.744, sl.LID_DELTA_FLOOR
+    E = delta * hv.profile_heat(0.3, T_held, T_b)
+    held = sl.fixed_surface_state(delta, E, T_b, k, T_held, floor, hv)
+    for eps in (-50.0, -1.0, 1.0):
+        cap = held.F_s + eps
+        if held.F_s <= cap:
+            want = held
+        else:
+            want = sl.robin_surface_state(delta, E, T_b, k, cap, Fp, T_held, floor, hv)
+        got = jl.surface_state(
+            delta, E, T_b, k, 1.0, 0.0, floor, e,
+            flux=1.0, F_atm=0.0, held=1.0, T_held=T_held, capped=1.0, cap=cap, slope=Fp,
+        )  # fmt: skip
+        np.testing.assert_allclose(float(got[2]), want.q_b, rtol=1e-9, err_msg=f'q_b at {eps}')
+        np.testing.assert_allclose(float(got[1]), want.F_s, rtol=1e-9, err_msg=f'F_s at {eps}')
+        if eps < 0.0:
+            assert float(got[0]) > T_held
+            np.testing.assert_allclose(
+                float(got[1]), cap + Fp * (float(got[0]) - T_held), rtol=1e-9
+            )
+
+
+def test_floor_weight_matches_numpy():
+    """The JAX floor weight equals the NumPy quintic ramp across and beyond the ramp."""
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    S_sol = 1000.0
+    for dS in np.linspace(-2.0, 8.0, 41):
+        assert float(jl.floor_weight(S_sol + dS, S_sol)) == pytest.approx(
+            sl.floor_weight(S_sol + dS, S_sol), rel=1e-14, abs=1e-15
+        )
+
+
+def test_mush_base_flux_matches_numpy():
+    """The JAX mush base flux equals the NumPy one with the flux from below scaled by the face
+    areas and the floor weight of the NumPy ramp, across the ramp."""
+    from types import SimpleNamespace
+
+    from aragog import surface_lid as sl
+    from aragog.jax import surface_lid as jl
+
+    S_sol = 1000.0
+    S = S_sol + np.array([0.0, 1.0, 2.0, 4.0, 6.0, 10.0])
+    Phi = np.array([0.0, 2.0e4, 6.0e4, 1.5e5, 2.6e5, 5.0e5])
+    phi_k = jl.enthalpy(sl.LidEnthalpy.table(S, Phi, np.zeros(S.size)))
+    lp = SimpleNamespace(phi_k=phi_k, h_top=500.0, area=1.0, area_below=0.98, S_sol=S_sol)
+    delta, F_in, q_conv = 2.0, 300.0, 40.0
+    for dS in (0.5, 1.0, 2.0, 3.5, 5.0, 6.0, 8.0):
+        S_f = S_sol + dS
+        Phi_f = float(jl.enthalpy_H(phi_k, S_f))
+        want = sl.mush_base_flux(
+            Phi_f,
+            lp.h_top,
+            delta,
+            F_in * lp.area_below / lp.area,
+            sl.floor_weight(S_f, S_sol),
+            q_conv,
+        )
+        got = float(jl.mush_base_flux(lp, S_f, delta, F_in, q_conv))
+        assert got == pytest.approx(want, rel=1e-12), dS
