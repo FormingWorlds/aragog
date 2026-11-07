@@ -6197,7 +6197,8 @@ class EntropySolver:
             step_dE_core, c_eff_vals = self._core_heat_change(
                 self._core_module_budget, y_arr, d_arr
             )
-            step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
+            if t_pts[-1] > t_pts[0]:  # a call that does not advance has no scale
+                step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:

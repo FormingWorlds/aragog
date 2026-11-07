@@ -461,8 +461,8 @@ class CoreEnergyBudget:
         if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
         pieces = [(t0, dt)]
-        if min(s0, s1) < self.t_onset - self.t_freeze < max(s0, s1):
-            d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
+        d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
+        if min(0.0, dt) < d_freeze < max(0.0, dt):  # on the changes: the subcooling rounds
             pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
         released = 0.0
         for t_a, d_a in pieces:
