@@ -1,10 +1,12 @@
 # The melting point of a core alloy
 
-This tutorial computes the liquidus of an iron alloy with light elements at core pressures with `aragog.core.AlloyLiquidus`: the eutectic points of the 3 binaries that lower the melting point, the liquidus of a mixed alloy, its slope, and the flags that mark extrapolated pressures and compositions past the eutectic. [The core alloy liquidus](../Explanations/core_alloy_liquidus.md) explains the model and [its validation](../Validation/core_alloy_liquidus.md) the checks against the source papers. The code needs no EOS tables.
+This tutorial computes the liquidus of an iron alloy with light elements at core pressures, with `aragog.core.AlloyLiquidus`. You need an installed aragog and nothing else: the code needs no EOS tables.
+
+The liquidus is the temperature at which a melt of a given composition starts to freeze. The steps show the eutectic points of the 3 binaries that lower the melting point, the liquidus of a mixed alloy and its slope. They also show the flags that mark extrapolated pressures and compositions past the eutectic. [The core alloy liquidus](../Explanations/core_alloy_liquidus.md) explains the model, and [its validation](../Validation/core_alloy_liquidus.md) shows the checks against the source papers.
 
 ## 1. The eutectic points
 
-Each Fe-X binary has a eutectic temperature and composition at every pressure. At 135 GPa, near the core-mantle boundary of the Earth:
+This step prints the eutectic point of each binary at 135 GPa, near the core-mantle boundary of the Earth. A binary is iron with one light element X, written Fe-X. Its eutectic is the composition that melts at the lowest temperature. Each Fe-X binary has a eutectic temperature and composition at every pressure.
 
 ```python
 from aragog.core import AlloyLiquidus, IronMeltingCurve, eutectic
@@ -20,9 +22,11 @@ Fe-C eutectic at 135 GPa: 2997 K, 3.77 wt% C
 Fe-O eutectic at 135 GPa: 3180 K, 12.45 wt% O
 ```
 
+The unit wt% is percent by mass. At this pressure the Fe-S eutectic is the coldest of the 3 binaries.
+
 ## 2. The liquidus of a mixed alloy
 
-An alloy with 2 wt% S, 0.5 wt% C, 3 wt% O and 4 wt% Si melts below pure iron. Si lowers no melting point; its atoms count with the iron.
+This step shows that an alloy with 2 wt% S, 0.5 wt% C, 3 wt% O and 4 wt% Si melts below pure iron. Si lowers no melting point. Its atoms count with the iron.
 
 ```python
 alloy = AlloyLiquidus({'S': 0.02, 'C': 0.005, 'O': 0.03, 'Si': 0.04})
@@ -37,9 +41,13 @@ for p_gpa in (135.0, 330.0):
 330 GPa: pure Fe 6229 K, alloy 4544 K, depression 1685 K
 ```
 
+The depression is how far the liquidus of the alloy lies below the melting point of pure iron. It grows with pressure, from 613 K at 135 GPa to 1685 K at 330 GPa.
+
 ## 3. Slope and flags
 
-The slope of the liquidus decides whether a core freezes from the centre or from the top; the flags mark a pressure outside the data of a binary present in the alloy, and a composition past the eutectic, whose liquidus is held at the eutectic value.
+This step prints the slope of the liquidus and its 2 flags at 3 pressures. The slope dT/dP decides whether a core freezes from the centre or from the top.
+
+The flag `extrapolated` marks a pressure outside the data of a binary present in the alloy. The flag `past_eutectic` marks a composition past the eutectic, which means richer in the light element than the eutectic. The code holds the liquidus of such a composition at the eutectic value.
 
 ```python
 import numpy as np
@@ -61,11 +69,15 @@ print(f"12 wt% S at 135 GPa: {float(rich.t_melt(135e9)):.0f} K, "
 12 wt% S at 135 GPa: 2672 K, past eutectic True
 ```
 
-At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eutectic composition is read up to 325 GPa.
+At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eutectic composition is read up to 325 GPa. The alloy with 12 wt% S is past the eutectic, so its liquidus is the Fe-S eutectic temperature of step 1.
 
 ## 4. Below 21 GPa
 
-Below 21 GPa the Fe-S eutectic comes from measured points at 1 bar, 10 and 14 GPa, joined into the fit over 18 to 21 GPa, and the S units change from FeS to Fe$_3$S over 18 to 26 GPa; the Fe-C eutectic runs from its 1 bar value into the fit at 5 GPa.
+This step prints the eutectic and the liquidus at low pressure, where measured points take over from the fits.
+
+- Below 21 GPa the Fe-S eutectic comes from measured points at 1 bar, 10 and 14 GPa. These points join the fit over 18 to 21 GPa.
+- The liquidus counts the light element in compound units Fe$_k$X$_m$, not as single atoms. For S these units change from FeS to Fe$_3$S over 18 to 26 GPa.
+- The Fe-C eutectic runs from its 1 bar value into the fit at 5 GPa.
 
 ```python
 for el in ('S', 'C'):
@@ -91,15 +103,18 @@ Fe-C eutectic at 20 GPa: 1942 K, 4.06 wt% C
 8 wt% S at 30 GPa: 2253 K, dT/dP 13.6 K/GPa
 ```
 
-The Fe-S eutectic falls from 1 bar to 14 GPa, and the liquidus of 8 wt% S falls from 5.5 to 14 GPa: in a core at these pressures iron starts to freeze at the top, not at the centre. At 22 GPa the liquidus is steep because the unit blend adds to its slope, with no data behind it; the [validation](../Validation/core_alloy_liquidus.md) states how far the liquidus is from the measured points below 15 GPa.
+The Fe-S eutectic falls from 1 bar to 14 GPa, and the liquidus of 8 wt% S falls from 5.5 to 14 GPa. In a core at these pressures, iron therefore starts to freeze at the top, not at the centre.
+
+!!! warning "The steep slope at 22 GPa has no data behind it"
+    At 22 GPa the liquidus is steep because the change of S units adds to its slope. No data supports this slope. The [validation](../Validation/core_alloy_liquidus.md) states how far the liquidus is from the measured points below 15 GPa.
 
 ## 5. Adding a binary
 
-A new light element that lowers the melting point needs 4 parts in `aragog/core/alloy.py` and its data folder `aragog/core/eutectics/`:
+This step lists what a new light element that lowers the melting point needs. It needs 4 parts in `aragog/core/alloy.py` and its data folder `aragog/core/eutectics/`:
 
-1. A table `fe_<el>_composition.csv` of the eutectic liquid composition (mass fraction) against pressure, with its source in the header.
-2. The eutectic temperature: a Simon fit in `_SIMON`, or a table read like `fe_o_temperature.csv`.
-3. The Fe_k X_m unit of the binary, like `_UNIT_O`, in the units of `_liquidus`, and the element in `DEPRESSING` with its atomic weight in `_MOLAR`.
-4. The pressure range of its data in `_data()` and its branch in `_eutectic_in_data`; a binary with points below its fit, like S and C, has a table `fe_<el>_low_pressure.csv` of pressure, eutectic temperature and composition.
+1. A table `fe_<el>_composition.csv` of the eutectic liquid composition against pressure. The composition is a mass fraction. The header of the table names its source.
+2. The eutectic temperature. This is a Simon fit in `_SIMON`, or a table read like `fe_o_temperature.csv`.
+3. The Fe$_k$X$_m$ unit of the binary, like `_UNIT_O`, in the units of `_liquidus`. The element also goes in `DEPRESSING`, with its atomic weight in `_MOLAR`.
+4. The pressure range of its data in `_data()`, and its branch in `_eutectic_in_data`. A binary with points below its fit, like S and C, also has a table `fe_<el>_low_pressure.csv`. This table lists pressure, eutectic temperature and composition.
 
-Then add the binary to the end-point test `tests/test_core_alloy_liquidus.py::test_each_binary_runs_through_pure_iron_and_its_eutectic` and, if the source paper draws liquidus curves, a test like `::test_the_fe_s_liquidus_curves_of_mori_are_the_ideal_form_on_fe3s_units`.
+Then add the binary to the end-point test `tests/test_core_alloy_liquidus.py::test_each_binary_runs_through_pure_iron_and_its_eutectic`. If the source paper draws liquidus curves, also add a test like `::test_the_fe_s_liquidus_curves_of_mori_are_the_ideal_form_on_fe3s_units`.
