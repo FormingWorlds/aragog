@@ -76,32 +76,92 @@ def test_the_fe_s_eutectic_nodes_are_the_mean_of_two_reads_of_fei_1997():
         assert _w_e('S')(p) == pytest.approx(w, rel=1e-12)
 
 
-@pytest.mark.physics_invariant
-def test_the_fe_s_eutectic_is_linear_between_the_nodes_with_kinks_at_10_and_14_gpa():
-    """T_e and w_e are linear between the nodes; the slopes step at 10 GPa (-7.335 to -13.163
-    K/GPa) and at 14 GPa, the invariant point where Fe3S2 appears (-13.163 to +30.393 K/GPa)."""
-    assert _t_e('S')(5.0) == pytest.approx(0.5 * (_t_e('S')(0.0) + _t_e('S')(10.0)), rel=1e-12)
-    assert _w_e('S')(12.0) == pytest.approx(
-        0.5 * (_w_e('S')(10.0) + _w_e('S')(14.0)), rel=1e-12
+def _hermite_by_hand(p, x0, x1, y0, y1, d0, d1):
+    """Cubic Hermite on [x0, x1] with the end values y and slopes d, written out."""
+    h, t = x1 - x0, (p - x0) / (x1 - x0)
+    return (
+        (2 * t**3 - 3 * t**2 + 1) * y0
+        + (t**3 - 2 * t**2 + t) * h * d0
+        + (-2 * t**3 + 3 * t**2) * y1
+        + (t**3 - t**2) * h * d1
     )
-    for p, left, right in ((10.0, -7.335, -13.1625), (14.0, -13.1625, 30.392857)):
-        assert _slopes(_t_e('S'), p) == pytest.approx((left, right), abs=1e-3)
-    assert _slopes(_w_e('S'), 14.0) == pytest.approx((-0.0056625, -0.0058583), abs=1e-6)
+
+
+def _fritsch_carlson(h0, h1, s0, s1):
+    """Interior node slope of the monotone Hermite: the weighted harmonic mean of the 2 secants,
+    0 where they change sign."""
+    return (
+        0.0 if s0 * s1 <= 0.0 else 3.0 * (h0 + h1) / ((2 * h1 + h0) / s0 + (h1 + 2 * h0) / s1)
+    )
+
+
+def _s_hermite_by_hand():
+    """Nodes and slopes of T_e [K] and w_e of Fe-S below the join: 1 bar end slope = first
+    chord, end slope = the Simon fit at 21 GPa and the first table segment at 20 GPa."""
+    tab = alloy._table('fe_s_composition')
+    t = ((0.0, 10.0, 14.0, 21.0), (1261.25, 1187.9, 1135.25, 1348.0), 1348.0 / (36.5 * 2.07))
+    w_end = (tab[1, 1] - tab[0, 1]) / (tab[1, 0] - tab[0, 0])
+    w = ((0.0, 10.0, 14.0, tab[0, 0]), (0.31175, 0.2057, 0.18305, tab[0, 1]), w_end)
+    out = []
+    for x, y, end in (t, w):
+        s = [(y[i + 1] - y[i]) / (x[i + 1] - x[i]) for i in range(3)]
+        h = [x[i + 1] - x[i] for i in range(3)]
+        d = [
+            s[0],
+            _fritsch_carlson(h[0], h[1], s[0], s[1]),
+            _fritsch_carlson(h[1], h[2], s[1], s[2]),
+            end,
+        ]
+        out.append((x, y, d))
+    return out
+
+
+def _from_nodes(p, x, y, d):
+    i = 0 if p < x[1] else (1 if p < x[2] else 2)
+    return _hermite_by_hand(p, x[i], x[i + 1], y[i], y[i + 1], d[i], d[i + 1])
+
+
+@pytest.mark.physics_invariant
+def test_the_fe_s_eutectic_is_the_monotone_hermite_through_the_nodes():
+    """T_e and w_e are the monotone cubic Hermite (Fritsch-Carlson) through the nodes and the
+    line ends (1348 K at 21 GPa; the composition table at 20 GPa): the first chord at 1 bar, the
+    weighted harmonic mean of the secants at 10 GPa, slope 0 at the 14 GPa minimum of T_e and
+    the slope of the target at the join end. T_e, w_e and the liquidus of 2, 8 and 12 wt% S have
+    no slope step at 10 and 14 GPa; T_e lies up to 25.94 K below the chord from 14 to 21 GPa, at
+    15.91 GPa."""
+    (tx, ty, td), (wx, wy, wd) = _s_hermite_by_hand()
+    assert td[1:3] == pytest.approx([-9.819165, 0.0], abs=1e-6)
+    for p in (5.0, 12.0, 16.0, 17.5):
+        assert _t_e('S')(p) == pytest.approx(_from_nodes(p, tx, ty, td), rel=1e-12)
+        assert _w_e('S')(p) == pytest.approx(_from_nodes(p, wx, wy, wd), rel=1e-12)
+    for i, p in ((1, 10.0), (2, 14.0)):
+        assert _slopes(_t_e('S'), p) == pytest.approx((td[i], td[i]), abs=1e-3)
+        assert _slopes(_w_e('S'), p) == pytest.approx((wd[i], wd[i]), abs=1e-7)
+        for w in (0.02, 0.08, 0.12):
+            liq = AlloyLiquidus({'S': w})
+            left, right = _slopes(lambda q: float(liq.t_melt(q * 1e9)), p)
+            assert abs(left - right) < 0.01
+    p = np.arange(14.0, 21.0001, 0.01)
+    below = (
+        1135.25 + (p - 14.0) * (1348.0 - 1135.25) / 7.0 - np.array([_t_e('S')(x) for x in p])
+    )
+    assert below.max() == pytest.approx(25.94, abs=0.01)
+    assert p[below.argmax()] == pytest.approx(15.91, abs=0.015)
 
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('el', 'p_gpa', 't_slope', 'w_slope'),
     [
-        ('S', 18.0, 30.392857, -0.0058583),
+        ('S', 18.0, 41.746026, -0.0058937),
         ('S', 21.0, 1348.0 / (2.07 * 36.5), -0.000592),
         ('C', 5.0, 1513.0 / (4.1 * 8.4), -0.000212),
     ],
 )
 def test_the_eutectic_joins_the_fits_with_a_continuous_slope(el, p_gpa, t_slope, w_slope):
     """At the edges of the S join (18 and 21 GPa) and at the C join (5 GPa) the slopes of T_e
-    [K/GPa] and w_e [1/GPa] are continuous: the low-pressure line at 18 GPa, the Simon fit and the
-    first segment of the table at 21 and 5 GPa."""
+    [K/GPa] and w_e [1/GPa] are continuous: the low-pressure Hermite at 18 GPa, the Simon fit
+    and the first segment of the table at 21 and 5 GPa."""
     for f, slope, tol in ((_t_e(el), t_slope, 2e-3), (_w_e(el), w_slope, 2e-7)):
         left, right = _slopes(f, p_gpa)
         assert left == pytest.approx(right, abs=tol)
@@ -110,11 +170,11 @@ def test_the_eutectic_joins_the_fits_with_a_continuous_slope(el, p_gpa, t_slope,
 
 @pytest.mark.physics_invariant
 def test_the_fe_s_eutectic_inside_the_join_is_the_smootherstep_mean():
-    """Inside 18 to 21 GPa the eutectic is (1 - b) line + b fit, with b the smootherstep of
-    (P - 18)/3; at 19.5 GPa b = 1/2."""
+    """Inside 18 to 21 GPa the eutectic is (1 - b) low-pressure Hermite + b fit, with b the
+    smootherstep of (P - 18)/3; at 19.5 GPa b = 1/2."""
     tab = alloy._table('fe_s_composition')
-    line_t = 1135.25 + (19.5 - 14.0) * (1348.0 - 1135.25) / 7.0
-    line_w = 0.18305 + (19.5 - 14.0) * (tab[0, 1] - 0.18305) / (tab[0, 0] - 14.0)
+    (tx, ty, td), (wx, wy, wd) = _s_hermite_by_hand()
+    line_t, line_w = _from_nodes(19.5, tx, ty, td), _from_nodes(19.5, wx, wy, wd)
     simon = 1348.0 * ((19.5 - 21.0) / 36.5 + 1.0) ** (1.0 / 2.07)
     first = tab[0, 1] + (19.5 - tab[0, 0]) * (tab[1, 1] - tab[0, 1]) / (tab[1, 0] - tab[0, 0])
     assert _smootherstep(0.5) == 0.5
@@ -193,17 +253,17 @@ def test_the_unit_blend_adds_the_stated_slope(w, added, top):
 
 @pytest.mark.physics_invariant
 def test_the_fe3s_units_hold_the_eutectic_from_the_start_of_the_blend():
-    """At 18 GPa w_e is 15.96 wt% S, below the 16.06 wt% that Fe3S units can hold (w_e crosses it
-    at 17.83 GPa), and it stays below over the whole blend, so the Fe3S form is defined there; its
-    x_Fe at the eutectic is 0.022 at 18 GPa."""
+    """At 18 GPa w_e is 15.50 wt% S, below the 16.06 wt% that Fe3S units can hold (w_e crosses
+    it at 17.14 GPa), and it stays below over the whole blend, so the Fe3S form is defined
+    there; its x_Fe at the eutectic is 0.115 at 18 GPa."""
     cap = MOLAR['S'] / (3.0 * MOLAR['Fe'] + MOLAR['S'])
     w_e = _w_e('S')(18.0)
-    assert w_e == pytest.approx(0.15962, abs=1e-5)
-    assert _w_e('S')(17.82) > cap > _w_e('S')(17.84)
+    assert w_e == pytest.approx(0.15498, abs=1e-5)
+    assert _w_e('S')(17.13) > cap > _w_e('S')(17.14)
     assert all(_w_e('S')(p) < cap for p in np.linspace(*alloy.S_UNIT_BLEND_GPA, 81))
     u = w_e / MOLAR['S']
     free = (1.0 - w_e) / MOLAR['Fe'] - 3.0 * u
-    assert free / (free + u) == pytest.approx(0.0221, abs=2e-4)
+    assert free / (free + u) == pytest.approx(0.1151, abs=2e-4)
 
 
 @pytest.mark.parametrize(
@@ -273,7 +333,7 @@ def test_the_two_reads_of_the_1_bar_points_agree(validation_plot):
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     ('p_gpa', 'n', 'rms', 'mean'),
-    [(0.0, 19, 78.60, -33.32), (6.0, 22, 142.14, -130.99), (10.0, 7, 88.95, -82.55)]
+    [(0.0, 19, 78.60, -33.32), (6.0, 21, 153.15, -141.36), (10.0, 7, 88.95, -82.55)]
     + [(14.0, 4, 150.90, -12.45)],
 )
 def test_the_low_pressure_liquidus_misses_the_measured_points_as_stated(p_gpa, n, rms, mean):
@@ -302,7 +362,7 @@ def test_the_two_reads_of_the_chen_points_agree():
 def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot):
     """Between 10 and 14 GPa the measured liquidus of Chen et al. (2008, linear between their
     points and their pure-Fe point) falls by 42.05, 39.06 and 15.53 K/GPa at 4, 8 and 12 wt% S; the
-    ideal form changes by +3.0, -14.5 and -26.9 K/GPa."""
+    ideal form changes by +3.05, -14.49 and -26.89 K/GPa."""
     rows = _csv('chen2008_fig1_liquidus.csv')
 
     def data(p, w):
@@ -310,9 +370,9 @@ def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot
         return np.interp(w, *zip(*pts))
 
     for w, stated_data, stated_code in (
-        (4, -42.05, 3.0),
-        (8, -39.06, -14.5),
-        (12, -15.53, -26.9),
+        (4, -42.05, 3.05),
+        (8, -39.06, -14.49),
+        (12, -15.53, -26.89),
     ):
         assert (data(14.0, w) - data(10.0, w)) / 4.0 == pytest.approx(stated_data, abs=0.005)
         liq = AlloyLiquidus({'S': w / 100.0})
@@ -360,10 +420,10 @@ def test_from_10_to_14_gpa_the_liquidus_falls_less_than_the_data(validation_plot
 
 # code minus source, T_e [K] and w_e [wt%], by source and pressure [GPa] of low_pressure_eutectic_checks.csv
 _CHECK_MISS = {
-    ('Buono & Walker 2011 Table 1', '6'): (-45.76, -0.935),
-    ('Ryzhenko & Kennedy 1973 via Buono & Walker 2011 Table 1', '6'): (-45.76, -0.808),
-    ('Usselman 1975 via Buono & Walker 2011 Table 1', '6'): (-41.76, -2.937),
-    ('Morard et al. 2007 via Buono & Walker 2011 Table 1', '6'): (77.24, -2.272),
+    ('Buono & Walker 2011 Table 1', '6'): (-42.18, -1.443),
+    ('Ryzhenko & Kennedy 1973 via Buono & Walker 2011 Table 1', '6'): (-42.18, -1.317),
+    ('Usselman 1975 via Buono & Walker 2011 Table 1', '6'): (-38.18, -3.445),
+    ('Morard et al. 2007 via Buono & Walker 2011 Table 1', '6'): (80.82, -2.780),
     ('Fei et al. 2000 p. 1831', '21'): (0.0, -0.669),
     ('Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P', '21'): (36.60, None),
     ('Kamada et al. 2010 p. 98; T_e = 1030(40) + 13.4(0.7) P', '25'): (52.45, None),
@@ -379,7 +439,7 @@ _CHECK_MISS = {
 @pytest.mark.physics_invariant
 def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
     """Eutectic points that set no node, code minus source: T_e [K] and w_e [wt%]; the 6 GPa
-    eutectic is 46 K and 0.9 wt% below Buono & Walker (2011), Kamada et al. (2010) lie inside
+    eutectic is 42 K and 1.4 wt% below Buono & Walker (2011), Kamada et al. (2010) lie inside
     their fit errors, the 21.9 and 23.0 GPa quench runs (upper bounds of T_e) lie above, the liquid
     at 21.9 GPa (on the Fe-rich liquidus) holds less S than w_e, and Fe-C at 10 GPa is the Mashino
     fit, 77.5 K above Fei & Brosh (2014). The 2 anchors of the fits (Fei et al. 2000 at 21 GPa,
@@ -453,19 +513,19 @@ def test_the_low_pressure_eutectic_against_the_check_points(validation_plot):
 @pytest.mark.parametrize(
     ('w', 'slope_min', 'p_min', 'falling'),
     [
-        (0.01, 18.123, 13.99, None),
-        (0.03, 4.436, 13.99, None),
-        (0.048, -5.816, 13.99, (9.33, 13.99)),
-        (0.08, -19.977, 13.99, (5.49, 14.00)),
-        (0.12, -34.304, 9.99, (2.08, 14.00)),
+        (0.01, 19.531, 13.15, None),
+        (0.03, 7.241, 12.56, None),
+        (0.048, -2.368, 12.35, (10.78, 13.79)),
+        (0.08, -16.413, 12.07, (4.99, 15.57)),
+        (0.12, -29.381, 11.77, (1.74, 16.41)),
     ],
 )
 def test_below_26_gpa_the_s_liquidus_falls_where_the_eutectic_falls(
     w, slope_min, p_min, falling
 ):
-    """Below 14 GPa T_e falls (Fei et al. 1997), so S alloys from about 4 wt% fall with pressure
-    there: the least slope [K/GPa] and the first and last falling pressures [GPa] on a 0.01 GPa
-    grid; 1 and 3 wt% S keep rising."""
+    """Up to 14 GPa T_e falls (Fei et al. 1997) and it rises slowly from its minimum there, so S
+    alloys from about 4 wt% fall with pressure around 14 GPa: the least slope [K/GPa] and the
+    first and last falling pressures [GPa] on a 0.01 GPa grid; 1 and 3 wt% S keep rising."""
     p = np.arange(0.01, 26.0, 0.01)
     g = np.asarray(AlloyLiquidus({'S': w}).gradient(p * 1e9)) * 1e9
     assert g.min() == pytest.approx(slope_min, abs=0.02)
