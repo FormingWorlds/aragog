@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_eutectic_against_the_check_points; command: pytest tests/test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_eutectic_against_the_check_points --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[28, 0.0, 40.0, 18.160714285714285, 6.909391534391533, 1135.25, 1650.4890782984849, 1338.1156570828014, 77.16585936402969], [9, 6.0, 25.0, 15.1, 4.686111111111111, 1140.0, 1512.0, 1323.4888888888888, 52.17777777777771], [28, 0.0, 40.0, 18.160714285714285, 6.909391534391533, 1416.15, 2258.3575129212254, 1852.6282157500964, 157.62819649306977], [3, 0.0, 10.0, 5.0, 3.333333333333333, 1420.0, 1618.0, 1517.0, 66.0], [3, 0.0, 14.0, 8.000000000000002, 4.666666666666666, 1135.25, 1261.25, 1194.8, -41.999999999999986], [0, null, null, null, null, null, null, null, null]], "collections": [[18, 6.0, 25.0, 15.1, 4.410457516339869, 970.0, 1531.0, 1323.4888888888888, 51.61307189542482], [6, 0.0, 10.0, 5.0, 2.6666666666666665, 1420.0, 1618.0, 1517.0, 53.46666666666674], [0, null, null, null, null, null, null, null, null]], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_eutectic_against_the_check_points; command: pytest tests/test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_eutectic_against_the_check_points --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[28, 0.0, 40.0, 18.160714285714285, 6.909391534391533, 1135.25, 1650.4890782984849, 1337.211971833018, 77.0817506837408], [9, 6.0, 25.0, 15.1, 4.686111111111111, 1140.0, 1512.0, 1323.4888888888888, 52.17777777777771], [28, 0.0, 40.0, 18.160714285714285, 6.909391534391533, 1416.15, 2258.3575129212254, 1852.6282157500964, 157.62819649306977], [3, 0.0, 10.0, 5.0, 3.333333333333333, 1420.0, 1618.0, 1517.0, 66.0], [3, 0.0, 14.0, 8.000000000000002, 4.666666666666666, 1135.25, 1261.25, 1194.8, -41.999999999999986], [0, null, null, null, null, null, null, null, null]], "collections": [[18, 6.0, 25.0, 15.1, 4.410457516339869, 970.0, 1531.0, 1323.4888888888888, 51.61307189542482], [6, 0.0, 10.0, 5.0, 2.6666666666666665, 1420.0, 1618.0, 1517.0, 53.46666666666674], [0, null, null, null, null, null, null, null, null]], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -620,23 +620,23 @@ z
    </g>
    <g id="line2d_13">
     <path d="M 80.812517 125.035244 
-L 89.904252 126.663696 
-L 94.45012 127.477922 
-L 96.723054 127.885035 
-L 98.995988 128.292148 
-L 101.268922 128.699261 
-L 108.087723 129.9206 
-L 117.179459 131.549052 
+L 89.904252 126.575454 
+L 94.45012 127.304195 
+L 96.723054 127.665464 
+L 98.995988 128.027422 
+L 101.268922 128.392137 
+L 108.087723 129.523511 
+L 117.179459 131.196084 
 L 126.271194 133.177503 
-L 135.36293 136.099725 
+L 135.36293 136.644716 
 L 144.454666 139.021947 
-L 153.546401 132.274394 
-L 162.638137 125.52684 
-L 164.911071 123.719542 
-L 167.184004 121.580336 
-L 169.456938 119.437319 
-L 171.729872 117.68965 
-L 174.002806 116.423884 
+L 153.546401 135.148332 
+L 162.638137 126.640676 
+L 164.911071 124.198883 
+L 167.184004 121.545037 
+L 169.456938 119.218236 
+L 171.729872 117.561515 
+L 174.002806 116.406535 
 L 180.821608 113.438858 
 L 189.913343 109.58528 
 L 199.005079 105.831304 

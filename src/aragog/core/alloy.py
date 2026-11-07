@@ -15,16 +15,17 @@ pressures and leave the mole count: an alloy melts like the same alloy without t
 The eutectic compositions and the Fe-O eutectic temperature are tables read from the papers'
 figures (``aragog/core/eutectics/*.csv``, sources in each header); the Fe-S and Fe-C eutectic
 temperatures are the Simon fits of Mori et al. (2017) and Mashino et al. (2019). Below them the
-Fe-S eutectic is linear between the nodes of Fei et al. (1997) at 1 bar, 10 and 14 GPa, towards
-1348 K at 21 GPa and the composition table at 20 GPa, joined into the fit and the table by a
-smootherstep over 18 to 21 GPa; the Fe-C eutectic is the cubic from 1 bar (1416.15 K, 4.3 wt%)
-with zero curvature there and the value and slope of the fit and the table at 5 GPa. Above the
-data, the tables are read at an effective pressure ``q`` whose slope fades from 1 to 0 by a
-smootherstep over the 40 GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic
-temperature is its value at ``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve
-at ``q``, and the composition and Fe-O temperature tables continue along their last segment up
-to ``q``. A composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is
-evaluated at its boundary.
+Fe-S eutectic is the monotone cubic Hermite (Fritsch & Carlson 1980) through the nodes of Fei et
+al. (1997) at 1 bar, 10 and 14 GPa, towards 1348 K at 21 GPa and the composition table at 20
+GPa, with no slope step at the nodes, joined into the fit and the table by a smootherstep over
+18 to 21 GPa; the Fe-C eutectic is the cubic from 1 bar (1416.15 K, 4.3 wt%) with zero curvature
+there and the value and slope of the fit and the table at 5 GPa. Above the data, the tables are
+read at an effective pressure ``q`` whose slope fades from 1 to 0 by a smootherstep over the 40
+GPa above the end, so ``q`` stops 20 GPa above the end: the eutectic temperature is its value at
+``q`` times ``T_Fe(P) / T_Fe(q)``, homologous to the pure-iron curve at ``q``, and the
+composition and Fe-O temperature tables continue along their last segment up to ``q``. A
+composition past the Fe-rich side of the eutectic (``sum w_i / w_e,i > 1``) is evaluated at its
+boundary.
 """
 
 from __future__ import annotations
@@ -107,6 +108,35 @@ def _smootherstep(z):
     return z * z * z * (z * (z * 6.0 - 15.0) + 10.0)
 
 
+def _hermite_slopes(x, y, first, last):
+    """Node slopes of the monotone cubic Hermite (Fritsch-Carlson) through ``(x, y)``: the weighted
+    harmonic mean of the 2 secants where they share a sign, 0 at an extremum, and the given end
+    slopes."""
+    h, s = np.diff(x), np.diff(y) / np.diff(x)
+    w1, w2 = 2.0 * h[1:] + h[:-1], h[1:] + 2.0 * h[:-1]
+    same = s[:-1] * s[1:] > 0.0
+    inner = np.where(same, (w1 + w2) / np.where(same, w1 / s[:-1] + w2 / s[1:], 1.0), 0.0)
+    return np.r_[first, inner, last]
+
+
+def _hermite(q, x, y, d):
+    """Cubic Hermite through ``(x, y)`` with node slopes ``d``, continued along its end slopes."""
+    x, y, d = jnp.asarray(x), jnp.asarray(y), jnp.asarray(d)
+    i = jnp.clip(jnp.searchsorted(x, q, side='right') - 1, 0, len(x) - 2)
+    x0, h, y0, y1, d0, d1 = x[i], x[i + 1] - x[i], y[i], y[i + 1], d[i], d[i + 1]
+    t = jnp.clip((q - x0) / h, 0.0, 1.0)
+    inside = (
+        (1.0 + 2.0 * t) * (1.0 - t) ** 2 * y0
+        + t * (1.0 - t) ** 2 * h * d0
+        + t * t * (3.0 - 2.0 * t) * y1
+        - t * t * (1.0 - t) * h * d1
+    )
+    beyond = jnp.where(q > x[-1], d[-1] * (q - x[-1]), 0.0) + jnp.where(
+        q < x[0], d[0] * (q - x[0]), 0.0
+    )
+    return inside + beyond
+
+
 def _natural_cubic(x, span, y0, y1, s1):
     """Cubic through ``y0`` at ``x = 0`` with zero curvature there, and ``y1`` with slope ``s1``
     at ``x = span``."""
@@ -124,8 +154,13 @@ def _eutectic_in_data(el: str, q):
     t_ref, p_ref, a, c = _SIMON[el]
     t_fit, w_fit = t_ref * ((q - p_ref) / a + 1.0) ** (1.0 / c), _interp(q, comp)
     if el == 'S':
-        t_low = _interp(q, np.vstack([low[:, :2], [p_ref, t_ref]]))
-        w_low = _interp(q, np.vstack([low[:, [0, 2]], comp[:1]]))
+        tx, ty = np.r_[low[:, 0], p_ref], np.r_[low[:, 1], t_ref]
+        wx, wy = np.r_[low[:, 0], comp[0, 0]], np.r_[low[:, 2], comp[0, 1]]
+        w_end = (comp[1, 1] - comp[0, 1]) / (comp[1, 0] - comp[0, 0])
+        t_low = _hermite(
+            q, tx, ty, _hermite_slopes(tx, ty, (ty[1] - ty[0]) / tx[1], t_ref / (a * c))
+        )
+        w_low = _hermite(q, wx, wy, _hermite_slopes(wx, wy, (wy[1] - wy[0]) / wx[1], w_end))
         b = _smootherstep((q - S_JOIN_START_GPA) / (p_ref - S_JOIN_START_GPA))
         return (1.0 - b) * t_low + b * t_fit, (1.0 - b) * w_low + b * w_fit
     span, x = p_ref - low[0, 0], q - low[0, 0]

@@ -81,12 +81,12 @@ for q, t, g in zip(p / 1e9, np.asarray(small.t_melt(p)), np.asarray(small.gradie
 ```text
 Fe-S eutectic at 0 GPa: 1261 K, 31.18 wt% S
 Fe-S eutectic at 10 GPa: 1188 K, 20.57 wt% S
-Fe-S eutectic at 20 GPa: 1327 K, 14.79 wt% S
+Fe-S eutectic at 20 GPa: 1329 K, 14.79 wt% S
 Fe-C eutectic at 0 GPa: 1416 K, 4.30 wt% C
 Fe-C eutectic at 10 GPa: 1696 K, 4.21 wt% C
 Fe-C eutectic at 20 GPa: 1942 K, 4.06 wt% C
-8 wt% S at 6 GPa: 1790 K, dT/dP -1.9 K/GPa
-8 wt% S at 12 GPa: 1727 K, dT/dP -14.5 K/GPa
+8 wt% S at 6 GPa: 1783 K, dT/dP -3.3 K/GPa
+8 wt% S at 12 GPa: 1722 K, dT/dP -16.4 K/GPa
 8 wt% S at 22 GPa: 1962 K, dT/dP 98.3 K/GPa
 8 wt% S at 30 GPa: 2253 K, dT/dP 13.6 K/GPa
 ```
