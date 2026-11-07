@@ -2946,9 +2946,15 @@ class EntropySolver:
         # Carry the entropy onto the current mesh by mass parcel when a
         # structure re-solve changed the mass grid (no-op otherwise, and
         # always consumes the cached pre-resolve grid).
+        xi_cached = getattr(self, '_xi_pre_resolve', None)
         S_arr = self._remap_entropy_to_current_mesh(S_arr)
-        # the lid start can refuse the state, so it runs before the state changes
-        lid_start = self._initial_lid(float(S_arr[-1])) if _lid_slots(self) else None
+        # the lid start can refuse the state, so it runs before the state changes, and a refusal
+        # puts back the one-shot remap grid for the next start
+        try:
+            lid_start = self._initial_lid(float(S_arr[-1])) if _lid_slots(self) else None
+        except ValueError:
+            self._xi_pre_resolve = xi_cached
+            raise
 
         # Prefer the cached _core_bc from _initialize_internals.
         if hasattr(self, '_core_bc') and self._core_bc is not None:
@@ -3192,18 +3198,20 @@ class EntropySolver:
         Raises
         ------
         ValueError
-            With ``lid_mush_base`` and a live lid over a top cell below the floor. A carried
-            lid passed the step check, so it starts down to ``S_sol + LID_FLOOR_SLACK``, as that
-            check accepts; a lid set by ``set_initial_lid`` takes the same floor without a check,
-            and the phantom lid needs the full gap. Also where the heat jump of the lid base
-            ``(W(S_top) - W(S_sol)) / rho_b`` is below ``LID_DH_MIN``: there the Stefan rate runs
-            at the floor, so the top cell does not hold its entropy at a floor weight of 0.
+            With ``lid_mush_base`` and a live lid over a top cell below the floor, or not finite.
+            A set or carried lid starts down to ``S_sol + LID_FLOOR_SLACK``, the floor the step
+            check accepts, and the phantom lid needs the full gap. Every live start is also
+            refused where the heat jump of the lid base ``(W(S_top) - W(S_sol)) / rho_b`` is
+            below ``LID_DH_MIN``: there the Stefan rate runs at the floor, so the top cell does
+            not hold its entropy at a floor weight of 0. That band reaches about
+            ``S_sol + LID_DH_MIN / T_sol``, above the slack of the step check for a solidus
+            below 2000 K, so a state the step check accepted can still be refused here.
         """
         kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
         gap = _lid.LID_FLOOR_SLACK if kept else _lid.LID_FLOOR_GAP
         floor = self._lid_S_sol + gap if self._lid_mush else -math.inf
-        if start[0] != 0.0 and S_top < floor:
+        if start[0] != 0.0 and self._lid_mush and not S_top >= floor:
             raise ValueError(
                 f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, below the floor '
                 f'{floor:.6g} J/kg/K; a run that starts solid needs the present lid base'
@@ -3211,7 +3219,7 @@ class EntropySolver:
         if start[0] != 0.0 and self._lid_mush:
             rho_b = self._lid_base_state(self._lid_T_sol, 0.0, self._lid_S_sol)['rho']
             dh = float(self._lid_W(S_top) - self._lid_W(self._lid_S_sol)) / rho_b
-            if dh < _lid.LID_DH_MIN:
+            if not dh >= _lid.LID_DH_MIN:
                 raise ValueError(
                     f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, where the heat '
                     f'jump of the lid base is {dh:.6g} J/kg, below LID_DH_MIN = {_lid.LID_DH_MIN} '

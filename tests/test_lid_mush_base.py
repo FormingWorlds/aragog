@@ -85,10 +85,17 @@ def test_floor_weight_limits_and_smoothness():
     for end, sign in ((lo, 1.0), (hi, -1.0)):
         y0 = sl.floor_weight(end, S_sol)
         y1 = sl.floor_weight(end + sign * h, S_sol)
-        y2 = sl.floor_weight(end + 2.0 * sign * h, S_sol)
         assert abs(y1 - y0) / h < 1e-6
-        # second difference: about 2e-4 for the quintic, 0.24 for a C1 cubic ramp
-        assert abs(y2 - 2.0 * y1 + y0) / h**2 < 1e-2
+
+    def d2(step, end, sign):
+        y = [sl.floor_weight(end + i * sign * step, S_sol) for i in (0, 1, 2)]
+        return abs(y[2] - 2.0 * y[1] + y[0]) / step**2
+
+    # C2: the second difference at the end falls with the step (by 10 for the quintic); a ramp
+    # with a second derivative that is not 0 at the end keeps it
+    h2 = 1e-3 * sl.LID_FLOOR_WIDTH
+    for end, sign in ((lo, 1.0), (hi, -1.0)):
+        assert d2(0.1 * h2, end, sign) <= 0.2 * d2(h2, end, sign)
 
 
 @pytest.mark.unit
@@ -853,11 +860,33 @@ class TestRestore:
         run = _solver(entropy_eos_copy(EOS_DIR), end=0.1)
         run.solve()
         before = run._S0.copy()
+        grid = run.staggered_mass_coordinates.copy()
+        run._xi_pre_resolve = grid  # the one-shot remap grid of a structure update
         with pytest.raises(ValueError, match='below the floor'):
             run.set_initial_entropy(run._lid_S_sol - 10.0)
         assert np.array_equal(run._S0, before)
+        assert run._xi_pre_resolve is grid
         run.set_initial_entropy(3050.0)
         assert run._S0.size == before.size
+        assert run._xi_pre_resolve is None
+
+    def test_a_carried_lid_in_the_heat_jump_band_is_refused_by_the_next_start(self):
+        """On a thin top cell a lid carried from a solve is refused by set_initial_entropy where the
+        top cell lies above the slack of the step check but in the heat-jump band, and the state
+        and the remap grid stay as they were; a NaN top cell is refused too."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40, end=1.0e-3)
+        s.solve()
+        assert s._previous_lid() is not None and s._previous_lid()[0] > 0.0
+        before, n = s._S0.copy(), s._n_stag
+        S = np.array(before[:n])
+        for top, match in (
+            (s._lid_S_sol + 0.6, 'heat jump of the lid base'),
+            (np.nan, 'below the floor'),
+        ):
+            S[-1] = top
+            with pytest.raises(ValueError, match=match):
+                s.set_initial_entropy(S)
+            assert np.array_equal(s._S0, before)
 
 
 def _flux_lid_run(hv, T_b, k, delta0, E0, F_atm, F_b, t_yr, H=None, w_of=None):
