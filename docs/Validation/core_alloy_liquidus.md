@@ -2,7 +2,7 @@
 
 ## What this page checks
 
-This page checks the liquidus of the core alloy, `aragog.core.AlloyLiquidus`: the temperature at which iron with S, C, O, Si, H and N starts to freeze ([explanation](../Explanations/core_alloy_liquidus.md)). Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answer is a curve that a paper draws, a temperature it states or a second read of a figure. A wrong liquidus puts the inner-core boundary of a planet at the wrong radius, and a wrong slope of the liquidus puts the first freezing at the wrong depth. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details". Concentrations are in wt%, percent by mass.
+This page checks the liquidus of the core alloy, `aragog.core.AlloyLiquidus`: the temperature at which iron with S, C, O, Si, H and N starts to freeze ([explanation](../Explanations/core_alloy_liquidus.md)), with concentrations in wt%, percent by mass. Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answer is a curve that a paper draws, a temperature it states, a second read of a figure or a rule written out by hand in the test. The slope case is the exception: it pins the code's own output, so it catches a later change but is not an independent answer. A wrong liquidus puts the inner-core boundary of a planet at the wrong radius, and a wrong slope of the liquidus puts the first freezing at the wrong depth. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details".
 
 Test files:
 
@@ -33,7 +33,7 @@ This case has no plot: it checks an identity of the code, the 2 points that each
     - Reference: the ideal form through pure iron and the eutectic point (analytical).
     - Tolerance: exact at zero light element; relative $10^{-12}$ at the eutectic.
     - Test id: `::test_each_binary_runs_through_pure_iron_and_its_eutectic`, `::test_si_h_and_n_lower_no_melting_point`, `::test_h_and_n_leave_the_mole_basis`, `::test_si_counts_with_the_iron_solvent` (unit tier)
-    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "end or binary_runs or mole_basis or solvent"`
+    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "binary_runs or lower_no_melting or mole_basis or solvent"`
 
 ## The Fe-S liquidus curves of Mori et al. (2017)
 
@@ -43,7 +43,7 @@ This case has no plot: it checks an identity of the code, the 2 points that each
 
 **How we know the right answer.** The 3 curves of Mori et al. (2017[^cite-mori2017], Fig. 9), read twice (see the last case). Mori et al. (2017[^cite-mori2017], p. 138) draw them from their own ideal-solution model through their eutectic points. So this case checks that Aragog reproduces their model curves, not measured liquidus points. Their measurements enter through the eutectic points.
 
-RMS difference at 30, 130 and 250 GPa:
+Root-mean-square (RMS) difference at 30, 130 and 250 GPa, the square root of the mean squared difference at the curve points:
 
 | Case | Value | Reference | Difference (RMS) |
 | --- | --- | --- | --- |
@@ -86,7 +86,7 @@ Difference to the drawn curves at 54, 138, 203, 255 and 330 GPa:
 
 The shipped eutectic points come from the Simon fit and the composition curve of the same paper. The Simon fit is a fit of the eutectic temperature against pressure. These points differ from the ends of the drawn curves: at 138 GPa the fit gives 3012 K, while the curve ends at 2885 K.
 
-**Why it matters.** A core with C melts on this liquidus, the least certain part of the model.
+**Why it matters.** A core with C melts on this liquidus, so its misfit moves the inner-core boundary of a C-bearing core. It is the least certain part of the model.
 
 ![Fe-C liquidus against C content for 5 pressures, Aragog lines and the curves of Mashino et al. 2019 as circles](../assets/validation/core_alloy_liquidus_fe_c_mashino2019.svg#only-light){ width="70%" }
 ![Fe-C liquidus against C content for 5 pressures, Aragog lines and the curves of Mashino et al. 2019 as circles](../assets/validation/core_alloy_liquidus_fe_c_mashino2019_dark.svg#only-dark){ width="70%" }
@@ -153,7 +153,7 @@ Depression of the alloy under each rule:
 | Depression over the dilute sum, content scaled down by 100 | 0.99947 | 1 |
 | Depression over the dilute sum, content scaled down by 1000 | 0.99995 | 1 |
 
-**Why it matters.** A core holds several light elements at once.
+**Why it matters.** A core holds several light elements at once. With the composition-weighted rule, the depression of the alloy above at 330 GPa would be about half as large, and the inner-core boundary would move with it.
 
 ![Melting point depression against total light-element content at 135 GPa for the 4 rules](../assets/validation/core_alloy_liquidus_rules_135gpa.svg#only-light){ width="70%" }
 ![Melting point depression against total light-element content at 135 GPa for the 4 rules](../assets/validation/core_alloy_liquidus_rules_135gpa_dark.svg#only-dark){ width="70%" }
@@ -183,7 +183,7 @@ Depression of the alloy under each rule:
     - Across the blend of the 2 C units, the slope must fall less than 1 K/GPa below the lower of its values at 229 and 281 GPa, just outside the blend.
     - For 4.9 to 7 wt% S and for 4 wt% S with 1 wt% C, the least slope and the pressures where the slope is negative are pinned. Outside them the slope must be positive.
 
-**How we know the right answer.** A liquidus of a fixed composition rises with pressure where its data do. The pinned values are the code's own output on the read curve of Mori et al. (2017[^cite-mori2017], Fig. 5). They catch a later change of the code. They are not an independent answer. These tests carry `physics_invariant`, not `reference_pinned`.
+**How we know the right answer.** A liquidus of a fixed composition rises with pressure where its data do. The pinned values are the code's own output on the read curve of Mori et al. (2017[^cite-mori2017], Fig. 5). They catch a later change of the code. They are not an independent answer.
 
 | Case | Value | Required |
 | --- | --- | --- |
@@ -225,13 +225,15 @@ Depression of the alloy under each rule:
     | 4.85 wt% S | into it | 348 GPa |
     | 4.9 wt% S | into it | 341 GPa |
     | 4.95 wt% S | into it | 335 GPa |
+    | 5 wt% S, the end value | into it | 330.01 GPa, just above the data |
     | 3.3 wt% C | into it | 344 GPa |
+    | 3.35 wt% C, the end value | into it | 330.01 GPa, just above the data |
     | 4 wt% S with 0.65 wt% C | into it | 333 GPa |
     | 15.2 wt% O | out of it | 338 GPa |
     | 15.28 wt% O | out of it | 354 GPa |
 
 ??? info "Test details"
-    - Reference: the sign of the slope (physical); for 4.9 to 7 wt% S, pinned values of the code's own output on the read curve of Mori et al. (2017[^cite-mori2017], Fig. 5).
+    - Reference: the sign of the slope (physical); for 4.9 to 7 wt% S, pinned values of the code's own output on the read curve of Mori et al. (2017[^cite-mori2017], Fig. 5). The tests carry the marker `physics_invariant`, not `reference_pinned`.
     - Tolerance: slope above 0; step below 0.1 K/GPa; crossing pressures to 0.02 GPa; blend dip below 1 K/GPa; pinned least slope to 0.01 K/GPa and the negative range within 0.2 GPa.
     - Test id: `::test_the_liquidus_rises_with_pressure`, `::test_the_end_of_the_data_adds_no_slope_step`, `::test_alloys_near_the_end_eutectic_cross_it_above_the_data`, `::test_the_fe_c_liquidus_falls_near_the_end_of_its_data_for_3_28_to_3_37_wt_percent`, `::test_the_carbon_unit_switch_adds_no_slope_dip`, `::test_near_the_eutectic_the_liquidus_falls_where_the_read_curve_falls`, `::test_the_liquidus_slope_against_pressure` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "slope or rises or falls or cross"`; the plot: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k slope_against_pressure --validation-plots`
@@ -273,11 +275,11 @@ Change of the liquidus from 10 to 14 GPa:
 | 12 wt% S | changes by $-26.89$ K/GPa | falls by 15.53 K/GPa |
 | Falls from 10 to 14 GPa from | 4.61 wt% S | 1.01 wt% S |
 
-For the measured onset, the 10 GPa data are the chord from the pure-Fe point to the first liquid point at 7.05 wt%. A chord is the straight line between 2 points. So the code puts the onset of top-down freezing at a higher S content than the data.
+The measured values are linear between the points of Chen et al. (2008[^cite-chen2008]). For the measured onset, the 10 GPa data are the chord from the pure-Fe point to the first liquid point at 7.05 wt%. A chord is the straight line between 2 points. So the code puts the onset of top-down freezing at a higher S content than the data.
 
 Pure iron: the 2 pure-iron points at 1 bar, 1800 and 1809 K, lie 22.4 and 13.4 K below the pure-iron curve (1822.4 K at 1 bar). The shipped pure iron melts 12.9 and 35.0 K above the pure-Fe points at 10 and 14 GPa.
 
-**Why it matters.** The liquidus from 1 bar to 14 GPa decides when a core whose pressures lie in that range starts to freeze. Above 14 GPa the case below and the fits of Mori et al. (2017) and Mashino et al. (2019) take over.
+**Why it matters.** The liquidus from 1 bar to 15 GPa decides when the core of a small planet, with all its pressures in that range, starts to freeze, and whether it freezes from the top.
 
 ![Fe-S liquidus against S content at 6, 10 and 14 GPa, Aragog lines and measured points as circles](../assets/validation/core_alloy_liquidus_low_pressure_liquidus.svg#only-light){ width="70%" }
 ![Fe-S liquidus against S content at 6, 10 and 14 GPa, Aragog lines and measured points as circles](../assets/validation/core_alloy_liquidus_low_pressure_liquidus_dark.svg#only-dark){ width="70%" }
@@ -287,15 +289,15 @@ Pure iron: the 2 pure-iron points at 1 bar, 1800 and 1809 K, lie 22.4 and 13.4 K
 ![Fe-S liquidus at 1 bar against S content, Aragog line and the points of Friedrich 1910 and Miyazaki 1928](../assets/validation/core_alloy_liquidus_one_bar.svg#only-light){ width="70%" }
 ![Fe-S liquidus at 1 bar against S content, Aragog line and the points of Friedrich 1910 and Miyazaki 1928](../assets/validation/core_alloy_liquidus_one_bar_dark.svg#only-dark){ width="70%" }
 
-The second plot shows 1 bar. The line is the shipped liquidus from pure iron to the 1 bar eutectic, the triangles and squares the 2 data sets. The line lies above the points up to 11 wt% S (by up to 67 K) and below them from 16 wt% S to the eutectic (by up to 135 K).
+**How to read the 1 bar plot.** The line is the shipped liquidus from pure iron to the 1 bar eutectic, the triangles and squares the 2 data sets. The line lies above the points up to 11 wt% S (by up to 67 K) and below them from 16 wt% S to the eutectic (by up to 135 K).
 
-**Known limit.** A non-ideal liquidus below 21 GPa, such as the model of Buono & Walker (2011[^cite-buono2011]), is not implemented. The misfit above is the size of that limit. Above 14 GPa the case below and the fits of Mori et al. (2017[^cite-mori2017]) and Mashino et al. (2019[^cite-mashino2019]) take over.
+**Known limit.** A non-ideal liquidus below 21 GPa, such as the model of Buono & Walker (2011[^cite-buono2011]), is not implemented. The misfit above is the size of that limit. Above 14 GPa the case [The low-pressure eutectic](#the-low-pressure-eutectic) and the fits of Mori et al. (2017[^cite-mori2017]) and Mashino et al. (2019[^cite-mashino2019]) take over.
 
 ??? info "Test details"
     - Reference: Buono & Walker (2011[^cite-buono2011]), Fig. 6, p. 2079, 2 reads, and Table 1, p. 2075; Chen et al. (2008[^cite-chen2008]), Fig. 1, 2 reads (`tests/validation/data/core_eutectics/low_pressure/`).
     - Tolerance: RMS and mean to 0.05 K; the 2 reads of the 1 bar points to 0.5 pt, of the Chen et al. points to 0.28 wt% and 3.2 K; slopes to 0.05 K/GPa (code) and 0.005 K/GPa (data).
     - Test id: `test_core_alloy_liquidus_low_pressure.py::test_the_low_pressure_liquidus_misses_the_measured_points_as_stated`, `::test_the_two_reads_of_the_1_bar_points_agree`, `::test_the_two_reads_of_the_chen_points_agree`, `::test_from_10_to_14_gpa_the_liquidus_falls_from_a_higher_s_content_than_the_data` (unit tier)
-    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "misses or 1_bar or chen_points or falls_less"`; the plots: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "1_bar or falls_less" --validation-plots`
+    - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "misses or 1_bar or chen_points or falls_from_a_higher"`; the plots: `pytest -o "addopts=" tests/test_core_alloy_liquidus_low_pressure.py -k "1_bar or falls_from_a_higher" --validation-plots`
 
 ## The low-pressure eutectic
 
@@ -351,7 +353,7 @@ Code minus check point, in composition:
 
 The 1512 $\pm$ 19 K of the 21.9 GPa liquid lie 55.62 K below the liquidus at 13 wt% S.
 
-**Why it matters.** The eutectic is the end point of every Fe-S and Fe-C liquidus at these pressures. Its slope sets the slope of the liquidus near it.
+**Why it matters.** A wrong eutectic here moves the temperature at which an S- or C-bearing core at these pressures starts to freeze. A wrong eutectic slope can change whether the core freezes from the top or from the centre.
 
 ![Eutectic temperature of Fe-S and Fe-C against pressure from 1 bar to 40 GPa, with the nodes and the check points](../assets/validation/core_alloy_liquidus_low_pressure_eutectic_t.svg#only-light){ width="65%" }
 ![Eutectic temperature of Fe-S and Fe-C against pressure from 1 bar to 40 GPa, with the nodes and the check points](../assets/validation/core_alloy_liquidus_low_pressure_eutectic_t_dark.svg#only-dark){ width="65%" }
@@ -417,7 +419,7 @@ The 1512 $\pm$ 19 K of the 21.9 GPa liquid lie 55.62 K below the liquidus at 13 
 
 ??? info "Test details"
     - Reference: read A and read B of each curve (`tests/validation/data/core_eutectics/`).
-    - Tolerance: the tolerance in the header of each file, plus 0.02 pt; shipped tables equal to read A within $6 \times 10^{-6}$ (mass fraction) or 0.06 K.
+    - Tolerance: the tolerance in the header of each file, plus 0.02 pt. It is half the drawn line width, or the full width for the thin Fe-O temperature line. Shipped tables equal to read A within $6 \times 10^{-6}$ (mass fraction) or 0.06 K.
     - Test id: `::test_the_two_reads_of_each_figure_curve_agree`, `::test_the_two_reads_figure`, `::test_the_shipped_tables_are_the_first_read` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_alloy_liquidus.py -k "reads or first_read"`
 
@@ -439,7 +441,7 @@ The other tests in `tests/test_core_alloy_liquidus.py` check that:
 The other tests in `tests/test_core_alloy_liquidus_low_pressure.py` check that:
 
 - the S and C data start at 1 bar, so nothing below 21 or 5 GPa is flagged;
-- below 1 bar the eutectic is held homologous and flagged;
+- at a negative pressure, below the start of the data (1 bar, written 0 GPa), the eutectic is held homologous and flagged;
 - the Fe-S liquidus is the ideal form on FeS units below 18 GPa, on Fe$_3$S units from 26 GPa and their mean at 22 GPa;
 - the Fe-C liquidus below 18 GPa is the Fe$_3$C form written out by hand;
 - a mixture of S, C and O takes the S units of its pressure;

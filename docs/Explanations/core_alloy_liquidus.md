@@ -107,13 +107,11 @@ For a dilute alloy this gives $T_\mathrm{Fe} - T \approx T_\mathrm{Fe} \sum_i x_
 
 ## Eutectic data
 
-Where do the eutectic points come from? Each binary needs its eutectic temperature and composition at every pressure. Aragog reads them from measured points at low pressure and from fits and figure curves at high pressure, and continues them above the data by a rule.
-
-Each binary needs $T_e$ and $w_e$ at every pressure. The data come from different sources at low pressure and at high pressure. Above the data, a rule continues them. The [data sources](#data-sources) table lists every source.
+Where do the eutectic points come from? Each binary needs its eutectic temperature and composition at every pressure. Aragog reads them from measured points at low pressure and from fits and figure curves at high pressure, and continues them above the data by a rule. The [data sources](#data-sources) table lists every source.
 
 ### Low pressure
 
-The data of all 3 binaries start at 1 bar. Below it the eutectic temperature would keep its ratio to $T_\mathrm{Fe}$ at 1 bar. This fixed ratio to the pure-iron melting point is called homologous. The eutectic composition would keep its 1 bar value.
+The data of all 3 binaries start at 1 bar, written 0 GPa. At a negative pressure the eutectic temperature keeps its ratio to $T_\mathrm{Fe}$ at 0 GPa. This fixed ratio to the pure-iron melting point is called homologous. The eutectic composition keeps its 0 GPa value.
 
 **Fe-S.** Fei et al. (1997[^cite-fei1997], Fig. 2) give the eutectic at 1 bar, 10 and 14 GPa. These points are the nodes. From the nodes, $T_e$ runs towards 1348 K at 21 GPa (Fei et al. 2000[^cite-fei2000]), and $w_e$ runs towards the composition curve at 20 GPa.
 
@@ -224,11 +222,16 @@ The curves were read from the vector paths of the published figures. A second re
 
 ## Bounds and what happens outside them
 
+What does `AlloyLiquidus` do outside its valid inputs? It refuses an invalid composition or result, holds a composition past the eutectic at its boundary and continues the eutectic outside the data, with a flag.
+
 - **Composition.** The mass fractions must be finite real numbers, not negative, of the known elements (S, C, O, Si, H, N), and sum below 1. Otherwise `AlloyLiquidus` raises a `ValueError`.
-- **Past the eutectic.** A composition with $\sum_i w_i / w_{e,i} > 1$ over S, C and O is held at the eutectic value. `AlloyLiquidus.status` flags the pressure (`past_eutectic`).
-- **Above the data.** Above 330 GPa (S, C) or 325 GPa (O) the eutectic keeps its ratio to the pure-iron curve. `AlloyLiquidus.status` flags the pressure (`extrapolated`) for each depressing element in the alloy.
-- **Below 1 bar.** The eutectic keeps its ratio to the pure-iron curve at 1 bar and is flagged `extrapolated`.
+- **Past the eutectic.** A composition with $\sum_i w_i / w_{e,i} > 1$ over S, C and O is held at its value on the eutectic boundary. `AlloyLiquidus.status` flags the pressure (`past_eutectic`).
+- **Above the data.** Above 330 GPa (S, C) or 325 GPa (O) the eutectic temperature keeps its ratio to the pure-iron curve at an effective pressure. The eutectic composition moves along its last table segment over the next 40 GPa and then stays constant ([above the data](#above-the-data)). `AlloyLiquidus.status` flags the pressure (`extrapolated`) for each depressing element in the alloy.
+- **Negative pressure.** Below the start of the data (1 bar, written 0 GPa) the eutectic temperature keeps its ratio to the pure-iron curve at 0 GPa and the composition its 0 GPa value. `AlloyLiquidus.status` flags the pressure (`extrapolated`).
 - **Result.** A liquidus that is not finite, not above 0 K or above the pure-iron curve, or a binary with $A \le 0$, raises a `ValueError`.
+- **Traced values.** The `ValueError` checks run only on concrete values. Inside `jax.jit` or a gradient, an invalid composition or result is not refused.
+
+**Where this is checked.** The tests listed under [related tests](../Validation/core_alloy_liquidus.md#related-tests) and the crossings above the data in [the slope of the liquidus](../Validation/core_alloy_liquidus.md#the-slope-of-the-liquidus).
 
 ## Limits
 
