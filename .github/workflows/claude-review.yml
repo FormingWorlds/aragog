@@ -73,19 +73,27 @@ jobs:
             First read AGENTS.md and tests/AGENTS.md of the repository. Then read the diff
             with `gh pr diff ${{ env.PR_NUMBER }}` and the files it touches.
 
-            Report only real items:
+            Section 1, "Findings": report only real items:
             - a wrong result or a crash if the change is merged, with the input or state
               that triggers it;
             - a physics or unit error;
             - a test or guard that the change removes or weakens;
             - a doc or docstring that states wrong behaviour.
-            Do not comment on style, naming, formatting or comment length.
+            At most 5 findings, each with the file, the line and a concrete input or
+            state that fails.
 
-            Report at most 5 findings. For each, give the file, the line and a concrete
-            input or state that fails. Put a finding on its line with the inline comment
-            tool when the line is in the diff. Then post one short summary comment with
-            `gh pr comment ${{ env.PR_NUMBER }} --body "..."`. If you find nothing real,
-            say so in one line in that comment. Write in plain, short sentences.
+            Section 2, "Code quality": reliability and maintainability items in the lines
+            the pull request adds or changes only, for example an unused import or
+            variable, unreachable or dead code, duplicated logic, a function that grew too
+            complex, or an error-prone pattern (bare except, mutable default argument,
+            resource leak, comparison that is always true or false). At most 5 items, each
+            with the file, the line and the concrete risk. Keep them apart from section 1.
+
+            Do not comment on style, naming, formatting or comment length; ruff covers
+            formatting. Put an item on its line with the inline comment tool when the line
+            is in the diff. Then post one short summary comment with the 2 sections, with
+            `gh pr comment ${{ env.PR_NUMBER }} --body "..."`. If a section has nothing
+            real, say so in one line. Write in plain, short sentences.
           claude_args: |
             --model ${{ env.MODEL }}
             --max-turns 30
