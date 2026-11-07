@@ -42,6 +42,7 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMENT_AT: ${{ github.event.comment.created_at }}
         run: |
           pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,headRefOid)
           echo "$pr"
@@ -50,8 +51,17 @@ jobs:
             echo "No review: the pull request is closed, a draft or from a fork." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          head=$(jq -r .headRefOid <<<"$pr")
+          if [ -n "$COMMENT_AT" ]; then
+            committed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head" --jq .commit.committer.date)
+            if [ "$(jq -n --arg c "$committed" --arg r "$COMMENT_AT" '($c | fromdate) > ($r | fromdate)')" = true ]; then
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No review: new commits after the request; comment @claude again." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
           echo "run=true" >> "$GITHUB_OUTPUT"
-          echo "head=$(jq -r .headRefOid <<<"$pr")" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
 
       - name: Check out the head commit of the pull request
         if: steps.gate.outputs.run == 'true'
