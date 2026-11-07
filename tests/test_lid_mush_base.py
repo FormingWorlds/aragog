@@ -293,12 +293,13 @@ class TestSolver:
         assert np.all(S_f >= s._lid_S_sol)
 
     def test_jax_lid_top_matches_numpy(self, eos):
-        """The JAX mush base flux equals NumPy at four top-cell entropies, and lid_top stays finite."""
+        """The JAX mush base flux and the JAX lid (surface loss, fluid flux and volume, rates,
+        ledger terms) equal NumPy at four top-cell entropies above the solidus."""
         from aragog.jax import surface_lid as jl
-        from tests.test_subgrid_lid_jax_rhs import entropy_eos_jax
+        from tests.test_subgrid_lid_jax_rhs import lid_top_against_numpy
 
         s = _solver(eos)
-        lp, ej = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
+        lp = s.jax_lid_params()
         assert float(lp.mush) == 1.0
         for dS in (0.5, 3.0, 40.0, 900.0):
             S_f = s._lid_S_sol + dS
@@ -314,7 +315,6 @@ class TestSolver:
                 phi=0.01,
             )
             y = np.array([3.0, 3.0 * float(s._lid_hv.profile_heat(0.0, 400.0, T_b))])
-            out = jl.lid_top(lp, ej, y, S_f, top, 50.0, 80.0, np.nan, 0.0)
             F_b = sl.mush_base_flux(
                 float(s._lid_Phi(S_f)),
                 s._lid_h_top,
@@ -338,7 +338,21 @@ class TestSolver:
                     ),
                 )
             ) == pytest.approx(F_b, rel=1e-10)
-            assert math.isfinite(float(out[0]))
+            y_full = s._S0.copy()
+            y_full[: s._n_stag] = np.linspace(3050.0, S_f, s._n_stag)
+            y_full[-2:] = y
+            got, want = lid_top_against_numpy(s, y_full)
+            np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
+        # an onset near the hand-over gives a partial weight under a partial floor: the blend acts
+        s = _solver(eos, lid_delta_on=0.65 * s._lid_h_top, lid_delta_lo=0.3 * s._lid_h_top)
+        S_f = s._lid_S_sol + 4.0
+        y_full = s._S0.copy()
+        y_full[: s._n_stag] = np.linspace(3050.0, S_f, s._n_stag)
+        y_full[-2:] = (3.0, 3.0 * float(s._lid_hv.profile_heat(0.0, 400.0, s._lid_T_sol)))
+        got, want = lid_top_against_numpy(s, y_full)
+        g, w = sl.floor_weight(S_f, s._lid_S_sol), float(s._lid_last.rates.w)
+        assert 0.1 < g < 0.9 and 1.0 - g < w < 0.99
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
 
 
 @pytest.mark.smoke

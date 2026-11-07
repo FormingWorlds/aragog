@@ -37,7 +37,6 @@ def test_lid_top_matches_the_numpy_lid(case):
     """Fed the NumPy top-cell state, the JAX lid gives the NumPy surface loss, fluid flux,
     fluid volume and lid rates to relative 1e-10, on molten and partly solid top cells with
     and without the solid rheology."""
-    from aragog.jax import surface_lid as jl
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
@@ -48,6 +47,26 @@ def test_lid_top_matches_the_numpy_lid(case):
     s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR))
     s.initialize()
     s.set_initial_entropy(3050.0)
+    rng = np.random.default_rng(13)
+    for _ in range(4):
+        y = s._S0.copy()
+        y[: s._n_stag] = np.linspace(
+            rng.uniform(2900, 3100), rng.uniform(2300, 3100), s._n_stag
+        )
+        delta = 10.0 ** rng.uniform(0.0, 2.5)
+        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(600.0, 1300.0))))
+        got, want = lid_top_against_numpy(s, y)
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
+
+
+def lid_top_against_numpy(s, y):
+    """The JAX ``lid_top`` outputs and the NumPy lid outputs of solver ``s`` at the state ``y``.
+
+    Returns two arrays of the surface loss, fluid flux, fluid volume, lid rates, fluid heat
+    content and lid mass: the JAX lid fed the NumPy top-cell state, and the NumPy lid.
+    """
+    from aragog.jax import surface_lid as jl
+
     lp, eos_jax = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
     seen = {}
     evaluate = s._lid_evaluate
@@ -58,47 +77,41 @@ def test_lid_top_matches_the_numpy_lid(case):
         return seen['ev']
 
     s._lid_evaluate = spy
-    rng = np.random.default_rng(13)
-    for _ in range(4):
-        y = s._S0.copy()
-        y[: s._n_stag] = np.linspace(
-            rng.uniform(2900, 3100), rng.uniform(2300, 3100), s._n_stag
-        )
-        delta = 10.0 ** rng.uniform(0.0, 2.5)
-        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(600.0, 1300.0))))
+    try:
         s._dSdt_single(0.0, y)
-        ev, ph = seen['ev'], s.state.phase_staggered
+    finally:
+        s._lid_evaluate = evaluate
+    ev, ph = seen['ev'], s.state.phase_staggered
 
-        def top(v):
-            return float(np.asarray(v).ravel()[-1])
+    def top(v):
+        return float(np.asarray(v).ravel()[-1])
 
-        props = dict(
-            T=top(ph.temperature()),
-            rho=top(ph.density()),
-            cp=top(ph.heat_capacity()),
-            k=top(ph.thermal_conductivity()),
-            alpha=top(ph.thermal_expansivity()),
-            g=top(ph.gravitational_acceleration()),
-            eta=top(ph.viscosity()),
-            phi=top(ph.melt_fraction()),
-        )
-        ls = s.state.lid_state
-        T_iso = float(np.asarray(ls['T_lid_iso'])) if ls is not None else np.nan
-        got = jl.lid_top(
-            lp,
-            eos_jax,
-            y[-2:],
-            float(y[s._n_stag - 1]),
-            props,
-            float(s.state._heat_flux[-2]),
-            seen['F_grid'],
-            T_iso,
-            top(s.state.heating),
-        )
-        r = ev.rates
-        want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.H_f, ev.m_lid)
-        got = np.array([*got[:5], *got[5]], dtype=float)
-        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
+    props = dict(
+        T=top(ph.temperature()),
+        rho=top(ph.density()),
+        cp=top(ph.heat_capacity()),
+        k=top(ph.thermal_conductivity()),
+        alpha=top(ph.thermal_expansivity()),
+        g=top(ph.gravitational_acceleration()),
+        eta=top(ph.viscosity()),
+        phi=top(ph.melt_fraction()),
+    )
+    ls = s.state.lid_state
+    T_iso = float(np.asarray(ls['T_lid_iso'])) if ls is not None else np.nan
+    got = jl.lid_top(
+        lp,
+        eos_jax,
+        y[-2:],
+        float(y[s._n_stag - 1]),
+        props,
+        float(s.state._heat_flux[-2]),
+        seen['F_grid'],
+        T_iso,
+        top(s.state.heating),
+    )
+    r = ev.rates
+    want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.H_f, ev.m_lid)
+    return np.array([*got[:5], *got[5]], dtype=float), np.array(want, dtype=float)
 
 
 def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, convection=True):
