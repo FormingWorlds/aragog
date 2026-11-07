@@ -26,9 +26,7 @@ from typed_configparser import ConfigParser
 from aragog.config.boundary import (
     check_core_bc,
     check_lid_mush_base,
-    check_lid_surface_flux_cap,
-    check_lid_surface_flux_slope,
-    check_lid_surface_temperature,
+    check_lid_surface,
     check_subgrid_lid,
     check_top_node,
 )
@@ -157,16 +155,13 @@ class _BoundaryConditionsParameters:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_top_node(self.top_node, self.core_bc)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
-        check_lid_surface_temperature(
-            self.lid_surface_temperature, self.outer_boundary_condition, self.lid_mush_base
-        )
-        check_lid_surface_flux_cap(
-            self.lid_surface_flux_cap,
+        check_lid_surface(
             self.outer_boundary_condition,
             self.lid_mush_base,
             self.lid_surface_temperature,
+            self.lid_surface_flux_cap,
+            self.lid_surface_flux_slope,
         )
-        check_lid_surface_flux_slope(self.lid_surface_flux_slope, self.lid_surface_flux_cap)
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,

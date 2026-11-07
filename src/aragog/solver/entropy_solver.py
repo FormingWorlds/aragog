@@ -40,9 +40,7 @@ from aragog import surface_lid as _lid
 from aragog.config.boundary import (
     _is_real,
     check_lid_mush_base,
-    check_lid_surface_flux_cap,
-    check_lid_surface_flux_slope,
-    check_lid_surface_temperature,
+    check_lid_surface,
     check_subgrid_lid,
 )
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
@@ -3752,16 +3750,11 @@ class EntropySolver:
                 T_fix = min(T_held, T_b - _lid.LID_DT_MIN)
                 surf = _lid.fixed_surface_state(delta, E, T_b, k, T_fix, floor, self._lid_hv)
                 if cap is not None and surf.F_s > cap:
-                    # rule 3: the lid loses the flux the atmosphere gives it, C + F' (T_s - T_held)
-                    Fp = bc.lid_surface_flux_slope
-                    if Fp:
-                        surf = _lid.robin_surface_state(
-                            delta, E, T_b, k, cap, Fp, T_held, floor, self._lid_hv
-                        )
-                    else:
-                        surf = _lid.flux_surface_state(
-                            delta, E, T_b, k, cap, floor, self._lid_hv
-                        )
+                    # above the cap the lid loses C + F' (T_s - T_held); F' 0 is the cap alone
+                    Fp = bc.lid_surface_flux_slope or 0.0
+                    surf = _lid.robin_surface_state(
+                        delta, E, T_b, k, cap, Fp, T_held, floor, self._lid_hv
+                    )
             T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else T_b
             w = _lid.flux_weight(F_b, T_b, T_top, k, eps, T_eq, self._lid_delta_on)
         else:
@@ -5324,16 +5317,13 @@ class EntropySolver:
         self._sync_top_node()  # the EOS may have changed since the reset
         self._refresh_surface_temperature()
         bc_s = self.evaluator.boundary_conditions._settings
-        check_lid_surface_temperature(
-            bc_s.lid_surface_temperature, self._outer_bc_kind, self._lid_mush
-        )
-        check_lid_surface_flux_cap(
-            bc_s.lid_surface_flux_cap,
+        check_lid_surface(
             self._outer_bc_kind,
             self._lid_mush,
             bc_s.lid_surface_temperature,
+            bc_s.lid_surface_flux_cap,
+            bc_s.lid_surface_flux_slope,
         )
-        check_lid_surface_flux_slope(bc_s.lid_surface_flux_slope, bc_s.lid_surface_flux_cap)
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.

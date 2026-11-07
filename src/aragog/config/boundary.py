@@ -114,6 +114,13 @@ def check_lid_surface_flux_slope(value, cap) -> None:
         raise ValueError('lid_surface_flux_slope needs lid_surface_flux_cap')
 
 
+def check_lid_surface(outer_boundary_condition, lid_mush_base, T_held, cap, slope) -> None:
+    """Run the checks of the held lid surface: temperature, flux cap and flux slope."""
+    check_lid_surface_temperature(T_held, outer_boundary_condition, lid_mush_base)
+    check_lid_surface_flux_cap(cap, outer_boundary_condition, lid_mush_base, T_held)
+    check_lid_surface_flux_slope(slope, cap)
+
+
 def check_subgrid_lid(
     subgrid_lid,
     lid_delta_on,
@@ -315,16 +322,13 @@ class BoundaryConfig:
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
-        check_lid_surface_temperature(
-            self.lid_surface_temperature, self.outer_boundary_condition, self.lid_mush_base
-        )
-        check_lid_surface_flux_cap(
-            self.lid_surface_flux_cap,
+        check_lid_surface(
             self.outer_boundary_condition,
             self.lid_mush_base,
             self.lid_surface_temperature,
+            self.lid_surface_flux_cap,
+            self.lid_surface_flux_slope,
         )
-        check_lid_surface_flux_slope(self.lid_surface_flux_slope, self.lid_surface_flux_cap)
         check_subgrid_lid(
             self.subgrid_lid,
             self.lid_delta_on,
