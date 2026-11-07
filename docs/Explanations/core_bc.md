@@ -352,7 +352,7 @@ $$
 r_\text{core} = \frac{|\Delta E_\text{core} + \Delta E_\text{cmb} - Q_R\, \Delta t|}{\max(|\Delta E_\text{core}|, |\Delta E_\text{cmb}|)}
 $$
 
-where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$.
+where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$. The convergence tests of [core ledger closure](../Validation/core.md#core-ledger-closure) use the signed form $(\Delta E_\text{core} + \Delta E_\text{cmb}) / \Delta E_\text{cmb}$ with $Q_R = 0$; its size agrees with $r_\text{core}$ to a relative $r_\text{core}$.
 
 The solver books the core heat change of a call in 2 steps:
 
