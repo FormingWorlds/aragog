@@ -600,3 +600,21 @@ def test_heat_change_books_each_side_of_freeze_out_with_its_own_capacity(
     above = t0 - t_fr if d_t < 0.0 else d_t - (t_fr - t0)
     expected = np.sign(d_t) * (liquid * above + frozen * (abs(d_t) - above))
     assert budget.heat_change(t0, d_t) == pytest.approx(expected, rel=1e-9)
+
+
+@pytest.mark.parametrize('k', [0.25, 0.5, 1.0])
+@pytest.mark.parametrize('side', [-1.0, 1.0])
+def test_heat_change_splits_a_crossing_below_the_spacing_of_the_subcooling(prof, k, side):
+    """A step from 1 float beside freeze-out that crosses it by k float spacings of T_onset -
+    T_freeze (below the spacing of the subcooling, which rounds to its freeze-out value) books
+    the same change as the explicit split at T_freeze, heating and cooling, to 1e-12."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_fr = budget.t_freeze
+    t0 = np.nextafter(t_fr, -side * np.inf)
+    d_fr = t_fr - t0
+    d_t = d_fr + side * k * np.spacing(budget.t_onset - t_fr)
+    split = budget.heat_change(t0, d_fr) + budget.heat_change(t_fr, d_t - d_fr)
+    assert budget.heat_change(t0, d_t) == pytest.approx(split, rel=1e-12)
