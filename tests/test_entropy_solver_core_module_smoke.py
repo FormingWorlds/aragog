@@ -1035,3 +1035,16 @@ def test_a_core_bc_without_the_core_module_reports_no_tolerance_scale(shared_eos
     out = solver.get_state()
     assert out.step_dE_core_J != 0.0
     assert math.isnan(out.step_core_tol_J)
+
+
+@pytest.mark.parametrize('method', ['radau', 'bdf', pytest.param('cvode', marks=needs_cvode)])
+def test_a_zero_span_call_reports_no_tolerance_scale(shared_eos, method):
+    """A call with start time equal to end time does not advance: no core heat change and a NaN
+    tolerance scale on every solver path, also where the trace holds 2 equal times."""
+    solver = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=0.0, solver_method=method
+    )
+    solver.solve()
+    out = solver.get_state()
+    assert out.step_dE_core_J == 0.0
+    assert math.isnan(out.step_core_tol_J)
