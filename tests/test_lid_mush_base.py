@@ -82,6 +82,7 @@ def test_floor_weight_rises_from_1_to_6_j_per_kg_k_above_the_solidus():
 @settings(max_examples=60, deadline=None)
 @given(st.floats(allow_nan=False, allow_infinity=False, min_value=-1e6, max_value=1e6))
 def test_floor_weight_stays_in_range(x):
+    """The floor weight lies in [0, 1] for any entropy offset from the solidus."""
     assert 0.0 <= sl.floor_weight(x, 0.0) <= 1.0
 
 
@@ -103,6 +104,7 @@ def test_floor_flux_constant_diffusivity_hand_value():
     [('lid_mush_base', 1), ('lid_mush_base', 'yes'), ('lid_mush_base', None)],
 )
 def test_lid_mush_base_must_be_bool(field, value):
+    """A lid_mush_base of 1, 'yes' or None is refused with a ValueError naming the field."""
     from aragog.config.boundary import check_lid_mush_base
 
     with pytest.raises(ValueError, match=field):
@@ -111,6 +113,7 @@ def test_lid_mush_base_must_be_bool(field, value):
 
 @pytest.mark.unit
 def test_lid_mush_base_is_off_by_default():
+    """The lid_mush_base field of the boundary-condition parameters defaults to False."""
     from aragog.parser import _BoundaryConditionsParameters
 
     assert _BoundaryConditionsParameters.__dataclass_fields__['lid_mush_base'].default is False
@@ -124,12 +127,14 @@ class TestSolver:
         return entropy_eos_copy(EOS_DIR)
 
     def test_refused_without_the_rheology(self, eos):
+        """Setup with the mush base and the solid rheology disabled raises a ValueError."""
         from aragog.parser import SolidRheologyParams
 
         with pytest.raises(ValueError, match='lid_mush_base'):
             _solver(eos, rheo=SolidRheologyParams(enabled=False))
 
     def test_refused_at_a_start_below_the_floor(self, eos):
+        """A start 10 J/kg/K below the solidus entropy is refused, naming lid_mush_base."""
         s = _solver(eos, S0=3050.0)
         S_cold = s._lid_S_sol - 10.0
         with pytest.raises(ValueError, match='lid_mush_base'):
@@ -137,6 +142,7 @@ class TestSolver:
             s.solve()
 
     def test_base_is_the_solidus(self, eos):
+        """The lid base state takes the solidus entropy and the solidus temperature."""
         s = _solver(eos)
         base = s._lid_base_state(1500.0, 0.01, s._lid_S_sol + 3.0)
         assert base['S_b'] == s._lid_S_sol
@@ -194,6 +200,7 @@ class TestSolver:
 
     @pytest.mark.parametrize('dS', [-1.0, 0.0, 0.49 * sl.LID_FLOOR_GAP])
     def test_invariant_refuses_an_accepted_state_below_the_floor(self, eos, dS):
+        """The step check raises 'below the floor' for a top cell under solidus plus half the gap."""
         s = _solver(eos)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
@@ -204,6 +211,7 @@ class TestSolver:
             s._check_lid_step(s._lid_delta_lo, 3, 1.0)
 
     def test_invariant_accepts_a_state_at_the_slack(self, eos):
+        """The step check accepts a top cell 0.51 floor gaps above the solidus."""
         s = _solver(eos)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
@@ -258,6 +266,7 @@ class TestSolver:
             EntropySolver(p, entropy_eos=None).initialize()
 
     def test_hand_over_at_the_fraction_of_the_cell(self, eos):
+        """The hand-over root changes sign at 0.7 of the top-cell width and is -1 at zero thickness."""
         s = _solver(eos)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
@@ -284,6 +293,7 @@ class TestSolver:
         assert np.all(S_f >= s._lid_S_sol)
 
     def test_jax_lid_top_matches_numpy(self, eos):
+        """The JAX mush base flux equals NumPy at four top-cell entropies, and lid_top stays finite."""
         from aragog.jax import surface_lid as jl
         from tests.test_subgrid_lid_jax_rhs import entropy_eos_jax
 
@@ -383,6 +393,7 @@ def test_flux_surface_state_carries_the_prescribed_flux():
     'bc, mush, ok', [(4, True, True), (4, False, False), (1, True, True), (2, True, False)]
 )
 def test_prescribed_flux_needs_the_mush_base(bc, mush, ok):
+    """Outer boundary 4 needs lid_mush_base; boundary 1 passes and boundary 2 is refused."""
     from aragog.config.boundary import check_subgrid_lid
 
     args = (True, 1.0, None, 3, 450.0, bc, 'quasi_steady', False)
@@ -436,6 +447,7 @@ class TestFluxSolver:
         )
 
     def test_surface_loss_is_the_prescribed_flux(self, eos):
+        """With a prescribed flux of 200 the top heat flux is 200 and the crust is below the base."""
         s = self._s(eos)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
@@ -448,6 +460,7 @@ class TestFluxSolver:
         assert ev.surf.T_s < ev.T_b
 
     def test_short_run_closes_energy_and_reports_the_crust_surface(self, eos, monkeypatch):
+        """A short flux-mode run closes its energy budget and reports T_magma and the crust surface."""
         s = self._s(eos, end=2.0)
         s.solve()
         sol = s._solution
@@ -493,6 +506,7 @@ class TestFluxSolver:
             assert abs(T_w - T_node) > 1.0
 
     def test_jax_flux_mode_matches_numpy(self, eos):
+        """The JAX flux-mode surface state and weight match NumPy, including a flux at or below 0."""
         from aragog.jax import surface_lid as jl
 
         s = self._s(eos)
@@ -530,6 +544,7 @@ class TestFluxSolver:
             assert float(surf_j[0]) == T_b - sl.LID_DT_MIN
 
     def test_a_lid_at_the_limit_of_its_profile_is_reported(self, eos, caplog):
+        """A lid under a flux of 1e4 reaches the minimum surface temperature and logs a warning."""
         s = self._s(eos, F_atm=1.0e4)
         n = s._n_stag
         y = np.full(n + 2, 3050.0)
@@ -567,6 +582,7 @@ GOOD_LID = dict(
 @settings(max_examples=80, deadline=None)
 @given(NOT_BOOL, st.booleans())
 def test_lid_mush_base_refuses_every_other_type(value, subgrid):
+    """Any non-bool lid_mush_base is refused with 'must be true or false'."""
     from aragog.config.boundary import check_lid_mush_base
 
     with pytest.raises(ValueError, match='lid_mush_base must be true or false'):
@@ -577,6 +593,7 @@ def test_lid_mush_base_refuses_every_other_type(value, subgrid):
 @settings(max_examples=40, deadline=None)
 @given(st.booleans(), st.booleans())
 def test_lid_mush_base_needs_the_lid(mush, subgrid):
+    """lid_mush_base true without subgrid_lid is refused; other combinations return None."""
     from aragog.config.boundary import check_lid_mush_base
 
     if mush and not subgrid:
@@ -613,6 +630,7 @@ FLUX = st.floats(min_value=-1e7, max_value=1e7, allow_nan=False)
     st.floats(min_value=0.0, max_value=1e4, allow_nan=False),
 )
 def test_floor_weight_does_not_fall_with_entropy(S, dS):
+    """The floor weight does not decrease when the entropy rises."""
     assert sl.floor_weight(S + dS, 0.0) >= sl.floor_weight(S, 0.0)
 
 
@@ -627,6 +645,7 @@ def test_floor_weight_does_not_fall_with_entropy(S, dS):
     st.floats(min_value=0.0, max_value=1e7, allow_nan=False),
 )
 def test_base_flux_lies_between_its_two_limits(Phi, h, frac, F_lo, g, q_conv):
+    """The base flux lies between the flux from below (g = 0) and the floor flux plus convection (g = 1)."""
     delta = frac * h
     F_k = sl.floor_flux(Phi, h, delta)
     assert F_k >= 0.0
@@ -657,6 +676,7 @@ class TestRestore:
         st.floats(min_value=0.0, max_value=2000.0),
     )
     def test_a_resume_above_the_floor_keeps_the_lid_bitwise(self, solver, delta, E, dS):
+        """A set lid under a top cell above the floor gap starts unchanged, bit for bit."""
         S_top = solver._lid_S_sol + sl.LID_FLOOR_GAP + dS
         solver.set_initial_lid(delta, E)
         try:
@@ -699,6 +719,7 @@ class TestRestore:
         assert np.array_equal(run._lid_start(S_top), carried)
 
     def test_a_handed_over_state_may_resume_below_the_floor(self, solver):
+        """A handed-over lid (0, 0) restarts unchanged with a top cell below the solidus."""
         solver.set_initial_lid(0.0, 0.0)
         try:
             start = solver._lid_start(solver._lid_S_sol - 50.0)
@@ -769,6 +790,7 @@ class TestFluxLidKnownAnswers:
         assert k * (T_b - surf.T_s) / F == pytest.approx(delta, rel=1e-2)
 
     def test_a_crust_off_the_linear_profile_relaxes_to_the_conduction_law(self, s):
+        """A crust off the linear profile relaxes to zero surface slope and the conduction law."""
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         F, delta0 = 5.0, 100.0
         E0 = delta0 * float(hv.profile_heat(1.0, T_b - 2.0 * F * delta0 / k, T_b))
@@ -777,6 +799,7 @@ class TestFluxLidKnownAnswers:
         assert k * (T_b - surf.T_s) / F == pytest.approx(delta, rel=1e-2)
 
     def test_growth_above_the_delivery_runs_at_the_stefan_rate(self, s):
+        """With a surface flux above the delivery, the lid grows at the Stefan rate within 5 percent."""
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         F, F_b, delta0 = 1.5, 1.0, 1000.0
         H_f, H_b = 3.5e9, 0.0
@@ -789,6 +812,7 @@ class TestFluxLidKnownAnswers:
 
     @pytest.mark.parametrize('F_atm', [0.0, -5.0, -1e4])
     def test_no_surface_flux_leaves_no_crust_above_the_base_temperature(self, s, F_atm):
+        """A surface flux of 0 or below keeps the surface 1 K below the base; a surface at the base has weight 0."""
         T_b, k, hv = s._lid_T_sol, s._lid_k, s._lid_hv
         surf = sl.flux_surface_state(100.0, 1.0e12, T_b, k, F_atm, sl.LID_DELTA_FLOOR, hv)
         assert surf.T_s == T_b - sl.LID_DT_MIN
@@ -880,6 +904,7 @@ def test_jax_factory_rhs_matches_on_the_mush_base(outer):
     )
 )
 def test_lid_surface_temperature_refuses_every_other_value(value):
+    """A lid_surface_temperature that is not a finite positive number is refused by name."""
     from aragog.config.boundary import check_lid_surface_temperature
 
     with pytest.raises(ValueError, match='lid_surface_temperature'):
@@ -890,6 +915,7 @@ def test_lid_surface_temperature_refuses_every_other_value(value):
 @settings(max_examples=60, deadline=None)
 @given(st.floats(min_value=1.0e-3, max_value=1.0e5), st.integers(0, 6), st.booleans())
 def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc, mush):
+    """lid_surface_temperature is accepted only with outer boundary 4 and the mush base."""
     from aragog.config.boundary import check_lid_surface_temperature
 
     assert check_lid_surface_temperature(None, bc, mush) is None
@@ -912,6 +938,7 @@ def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc
     )
 )
 def test_lid_surface_flux_cap_refuses_every_other_value(value):
+    """A lid_surface_flux_cap that is not a finite positive number is refused by name."""
     from aragog.config.boundary import check_lid_surface_flux_cap
 
     with pytest.raises(ValueError, match='lid_surface_flux_cap'):
@@ -927,6 +954,7 @@ def test_lid_surface_flux_cap_refuses_every_other_value(value):
     st.one_of(st.none(), st.just(500.0)),
 )
 def test_lid_surface_flux_cap_needs_the_held_surface(C, bc, mush, T_held):
+    """lid_surface_flux_cap needs boundary 4, the mush base and a held surface temperature."""
     from aragog.config.boundary import check_lid_surface_flux_cap
 
     assert check_lid_surface_flux_cap(None, bc, mush, T_held) is None
@@ -1022,6 +1050,7 @@ class TestHeldSurface:
         assert float(s.state._heat_flux[-1]) == pytest.approx(C, rel=1e-9)
 
     def test_change_of_the_cap_between_calls_is_read(self, eos):
+        """A cap set between calls takes effect; a negative cap set later is refused at the solve."""
         s = _held_solver(eos, 500.0)
         y = self._state(s, 100.0, 500.0)
         s._dSdt_single(0.0, y)
@@ -1035,6 +1064,7 @@ class TestHeldSurface:
 
     @pytest.mark.parametrize('frac', [0.5, 2.0])
     def test_jax_factory_matches_numpy_with_the_cap(self, eos, frac):
+        """The JAX factory matches NumPy at caps of 0.5 and 2 times the held flux, Jacobian finite."""
         from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
 
         s = _held_solver(eos, 500.0)
@@ -1060,6 +1090,7 @@ class TestHeldSurface:
             assert np.all(np.isfinite(J))
 
     def test_a_surface_at_or_above_the_base_hands_the_surface_to_the_flux(self, eos):
+        """A held surface at or above the base falls back to the prescribed flux with weight 0."""
         s = _held_solver(eos, 1.0e4, F_atm=123.0)
         s._dSdt_single(0.0, self._state(s, 100.0, 500.0, dS=sl.LID_FLOOR_WIDTH * 3.0))
         ev = s._lid_last
@@ -1068,6 +1099,7 @@ class TestHeldSurface:
         assert float(s.state._heat_flux[-1]) == 123.0
 
     def test_change_of_the_held_surface_between_calls_is_read(self, eos):
+        """A held surface temperature set between calls is used by the next call."""
         s = _held_solver(eos, 500.0)
         y = self._state(s, 100.0, 500.0)
         s._dSdt_single(0.0, y)
@@ -1076,12 +1108,14 @@ class TestHeldSurface:
         assert s._lid_last.surf.T_s == 800.0
 
     def test_bad_value_set_between_calls_is_refused_at_the_solve(self, eos):
+        """A negative held surface temperature set after setup is refused at the solve, by name."""
         s = _held_solver(eos, 500.0)
         s.parameters.boundary_conditions.lid_surface_temperature = -3.0
         with pytest.raises(ValueError, match='lid_surface_temperature'):
             s.solve()
 
     def test_jax_factory_matches_numpy_with_the_held_surface(self, eos):
+        """The JAX factory matches NumPy for six mush states with a held surface at 500 K."""
         from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
 
         s = _held_solver(eos, 500.0)
