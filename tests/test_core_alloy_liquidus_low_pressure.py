@@ -56,8 +56,13 @@ def _w_e(el):
 
 
 def _smootherstep(z):
-    z = min(max(z, 0.0), 1.0)
-    return z**3 * (z * (6.0 * z - 15.0) + 10.0)
+    return float(alloy._smootherstep(z))
+
+
+def _blend(p_gpa):
+    """Weight of the Fe3S form at ``p_gpa``, the smootherstep over the unit blend window."""
+    s0, s1 = alloy.S_UNIT_BLEND_GPA
+    return _smootherstep((p_gpa - s0) / (s1 - s0))
 
 
 @pytest.mark.reference_pinned
@@ -263,7 +268,7 @@ def test_the_unit_blend_adds_the_stated_slope(w, added, top):
     wt% S; the liquidus slope peaks at 51.4, 73.9, 98.4, 96.7 and 80.0 K/GPa."""
     p = np.linspace(18.001, 25.999, 801)
     g = np.asarray(AlloyLiquidus({'S': w}).gradient(p * 1e9)) * 1e9
-    c = np.array([_smootherstep((x - 18.0) / 8.0) for x in p])
+    c = np.array([_blend(x) for x in p])
     ends = [
         np.array([(_form(w, x + 1e-4, u) - _form(w, x - 1e-4, u)) / 2e-4 for x in p])
         for u in (FES, FE3S)
@@ -701,8 +706,7 @@ def test_a_mixture_takes_the_sulfur_units_of_its_pressure():
         _harmonic_by_hand(40.0, comp, FE3S), rel=1e-12
     )
     for p in (20.0, 22.0, 24.0):
-        z = (p - 18.0) / 8.0
-        b = z**3 * (10.0 - 15.0 * z + 6.0 * z**2)
+        b = _blend(p)
         hand = (1.0 - b) * _harmonic_by_hand(p, comp, FES) + b * _harmonic_by_hand(
             p, comp, FE3S
         )
@@ -735,5 +739,5 @@ def test_the_joins_and_blends_sit_where_the_data_need_them():
         < alloy.C_UNIT_SWITCH_PA - alloy.C_UNIT_BLEND_HALF_WIDTH_PA
     )
     start = alloy._table('fe_s_composition')[0, 0]
-    assert alloy.S_JOIN_START_GPA < start < alloy._SIMON['S'][1]
+    assert alloy.S_UNIT_BLEND_GPA[0] < start < alloy._SIMON['S'][1]
     assert alloy._table('fe_c_composition')[0, 0] == alloy._SIMON['C'][1]

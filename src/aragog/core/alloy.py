@@ -66,7 +66,6 @@ C_UNIT_BLEND_HALF_WIDTH_PA = 25.0e9
 HOMOLOGOUS_FADE_GPA = 40.0
 # Simon fits of the eutectic temperature, T_ref [K], P_ref [GPa], a [GPa], c.
 _SIMON = {'S': (1348.0, 21.0, 36.5, 2.07), 'C': (1513.0, 5.0, 8.4, 4.1)}
-S_JOIN_START_GPA = 18.0
 
 
 def _table(name: str) -> np.ndarray:
@@ -161,7 +160,8 @@ def _eutectic_in_data(el: str, q):
             q, tx, ty, _hermite_slopes(tx, ty, (ty[1] - ty[0]) / tx[1], t_ref / (a * c))
         )
         w_low = _hermite(q, wx, wy, _hermite_slopes(wx, wy, (wy[1] - wy[0]) / wx[1], w_end))
-        b = _smootherstep((q - S_JOIN_START_GPA) / (p_ref - S_JOIN_START_GPA))
+        s0 = S_UNIT_BLEND_GPA[0]
+        b = _smootherstep((q - s0) / (p_ref - s0))
         return (1.0 - b) * t_low + b * t_fit, (1.0 - b) * w_low + b * w_fit
     span, x = p_ref - low[0, 0], q - low[0, 0]
     w_slope = (comp[1, 1] - comp[0, 1]) / (comp[1, 0] - comp[0, 0])
@@ -334,7 +334,7 @@ class AlloyLiquidus:
 
     def gradient(self, pressure):
         """dT_liq/dP [K/Pa] at ``pressure`` [Pa], by automatic differentiation."""
-        p = jnp.atleast_1d(jnp.asarray(pressure, dtype=float))
+        p = jnp.ravel(jnp.asarray(pressure, dtype=float))
         return jax.vmap(jax.grad(lambda q: self.t_melt(q)))(p).reshape(jnp.shape(pressure))
 
     def status(self, pressure) -> dict:
