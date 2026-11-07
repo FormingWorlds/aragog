@@ -51,10 +51,10 @@ jobs:
             exit 0
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" > /dev/null; then
-            echo "ref=refs/pull/$PR_NUMBER/merge" >> "$GITHUB_OUTPUT"
+          if sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" --jq .object.sha); then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
           else
-            echo "ref=$(jq -r .headRefOid <<<"$pr")" >> "$GITHUB_OUTPUT"
+            echo "sha=$(jq -r .headRefOid <<<"$pr")" >> "$GITHUB_OUTPUT"
             echo "No merge commit (merge conflict): the review reads the head commit." >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -62,7 +62,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v6
         with:
-          ref: ${{ steps.gate.outputs.ref }}
+          ref: ${{ steps.gate.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
 
