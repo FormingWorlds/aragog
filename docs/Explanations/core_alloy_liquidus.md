@@ -2,14 +2,14 @@
 
 ## What this is and why it matters
 
-The liquidus of an alloy is the temperature at which it starts to freeze as it cools. In a planet's core, the inner core grows where the core adiabat meets the liquidus of the core alloy. The adiabat is the temperature profile of a convecting liquid that exchanges no heat with its surroundings. Light elements such as sulfur, carbon and oxygen lower the liquidus of iron, so they move the inner-core boundary. The slope of the liquidus also decides whether the core freezes from the centre or from the top.
+The liquidus of an alloy is the temperature at which it starts to freeze as it cools. In a planet's core, the inner core grows where the core adiabat meets the liquidus of the core alloy. The adiabat is the temperature profile at constant entropy, which a well-mixed convecting liquid follows. Light elements such as sulfur, carbon and oxygen lower the liquidus of iron, so they move the inner-core boundary. The slope of the liquidus, compared with the slope of the adiabat, also decides whether the core freezes from the centre or from the top.
 
 ## A sketch of the liquidus
 
 ![Melting temperature of iron and iron-sulfur alloys against pressure, with an example core adiabat](../figures/alloy_liquidus_sketch_light.svg#only-light){ width="100%" }
 ![Melting temperature of iron and iron-sulfur alloys against pressure, with an example core adiabat](../figures/alloy_liquidus_sketch_dark.svg#only-dark){ width="100%" }
 
-The figure shows melting temperature against pressure, from the surface to the centre of the Earth at 364 GPa. The solid curves are pure iron and iron with 2 and 4.8 wt% S. The dashed curve is the Fe-S eutectic, the lowest melting point of the mixture. `AlloyLiquidus` computes all 4 curves. The dotted curve is an example core temperature profile, an adiabat from 4500 K at the core-mantle boundary, not a model result. The notes beside the plot explain the 5 numbered points. `tools/verification/figures/sketch_alloy_liquidus.py` builds the figure.
+The figure shows melting temperature against pressure, from the surface to the centre of the Earth at 364 GPa: pure iron and iron with 2 and 4.8 wt% S (percent by mass), from `IronMeltingCurve` and `AlloyLiquidus`, and the Fe-S eutectic (dashed), the lowest melting point of the mixture, from `eutectic`. The dotted curve is an example core temperature profile, 4500 K at the core-mantle boundary with the slopes of the default core adiabat, not a model result. The notes beside the plot explain the 5 numbered points. `tools/verification/figures/sketch_alloy_liquidus.py` builds the figure.
 
 ## The model in steps
 
@@ -62,9 +62,9 @@ Where the unit changes, Aragog blends the liquidus temperatures of the two units
 
 **Sulfur.** The sulfide that coexists with iron at the Fe-S eutectic is FeS up to 14 GPa. Above it the sulfide is Fe$_3$S$_2$ (Fei et al. 1997[^cite-fei1997]). Fe$_3$S forms between 18 and 21 GPa (Fei et al. 2000[^cite-fei2000]).
 
-Fe$_3$S units hold at most 16.06 wt% S. This is less than the S in the eutectic liquid below 17.8 GPa. Aragog therefore uses FeS units up to 18 GPa and Fe$_3$S units from 26 GPa. A $C^2$ smootherstep of the 2 liquidus temperatures joins them over 18 to 26 GPa.
+Fe$_3$S units hold at most 16.06 wt% S. This is less than the S in the eutectic liquid below 17.14 GPa. Aragog therefore uses FeS units up to 18 GPa and Fe$_3$S units from 26 GPa. A $C^2$ smootherstep of the 2 liquidus temperatures joins them over 18 to 26 GPa.
 
-Fe$_3$S$_2$ and Fe$_2$S are not used as units. The two forms run through the same end points but differ between them. The blend therefore adds to the slope of the liquidus near 22 GPa, with no data behind it.
+Fe$_3$S$_2$ and Fe$_2$S are not used as units. The FeS and Fe$_3$S forms run through the same end points but differ between them. The blend therefore adds to the slope of the liquidus near 22 GPa, with no data behind it.
 
 The dilute limit is the limit of a vanishing light-element content, $w \to 0$. Over the window, the depression per wt% S in the dilute limit falls 3.46 times. It falls from 92.72 K at 18 GPa (FeS units) to 26.80 K at 26 GPa (Fe$_3$S units).
 
@@ -139,7 +139,7 @@ The data of all 3 binaries start at 1 bar. Below it the eutectic temperature wou
 
 **Fe-S.** Fei et al. (1997[^cite-fei1997], Fig. 2) give the eutectic at 1 bar, 10 and 14 GPa. These points are the nodes. From the nodes, $T_e$ runs towards 1348 K at 21 GPa (Fei et al. 2000[^cite-fei2000]), and $w_e$ runs towards the composition curve at 20 GPa.
 
-Through the nodes and these line ends, $T_e$ and $w_e$ follow the monotone cubic Hermite of Fritsch & Carlson (1980[^cite-fritsch1980]). This piecewise cubic stays monotone between the nodes and has no step in slope at them. Over 18 to 21 GPa a smootherstep $b$ of $(P - 18\,\mathrm{GPa})/3\,\mathrm{GPa}$ joins these lines into the high-pressure Simon fit and composition table:
+Through the nodes and these line ends, $T_e$ and $w_e$ follow the monotone cubic Hermite of Fritsch & Carlson (1980[^cite-fritsch1980]). This piecewise cubic stays monotone between the nodes and has no step in slope at them. Over 18 to 21 GPa a smootherstep $b$ of $(P - 18\,\mathrm{GPa})/3\,\mathrm{GPa}$ joins these lines into the high-pressure Simon fit (a power law of pressure for the eutectic temperature, below) and composition table:
 
 $T_e = (1 - b)\,T_\mathrm{line} + b\,T_\mathrm{fit}$ and the same for $w_e$.
 
@@ -170,7 +170,7 @@ The composition table is continued below 20 GPa along its first segment. $T_e$, 
 **Fe-C.** Below 5 GPa the Fe-C eutectic is a cubic. It runs through 1416.15 K and 4.3 wt% C at 1 bar (Nakajima et al. 2009[^cite-nakajima2009], p. 207), with zero curvature there. At 5 GPa it takes the value of the Mashino fit and composition table.
 
 ??? note "Details"
-    At 5 GPa $T_e$ takes the slope of the fit, and $w_e$ the slope 0. The table falls at 5 GPa where the chord from 1 bar rises, so the slope 0 keeps both monotone (Fritsch & Carlson 1980[^cite-fritsch1980]).
+    At 5 GPa $T_e$ takes the slope of the fit, and $w_e$ the slope 0. Both stay monotone (Fritsch & Carlson 1980[^cite-fritsch1980]). For $w_e$ the slope 0 is needed, because the table falls at 5 GPa where the chord from 1 bar rises.
 
     $T_e$ rises by 7.09 K/GPa at 1 bar and 43.93 K/GPa at 5 GPa. It is convex, because the join takes the slope of the Mashino fit at 5 GPa. That slope is 2.1 times the 21.0 K/GPa that Fei & Brosh (2014[^cite-fei2014], p. 158) measure from 5 to 10 GPa.
 
@@ -180,7 +180,7 @@ The composition table is continued below 20 GPa along its first segment. $T_e$, 
 
 A Simon fit is a power law of pressure for a melting temperature. From 21 GPa the Fe-S eutectic temperature is the Simon fit of Mori et al. (2017[^cite-mori2017], p. 138), $T_e = 1348\,\mathrm{K}\,[(P - 21)/36.5 + 1]^{1/2.07}$, with $P$ in GPa. From 5 GPa the Fe-C eutectic temperature is the Simon fit of Mashino et al. (2019[^cite-mashino2019], p. 138), $T_e = 1513\,\mathrm{K}\,[(P - 5)/8.4 + 1]^{1/4.1}$. The Fe-O eutectic temperature is the curve of Oka et al. (2019[^cite-oka2019], Fig. 4).
 
-The eutectic compositions are curves read from published figures. For S and C the read curve ends before 330 GPa. A straight segment then runs from the last table node to an anchor at 330 GPa. The pressures between the end of each read curve and its anchor at 330 GPa count as data.
+The eutectic compositions are curves read from published figures. For S and C the read curve ends before 330 GPa. A straight segment then runs from the last table node to an anchor, a fixed end value at 330 GPa ([data sources](#data-sources)). The pressures between the end of each read curve and its anchor at 330 GPa count as data.
 
 The eutectic equals the data up to the end of each range.
 
@@ -211,7 +211,8 @@ The continued compositions move above the data. An alloy whose $\sum_i w_i / w_{
     | 4.85 wt% S | 348 GPa |
     | 4.9 wt% S | 341 GPa |
     | 4.95 wt% S | 335 GPa |
-    | 5 wt% S, 3.35 wt% C (the end values) | just above 330 GPa |
+    | 5 wt% S (the end value) | just above 330 GPa |
+    | 3.35 wt% C (the end value) | just above 330 GPa |
     | 3.3 wt% C | 344 GPa |
     | 4 wt% S with 0.65 wt% C | 333 GPa |
 
@@ -234,6 +235,7 @@ The continued compositions move above the data. An alloy whose $\sum_i w_i / w_{
 
 | Source | Binary | Pressure range | What it gives |
 |---|---|---|---|
+| Anzellini et al. (2013[^cite-anzellini2013]) | pure Fe | all pressures | Melting curve $T_\mathrm{Fe}(P)$ of pure iron (the PALEOS prescription). |
 | Fei et al. (1997[^cite-fei1997], Fig. 2) | Fe-S | 1 bar, 10 and 14 GPa | Nodes of $T_e$ and $w_e$. The sulfide at the eutectic: FeS up to 14 GPa, Fe$_3$S$_2$ above. |
 | Fei et al. (2000[^cite-fei2000]) | Fe-S | 18 to 21 GPa | $T_e$ = 1348 K at 21 GPa, the end of the low-pressure curve. Fe$_3$S forms between 18 and 21 GPa. |
 | Mori et al. (2017[^cite-mori2017], p. 138) | Fe-S | from 21 GPa | Simon fit of $T_e$. |
@@ -252,7 +254,7 @@ The curves were read from the vector paths of the published figures. A second re
 
 ## Limits
 
-- The ideal form is a fit to the eutectic points, not ideal thermodynamics: its constants give entropies of fusion of 0.1$R$ to 4.4$R$, against 1.16$R$ for iron in the core module.
+- The ideal form is a fit to the eutectic points, not ideal thermodynamics: its constants give entropies of fusion of 0.1$R$ to 3.5$R$, against 1.16$R$ for iron in the core module.
 
     ??? note "Details"
         For a truly ideal solution, $A$ is the entropy of fusion of iron over $R$, the gas constant, and is the same for every binary. Over their data the binaries give these values of $A$:

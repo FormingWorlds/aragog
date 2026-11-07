@@ -97,7 +97,7 @@ The shipped eutectic points come from the Simon fit and the composition curve of
 
 **How to read the plot.** The x-axis is the C content in wt% and the y-axis the liquidus in K. The lines are the binary form through the end points of each curve, the circles points of the first read of the curves of Mashino et al. (2019[^cite-mashino2019]). Between the end points the circles lie below the lines: the drawn curves are close to straight lines, while the ideal form lies above them.
 
-**Known limit.** C lowers the melting point of a core less than S. Between pure iron and the eutectic, the liquidus of a C-bearing alloy differs from the drawn curves by an RMS of 47 to 175 K.
+**Known limit.** Between pure iron and the eutectic, the liquidus of a C-bearing alloy differs from the drawn curves by an RMS of 47 to 175 K.
 
 ??? info "Test details"
     - Reference: Mashino et al. (2019[^cite-mashino2019]), Fig. 8, 2 reads (`tests/validation/data/core_eutectics/mashino_liquidus_*GPa.csv`).
@@ -123,8 +123,8 @@ The shipped eutectic points come from the Simon fit and the composition curve of
 
 | Case | Value | Reference | Difference |
 | --- | --- | --- | --- |
-| Fe-S, 254 GPa | 3541.1 K | 3550 K (Mori et al. 2017[^cite-mori2017], run 11) | within 50 K |
-| Fe-C, 330 GPa | 3713.3 K | about 3750 K (Mashino et al. 2019[^cite-mashino2019], p. 140) | within 50 K |
+| Fe-S, 254 GPa | 3541.1 K | 3550 K (Mori et al. 2017[^cite-mori2017], run 11) | $-8.9$ K |
+| Fe-C, 330 GPa | 3713.3 K | about 3750 K (Mashino et al. 2019[^cite-mashino2019], p. 140) | $-36.7$ K |
 | Fe-O, 0 to 325 GPa | Aragog table | second read of Oka et al. (2019[^cite-oka2019], Fig. 4) | within 0.354 pt |
 
 Up to the end of each range the eutectic equals the shipped tables. At 330 GPa it equals the anchors, the fixed end points of the data: 5 wt% S, 3.35 wt% C and the Fe-C fit.
@@ -484,7 +484,7 @@ The other tests in `tests/test_core_alloy_liquidus_low_pressure.py` check that:
 - a mixture of S, C and O takes the S units of its pressure;
 - Fe$_3$S units hold the eutectic from 17.14 GPa;
 - the S and C blends do not overlap, and the joins sit at the starts of the tables;
-- the gradient of alloys below 30 GPa passes `jax.debug_nans`.
+- the gradient of alloys below 30 GPa passes `jax.debug_nans`;
 - at every node and join of the eutectic tables, the blends and the fade, the gradient equals the gradient just below or just above it (`::test_the_gradient_at_a_table_node_is_a_one_sided_gradient`).
 
 ## Limits

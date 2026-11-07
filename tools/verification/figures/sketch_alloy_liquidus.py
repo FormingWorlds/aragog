@@ -1,9 +1,10 @@
 """Schematic of the core alloy liquidus for ``docs/Explanations/core_alloy_liquidus.md``.
 
 Temperature against pressure from 0 to 364 GPa (the centre of the Earth): the melting curve of
-pure iron, the liquidus of iron with 2 and 4.8 wt% S and the Fe-S eutectic, all computed from
-:class:`aragog.core.AlloyLiquidus` when the figure is built, and an example core adiabat from
-the core-mantle boundary, 4500 K at 136 GPa. Numbered callouts sit in free space inside the
+pure iron (:class:`aragog.core.IronMeltingCurve`), the liquidus of iron with 2 and 4.8 wt% S
+(:class:`aragog.core.AlloyLiquidus`) and the Fe-S eutectic (:func:`aragog.core.eutectic`), computed
+when the figure is built, and an example core temperature profile from the core-mantle boundary,
+4500 K at 136 GPa with the slopes of the default core adiabat (not a model result). Numbered callouts sit in free space inside the
 frame, chosen by a search that keeps them off every curve; their text and the legend lie beside
 the frame. :func:`collisions` lists every text that touches a curve, another text or the frame.
 

@@ -6,7 +6,7 @@ The liquidus is the temperature at which a melt of a given composition starts to
 
 ## 1. The eutectic points
 
-This step prints the eutectic point of each binary at 135 GPa, near the core-mantle boundary of the Earth. A binary is iron with one light element X, written Fe-X. Its eutectic is the composition that melts at the lowest temperature. Each Fe-X binary has a eutectic temperature and composition at every pressure.
+This step prints the eutectic point of each binary at 135 GPa, near the core-mantle boundary of the Earth.
 
 ```python
 from aragog.core import AlloyLiquidus, IronMeltingCurve, eutectic
@@ -22,7 +22,7 @@ Fe-C eutectic at 135 GPa: 2997 K, 3.77 wt% C
 Fe-O eutectic at 135 GPa: 3180 K, 12.45 wt% O
 ```
 
-The unit wt% is percent by mass. At this pressure the Fe-S eutectic is the coldest of the 3 binaries.
+A binary is iron with one light element X, written Fe-X. Its eutectic is the composition that melts at the lowest temperature, and it changes with pressure. The unit wt% is percent by mass. At this pressure the Fe-S eutectic is the coldest of the 3 binaries.
 
 ## 2. The liquidus of a mixed alloy
 
@@ -45,9 +45,7 @@ The depression is how far the liquidus of the alloy lies below the melting point
 
 ## 3. Slope and flags
 
-This step prints the slope of the liquidus and its 2 flags at 3 pressures. The slope dT/dP decides whether a core freezes from the centre or from the top.
-
-The flag `extrapolated` marks a pressure outside the data of a binary present in the alloy. The flag `past_eutectic` marks a composition past the eutectic, which means richer in the light element than the eutectic. The code holds the liquidus of such a composition at the eutectic value.
+This step prints the slope of the liquidus and its 2 flags at 3 pressures.
 
 ```python
 import numpy as np
@@ -68,6 +66,8 @@ print(f"12 wt% S at 135 GPa: {float(rich.t_melt(135e9)):.0f} K, "
 500 GPa: dT/dP 5.71 K/GPa, past eutectic False, extrapolated True
 12 wt% S at 135 GPa: 2672 K, past eutectic True
 ```
+
+The slope dT/dP, compared with the slope of the adiabat, decides whether a core freezes from the centre or from the top. The flag `extrapolated` marks a pressure outside the data of a binary present in the alloy. The flag `past_eutectic` marks a composition past the eutectic: the sum of $w_i / w_{e,i}$ over S, C and O is above 1. For one light element this means richer in it than the eutectic. The code holds the liquidus of such a composition at the eutectic value.
 
 At 330 GPa the alloy is flagged because its O is outside the data: the Fe-O eutectic composition is read up to 325 GPa. The alloy with 12 wt% S is past the eutectic, so its liquidus is the Fe-S eutectic temperature of step 1.
 
@@ -103,7 +103,7 @@ Fe-C eutectic at 20 GPa: 1942 K, 4.06 wt% C
 8 wt% S at 30 GPa: 2253 K, dT/dP 13.6 K/GPa
 ```
 
-The Fe-S eutectic falls from 1 bar to 14 GPa, and the liquidus of 8 wt% S falls from 5.5 to 14 GPa. In a core at these pressures, iron therefore starts to freeze at the top, not at the centre.
+The Fe-S eutectic falls from 1 bar to 14 GPa, and the liquidus of 8 wt% S falls from 5.0 to 15.6 GPa. In a core at these pressures, iron therefore starts to freeze at the top, not at the centre.
 
 !!! warning "The steep slope at 22 GPa has no data behind it"
     At 22 GPa the liquidus is steep because the change of S units adds to its slope. No data supports this slope. The [validation](../Validation/core_alloy_liquidus.md) states how far the liquidus is from the measured points below 15 GPa.
