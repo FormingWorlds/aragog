@@ -55,8 +55,44 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: refs/pull/${{ env.PR_NUMBER }}/merge
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
+
+      - name: Lint the changed lines
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          pip install --quiet ruff
+          python - <<'PY'
+          import re, subprocess
+          diff = subprocess.run(['git', 'diff', '-U0', 'HEAD^1', 'HEAD', '--', '*.py'],
+                                capture_output=True, text=True, check=True).stdout
+          added, f = {}, None
+          for line in diff.splitlines():
+              if line.startswith('+++ '):
+                  f = line[6:] if line.startswith('+++ b/') else None
+              elif f and (m := re.match(r'@@ -\S+ \+(\d+)(?:,(\d+))? @@', line)):
+                  start, n = int(m[1]), int(m[2] or 1)
+                  added.setdefault(f, set()).update(range(start, start + n))
+          out = []
+          if added:
+              ruff = subprocess.run(['ruff', 'check', '--output-format', 'concise', *added],
+                                    capture_output=True, text=True).stdout
+              for line in ruff.splitlines():
+                  m = re.match(r'(.+?):(\d+):\d+: ', line)
+                  if m and int(m[2]) in added.get(m[1], ()):
+                      out.append('ruff ' + line)
+          for f, lines in added.items():
+              run = []
+              for i, text in enumerate(open(f).read().splitlines() + [''], 1):
+                  if text.lstrip().startswith('#'):
+                      run.append(i)
+                      continue
+                  if len(run) > 3 and added[f] & set(run):
+                      out.append(f'comment block {f}:{run[0]}-{run[-1]}: {len(run)} lines')
+                  run = []
+          open('/tmp/review_lint.txt', 'w').write('\n'.join(out) + '\n')
+          print('\n'.join(out) or 'no lint items in the changed lines')
+          PY
 
       - name: Review the pull request
         id: claude
@@ -89,8 +125,13 @@ jobs:
             resource leak, comparison that is always true or false). At most 5 items, each
             with the file, the line and the concrete risk. Keep them apart from section 1.
 
-            Do not comment on style, naming, formatting or comment length; ruff covers
-            formatting. Put an item on its line with the inline comment tool when the line
+            Section 2 also lists each line of /tmp/review_lint.txt: ruff violations of the
+            repository's rules and inline comment blocks longer than 3 lines, both in the
+            changed lines only. These count toward the 5 items; if there are more, list the
+            5 most important and give the total count.
+
+            Apart from those 2 rules, do not comment on style, naming, formatting or
+            comment length. Put an item on its line with the inline comment tool when the line
             is in the diff. Then post one short summary comment with the 2 sections, with
             `gh pr comment ${{ env.PR_NUMBER }} --body "..."`. If a section has nothing
             real, say so in one line. Write in plain, short sentences.
