@@ -469,6 +469,20 @@ class TestFluxSolver:
             monkeypatch.setattr(s, '_dSdt_single', thinning)
             G = s.get_state().lid_conductance
             assert G == pytest.approx(s._lid_k * max(slope, 0.1) / ev.delta, rel=1e-9)
+        # the blended T_magma at a partial and at a full weight, where it differs from T_node
+        for w in (0.37, 1.0):
+
+            def weighted(t, y, w=w):
+                out = rhs(t, y)
+                rates = dataclasses.replace(s._lid_last.rates, w=w)
+                s._lid_last = dataclasses.replace(s._lid_last, rates=rates)
+                return out
+
+            monkeypatch.setattr(s, '_dSdt_single', weighted)
+            T_w = s.get_state().T_magma
+            T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
+            assert T_w == pytest.approx(w * s._lid_last.T_b + (1.0 - w) * T_node, rel=1e-12)
+            assert abs(T_w - T_node) > 1.0
 
     def test_jax_flux_mode_matches_numpy(self, eos):
         from aragog.jax import surface_lid as jl

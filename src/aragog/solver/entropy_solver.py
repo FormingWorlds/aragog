@@ -1091,7 +1091,7 @@ class SolverOutput:
     g_b: npt.NDArray  # gravitational acceleration at basic nodes [m/s^2]
 
     # Scalar quantities
-    T_magma: float  # surface temperature [K]
+    T_magma: float  # surface temperature [K]; with the mush base and a live lid, the melt side w T_b + (1 - w) T_node
     T_core: float  # CMB temperature [K]
     Phi_global: float  # mass-weighted melt fraction (= M_mantle_liquid / M_mantle)
     Phi_global_vol: float  # porosity-based volumetric melt fraction
@@ -1335,7 +1335,12 @@ class SolverOutput:
             _scalar('time', t_value, 'yr', 'Simulation time of snapshot')
 
             # ── Scalar diagnostics ──────────────────────────────────
-            _scalar('T_magma', self.T_magma, 'K', 'Surface (magma) temperature')
+            _scalar(
+                'T_magma',
+                self.T_magma,
+                'K',
+                'Surface (magma) temperature; with the mush base and a live lid w T_b + (1 - w) T_node',
+            )
             _scalar('T_core', self.T_core, 'K', 'Core-mantle boundary temperature')
             _scalar(
                 'Phi_global',
@@ -6947,11 +6952,9 @@ class EntropySolver:
             np.diff(mesh.eos.get_mass_within_radii(self._r_basic_flat[[0, -1]]))[0]
         )
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
-        # T_magma = top basic-node temperature, evaluated at
-        # r = outer_boundary where P = surface_pressure. This matches
-        # SPIDER's `atmosphere/temperature_surface` definition.
-        # PROTEUS passes T_magma to the atmosphere module as the
-        # interior-side surface boundary condition.
+        # T_magma = top basic-node temperature at the outer boundary (SPIDER's
+        # atmosphere/temperature_surface); with the mush base and a live lid, the blend
+        # w T_b + (1 - w) T_node below, the melt side of the crust that outgassing reads.
         T_basic_final = np.asarray(self.state.phase_basic.temperature()).ravel()
         T_magma = float(T_basic_final[-1])
         if self._n_lid and self._lid_active and self._lid_mush:
