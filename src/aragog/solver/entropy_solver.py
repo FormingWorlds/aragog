@@ -3703,47 +3703,26 @@ class EntropySolver:
             F_b = _lid.mush_base_flux(Phi, self._lid_h_top, delta, F_lo, g, q_conv)
         else:
             F_b = max(q_conv, F_in, 0.0)
-        floor = _lid.LID_DELTA_FLOOR
+        floor, k, T_b = _lid.LID_DELTA_FLOOR, self._lid_k, base['T_b']
         if self._outer_bc_kind == 4:
-            T_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
-            surf = (
-                _lid.flux_surface_state(
-                    delta, E, base['T_b'], self._lid_k, F_grid, floor, self._lid_hv
-                )
-                if T_held is None
-                else _lid.fixed_surface_state(
-                    delta,
-                    E,
-                    base['T_b'],
-                    self._lid_k,
-                    min(T_held, base['T_b'] - _lid.LID_DT_MIN),
-                    floor,
-                    self._lid_hv,
-                )
-            )
-            cap = self.evaluator.boundary_conditions._settings.lid_surface_flux_cap
-            if T_held is not None and cap is not None and surf.F_s > cap:
-                # rule 3: the lid loses at most the flux the atmosphere gave it
-                surf = _lid.flux_surface_state(
-                    delta, E, base['T_b'], self._lid_k, cap, floor, self._lid_hv
-                )
-            T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else base['T_b']
-            w = _lid.flux_weight(
-                F_b, base['T_b'], T_top, self._lid_k, eps, T_eq, self._lid_delta_on
-            )
+            bc = self.evaluator.boundary_conditions._settings
+            T_held, cap = bc.lid_surface_temperature, bc.lid_surface_flux_cap
+            if T_held is None:
+                surf = _lid.flux_surface_state(delta, E, T_b, k, F_grid, floor, self._lid_hv)
+            else:
+                T_fix = min(T_held, T_b - _lid.LID_DT_MIN)
+                surf = _lid.fixed_surface_state(delta, E, T_b, k, T_fix, floor, self._lid_hv)
+                if cap is not None and surf.F_s > cap:
+                    # rule 3: the lid loses at most the flux the atmosphere gave it
+                    surf = _lid.flux_surface_state(delta, E, T_b, k, cap, floor, self._lid_hv)
+            T_top = T_held if T_held is not None else surf.T_s if F_grid > 0.0 else T_b
+            w = _lid.flux_weight(F_b, T_b, T_top, k, eps, T_eq, self._lid_delta_on)
         else:
-            w = _lid.existence_weight(
-                F_b, base['T_b'], self._lid_k, eps, T_eq, self._lid_delta_on, T_surf=T_surf
-            )
-            surf = (
-                _lid.surface_state(
-                    delta, E, base['T_b'], self._lid_k, eps, T_eq, floor, self._lid_hv
-                )
-                if T_surf is None
-                else _lid.fixed_surface_state(
-                    delta, E, base['T_b'], self._lid_k, T_surf, floor, self._lid_hv
-                )
-            )
+            w = _lid.existence_weight(F_b, T_b, k, eps, T_eq, self._lid_delta_on, T_surf=T_surf)
+            if T_surf is None:
+                surf = _lid.surface_state(delta, E, T_b, k, eps, T_eq, floor, self._lid_hv)
+            else:
+                surf = _lid.fixed_surface_state(delta, E, T_b, k, T_surf, floor, self._lid_hv)
         if self._lid_mush:
             w = 1.0 - g * (1.0 - w)
         heating = top(self.state.heating)
