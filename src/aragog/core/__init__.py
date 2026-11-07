@@ -14,6 +14,7 @@ budget term is an analytic integral and the whole module stays at ODE cost.
 
 from __future__ import annotations
 
+from aragog.core.alloy import AlloyLiquidus, eutectic
 from aragog.core.boundary_layer import (
     RA_CRIT_CMB_DEFAULT,
     check_ra_crit,
@@ -28,6 +29,7 @@ from aragog.core.regime import REGIME_NAMES, crystallization_regime, regime_name
 from aragog.core.stratification import adiabatic_ratio, stratification_depth
 
 __all__ = [
+    'AlloyLiquidus',
     'CoreEnergyBudget',
     'CoreEntropyBudget',
     'CoreModule',
@@ -41,6 +43,7 @@ __all__ = [
     'RA_CRIT_CMB_DEFAULT',
     'REGIME_NAMES',
     'crystallization_regime',
+    'eutectic',
     'regime_name',
     'adiabatic_ratio',
     'stratification_depth',

@@ -38,6 +38,7 @@ nav:
       - Refining the mesh: Tutorials/mesh_refinement.md
       - Solid-state convection: Tutorials/solid_state_convection.md
       - A crust on the magma ocean: Tutorials/surface_lid.md
+      - The melting point of a core alloy: Tutorials/core_alloy_liquidus.md
 
   - Explanations:
       - Overview:
@@ -55,6 +56,7 @@ nav:
           - Phase transitions: Explanations/phase_transitions.md
           - Pressure EOS: Explanations/pressure_eos.md
           - Core BC modes: Explanations/core_bc.md
+          - Core alloy liquidus: Explanations/core_alloy_liquidus.md
           - Surface boundary conditions: Explanations/surface_bc.md
           - Surface lid: Explanations/surface_lid.md
       - Numerics:
@@ -69,6 +71,7 @@ nav:
   - Validation:
       - Overview: Validation/index.md
       - Core: Validation/core.md
+      - Core alloy liquidus: Validation/core_alloy_liquidus.md
       - Surface boundary: Validation/surface.md
       - Surface lid: Validation/surface_lid.md
       - Phase transitions: Validation/phase_transitions.md

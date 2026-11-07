@@ -1,0 +1,7 @@
+# eutectic of the Fe-S binary below the Mori fit: temperature T_e [K] and liquid composition w_e (mass fraction of S); 1 bar written as 0 GPa
+# source: Fei, Bertka & Finger 1997, Science 275, 1621-1623, doi:10.1126/science.275.5306.1621, Fig. 2 (Fe-FeS at 1 bar, 10 and 14 GPa); the mean of 2 reads (figlab), T in C + 273.15
+# validation read: tests/validation/data/core_eutectics/low_pressure/fei1997_fig2_eutectic.csv (reads A and B, axis fits in its header)
+P_GPa,T_e_K,w_e
+0,1261.25,0.31175
+10,1187.9,0.2057
+14,1135.25,0.18305

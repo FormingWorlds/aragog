@@ -57,7 +57,7 @@ At freeze-out completion, latent heat release ceases abruptly once the entire co
 
 The size of the drop depends on the core geometry and $\Delta s_\text{fusion}$.
 
-The melting curve is the PALEOS iron prescription (Anzellini et al., 2013[^cite-anzellini2013]) with a light-element depression, or the quadratic of Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Eq. 6. The piecewise Anzellini fit carries a ~0.73 K jump at the 98.5 GPa triple point, which is blended smoothly with a $C^2$ smootherstep over a 3.0 GPa half-width, bounding the temperature adjustment to 0.363 K and recovering exact branch values outside the range 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
+The melting curve is the PALEOS iron prescription (Anzellini et al., 2013[^cite-anzellini2013]) with a light-element depression, or the quadratic of Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Eq. 6. The liquidus of iron with S, C and O is `AlloyLiquidus` ([core alloy liquidus](core_alloy_liquidus.md)). It comes from the eutectic points and liquidus curves of the source papers. `melting_curve` takes only `iron` or `quadratic`, so `AlloyLiquidus` is used through the Python API. The piecewise Anzellini fit has a jump of about 0.73 K at the 98.5 GPa triple point. A $C^2$ smootherstep over a 3.0 GPa half-width blends the 2 branches. The blend changes the temperature by at most 0.363 K and gives the exact branch values outside 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
 
 ### Coupling to the mantle solver
 
