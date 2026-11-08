@@ -206,3 +206,22 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
         return fig
 
     validation_plot(figure, 'surface_lid_onset_weight')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('Fp', [1.0e10, 1.0e300])
+def test_a_very_steep_slope_holds_the_surface_at_the_held_temperature(Fp):
+    """A slope F' of the atmosphere flux far above the lid conductance pins the Robin surface to
+    the held surface: the NumPy and JAX surfaces stay finite and within 1e-6 K of T_held up to
+    F' = 1e300 W/m2/K, where the product F' d / (k f'(0)) overflows."""
+    from aragog.jax import surface_lid as jl
+
+    hv = sl.LidEnthalpy.linear(RHO, CP, T_B, 0.0)
+    got = sl.robin_surface_state(DELTA, E_LID, T_B, K, CAP, Fp, T_HELD, sl.LID_DELTA_FLOOR, hv)
+    assert math.isfinite(got.T_s) and got.T_s == pytest.approx(T_HELD, abs=1e-6)
+    e = jl.enthalpy(hv)
+    out = jl.surface_state(
+        DELTA, E_LID, T_B, K, 1.0, 0.0, sl.LID_DELTA_FLOOR, e,
+        flux=1.0, F_atm=0.0, held=1.0, T_held=T_HELD, capped=1.0, cap=CAP, slope=Fp,
+    )  # fmt: skip
+    assert math.isfinite(float(out[0])) and float(out[0]) == pytest.approx(T_HELD, abs=1e-6)
