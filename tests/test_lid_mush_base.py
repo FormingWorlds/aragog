@@ -1895,3 +1895,73 @@ class TestHandOverBoundary:
             _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
         except ValueError as err:
             pytest.fail(f'a solidus at the limit is refused: {err}')
+
+
+def _top_node_after_merge(s):
+    """Top basic-node entropy [J/kg/K] of the start after the hand-over merge of its lid."""
+    y, _ = s._lid_merge(s._S0.copy())
+    n = s._n_stag
+    return float(np.asarray(s.evaluator.mesh._quantity_transform)[-1] @ y[:n])
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestMergeLimitTopNode:
+    """The merge limit also keeps the extrapolated top node, which the EOS floor watches, inside
+    the table after the merge."""
+
+    def test_a_merge_that_puts_the_top_node_below_the_table_is_refused(self):
+        """A lid with its surface at 300 K at 1.0 top cell merges into a top cell inside the table
+        but puts the top node below S_min: it is refused. At 0.94 top cell (the carried case of the
+        largest top-cell shrink) the top node stays inside and the lid is accepted."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = 0.94 * s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta, T_s=300.0))
+        s.set_initial_entropy(3050.0)
+        assert _top_node_after_merge(s) > float(s.entropy_eos.S_min)
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta, T_s=300.0))
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s.set_initial_entropy(3050.0)
+
+    def test_the_top_node_bound_takes_the_floor_margin(self):
+        """With eos_floor_margin 50 a lid at 0.999 of the cell-only limit (heat per volume
+        -3e9 J/m^3) is refused, since its merged top node lies far below S_min + 50."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        s.parameters.energy.eos_floor_margin = 50.0
+        S_cells = np.full(s._n_stag, 3050.0)
+        cell_only = s._lid_merge_limit(3050.0, 1.0, -3.0e9)
+        assert s._lid_merge_limit(3050.0, 1.0, -3.0e9, S_cells) < cell_only
+        delta = 0.999 * cell_only
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s._check_lid_size(3050.0, np.array([delta, -3.0e9 * delta]), S_cells)
+
+    def test_a_hot_lid_over_a_cold_top_cell_is_limited_by_the_table_top(self):
+        """A lid hotter than its top cell raises the merged entropy: the limit then ends at the
+        top of the table, and a lid just past it is refused while one just below is accepted."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S_top = float(s.entropy_eos.S_min) + 100.0
+        W_f, W_max = float(s._lid_W(S_top)), float(s._lid_W(float(s.entropy_eos.S_max)))
+        W_lid = W_f + (W_max - W_f) / 0.9  # the limit lies near 0.9 top cells, past the hand-over
+        limit = s._lid_merge_limit(S_top, 1.0, W_lid)
+        assert sl.LID_HANDOVER_FRAC * s._lid_h_top < 0.999 * limit < math.inf
+        assert (
+            s._check_lid_size(S_top, np.array([0.999 * limit, 0.999 * limit * W_lid])) is None
+        )
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s._check_lid_size(S_top, np.array([1.001 * limit, 1.001 * limit * W_lid]))
+
+    @pytest.mark.parametrize('bad', ['S_top', 'E'])
+    def test_a_non_finite_start_at_the_hand_over_is_refused(self, bad):
+        """A lid at the hand-over over a non-finite top cell, or with a non-finite energy, is
+        refused before the hand-over shortcut, not later in the merge."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = 0.75 * s._lid_h_top
+        S_top, E = 3050.0, _lid_E(s, delta)
+        if bad == 'S_top':
+            S_top = float('nan')
+        else:
+            E = float('nan')
+        with pytest.raises(ValueError, match='not finite'):
+            s._check_lid_start(S_top, np.array([delta, E]), sl.LID_FLOOR_SLACK)
