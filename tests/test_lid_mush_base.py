@@ -1593,3 +1593,83 @@ class TestHeldSurface:
         assert len(diffs) == 7
         assert abs(diffs[0]) < 0.25  # the first call moves the surface to the balance
         assert max(abs(v) for v in diffs[1:]) < 0.05
+
+
+def _lid_E(s, delta, T_s=1800.0):
+    """Energy [J/m^2] of a linear lid of thickness ``delta`` [m] with its surface at ``T_s``."""
+    return delta * float(s._lid_hv.profile_heat(0.0, T_s, s._lid_T_sol))
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestStartOrder:
+    """The start checks of a live lid hold in either order of set_initial_lid and
+    set_initial_entropy: a lid set after the entropy is checked at the start of the solve,
+    against the top cell of the state the solve starts from."""
+
+    def test_a_lid_set_after_the_entropy_over_a_solid_top_cell_is_refused_at_the_solve(self):
+        """A live lid written into a start over a top cell below the floor is refused when the
+        solve starts, with the start state and the set lid unchanged."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        s.set_initial_lid(0.0, 0.0)
+        s.set_initial_entropy(s._lid_S_sol - 50.0)
+        E = _lid_E(s, 2.0)
+        s.set_initial_lid(2.0, E)
+        S0, sol = s._S0.copy(), getattr(s, '_solution', None)
+        with pytest.raises(ValueError, match='below the floor'):
+            s.solve()
+        assert np.array_equal(s._S0, S0) and getattr(s, '_solution', None) is sol
+        assert s._lid_init == (2.0, E)
+
+    def test_a_lid_set_before_the_entropy_over_a_solid_top_cell_is_refused_at_the_entropy(self):
+        """The other order refuses the same state when the entropy is set."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        s.set_initial_lid(2.0, _lid_E(s, 2.0))
+        with pytest.raises(ValueError, match='below the floor'):
+            s.set_initial_entropy(s._lid_S_sol - 50.0)
+
+    def test_a_lid_set_after_the_entropy_in_the_heat_jump_band_is_refused_at_the_solve(self):
+        """On a thin top cell a live lid written into a start whose top cell lies in the heat-jump
+        band (above the slack of the step check) is refused when the solve starts."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        rho_b = s._lid_base_state(s._lid_T_sol, 0.0, s._lid_S_sol)['rho']
+        dh = float(s._lid_W(s._lid_S_sol + 0.6) - s._lid_W(s._lid_S_sol)) / rho_b
+        assert dh < sl.LID_DH_MIN and 0.6 > sl.LID_FLOOR_SLACK
+        s.set_initial_lid(0.0, 0.0)
+        s.set_initial_entropy(s._lid_S_sol + 0.6)
+        s.set_initial_lid(2.0, 1.0e6)
+        with pytest.raises(ValueError, match='heat jump of the lid base'):
+            s.solve()
+
+    @pytest.mark.parametrize('order', ['lid first', 'entropy first'])
+    def test_a_valid_lid_starts_the_solve_in_either_order(self, order):
+        """A live lid over a top cell in the slack of the step check starts the solve unchanged,
+        whichever of the two calls comes first."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S_top, E = s._lid_S_sol + 0.75 * sl.LID_FLOOR_GAP, _lid_E(s, 2.0)
+        if order == 'lid first':
+            s.set_initial_lid(2.0, E)
+            s.set_initial_entropy(S_top)
+        else:
+            s.set_initial_lid(0.0, 0.0)
+            s.set_initial_entropy(S_top)
+            s.set_initial_lid(2.0, E)
+        s.solve()
+        assert s._solution.status >= 0
+        assert np.array_equal(s._solution.y[-2:, 0], [2.0, E])
+
+    def test_a_lid_set_twice_starts_from_the_second_and_checks_it(self):
+        """The second set lid replaces the first in the start; a refused second lid leaves the
+        first in place."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S_top = s._lid_S_sol + 0.75 * sl.LID_FLOOR_GAP
+        E2, E3 = _lid_E(s, 2.0), _lid_E(s, 3.0)
+        s.set_initial_lid(2.0, E2)
+        s.set_initial_entropy(S_top)
+        s.set_initial_lid(3.0, E3)
+        assert np.array_equal(s._S0[-2:], [3.0, E3])
+        with pytest.raises(ValueError, match='finite delta > 0'):
+            s.set_initial_lid(-1.0, E3)
+        assert np.array_equal(s._S0[-2:], [3.0, E3])
+        s.solve()
+        assert np.array_equal(s._solution.y[-2:, 0], [3.0, E3])
