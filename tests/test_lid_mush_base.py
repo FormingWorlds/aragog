@@ -1763,3 +1763,17 @@ class TestLidBound:
         s.set_initial_lid(delta, _lid_E(s, delta))
         with pytest.raises(ValueError, match='growth stop'):
             s.set_initial_entropy(3050.0)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_a_solidus_below_the_band_limit_is_refused_at_setup(monkeypatch):
+    """Below T_sol = LID_DH_MIN / LID_FLOOR_GAP (1000 K) the heat-jump band of the lid start
+    reaches past the floor gap, so a top cell can cool into it under a live lid: such a solidus
+    is refused at setup. The SPIDER tables pass (T_sol 1439 K at the thin top cell); with the
+    limit raised just above that solidus, the same setup is refused."""
+    s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+    assert s._lid_T_sol > sl.LID_DH_MIN / sl.LID_FLOOR_GAP
+    monkeypatch.setattr(sl, 'LID_DH_MIN', 1.01 * s._lid_T_sol * sl.LID_FLOOR_GAP)
+    with pytest.raises(ValueError, match='solidus of at least'):
+        _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
