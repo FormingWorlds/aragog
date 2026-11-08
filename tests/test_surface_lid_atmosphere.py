@@ -213,7 +213,8 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
 def test_a_very_steep_slope_holds_the_surface_at_the_held_temperature(Fp):
     """A slope F' of the atmosphere flux far above the lid conductance pins the Robin surface to
     the held surface: the NumPy and JAX surfaces stay finite and within 1e-6 K of T_held up to
-    F' = 1e300 W/m2/K, where the product F' d / (k f'(0)) overflows."""
+    F' = 1e300 W/m2/K, where the shape search, with f'(0) at its floor, makes F' d / (k f'(0))
+    overflow."""
     from aragog.jax import surface_lid as jl
 
     hv = sl.LidEnthalpy.linear(RHO, CP, T_B, 0.0)

@@ -3242,7 +3242,8 @@ class EntropySolver:
         if start[0] == 0.0:
             return
         self._check_lid_size(S_top, start)
-        if not self._lid_mush:
+        # a lid at the hand-over merges at the call start, before any lid physics
+        if not self._lid_mush or start[0] >= _lid.LID_HANDOVER_FRAC * self._lid_h_top:
             return
         floor = self._lid_S_sol + gap
         if not S_top >= floor:
@@ -3276,7 +3277,8 @@ class EntropySolver:
                 raise ValueError(
                     f'lid_mush_base: the lid ({delta:.6g} m, {E:.6g} J/m^2) cannot hand over into '
                     f'the top cell ({h:.6g} m): at this lid heat per thickness the merged top cell '
-                    f'leaves the EOS table above {limit:.6g} m ({limit / h:.4g} top cells)'
+                    f'leaves the EOS table (or its floor margin) above {limit:.6g} m '
+                    f'({limit / h:.4g} top cells)'
                 )
             return
         cap = _lid.LID_CAP_FRAC * h
@@ -3288,14 +3290,18 @@ class EntropySolver:
 
     def _lid_merge_limit(self, S_top: float, delta: float, E: float) -> float:
         """Largest lid thickness [m] at the heat per thickness ``E / delta`` whose merge into a
-        top cell at ``S_top`` (:meth:`_lid_merge`) stays inside the EOS table; inf without a
-        limit. The merged heat ``V W_f + A d (E / delta - W_f)`` is linear in the thickness d."""
+        top cell at ``S_top`` (:meth:`_lid_merge`) stays inside the EOS table, above its floor
+        margin ``eos_floor_margin``; inf without a limit. The merged heat
+        ``V W_f + A d (E / delta - W_f)`` is linear in the thickness d."""
         if self._lid_const:
             return math.inf
         V, A = float(self._volume_flat[-1]), float(self._lid_area)
         W_f, W_lid = float(self._lid_W(S_top)), E / delta
         if W_lid < W_f:
-            W_end = float(self._lid_W(float(self.entropy_eos.S_min)))
+            margin = _resolve_step_cap(
+                getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
+            )
+            W_end = float(self._lid_W(float(self.entropy_eos.S_min) + max(margin, 0.0)))
             return V * (W_f - W_end) / (A * (W_f - W_lid))
         if W_lid > W_f:
             W_end = float(self._lid_W(float(self.entropy_eos.S_max)))

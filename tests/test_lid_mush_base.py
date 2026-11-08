@@ -1777,6 +1777,13 @@ def test_a_solidus_below_the_band_limit_is_refused_at_setup(monkeypatch):
     monkeypatch.setattr(sl, 'LID_DH_MIN', 1.01 * s._lid_T_sol * sl.LID_FLOOR_GAP)
     with pytest.raises(ValueError, match='solidus of at least'):
         _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+    # the limit is LID_DH_MIN / LID_FLOOR_GAP: with the gap doubled the same jump floor passes
+    monkeypatch.setattr(sl, 'LID_FLOOR_GAP', 2.0 * sl.LID_FLOOR_GAP)
+    monkeypatch.setattr(sl, 'LID_FLOOR_SLACK', 0.5 * sl.LID_FLOOR_GAP)
+    try:
+        _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+    except ValueError as err:
+        pytest.fail(f'a solidus above LID_DH_MIN / LID_FLOOR_GAP is refused: {err}')
 
 
 @pytest.mark.smoke
@@ -1832,3 +1839,20 @@ class TestHandOverAtTheStart:
             s.solve()
         assert np.array_equal(s._S0, S0) and getattr(s, '_solution', None) is sol
         assert s._lid_init == (2.0, 1.0e6)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_the_merge_limit_keeps_the_top_cell_above_the_floor_margin():
+    """With eos_floor_margin > 0 the merge limit ends at S_min + margin: a lid at 0.999 of the
+    limit without the margin starts with the margin off and is refused with a margin of
+    50 J/kg/K, where the merged top cell would land inside the floor margin."""
+    s = _solver(entropy_eos_copy(EOS_DIR))
+    E_per = _lid_E(s, 1.0)
+    limit = s._lid_merge_limit(3050.0, 1.0, E_per)
+    delta = 0.999 * limit
+    assert s._check_lid_size(3050.0, np.array([delta, delta * E_per])) is None
+    s.parameters.energy.eos_floor_margin = 50.0
+    assert s._lid_merge_limit(3050.0, 1.0, E_per) < delta
+    with pytest.raises(ValueError, match='floor margin'):
+        s._check_lid_size(3050.0, np.array([delta, delta * E_per]))
