@@ -1777,3 +1777,58 @@ def test_a_solidus_below_the_band_limit_is_refused_at_setup(monkeypatch):
     monkeypatch.setattr(sl, 'LID_DH_MIN', 1.01 * s._lid_T_sol * sl.LID_FLOOR_GAP)
     with pytest.raises(ValueError, match='solidus of at least'):
         _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestHandOverAtTheStart:
+    """A lid at or above the hand-over is merged at the call start, so the floor and heat-jump
+    checks of a live start do not apply to it."""
+
+    @pytest.mark.parametrize('order', ['lid first', 'entropy first'])
+    def test_a_lid_above_the_hand_over_over_a_solid_top_cell_hands_over(self, order):
+        """A lid of 0.75 top cells over a top cell 50 J/kg/K below the solidus hands over at the
+        start in either order, with the heat kept to 1e-12."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = 0.75 * s._lid_h_top
+        E, S_top = _lid_E(s, delta), s._lid_S_sol - 50.0
+        if order == 'lid first':
+            s.set_initial_lid(delta, E)
+            s.set_initial_entropy(S_top)
+        else:
+            s.set_initial_lid(0.0, 0.0)
+            s.set_initial_entropy(S_top)
+            s.set_initial_lid(delta, E)
+        before = _merge_energy(s, s._S0)
+        s.solve()
+        assert s._solution.status >= 0
+        assert np.array_equal(s._solution.y[-2:, 0], [0.0, 0.0])
+        assert abs(_merge_energy(s, s._solution.y[:, 0]) - before) < 1e-12 * abs(before)
+
+    def test_a_lid_above_the_hand_over_over_a_top_cell_in_the_band_hands_over(self):
+        """On the thin top cell a lid of 0.75 top cells over a top cell in the heat-jump band
+        hands over at the start instead of being refused with the band."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        rho_b = s._lid_base_state(s._lid_T_sol, 0.0, s._lid_S_sol)['rho']
+        dh = float(s._lid_W(s._lid_S_sol + 0.6) - s._lid_W(s._lid_S_sol)) / rho_b
+        assert dh < sl.LID_DH_MIN
+        delta = 0.75 * s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta, T_s=1000.0))
+        s.set_initial_entropy(s._lid_S_sol + 0.6)
+        s.solve()
+        assert s._solution.status >= 0
+        assert np.array_equal(s._solution.y[-2:, 0], [0.0, 0.0])
+
+    def test_a_second_lid_refused_at_the_solve_leaves_the_state(self):
+        """A first lid, the entropy, then a second live lid over a top cell in the band: the
+        solve refuses the second lid with the band, and the start, the solution and the set lid
+        stay as they were."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        s.set_initial_lid(0.0, 0.0)
+        s.set_initial_entropy(s._lid_S_sol + 0.6)
+        s.set_initial_lid(2.0, 1.0e6)
+        S0, sol = s._S0.copy(), getattr(s, '_solution', None)
+        with pytest.raises(ValueError, match='heat jump of the lid base'):
+            s.solve()
+        assert np.array_equal(s._S0, S0) and getattr(s, '_solution', None) is sol
+        assert s._lid_init == (2.0, 1.0e6)
