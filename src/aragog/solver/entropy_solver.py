@@ -3118,8 +3118,11 @@ class EntropySolver:
         the lid of the previous solution, and the phantom start of a new solver, which needs the
         top cell the full floor gap above the solidus and outside the heat-jump band (a
         handed-over lid over a solid top cell, or a lid in the slack of the step check, is
-        refused there): a resume calls it first. Every start uses it until the next ``solve``,
-        which consumes it.
+        refused there): a resume calls it first. With ``lid_mush_base`` a live lid set after
+        ``set_initial_entropy`` is written into that start and checked when the solve starts,
+        against the top cell of the start: below ``S_sol + LID_FLOOR_SLACK``, not finite or in
+        the heat-jump band, the solve refuses it and leaves the state as it was. Every start
+        uses it until the next ``solve``, which consumes it.
         A lid above the growth stop fails the step check at step 0. ``None`` clears
         the stored value: a later start then takes the lid of the previous solution, or the
         phantom lid (``lid_delta_lo``, linear profile). ``(0, 0)`` is a lid handed over to the
@@ -3213,25 +3216,33 @@ class EntropySolver:
         """
         kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
-        gap = _lid.LID_FLOOR_SLACK if kept else _lid.LID_FLOOR_GAP
-        floor = self._lid_S_sol + gap if self._lid_mush else -math.inf
-        if start[0] != 0.0 and self._lid_mush and not S_top >= floor:
+        self._check_lid_start(
+            S_top, start, _lid.LID_FLOOR_SLACK if kept else _lid.LID_FLOOR_GAP
+        )
+        return start
+
+    def _check_lid_start(self, S_top: float, start: npt.NDArray, gap: float) -> None:
+        """Refuse a live lid ``start`` over the top-cell entropy ``S_top`` with
+        ``lid_mush_base``: below ``S_sol + gap`` or not finite, or in the heat-jump band (see
+        :meth:`_lid_start`)."""
+        if start[0] == 0.0 or not self._lid_mush:
+            return
+        floor = self._lid_S_sol + gap
+        if not S_top >= floor:
             raise ValueError(
                 f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, below the floor '
                 f'{floor:.6g} J/kg/K; a run that starts solid needs the present lid base'
             )
-        if start[0] != 0.0 and self._lid_mush:
-            rho_b = self._lid_base_state(self._lid_T_sol, 0.0, self._lid_S_sol)['rho']
-            dh = float(self._lid_W(S_top) - self._lid_W(self._lid_S_sol)) / rho_b
-            if not dh >= _lid.LID_DH_MIN:
-                raise ValueError(
-                    f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, where the heat '
-                    f'jump of the lid base is {dh:.6g} J/kg, below LID_DH_MIN = {_lid.LID_DH_MIN} '
-                    f'J/kg (the band from the solidus {self._lid_S_sol:.6g} J/kg/K to about '
-                    f'{self._lid_S_sol + _lid.LID_DH_MIN / self._lid_T_sol:.6g} J/kg/K); the top '
-                    'cell does not hold its entropy there'
-                )
-        return start
+        rho_b = self._lid_base_state(self._lid_T_sol, 0.0, self._lid_S_sol)['rho']
+        dh = float(self._lid_W(S_top) - self._lid_W(self._lid_S_sol)) / rho_b
+        if not dh >= _lid.LID_DH_MIN:
+            raise ValueError(
+                f'lid_mush_base: the top cell starts at {S_top:.6g} J/kg/K, where the heat '
+                f'jump of the lid base is {dh:.6g} J/kg, below LID_DH_MIN = {_lid.LID_DH_MIN} '
+                f'J/kg (the band from the solidus {self._lid_S_sol:.6g} J/kg/K to about '
+                f'{self._lid_S_sol + _lid.LID_DH_MIN / self._lid_T_sol:.6g} J/kg/K); the top '
+                'cell does not hold its entropy there'
+            )
 
     def _lid_start_values(self, S_top: float) -> npt.NDArray:
         """The set, carried or phantom lid start."""
@@ -5323,6 +5334,14 @@ class EntropySolver:
         already passed at the call start still merges, so that state then holds the merged lid.
         """
         wall_start = time.perf_counter()
+        s0 = getattr(self, '_S0', None)
+        if (
+            getattr(self, '_lid_mush', False)
+            and s0 is not None
+            and s0.size == self._n_core_state() + 2
+        ):
+            # a lid set after the entropy reaches the start unchecked: check the state it holds
+            self._check_lid_start(float(s0[self._n_stag - 1]), s0[-2:], _lid.LID_FLOOR_SLACK)
         if _lid_slots(self):  # the time belongs to the start: an earlier call may have merged
             self._lid_handover_time = getattr(self, '_lid_start_handover_time', float('nan'))
         self._lid_init = None  # a set initial lid holds until this solve
