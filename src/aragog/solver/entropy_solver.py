@@ -2605,6 +2605,13 @@ class EntropySolver:
                 'lid_mush_base needs the entropy EOS tables: the constant-property column has no '
                 'solidus for the lid base'
             )
+        T_sol_min = _lid.LID_DH_MIN / _lid.LID_FLOOR_GAP
+        if self._lid_mush and not self._lid_T_sol >= T_sol_min:
+            raise ValueError(
+                f'lid_mush_base needs a solidus of at least {T_sol_min:.6g} K at the top-cell '
+                f'pressure, got {self._lid_T_sol:.6g} K: below it the heat-jump band of the lid start '
+                '(up to about S_sol + LID_DH_MIN / T_sol) reaches past the floor gap of the top cell'
+            )
         if self._lid_mush and self._lid_delta_on >= _lid.LID_HANDOVER_FRAC * self._lid_h_top:
             raise ValueError(
                 f'with lid_mush_base, lid_delta_on = {self._lid_delta_on} m must lie below the '

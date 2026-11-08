@@ -582,7 +582,8 @@ def flux_weight(
 
     It is :func:`existence_weight` of the steady crust under that surface,
     ``delta_eq = k (T_b - T_s) / F_b``: 0 for ``T_s`` at or above ``T_b``, 1 for ``F_b <= 0``.
-    The weight falls to 0 as ``T_s`` rises to ``T_b``, so the lid has no step at the onset.
+    For ``F_b > 0`` the weight falls to 0 as ``T_s`` rises to ``T_b``, so the lid has no step at
+    the onset; for ``F_b <= 0`` it steps from 1 to 0 at ``T_s = T_b``.
     """
     return existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on, T_surf=T_s)
 
