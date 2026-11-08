@@ -92,7 +92,7 @@ def test_handover_cells_must_be_integer_at_least_one(value):
 def test_lid_refused_without_grey_body(outer):
     """With the lid on, an outer boundary other than the grey body or the fixed surface
     temperature is refused; off, it passes."""
-    with pytest.raises(ValueError, match='needs the grey-body'):
+    with pytest.raises(ValueError, match='needs outer_boundary_condition'):
         BoundaryConfig(**{**BASE, 'outer_boundary_condition': outer}, **GOOD)
     BoundaryConfig(
         **{**BASE, 'outer_boundary_condition': outer}, **{**GOOD, 'subgrid_lid': False}
@@ -201,3 +201,38 @@ def test_lid_keys_of_a_toml_file_are_checked(tmp_path, lines, word):
 def test_lid_accepted_with_a_fixed_surface_temperature():
     """The lid runs under a fixed surface temperature (outer boundary 5)."""
     BoundaryConfig(**{**BASE, 'outer_boundary_condition': 5}, **GOOD)
+
+
+def test_the_mush_base_and_held_surface_keys_reach_the_config_from_a_toml_file(tmp_path):
+    """lid_mush_base, lid_surface_temperature, lid_surface_flux_cap and lid_surface_flux_slope of a
+    TOML file reach the boundary config with outer boundary 4; a cap without a held surface and a
+    slope without a cap fail naming the key."""
+    from importlib.resources import files
+
+    from aragog.parser import Parameters
+
+    text = files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    assert text.count('outer_boundary_condition = 1\n') == 1
+    text = text.replace('outer_boundary_condition = 1\n', 'outer_boundary_condition = 4\n')
+
+    def parse(*lines):
+        path = tmp_path / 'held.toml'
+        head = '[boundary_conditions]\n'
+        path.write_text(text.replace(head, head + ''.join(f'{v}\n' for v in lines)))
+        return Parameters.from_file(str(path)).boundary_conditions
+
+    lid = ('subgrid_lid = true', 'lid_mush_base = true')
+    bc = parse(*lid, 'lid_surface_temperature = 800.0', 'lid_surface_flux_cap = 1000.0')
+    assert bc.lid_mush_base is True
+    assert (bc.lid_surface_temperature, bc.lid_surface_flux_cap) == (800.0, 1000.0)
+    with pytest.raises(ValueError, match='lid_surface_flux_cap'):
+        parse(*lid, 'lid_surface_flux_cap = 1000.0')
+    bc = parse(
+        *lid,
+        'lid_surface_temperature = 800.0',
+        'lid_surface_flux_cap = 1000.0',
+        'lid_surface_flux_slope = 25.0',
+    )
+    assert bc.lid_surface_flux_slope == 25.0
+    with pytest.raises(ValueError, match='lid_surface_flux_slope'):
+        parse(*lid, 'lid_surface_temperature = 800.0', 'lid_surface_flux_slope = 25.0')

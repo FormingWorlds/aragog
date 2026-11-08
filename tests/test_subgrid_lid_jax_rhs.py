@@ -37,7 +37,6 @@ def test_lid_top_matches_the_numpy_lid(case):
     """Fed the NumPy top-cell state, the JAX lid gives the NumPy surface loss, fluid flux,
     fluid volume and lid rates to relative 1e-10, on molten and partly solid top cells with
     and without the solid rheology."""
-    from aragog.jax import surface_lid as jl
     from aragog.solver.entropy_solver import EntropySolver
 
     p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=2, n_nodes=10, end_time=1.0)
@@ -48,6 +47,26 @@ def test_lid_top_matches_the_numpy_lid(case):
     s = EntropySolver(p, entropy_eos=entropy_eos_copy(EOS_DIR))
     s.initialize()
     s.set_initial_entropy(3050.0)
+    rng = np.random.default_rng(13)
+    for _ in range(4):
+        y = s._S0.copy()
+        y[: s._n_stag] = np.linspace(
+            rng.uniform(2900, 3100), rng.uniform(2300, 3100), s._n_stag
+        )
+        delta = 10.0 ** rng.uniform(0.0, 2.5)
+        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(600.0, 1300.0))))
+        got, want = lid_top_against_numpy(s, y)
+        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
+
+
+def lid_top_against_numpy(s, y):
+    """The JAX ``lid_top`` outputs and the NumPy lid outputs of solver ``s`` at the state ``y``.
+
+    Returns two arrays of the surface loss, fluid flux, fluid volume, lid rates, fluid heat
+    content and lid mass: the JAX lid fed the NumPy top-cell state, and the NumPy lid.
+    """
+    from aragog.jax import surface_lid as jl
+
     lp, eos_jax = s.jax_lid_params(), entropy_eos_jax(EOS_DIR)
     seen = {}
     evaluate = s._lid_evaluate
@@ -58,47 +77,41 @@ def test_lid_top_matches_the_numpy_lid(case):
         return seen['ev']
 
     s._lid_evaluate = spy
-    rng = np.random.default_rng(13)
-    for _ in range(4):
-        y = s._S0.copy()
-        y[: s._n_stag] = np.linspace(
-            rng.uniform(2900, 3100), rng.uniform(2300, 3100), s._n_stag
-        )
-        delta = 10.0 ** rng.uniform(0.0, 2.5)
-        y[-2:] = (delta, delta * float(s._lid_hv.H(rng.uniform(600.0, 1300.0))))
+    try:
         s._dSdt_single(0.0, y)
-        ev, ph = seen['ev'], s.state.phase_staggered
+    finally:
+        s._lid_evaluate = evaluate
+    ev, ph = seen['ev'], s.state.phase_staggered
 
-        def top(v):
-            return float(np.asarray(v).ravel()[-1])
+    def top(v):
+        return float(np.asarray(v).ravel()[-1])
 
-        props = dict(
-            T=top(ph.temperature()),
-            rho=top(ph.density()),
-            cp=top(ph.heat_capacity()),
-            k=top(ph.thermal_conductivity()),
-            alpha=top(ph.thermal_expansivity()),
-            g=top(ph.gravitational_acceleration()),
-            eta=top(ph.viscosity()),
-            phi=top(ph.melt_fraction()),
-        )
-        ls = s.state.lid_state
-        T_iso = float(np.asarray(ls['T_lid_iso'])) if ls is not None else np.nan
-        got = jl.lid_top(
-            lp,
-            eos_jax,
-            y[-2:],
-            float(y[s._n_stag - 1]),
-            props,
-            float(s.state._heat_flux[-2]),
-            seen['F_grid'],
-            T_iso,
-            top(s.state.heating),
-        )
-        r = ev.rates
-        want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.H_f, ev.m_lid)
-        got = np.array([*got[:5], *got[5]], dtype=float)
-        np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
+    props = dict(
+        T=top(ph.temperature()),
+        rho=top(ph.density()),
+        cp=top(ph.heat_capacity()),
+        k=top(ph.thermal_conductivity()),
+        alpha=top(ph.thermal_expansivity()),
+        g=top(ph.gravitational_acceleration()),
+        eta=top(ph.viscosity()),
+        phi=top(ph.melt_fraction()),
+    )
+    ls = s.state.lid_state
+    T_iso = float(np.asarray(ls['T_lid_iso'])) if ls is not None else np.nan
+    got = jl.lid_top(
+        lp,
+        eos_jax,
+        y[-2:],
+        float(y[s._n_stag - 1]),
+        props,
+        float(s.state._heat_flux[-2]),
+        seen['F_grid'],
+        T_iso,
+        top(s.state.heating),
+    )
+    r = ev.rates
+    want = (r.F_top, r.F_fluid, ev.V_fluid, r.ddelta, r.dE, ev.H_f, ev.m_lid)
+    return np.array([*got[:5], *got[5]], dtype=float), np.array(want, dtype=float)
 
 
 def _lid_solver(core_bc='quasi_steady', rheology=None, heating=None, lid=True, convection=True):
@@ -150,8 +163,8 @@ def _factory_rhs(s, lid_params, bc_lid=None):
             s.evaluator.mesh, validate_rheology=bool(s._rheology_enabled)
         ),
         boundary_params=BoundaryParams(
-            outer_bc_type=1,
-            outer_bc_value=0.0,
+            outer_bc_type=s._outer_bc_kind,
+            outer_bc_value=s._outer_bc_value if s._outer_bc_kind == 4 else 0.0,
             emissivity=float(bc.emissivity),
             T_eq=float(bc.equilibrium_temperature),
             inner_bc_type=2 if s._core_bc == 'quasi_steady' else 1,
@@ -624,11 +637,12 @@ def test_a_guard_cut_removes_the_hand_over_time_on_the_jax_path():
 
 
 def test_lid_step_check_runs_on_the_jax_batch_path():
-    """The lid invariant fails an accepted state past the growth stop on the JAX batch path,
-    as on the NumPy loop."""
+    """The lid invariant fails a state past the growth stop on the JAX batch path, as on the
+    NumPy loop. The start refuses such a lid, so this test skips the size check of the start."""
     from tests.test_subgrid_lid_solver import _phantom_energy
 
     s = _jax_cvode_lid_solver()
+    s._check_lid_size = lambda *args: None
     d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
     s.set_initial_lid(d, E)
@@ -831,7 +845,7 @@ def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
     """The JAX batch path checks every accepted state, not only the last: one state in the
     middle of the trace past the growth stop with its slack, or thinner than the melt-back
     stop, fails the lid invariant at its step. A lid that starts the call below ``delta_lo``
-    passes, and the lower bound is then its start thickness."""
+    passes, and the lower bound is then its start thickness less the solver precision."""
     s = _jax_cvode_lid_solver()
     s.solve()
     sol = s._solution
@@ -848,7 +862,7 @@ def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
         calls = s._batch_powers_calls
         s._compute_step_energy_integrals()
         assert s._batch_powers_calls == calls + 1
-        y[-2, k] = y[-2, 0] * (1.0 - 2e-6)
+        y[-2, k] = 2.0 * s._lid_lo_bound(y[-2, 0]) - y[-2, 0]  # 2 slacks below the start
     sol.energy_trace = (t, y)
     calls = s._batch_powers_calls
     with pytest.raises(RuntimeError, match=f'at step {k},.*thickness'):

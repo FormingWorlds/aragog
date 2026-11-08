@@ -47,6 +47,18 @@ from scipy.special import dawsn, erf
 # The lid stops growing over [CAP_FRAC - CAP_WIDTH, CAP_FRAC] of the top-cell width.
 LID_CAP_FRAC: float = 0.8
 LID_CAP_WIDTH: float = 0.02
+# With the mush base the lid hands over to the mesh at this fraction of the top-cell width.
+LID_HANDOVER_FRAC: float = 0.7
+# Floor ramp of the mush base [J/kg/K]: weight 0 up to S_sol + GAP, 1 from S_sol + GAP + WIDTH.
+LID_FLOOR_GAP: float = 1.0
+LID_FLOOR_WIDTH: float = 5.0
+# Floor of an accepted state and of a kept lid at the call start: S_sol plus half the gap.
+LID_FLOOR_SLACK: float = 0.5 * LID_FLOOR_GAP
+# Lowest lid surface temperature [K], and smallest drop [K] of the surface below the base.
+LID_T_S_MIN: float = 1.0
+LID_DT_MIN: float = 1.0
+# Smallest surface slope f'(0) in the reported lid conductance.
+LID_SLOPE_MIN: float = 0.1
 # A lid weight below this value is set to 0 (the lid is hidden).
 LID_WEIGHT_FLOOR: float = 1.0e-10
 # Width [decades] of the existence ramp in log10(delta_eq / lid_delta_on).
@@ -354,6 +366,68 @@ def surface_state(
     return _surface(s, T_s_of(s), T_b, k, d, clipped)
 
 
+def flux_surface_state(
+    delta: float,
+    E: float,
+    T_b: float,
+    k: float,
+    F_atm: float,
+    delta_floor: float,
+    hv: LidEnthalpy,
+) -> LidSurface:
+    """Lid under a prescribed surface flux ``F_atm`` [W/m^2]: for a shape ``s`` the conduction
+    ``k (T_b - T_s) f'(0) / d = F_atm`` fixes the surface temperature, at least 1 K, and with it
+    the lid heat content, so ``Q(s) = E / delta`` gives the shape. At 1 K the lid carries less
+    than ``F_atm``. The surface stays ``LID_DT_MIN`` below ``T_b``, so that the profile keeps a
+    temperature drop; :func:`flux_weight` gives such a lid no weight for ``F_atm <= 0``.
+
+    Parameters and the result as :func:`surface_state`, with ``F_atm`` for the grey body.
+    """
+    d = float(np.hypot(delta, delta_floor))
+    q = E / max(delta, delta_floor)
+
+    def T_s_of(v):
+        T_s = T_b - max(F_atm, 0.0) * d / (k * max(shape(v)[0], 1.0e-30))
+        return min(max(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
+
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
+    return _surface(s, T_s_of(s), T_b, k, d, clipped)
+
+
+def robin_surface_state(
+    delta: float,
+    E: float,
+    T_b: float,
+    k: float,
+    C: float,
+    Fp: float,
+    T_held: float,
+    delta_floor: float,
+    hv: LidEnthalpy,
+) -> LidSurface:
+    """Lid under the Robin flux ``C + Fp (T_s - T_held)``: for a shape ``s`` the conduction
+    ``k (T_b - T_s) f'(0) / d`` equals that flux, which fixes the surface temperature (in the
+    bounds of :func:`flux_surface_state`), and ``Q(s) = E / delta`` gives the shape. ``C`` is the
+    cap [W/m^2], ``Fp`` the slope of the atmosphere flux [W/m^2/K] and ``T_held`` the held surface
+    [K]. ``Fp = 0`` is :func:`flux_surface_state` at ``C``.
+
+    Parameters and the result as :func:`surface_state`.
+    """
+    if Fp == 0.0:
+        return flux_surface_state(delta, E, T_b, k, C, delta_floor, hv)
+    d = float(np.hypot(delta, delta_floor))
+    q = E / max(delta, delta_floor)
+
+    def T_s_of(v):
+        # T_s = T_held + (G (T_b - T_held) - C) / (G + Fp), G = k f'(0) / d: no overflow at a large Fp
+        G = k * max(shape(v)[0], 1.0e-30) / d
+        T_s = T_held + (G * (T_b - T_held) - C) / (G + Fp)
+        return min(max(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
+
+    s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
+    return _surface(s, T_s_of(s), T_b, k, d, clipped)
+
+
 def fixed_surface_state(
     delta: float,
     E: float,
@@ -404,6 +478,37 @@ def convective_base_flux(
         return 0.0
     kappa = k / (rho * cp)
     return k * dT ** (4.0 / 3.0) * (alpha * rho * g / (ra_crit * kappa * eta)) ** (1.0 / 3.0)
+
+
+def floor_weight(S_f: float, S_sol: float) -> float:
+    """Weight [0, 1] of the base flux above the top-cell floor of the mush base.
+
+    The quintic ramp in ``x = (S_f - S_sol - LID_FLOOR_GAP) / LID_FLOOR_WIDTH``, entropies in
+    J/kg/K: 0 at and below the floor ``S_sol + LID_FLOOR_GAP``, 1 from ``LID_FLOOR_WIDTH`` above
+    it, and C2 at both ends.
+    """
+    x = min(max((S_f - S_sol - LID_FLOOR_GAP) / LID_FLOOR_WIDTH, 0.0), 1.0)
+    return x * x * x * (x * (6.0 * x - 15.0) + 10.0)
+
+
+def floor_flux(phi_integral: float, h_top: float, delta: float) -> float:
+    """Steady flux [W/m^2] of the eddy-diffusivity floor from the fluid to the lid base.
+
+    ``F = Phi / (0.5 (h_top - delta))``, with
+    ``Phi(S) = int_{S_sol}^{S} rho T kappa_floor f(phi) dS'`` [W/m], the Kirchhoff integral of
+    the floor over entropy (``f`` its melt-fraction weight), across half of the fluid part of
+    the top cell. Lengths in m.
+    """
+    return phi_integral / (0.5 * max(h_top - delta, 1.0e-3))
+
+
+def mush_base_flux(
+    phi_integral: float, h_top: float, delta: float, F_in: float, g: float, q_conv: float
+) -> float:
+    """Flux [W/m^2] from the mush into the lid base: the floor flux plus the boundary-layer
+    flux ``q_conv``, blended by the floor weight ``g`` to the flux from below ``F_in``, given
+    per unit area of the top face of the cell, so that ``g = 0`` holds the fluid entropy."""
+    return F_in + g * (floor_flux(phi_integral, h_top, delta) + q_conv - F_in)
 
 
 def stefan_rate(
@@ -462,6 +567,25 @@ def existence_weight(
     d_eq = k * (T_b - T_s) / F_b
     w = 0.5 * (1.0 + np.tanh(np.log10(d_eq / delta_on) / LID_EXIST_WIDTH))
     return float(w) if w > LID_WEIGHT_FLOOR else 0.0
+
+
+def flux_weight(
+    F_b: float,
+    T_b: float,
+    T_s: float,
+    k: float,
+    emissivity: float,
+    T_eq: float,
+    delta_on: float,
+) -> float:
+    """Weight [0, 1] of the lid under the surface ``T_s`` of the atmosphere.
+
+    It is :func:`existence_weight` of the steady crust under that surface,
+    ``delta_eq = k (T_b - T_s) / F_b``: 0 for ``T_s`` at or above ``T_b``, 1 for ``F_b <= 0``.
+    For ``F_b > 0`` the weight falls to 0 as ``T_s`` rises to ``T_b``, so the lid has no step at
+    the onset; for ``F_b <= 0`` it steps from 1 to 0 at ``T_s = T_b``.
+    """
+    return existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on, T_surf=T_s)
 
 
 @dataclass(frozen=True)
