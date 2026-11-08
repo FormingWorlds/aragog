@@ -299,7 +299,7 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
 | `matprop_smooth_width` | -- | 0.01 | Width of the blend between the two-phase and the single-phase properties at the solidus and the liquidus, in units of the melt fraction ([Phase transitions](../Explanations/phase_transitions.md#width-of-the-blend-at-the-solidus-and-the-liquidus)); when the configuration is built, a value at or below 0, at or above 1, below 10⁻³⁰⁰, NaN, a bool or a string is refused, and a value outside \[0.001, 0.05\] logs a warning |
 | `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = (\rho_s - \rho_l) g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
-| `separation_buoyancy` | str | `"mixture"` | Buoyancy reference of the separation mobility $F(\phi)$: `"mixture"` (McKenzie 1984) multiplies the Blake-Kozeny-Carman and Rumpf-Gupte terms by $(1-\phi)$, and the Stokes term keeps the plain contrast, as under `"solid"` (dilute limit); `"solid"` (Abe 1995, SPIDER) uses no factor. The Abe benchmarks and the SPIDER parity runs use `"solid"` |
+| `separation_buoyancy` | str | `"mixture"` | Buoyancy reference of the separation mobility $F(\phi)$: `"mixture"` (McKenzie (1984)[^cite-mckenzie1984]) multiplies the Blake-Kozeny-Carman and Rumpf-Gupte terms by $(1-\phi)$, and the Stokes term keeps the plain contrast, as under `"solid"` (dilute limit); `"solid"` (Abe (1995)[^cite-abe1995], SPIDER) uses no factor. The Abe benchmarks and the SPIDER parity runs use `"solid"` |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
 | `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |
 | `const_rho` | kg/m³ | 4000 | Constant density when `const_properties = true` |
@@ -337,3 +337,7 @@ Use the format matching the file you are writing: a `.toml` file must use TOML c
 ## Legacy INI format
 
 The legacy `.cfg` format is still parsed. Example files live under `src/aragog/cfg/`. Keys and section names match the TOML schema; only the surface syntax differs (no quotes around strings, no `#` inline comments).
+
+[^cite-abe1995]: Yutaka Abe, *Basic equations for evolution of partially molten mantle and core*, in Yukutake, T. (ed.), The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., 215–230, 1995.
+
+[^cite-mckenzie1984]: Dan McKenzie, *[The generation and compaction of partially molten rock](https://doi.org/10.1093/petrology/25.3.713)*, Journal of Petrology, 25, 713–765, 1984.
