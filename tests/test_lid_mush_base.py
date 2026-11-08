@@ -1673,3 +1673,93 @@ class TestStartOrder:
         assert np.array_equal(s._S0[-2:], [3.0, E3])
         s.solve()
         assert np.array_equal(s._solution.y[-2:, 0], [3.0, E3])
+
+
+def _merge_energy(s, y):
+    """Heat of the lid and the top cell per unit area [J/m^2] of the state ``y``."""
+    n = s._n_stag
+    S, delta, E = float(y[n - 1]), float(y[-2]), float(y[-1])
+    W = float(s._lid_W(S))
+    return (float(s._volume_flat[-1]) * W + float(s._lid_area) * (E - W * delta)) / float(
+        s._lid_area
+    )
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestLidBound:
+    """With the mush base a set or carried lid at or above the hand-over (0.7 of the top cell)
+    hands over at the call start; a lid the merge cannot take is refused with its size. Without
+    the mush base a set lid above the growth stop (0.8 of the top cell) is refused."""
+
+    @pytest.mark.parametrize('frac', [0.75, 0.85])
+    def test_a_set_lid_above_the_hand_over_hands_over_at_the_start(self, frac):
+        """The merge at the start keeps the heat of the lid and the top cell to 1e-12."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = frac * s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta))
+        s.set_initial_entropy(3050.0)
+        before = _merge_energy(s, s._S0)
+        s.solve()
+        after = _merge_energy(s, s._solution.y[:, 0])
+        rel = abs(after - before) / abs(before)
+        print(f'set lid {frac} h_top: merge energy relative difference {rel:.3e}')
+        assert s._solution.status >= 0 and rel < 1e-12
+        assert np.array_equal(s._solution.y[-2:, 0], [0.0, 0.0])
+        assert s._lid_handover_time == pytest.approx(s.parameters.solver.start_time, abs=1e-12)
+
+    def test_a_carried_lid_after_a_top_cell_shrink_hands_over_at_the_start(self):
+        """A lid below the hand-over, carried across a mesh whose top cell shrinks by more than
+        the largest shrink of a structure update (1.36), lies above the growth stop of the new
+        cell and hands over at the start with the heat kept to 1e-12."""
+        s = _solver(entropy_eos_copy(EOS_DIR), end=0.1)
+        h0 = s._lid_h_top
+        delta = 0.69 * h0
+        s.set_initial_lid(delta, _lid_E(s, delta))
+        s.set_initial_entropy(3050.0)
+        s.solve()
+        carried = s._previous_lid()
+        mesh = s.parameters.mesh
+        mesh.inner_radius = mesh.outer_radius - (mesh.outer_radius - mesh.inner_radius) / 1.36
+        s.reset()
+        assert h0 / s._lid_h_top >= 1.36
+        assert carried[0] > sl.LID_CAP_FRAC * s._lid_h_top
+        s.parameters.solver.start_time, s.parameters.solver.end_time = 0.1, 0.2
+        s.set_initial_entropy(3050.0)
+        assert np.array_equal(s._S0[-2:], carried)
+        before = _merge_energy(s, s._S0)
+        s.solve()
+        rel = abs(_merge_energy(s, s._solution.y[:, 0]) - before) / abs(before)
+        print(
+            f'carried lid {carried[0] / s._lid_h_top:.3f} h_top: merge energy difference {rel:.3e}'
+        )
+        assert s._solution.status >= 0 and rel < 1e-12
+        assert np.array_equal(s._solution.y[-2:, 0], [0.0, 0.0])
+
+    @pytest.mark.parametrize('order', ['lid first', 'entropy first'])
+    def test_a_lid_the_merge_cannot_take_is_refused_with_its_size(self, order):
+        """A set lid of 1.5 top cells with its surface at 1800 K lies beyond the merge limit
+        (about 1.35 top cells for that lid heat): it is refused with the lid, the top cell and
+        the limit named, in either order of the calls."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = 1.5 * s._lid_h_top
+        if order == 'lid first':
+            s.set_initial_lid(delta, _lid_E(s, delta))
+            with pytest.raises(ValueError, match='cannot hand over') as err:
+                s.set_initial_entropy(3050.0)
+        else:
+            s.set_initial_lid(0.0, 0.0)
+            s.set_initial_entropy(3050.0)
+            s.set_initial_lid(delta, _lid_E(s, delta))
+            with pytest.raises(ValueError, match='cannot hand over') as err:
+                s.solve()
+        msg = str(err.value)
+        assert f'{delta:.6g} m' in msg and f'{s._lid_h_top:.6g} m' in msg and 'top cells' in msg
+
+    def test_without_the_mush_base_a_set_lid_above_the_growth_stop_is_refused(self):
+        """Without the mush base a set lid above 0.8 of the top cell is refused at the start."""
+        s = _solver(entropy_eos_copy(EOS_DIR), mush=False)
+        delta = 0.85 * s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta))
+        with pytest.raises(ValueError, match='growth stop'):
+            s.set_initial_entropy(3050.0)
