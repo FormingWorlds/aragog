@@ -128,12 +128,12 @@ def test_the_robin_surface_solves_the_energy_and_the_surface_balance(validation_
 @pytest.mark.physics_invariant
 def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
     """Analytical limit: under a held surface T_s the steady crust is delta_eq = k (T_b - T_s) /
-    F_b, and the weight is w = (1 + tanh(log10(delta_eq / delta_on) / W)) / 2, 0 below 1e-10,
-    0 for T_s at or above T_b and 1 for F_b <= 0. NumPy and JAX match it to 1e-12 for
-    delta_eq / delta_on from 1e-3 to 1e2 at 3 base fluxes, all with T_s at or above 900 K; both give
-    w = 0.5 where T_b - T_s = F_b delta_on / k, 0 at or above T_b and 1 for F_b <= 0, and w is 0
-    within the last 0.06 F_b delta_on / k below T_b. A step weight, 1 where delta_eq exceeds delta_on,
-    jumps from 0 to 1 at that drop."""
+    F_b, and the weight is w = (1 + tanh(log10(delta_eq / delta_on) / W)) / 2, 0 below 1e-10, 0
+    for T_s at or above T_b (also for F_b <= 0) and 1 for F_b <= 0 below it. NumPy and JAX match
+    it to 1e-12 for delta_eq / delta_on from 1e-3 to 1e2 at 3 base fluxes, all with T_s at or
+    above 900 K; both give w = 0.5 where T_b - T_s = F_b delta_on / k, 0 at or above T_b and 1
+    for F_b <= 0, and w is 0 within the last 0.06 F_b delta_on / k below T_b. A step weight, 1
+    where delta_eq exceeds delta_on, jumps from 0 to 1 at that drop."""
     from aragog.jax import surface_lid as jl
 
     k, delta_on, W = 4.0, 0.02, sl.LID_EXIST_WIDTH
@@ -145,7 +145,7 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
         half = F_b * delta_on / k
         drops = x_rel * half
         T_s = T_B - drops
-        assert np.all(T_s > 0.0)
+        assert np.all(T_s >= 900.0)
         # the closed form at the surface the code receives, T_b - T_s as rounded in it
         w = 0.5 * (1.0 + np.tanh(np.log10(k * (T_B - T_s) / F_b / delta_on) / W))
         ref[F_b] = np.where(w > 1e-10, w, 0.0)
@@ -168,6 +168,9 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
         for F_b in (-1.0, 0.0):
             for drop in (0.01, 10.0):
                 assert float(f(F_b, T_B, T_B - drop, k, 1.0, 0.0, delta_on)) == 1.0
+            # a surface at or above the base carries no lid, also without a base flux
+            for T_s in (T_B, T_B + 1.0):
+                assert float(f(F_b, T_B, T_s, k, 1.0, 0.0, delta_on)) == 0.0
     win = np.flatnonzero((x_rel >= 0.2) & (x_rel <= 5.0))
 
     def figure():
