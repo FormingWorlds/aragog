@@ -642,7 +642,7 @@ def test_lid_step_check_runs_on_the_jax_batch_path():
     from tests.test_subgrid_lid_solver import _phantom_energy
 
     s = _jax_cvode_lid_solver()
-    s._check_lid_size = lambda S_top, start: None
+    s._check_lid_size = lambda *args: None
     d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
     s.set_initial_lid(d, E)

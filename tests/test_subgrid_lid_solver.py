@@ -855,7 +855,7 @@ def test_lid_above_the_growth_stop_fails_the_step_check(eos):
         s.set_initial_entropy(3050.0)
     assert f'{d:.6g} m' in str(err.value)
     assert f'{sl.LID_CAP_FRAC * s._lid_h_top:.6g} m' in str(err.value)
-    s._check_lid_size = lambda S_top, start: None
+    s._check_lid_size = lambda *args: None
     s.set_initial_entropy(3050.0)
     with pytest.raises(RuntimeError, match='lid invariant violated at step 0') as err:
         s.solve()
