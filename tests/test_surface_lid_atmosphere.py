@@ -1,7 +1,8 @@
 """Validation of the lid surface under an atmosphere: the Robin surface and the onset weight.
 
-Each case solves the closed form independently of ``aragog.surface_lid`` and compares the NumPy
-and JAX functions with it.
+Each case computes the closed form without the lid functions of ``aragog.surface_lid`` and
+compares the NumPy and JAX functions with it; the onset case takes the width of its weight from
+the code.
 """
 
 from __future__ import annotations
@@ -89,6 +90,8 @@ def test_the_robin_surface_solves_the_energy_and_the_surface_balance(validation_
             flux=1.0, F_atm=0.0, held=1.0, T_held=T_HELD, capped=1.0, cap=CAP, slope=Fp,
         )  # fmt: skip
         np.testing.assert_allclose(float(out[0]), T_s, rtol=1e-9)
+        np.testing.assert_allclose(float(out[1]), CAP + Fp * (T_s - T_HELD), rtol=1e-9)
+        np.testing.assert_allclose(float(out[3]), s, rtol=1e-7, atol=1e-9)
         ref.append(T_s)
         numpy_T.append(got.T_s)
         jax_T.append(float(out[0]))
@@ -127,44 +130,51 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
     """Analytical limit: under a held surface T_s the steady crust is delta_eq = k (T_b - T_s) /
     F_b, and the weight is w = (1 + tanh(log10(delta_eq / delta_on) / W)) / 2, 0 below 1e-10,
     0 for T_s at or above T_b and 1 for F_b <= 0. NumPy and JAX match it to 1e-12 for
-    delta_eq / delta_on from 1e-3 to 1e3 at 3 base fluxes; w = 0.5 where T_b - T_s = F_b
-    delta_on / k, and w is 0 within the last 0.06 F_b delta_on / k below T_b. A step weight, 1 where delta_eq exceeds delta_on,
+    delta_eq / delta_on from 1e-3 to 1e2 at 3 base fluxes, all with T_s at or above 900 K; both give
+    w = 0.5 where T_b - T_s = F_b delta_on / k, 0 at or above T_b and 1 for F_b <= 0, and w is 0
+    within the last 0.06 F_b delta_on / k below T_b. A step weight, 1 where delta_eq exceeds delta_on,
     jumps from 0 to 1 at that drop."""
     from aragog.jax import surface_lid as jl
 
     k, delta_on, W = 4.0, 0.02, sl.LID_EXIST_WIDTH
-    x_rel = np.geomspace(1e-3, 1e3, 241)  # delta_eq / delta_on
-    fluxes = (1.0e3, 1.0e4, 1.0e5)
-    ref = 0.5 * (1.0 + np.tanh(np.log10(x_rel) / W))
-    ref = np.where(ref > 1e-10, ref, 0.0)
-    numpy_w, jax_w = {}, {}
+    # delta_eq / delta_on up to 1e2 at these base fluxes keeps T_s at or above 900 K
+    x_rel = np.geomspace(1e-3, 1e2, 211)
+    fluxes = (10.0, 100.0, 1000.0)
+    ref, numpy_w, jax_w = {}, {}, {}
     for F_b in fluxes:
         half = F_b * delta_on / k
         drops = x_rel * half
-        got = np.array(
-            [sl.flux_weight(F_b, T_B, T_B - x, k, 1.0, 0.0, delta_on) for x in drops]
-        )
+        T_s = T_B - drops
+        assert np.all(T_s > 0.0)
+        # the closed form at the surface the code receives, T_b - T_s as rounded in it
+        w = 0.5 * (1.0 + np.tanh(np.log10(k * (T_B - T_s) / F_b / delta_on) / W))
+        ref[F_b] = np.where(w > 1e-10, w, 0.0)
+        got = np.array([sl.flux_weight(F_b, T_B, T, k, 1.0, 0.0, delta_on) for T in T_s])
         got_jax = np.array(
-            [float(jl.flux_weight(F_b, T_B, T_B - x, k, 1.0, 0.0, delta_on)) for x in drops]
+            [float(jl.flux_weight(F_b, T_B, T, k, 1.0, 0.0, delta_on)) for T in T_s]
         )
-        np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-15)
-        np.testing.assert_allclose(got_jax, ref, rtol=1e-12, atol=1e-15)
-        assert sl.flux_weight(F_b, T_B, T_B - half, k, 1.0, 0.0, delta_on) == pytest.approx(
-            0.5, rel=1e-12
-        )
+        np.testing.assert_allclose(got, ref[F_b], rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(got_jax, ref[F_b], rtol=1e-12, atol=1e-15)
+        # 0.5 to the rounding of T_b - T_s at 1400 K: 1e-16 x 1400 K / 0.05 K, times dw/d ln(delta)
+        for f in (sl.flux_weight, jl.flux_weight):
+            assert float(f(F_b, T_B, T_B - half, k, 1.0, 0.0, delta_on)) == pytest.approx(
+                0.5, abs=1e-10
+            )
         assert np.all(got[x_rel < 0.06] == 0.0) and np.all(np.diff(got) >= 0.0)
         numpy_w[F_b], jax_w[F_b] = got, got_jax
-    for T_s in (T_B, T_B + 1.0):
-        assert sl.flux_weight(1e4, T_B, T_s, k, 1.0, 0.0, delta_on) == 0.0
-    assert sl.flux_weight(-1.0, T_B, T_B - 10.0, k, 1.0, 0.0, delta_on) == 1.0
-    assert sl.flux_weight(0.0, T_B, T_B - 10.0, k, 1.0, 0.0, delta_on) == 1.0
+    for f in (sl.flux_weight, jl.flux_weight):
+        for T_s in (T_B, T_B + 1.0):
+            assert float(f(100.0, T_B, T_s, k, 1.0, 0.0, delta_on)) == 0.0
+        for F_b in (-1.0, 0.0):
+            for drop in (0.01, 10.0):
+                assert float(f(F_b, T_B, T_B - drop, k, 1.0, 0.0, delta_on)) == 1.0
     win = np.flatnonzero((x_rel >= 0.2) & (x_rel <= 5.0))
 
     def figure():
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots(figsize=(6.4, 3.4))
-        ax.plot(x_rel[win], ref[win], color='C0', lw=1.2, label='closed form')
+        ax.plot(x_rel[win], ref[fluxes[1]][win], color='C0', lw=1.2, label='closed form')
         for i, F_b in enumerate(fluxes):
             m = win[i::6]
             ax.plot(
@@ -173,11 +183,11 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
                 'o',
                 color=f'C{i + 1}',
                 ms=5,
-                label=f'NumPy, 1e{i + 3}',
+                label=f'NumPy, {F_b:g}',
             )
             m = win[i + 3 :: 6]
             ax.plot(
-                x_rel[m], jax_w[F_b][m], 'x', color=f'C{i + 1}', ms=6, label=f'JAX, 1e{i + 3}'
+                x_rel[m], jax_w[F_b][m], 'x', color=f'C{i + 1}', ms=6, label=f'JAX, {F_b:g}'
             )
         ax.set_xscale('log')
         ax.set_xlabel(r'$\delta_\mathrm{eq} / \delta_\mathrm{on}$')
