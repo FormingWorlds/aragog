@@ -1856,3 +1856,42 @@ def test_the_merge_limit_keeps_the_top_cell_above_the_floor_margin():
     assert s._lid_merge_limit(3050.0, 1.0, E_per) < delta
     with pytest.raises(ValueError, match='floor margin'):
         s._check_lid_size(3050.0, np.array([delta, delta * E_per]))
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestHandOverBoundary:
+    """The equality cases of the hand-over thickness and of the solidus limit."""
+
+    def test_a_lid_exactly_at_the_hand_over_over_a_solid_top_cell_hands_over(self):
+        """A lid of exactly 0.7 top cells counts as at the hand-over: it hands over at the start
+        over a top cell below the floor, where a live start is refused."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta = sl.LID_HANDOVER_FRAC * s._lid_h_top
+        s.set_initial_lid(delta, _lid_E(s, delta))
+        s.set_initial_entropy(s._lid_S_sol - 50.0)
+        s.solve()
+        assert s._solution.status >= 0
+        assert np.array_equal(s._solution.y[-2:, 0], [0.0, 0.0])
+
+    def test_a_lid_exactly_at_the_hand_over_is_checked_against_the_merge_limit(self):
+        """A lid of exactly 0.7 top cells whose heat per volume lies as far below the table
+        minimum as the top cell lies above it (merge limit near half a top cell) is checked
+        against the merge limit and refused with its size."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        delta, S_top = sl.LID_HANDOVER_FRAC * s._lid_h_top, 3050.0
+        W_f, W_min = float(s._lid_W(S_top)), float(s._lid_W(float(s.entropy_eos.S_min)))
+        start = np.array([delta, delta * (2.0 * W_min - W_f)])
+        assert s._lid_merge_limit(S_top, delta, float(start[1])) < delta
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s._check_lid_size(S_top, start)
+
+    def test_a_solidus_exactly_at_the_limit_is_accepted(self, monkeypatch):
+        """A solidus equal to LID_DH_MIN / LID_FLOOR_GAP is accepted at setup."""
+        s = _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        monkeypatch.setattr(sl, 'LID_DH_MIN', s._lid_T_sol * sl.LID_FLOOR_GAP)
+        assert sl.LID_DH_MIN / sl.LID_FLOOR_GAP == s._lid_T_sol
+        try:
+            _solver(entropy_eos_copy(EOS_DIR), thin=True, n_nodes=40)
+        except ValueError as err:
+            pytest.fail(f'a solidus at the limit is refused: {err}')
