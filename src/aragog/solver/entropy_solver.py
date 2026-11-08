@@ -3115,8 +3115,11 @@ class EntropySolver:
         """Set the initial lid thickness [m] and energy [J/m^2] (a resume).
 
         It holds in either order with ``set_initial_entropy``, apart from a start that refuses
-        the lid of the previous solution; every start uses it until the next ``solve``, which
-        consumes it. A lid above the growth stop fails the step check at step 0. ``None`` clears
+        the lid of the previous solution, and the phantom start of a new solver, which needs the
+        top cell the full floor gap above the solidus (a handed-over lid over a solid top cell, or
+        a lid in the slack of the step check, is refused there): a resume calls it first. Every
+        start uses it until the next ``solve``, which consumes it.
+        A lid above the growth stop fails the step check at step 0. ``None`` clears
         the stored value: a later start then takes the lid of the previous solution, or the
         phantom lid (``lid_delta_lo``, linear profile). ``(0, 0)`` is a lid handed over to the
         mesh, which does not grow again; ``handover_time`` [yr] is then the
