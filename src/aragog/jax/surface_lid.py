@@ -307,8 +307,8 @@ def surface_state(
         return T_s, k * dT * f0 / d, k * dT * f1 / d, s, clipped, T_s + m * dT
 
     def T_s_capped(s):
-        a = d / (k * jnp.maximum(shape(s)[0], 1.0e-30))
-        robin = (T_b - (cap - slope * T_held) * a) / (1.0 + slope * a)
+        G = k * jnp.maximum(shape(s)[0], 1.0e-30) / d
+        robin = T_held + (G * (T_b - T_held) - cap) / (G + slope)
         robin = jnp.minimum(jnp.maximum(robin, LID_T_S_MIN), T_b - LID_DT_MIN)
         return jnp.where(slope > 0.0, robin, T_s_flux(cap, s))
 

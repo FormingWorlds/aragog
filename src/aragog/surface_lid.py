@@ -419,8 +419,9 @@ def robin_surface_state(
     q = E / max(delta, delta_floor)
 
     def T_s_of(v):
-        a = d / (k * max(shape(v)[0], 1.0e-30))
-        T_s = (T_b - (C - Fp * T_held) * a) / (1.0 + Fp * a)
+        # T_s = T_held + (G (T_b - T_held) - C) / (G + Fp), G = k f'(0) / d: no overflow at a large Fp
+        G = k * max(shape(v)[0], 1.0e-30) / d
+        T_s = T_held + (G * (T_b - T_held) - C) / (G + Fp)
         return min(max(T_s, LID_T_S_MIN), T_b - LID_DT_MIN)
 
     s, clipped = _shape_of_energy(q, lambda v: hv.profile_heat(v, T_s_of(v), T_b))
