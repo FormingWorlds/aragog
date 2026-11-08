@@ -175,6 +175,7 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
 
     def figure():
         import matplotlib.pyplot as plt
+        from matplotlib.ticker import NullFormatter
 
         fig, ax = plt.subplots(figsize=(6.4, 3.4))
         ax.plot(x_rel[win], ref[fluxes[1]][win], color='C0', lw=1.2, label='closed form')
@@ -193,6 +194,8 @@ def test_the_onset_weight_rises_without_a_step_below_the_base(validation_plot):
                 x_rel[m], jax_w[F_b][m], 'x', color=f'C{i + 1}', ms=6, label=f'JAX, {F_b:g}'
             )
         ax.set_xscale('log')
+        ax.set_xticks([0.2, 0.5, 1.0, 2.0, 5.0], ['0.2', '0.5', '1', '2', '5'])
+        ax.xaxis.set_minor_formatter(NullFormatter())
         ax.set_xlabel(r'$\delta_\mathrm{eq} / \delta_\mathrm{on}$')
         ax.set_ylabel('lid weight $w$')
         opaque_legend(
