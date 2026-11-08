@@ -845,11 +845,17 @@ def _phantom_energy(s, delta, T_m):
 
 
 def test_lid_above_the_growth_stop_fails_the_step_check(eos):
-    """An accepted state with the lid past the growth stop raises the lid invariant."""
+    """A set lid past the growth stop is refused at the start with both thicknesses named; a
+    state past the growth stop that skips that check raises the lid invariant at step 0."""
     s = _solver(eos)
     d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
     s.set_initial_lid(d, E)
+    with pytest.raises(ValueError, match='above the growth stop') as err:
+        s.set_initial_entropy(3050.0)
+    assert f'{d:.6g} m' in str(err.value)
+    assert f'{sl.LID_CAP_FRAC * s._lid_h_top:.6g} m' in str(err.value)
+    s._check_lid_size = lambda S_top, start: None
     s.set_initial_entropy(3050.0)
     with pytest.raises(RuntimeError, match='lid invariant violated at step 0') as err:
         s.solve()

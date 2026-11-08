@@ -3123,7 +3123,10 @@ class EntropySolver:
         against the top cell of the start: below ``S_sol + LID_FLOOR_SLACK``, not finite or in
         the heat-jump band, the solve refuses it and leaves the state as it was. Every start
         uses it until the next ``solve``, which consumes it.
-        A lid above the growth stop fails the step check at step 0. ``None`` clears
+        With ``lid_mush_base`` a lid at or above 0.7 of the top cell hands over at the call
+        start, and a lid the merge cannot take (the merged top cell leaves the EOS table) is
+        refused with its size; without it a lid above the growth stop (0.8 of the top cell) is
+        refused. ``None`` clears
         the stored value: a later start then takes the lid of the previous solution, or the
         phantom lid (``lid_delta_lo``, linear profile). ``(0, 0)`` is a lid handed over to the
         mesh, which does not grow again; ``handover_time`` [yr] is then the
@@ -3179,11 +3182,12 @@ class EntropySolver:
         return np.asarray(y)[-2:, -1].copy()
 
     def _check_carried_lid(self) -> None:
-        """Refuse a lid of the previous solution above the growth stop of the top cell, before
-        a new start changes any state."""
+        """Without ``lid_mush_base``, refuse a lid of the previous solution above the growth stop
+        of the top cell, before a new start changes any state; with it, the start hands such a
+        lid over (see :meth:`_check_lid_size`)."""
         lid = None if getattr(self, '_lid_init', None) is not None else self._previous_lid()
         cap = _lid.LID_CAP_FRAC * self._lid_h_top
-        if lid is not None and lid[0] > cap * (1.0 + _LID_CAP_SLACK):
+        if lid is not None and not self._lid_mush and lid[0] > cap * (1.0 + _LID_CAP_SLACK):
             raise ValueError(
                 f'the lid of the previous solution ({lid[0]:.6g} m) lies above the growth stop of '
                 f'the top cell ({cap:.6g} m); use a thicker top cell, or call set_initial_lid '
@@ -3212,7 +3216,10 @@ class EntropySolver:
             below ``LID_DH_MIN``: there the Stefan rate runs at the floor, so the top cell does
             not hold its entropy at a floor weight of 0. That band reaches about
             ``S_sol + LID_DH_MIN / T_sol``, above the slack of the step check for a solidus
-            below 2000 K, so a state the step check accepted can still be refused here.
+            below 2000 K, so a state the step check accepted can still be refused here. A live
+            start the top cell cannot take is refused (:meth:`_check_lid_size`): with
+            ``lid_mush_base`` a lid at or above 0.7 of the top cell hands over at the call start
+            unless the merge leaves the EOS table; without it a lid above 0.8 is refused.
         """
         kept = getattr(self, '_lid_init', None) is not None or self._previous_lid() is not None
         start = self._lid_start_values(S_top)
@@ -3225,7 +3232,10 @@ class EntropySolver:
         """Refuse a live lid ``start`` over the top-cell entropy ``S_top`` with
         ``lid_mush_base``: below ``S_sol + gap`` or not finite, or in the heat-jump band (see
         :meth:`_lid_start`)."""
-        if start[0] == 0.0 or not self._lid_mush:
+        if start[0] == 0.0:
+            return
+        self._check_lid_size(S_top, start)
+        if not self._lid_mush:
             return
         floor = self._lid_S_sol + gap
         if not S_top >= floor:
@@ -3243,6 +3253,47 @@ class EntropySolver:
                 f'{self._lid_S_sol + _lid.LID_DH_MIN / self._lid_T_sol:.6g} J/kg/K); the top '
                 'cell does not hold its entropy there'
             )
+
+    def _check_lid_size(self, S_top: float, start: npt.NDArray) -> None:
+        """Refuse a live lid ``start`` the start cannot take. With ``lid_mush_base`` a lid at or
+        above the hand-over (``LID_HANDOVER_FRAC`` of the top cell) hands over at the call start,
+        and is refused only above :meth:`_lid_merge_limit`, where the merged top cell would leave
+        the EOS table. Without it a lid above the growth stop (``LID_CAP_FRAC``) is refused."""
+        delta, E = float(start[0]), float(start[1])
+        h = self._lid_h_top
+        if self._lid_mush:
+            if delta < _lid.LID_HANDOVER_FRAC * h:
+                return
+            limit = self._lid_merge_limit(S_top, delta, E)
+            if not delta <= limit:
+                raise ValueError(
+                    f'lid_mush_base: the lid ({delta:.6g} m, {E:.6g} J/m^2) cannot hand over into '
+                    f'the top cell ({h:.6g} m): at this lid heat per thickness the merged top cell '
+                    f'leaves the EOS table above {limit:.6g} m ({limit / h:.4g} top cells)'
+                )
+            return
+        cap = _lid.LID_CAP_FRAC * h
+        if delta > cap * (1.0 + _LID_CAP_SLACK):
+            raise ValueError(
+                f'the lid ({delta:.6g} m) lies above the growth stop of the top cell ({cap:.6g} m); '
+                'use a thicker top cell or a thinner lid'
+            )
+
+    def _lid_merge_limit(self, S_top: float, delta: float, E: float) -> float:
+        """Largest lid thickness [m] at the heat per thickness ``E / delta`` whose merge into a
+        top cell at ``S_top`` (:meth:`_lid_merge`) stays inside the EOS table; inf without a
+        limit. The merged heat ``V W_f + A d (E / delta - W_f)`` is linear in the thickness d."""
+        if self._lid_const:
+            return math.inf
+        V, A = float(self._volume_flat[-1]), float(self._lid_area)
+        W_f, W_lid = float(self._lid_W(S_top)), E / delta
+        if W_lid < W_f:
+            W_end = float(self._lid_W(float(self.entropy_eos.S_min)))
+            return V * (W_f - W_end) / (A * (W_f - W_lid))
+        if W_lid > W_f:
+            W_end = float(self._lid_W(float(self.entropy_eos.S_max)))
+            return V * (W_end - W_f) / (A * (W_lid - W_f))
+        return math.inf
 
     def _lid_start_values(self, S_top: float) -> npt.NDArray:
         """The set, carried or phantom lid start."""
@@ -5335,11 +5386,7 @@ class EntropySolver:
         """
         wall_start = time.perf_counter()
         s0 = getattr(self, '_S0', None)
-        if (
-            getattr(self, '_lid_mush', False)
-            and s0 is not None
-            and s0.size == self._n_core_state() + 2
-        ):
+        if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
             self._check_lid_start(float(s0[self._n_stag - 1]), s0[-2:], _lid.LID_FLOOR_SLACK)
         if _lid_slots(self):  # the time belongs to the start: an earlier call may have merged

@@ -637,11 +637,12 @@ def test_a_guard_cut_removes_the_hand_over_time_on_the_jax_path():
 
 
 def test_lid_step_check_runs_on_the_jax_batch_path():
-    """The lid invariant fails an accepted state past the growth stop on the JAX batch path,
-    as on the NumPy loop."""
+    """The lid invariant fails a state past the growth stop on the JAX batch path, as on the
+    NumPy loop. The start refuses such a lid, so this test skips the size check of the start."""
     from tests.test_subgrid_lid_solver import _phantom_energy
 
     s = _jax_cvode_lid_solver()
+    s._check_lid_size = lambda S_top, start: None
     d = 1.01 * sl.LID_CAP_FRAC * s._lid_h_top
     E, _ = _phantom_energy(s, d, 0.5 * (s._lid_T_sol + 300.0))
     s.set_initial_lid(d, E)
