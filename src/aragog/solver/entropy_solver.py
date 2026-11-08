@@ -3245,10 +3245,11 @@ class EntropySolver:
         band (see :meth:`_lid_start`)."""
         if start[0] == 0.0:
             return
-        if not (math.isfinite(S_top) and np.all(np.isfinite(start))):
+        cells_ok = S_cells is None or bool(np.all(np.isfinite(S_cells)))
+        if not (math.isfinite(S_top) and np.all(np.isfinite(start)) and cells_ok):
             raise ValueError(
-                f'the lid start ({start[0]!r} m, {start[1]!r} J/m^2) over the top cell '
-                f'{S_top!r} J/kg/K is not finite'
+                f'the lid start ({float(start[0]):.6g} m, {float(start[1]):.6g} J/m^2) over the '
+                f'top cell {float(S_top):.6g} J/kg/K, or a cell entropy, is not finite'
             )
         self._check_lid_size(S_top, start, S_cells)
         # a lid at the hand-over merges at the call start, before any lid physics
@@ -3277,12 +3278,21 @@ class EntropySolver:
         """Refuse a live lid ``start`` the start cannot take. With ``lid_mush_base`` a lid at or
         above the hand-over (``LID_HANDOVER_FRAC`` of the top cell) hands over at the call start,
         and is refused only above :meth:`_lid_merge_limit`, where the merged top cell or the top
-        node would leave the EOS table. Without it a lid above the growth stop (``LID_CAP_FRAC``) is refused."""
+        node would leave the EOS table, or where the top node lies outside the table already.
+        Without it a lid above the growth stop (``LID_CAP_FRAC``) is refused."""
         delta, E = float(start[0]), float(start[1])
         h = self._lid_h_top
         if self._lid_mush:
             if delta < _lid.LID_HANDOVER_FRAC * h:
                 return
+            S_lo, S_hi = self._lid_merge_bounds()
+            node = self._lid_top_node(S_cells)
+            if node is not None and not S_lo <= node[0] @ np.asarray(S_cells) <= S_hi:
+                raise ValueError(
+                    f'lid_mush_base: the top node ({float(node[0] @ np.asarray(S_cells)):.6g} '
+                    f'J/kg/K) lies outside [{S_lo:.6g}, {S_hi:.6g}] J/kg/K (the EOS table, above '
+                    f'eos_floor_margin) before the lid ({delta:.6g} m) hands over'
+                )
             limit = self._lid_merge_limit(S_top, delta, E, S_cells)
             if not delta <= limit:
                 raise ValueError(
@@ -3299,31 +3309,39 @@ class EntropySolver:
                 'use a thicker top cell or a thinner lid'
             )
 
+    def _lid_merge_bounds(self) -> tuple[float, float]:
+        """Entropy band [J/kg/K] a merged top cell and the top node must stay in: from the table
+        minimum plus ``eos_floor_margin`` to the table maximum."""
+        margin = _resolve_step_cap(
+            getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
+        )
+        return float(self.entropy_eos.S_min) + max(margin, 0.0), float(self.entropy_eos.S_max)
+
+    def _lid_top_node(self, S_cells: npt.NDArray | None) -> tuple[npt.NDArray, float] | None:
+        """Weights of the top basic node on the cell entropies and the part of the node from the
+        cells below the top one, or None without ``S_cells``, with ``top_node = 'limited'`` or
+        on outer boundary 5 (the node is then the top cell)."""
+        mesh = self.evaluator.mesh
+        if S_cells is None or mesh.top_node == 'limited' or self._outer_bc_kind == 5:
+            return None
+        w = np.asarray(mesh._quantity_transform)[-1]
+        return w, float(w[:-1] @ np.asarray(S_cells, dtype=float)[:-1])
+
     def _lid_merge_limit(
         self, S_top: float, delta: float, E: float, S_cells: npt.NDArray | None = None
     ) -> float:
         """Largest lid thickness [m] at the heat per thickness ``E / delta`` whose merge into a
-        top cell at ``S_top`` (:meth:`_lid_merge`) keeps the top cell inside the EOS table, above
-        its floor margin ``eos_floor_margin``; with the cell entropies ``S_cells`` also the top
-        basic node the EOS floor watches; inf without a limit. The merged heat
-        ``V W_f + A d (E / delta - W_f)`` is linear in the thickness d, and the top node is
-        linear in the merged top-cell entropy."""
+        top cell at ``S_top`` (:meth:`_lid_merge`) keeps the top cell inside the band of
+        :meth:`_lid_merge_bounds`; with the cell entropies ``S_cells`` also the extrapolated top
+        basic node; inf without a limit. The merged heat ``V W_f + A d (E / delta - W_f)`` is
+        linear in the thickness d, and the top node is linear in the merged top-cell entropy."""
         V, A = float(self._volume_flat[-1]), float(self._lid_area)
         W_f, W_lid = float(self._lid_W(S_top)), E / delta
-        margin = _resolve_step_cap(
-            getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
-        )
-        S_lo = float(self.entropy_eos.S_min) + max(margin, 0.0)
-        S_hi = float(self.entropy_eos.S_max)
-        mesh = self.evaluator.mesh
-        if S_cells is not None and not (mesh.top_node == 'limited' or self._outer_bc_kind == 5):
-            w = np.asarray(mesh._quantity_transform)[-1]
-            rest = float(w[:-1] @ np.asarray(S_cells, dtype=float)[:-1])
-            if w[-1] > 0.0:  # the top node rises with the top cell
-                S_lo = max(
-                    S_lo, (float(self.entropy_eos.S_min) + max(margin, 0.0) - rest) / w[-1]
-                )
-                S_hi = min(S_hi, (float(self.entropy_eos.S_max) - rest) / w[-1])
+        S_lo, S_hi = self._lid_merge_bounds()
+        node = self._lid_top_node(S_cells)
+        if node is not None and node[0][-1] > 0.0:  # the top node rises with the top cell
+            w_N, rest = float(node[0][-1]), node[1]
+            S_lo, S_hi = max(S_lo, (S_lo - rest) / w_N), min(S_hi, (S_hi - rest) / w_N)
         if W_lid < W_f:
             return V * (W_f - float(self._lid_W(S_lo))) / (A * (W_f - W_lid))
         if W_lid > W_f:

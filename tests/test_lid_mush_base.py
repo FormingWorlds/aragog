@@ -881,7 +881,7 @@ class TestRestore:
         S = np.array(before[:n])
         for top, match in (
             (s._lid_S_sol + 0.6, 'heat jump of the lid base'),
-            (np.nan, 'below the floor'),
+            (np.nan, 'not finite'),
         ):
             S[-1] = top
             with pytest.raises(ValueError, match=match):
@@ -1943,7 +1943,9 @@ class TestMergeLimitTopNode:
         s = _solver(entropy_eos_copy(EOS_DIR))
         S_top = float(s.entropy_eos.S_min) + 100.0
         W_f, W_max = float(s._lid_W(S_top)), float(s._lid_W(float(s.entropy_eos.S_max)))
-        W_lid = W_f + (W_max - W_f) / 0.9  # the limit lies near 0.9 top cells, past the hand-over
+        W_lid = (
+            W_f + (W_max - W_f) / 0.9
+        )  # the limit lies near 0.9 top cells, past the hand-over
         limit = s._lid_merge_limit(S_top, 1.0, W_lid)
         assert sl.LID_HANDOVER_FRAC * s._lid_h_top < 0.999 * limit < math.inf
         assert (
@@ -1965,3 +1967,95 @@ class TestMergeLimitTopNode:
             E = float('nan')
         with pytest.raises(ValueError, match='not finite'):
             s._check_lid_start(S_top, np.array([delta, E]), sl.LID_FLOOR_SLACK)
+
+
+@pytest.mark.smoke
+@needs_eos
+class TestMergeLimitTopNodeCases:
+    """The top-node bound of the merge limit: the floor margin, the hot-lid side, the profile at
+    the solve start, a node outside the table before the merge, and the cases without the bound."""
+
+    @staticmethod
+    def _node_limit(s, S_top, W_lid, S_cells, side):
+        """Merge limit [m] from the closed form of the node bound on one side ('lo' or 'hi')."""
+        w = np.asarray(s.evaluator.mesh._quantity_transform)[-1]
+        rest = float(w[:-1] @ S_cells[:-1])
+        S_lo, S_hi = s._lid_merge_bounds()
+        S_end = (S_lo - rest) / w[-1] if side == 'lo' else (S_hi - rest) / w[-1]
+        V, A, W_f = float(s._volume_flat[-1]), float(s._lid_area), float(s._lid_W(S_top))
+        return V * (W_f - float(s._lid_W(S_end))) / (A * (W_f - W_lid))
+
+    def test_the_node_bound_moves_with_the_floor_margin(self):
+        """A lid between the node limits at margin 0 and at margin 50 is accepted at 0 and refused
+        at 50; each limit equals its closed form."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S = np.full(s._n_stag, 3050.0)
+        W_lid = _lid_E(s, 1.0, T_s=300.0)
+        lim0 = s._lid_merge_limit(3050.0, 1.0, W_lid, S)
+        assert lim0 == pytest.approx(self._node_limit(s, 3050.0, W_lid, S, 'lo'), rel=1e-12)
+        s.parameters.energy.eos_floor_margin = 50.0
+        lim50 = s._lid_merge_limit(3050.0, 1.0, W_lid, S)
+        assert lim50 == pytest.approx(self._node_limit(s, 3050.0, W_lid, S, 'lo'), rel=1e-12)
+        delta = 0.5 * (lim0 + lim50)
+        assert lim50 < delta < lim0 and delta > sl.LID_HANDOVER_FRAC * s._lid_h_top
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s._check_lid_size(3050.0, np.array([delta, delta * W_lid]), S)
+        s.parameters.energy.eos_floor_margin = 0.0
+        assert s._check_lid_size(3050.0, np.array([delta, delta * W_lid]), S) is None
+
+    def test_the_node_bounds_the_hot_lid_side(self):
+        """For a lid hotter than its top cell the node limit (S_max side) is below the cell-only
+        limit and equals its closed form."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S_min = float(s.entropy_eos.S_min)
+        S = np.full(s._n_stag, 3050.0)
+        S[-2], S[-1] = S_min + 50.0, S_min + 100.0
+        W_f, W_max = float(s._lid_W(S[-1])), float(s._lid_W(float(s.entropy_eos.S_max)))
+        W_lid = W_f + (W_max - W_f) / 0.9
+        cell = s._lid_merge_limit(S[-1], 1.0, W_lid)
+        node = s._lid_merge_limit(S[-1], 1.0, W_lid, S)
+        assert node < cell
+        assert node == pytest.approx(self._node_limit(s, S[-1], W_lid, S, 'hi'), rel=1e-12)
+
+    def test_a_lid_set_after_the_entropy_is_bounded_by_the_node_at_the_solve(self):
+        """Entropy first, then a lid of one top cell with its surface at 300 K: the solve refuses
+        it by the node bound (the cell-only limit would take it), and leaves the state."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        s.set_initial_entropy(3050.0)
+        delta = s._lid_h_top
+        E = _lid_E(s, delta, T_s=300.0)
+        assert s._lid_merge_limit(3050.0, delta, E) > delta
+        s.set_initial_lid(delta, E)
+        S0 = s._S0.copy()
+        with pytest.raises(ValueError, match='cannot hand over'):
+            s.solve()
+        assert np.array_equal(s._S0, S0) and s._lid_init == (delta, E)
+
+    def test_a_node_outside_the_table_before_the_merge_is_named(self):
+        """A profile whose top node lies below the table before the merge refuses a lid at the
+        hand-over with that node named; a non-finite cell is refused as not finite."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        S = np.full(s._n_stag, 3050.0)
+        S[-2], S[-1] = 6000.0, 500.0
+        delta = 0.75 * s._lid_h_top
+        start = np.array([delta, _lid_E(s, delta, T_s=300.0)])
+        with pytest.raises(ValueError, match='before the lid'):
+            s._check_lid_size(500.0, start, S)
+        S[-3] = np.nan
+        with pytest.raises(ValueError, match='not finite'):
+            s._check_lid_start(500.0, start, sl.LID_FLOOR_SLACK, S)
+
+    @pytest.mark.parametrize('case', ['limited top node', 'outer boundary 5'])
+    def test_without_an_extrapolated_node_the_limit_is_the_cell_limit(self, case):
+        """With top_node 'limited' or on outer boundary 5 the floor watches the top cell, so the
+        limit with the profile equals the cell-only limit."""
+        s = _solver(entropy_eos_copy(EOS_DIR))
+        if case == 'limited top node':
+            s.evaluator.mesh.top_node = 'limited'
+        else:
+            s._outer_bc_kind = 5
+        S = np.full(s._n_stag, 3050.0)
+        W_lid = _lid_E(s, 1.0, T_s=300.0)
+        assert s._lid_merge_limit(3050.0, 1.0, W_lid, S) == s._lid_merge_limit(
+            3050.0, 1.0, W_lid
+        )
