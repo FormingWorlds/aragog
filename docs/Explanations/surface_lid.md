@@ -84,6 +84,8 @@ For its next solve the atmosphere needs the conductance from the melt to its sur
 
 **Why it matters.** The surface flux of a call is not the flux of the atmosphere: it starts from it and follows the crust. The planet loses the integrated flux of the call, and PROTEUS books that as `F_int`, with the difference from `F_atm` in `lid_F_diff`.
 
+**Where this is checked.** [The lid surface under an atmosphere](../Validation/surface_lid.md#the-lid-surface-under-an-atmosphere) checks the Robin surface, and [the weight of the lid at its onset](../Validation/surface_lid.md#the-weight-of-the-lid-at-its-onset) checks the onset weight, both against closed forms on NumPy and JAX.
+
 ## Energy
 
 The heat content of the crust follows the equation of state across the crust, so its heat capacity and density change from the base to the surface as they do in the mesh. A crust that took them at its base would hold too much heat under a cold surface: on the PALEOS table at 10 MPa the heat capacity of the solid at 255 K is 55 % of its value at 1300 K.
