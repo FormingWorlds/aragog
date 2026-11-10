@@ -60,11 +60,11 @@ def test_a_drain_past_the_table_minimum_fails_the_call(eos, caplog, method, marg
     )
     assert 0.0 < sol.t[-1] < 10.0 and sol.t.size == sol.y.shape[1] > 1
     assert sol.y[: s._n_stag].min() >= float(eos.S_min) - _TOL
-    assert sol.energy_integrals == dict(es._ZERO_ENERGY_INTEGRALS)
+    np.testing.assert_equal(sol.energy_integrals, dict(es._ZERO_ENERGY_INTEGRALS))
     out = s.get_state()
     assert out.status == -1 and out.cvode_flag_name == 'EOS_TABLE_GUARD'
     assert out.cvode_flag in (0, 2)  # PROTEUS sends a flag of -1 to its stiffness recovery
-    assert sol.success is False and 'energy_trace' not in sol
+    assert sol.success is False and 'energy_trace' not in sol and 'energy_change' not in sol
     assert out.dt_actual == pytest.approx(sol.t[-1])
 
 
@@ -134,7 +134,7 @@ def test_a_retry_on_the_same_solver_equals_a_fresh_call(eos, method):
         sol.status == 0 and not s.stop_early and sol.get('cvode_flag_name') != 'EOS_TABLE_GUARD'
     )
     assert np.array_equal(sol.t, fresh.t) and np.array_equal(sol.y, fresh.y)
-    assert sol.energy_integrals == fresh.energy_integrals
+    np.testing.assert_equal(sol.energy_integrals, fresh.energy_integrals)
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
@@ -298,4 +298,4 @@ def test_a_call_inside_the_table_is_bit_equal_with_and_without_the_guard(
     b = run()
     assert a.status == b.status and a.status in (0, 1)
     assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
-    assert a.energy_integrals == b.energy_integrals
+    np.testing.assert_equal(a.energy_integrals, b.energy_integrals)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -343,6 +344,7 @@ def _fake_solver(sol):
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=3, _pb_cache_misses=4)
     s._stag_entropy, s._step_heat_content = (lambda y: y), (lambda a, b: 0.0)
+    s._warned = set()
     seen = []
 
     def powers(t, y):
@@ -673,6 +675,7 @@ _FIELDS = {
     'solver_residual': 'step_solver_residual_J',
     'state_heat': 'step_dE_state_heat_J',
     'core': 'step_dE_core_J',
+    'core_tol': 'step_core_tol_J',
 }
 
 
@@ -705,7 +708,18 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     s.solve()
     out = s.get_state()
     assert s.stop_early and not calls
-    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 9
+    zero = [f for k, f in _FIELDS.items() if k not in ('F_cmb_step_avg', 'core_tol')]
+    assert [getattr(out, f) for f in zero] == [0.0] * 9
+    assert math.isnan(out.step_core_tol_J)
+
+
+@pytest.mark.unit
+def test_a_core_without_a_heat_ledger_has_no_tolerance_scale():
+    """step_core_tol_J is NaN where the core is not integrated as a heat content."""
+    s = _const_properties_solver()
+    s.solve()
+    assert s._core_bc != 'core_module'
+    assert math.isnan(s.get_state().step_core_tol_J)
 
 
 @pytest.mark.unit

@@ -17,6 +17,7 @@ cross-checked against with every feature off.
 from __future__ import annotations
 
 import functools
+import logging
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,8 @@ import numpy as _np
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.stratification import _q_ad
+
+logger = logging.getLogger('fwl.' + __name__)
 
 jax.config.update('jax_enable_x64', True)
 
@@ -413,20 +416,100 @@ class CoreEnergyBudget:
                 'heat_content is the full-core content; a stratified budget evolves '
                 'only its convecting volume'
             )
-        secular = float(t_cmb) * float(self.secular_capacity())
         if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
+            return float(t_cmb) * float(self.secular_capacity())
+        on_set = self.t_onset * float(self.secular_capacity())
+        return on_set + self.heat_change(self.t_onset, float(t_cmb) - self.t_onset)
+
+    def heat_change(self, t_cmb, d_t) -> float:
+        """Core heat change [J] from CMB temperature ``t_cmb`` to ``t_cmb + d_t``.
+
+        The integral of the effective capacity, equal to ``heat_content(t_cmb + d_t) -
+        heat_content(t_cmb)`` but without that difference of 2 contents near 1e31 J, whose float
+        spacing (near 1e15 J) can exceed the change of a short call: the secular term is
+        ``d_t C_secular`` and the released energy is integrated over ``u = sqrt(T_onset - T)``
+        with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
+        ``T_freeze - t_cmb``.
+
+        Parameters
+        ----------
+        t_cmb : float
+            CMB temperature at the start [K].
+        d_t : float
+            Change of the CMB temperature [K].
+
+        Returns
+        -------
+        float
+            Heat change [J], negative when the core cools; NaN for a non-finite input.
+
+        Raises
+        ------
+        ValueError
+            For a stratified budget (see :meth:`heat_content`).
+        """
+        if self.stratification:
+            raise ValueError(
+                'heat_change is the full-core change; a stratified budget evolves '
+                'only its convecting volume'
+            )
+        t0, dt = float(t_cmb), float(d_t)
+        if not (_np.isfinite(t0) and _np.isfinite(dt)):
+            return float('nan')
+        secular = dt * float(self.secular_capacity())
+        s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
+        if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
-        u_max = float(_np.sqrt(self.t_onset - float(t_cmb)))
-        boundary = jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
-        # One Gauss-Legendre panel per side of the freeze-out jump in the latent term.
-        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
-        edges = [0.0, u_freeze, u_max] if 0.0 < u_freeze < u_max else [0.0, u_max]
+        pieces = [(t0, dt)]
+        d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
+        if min(0.0, dt) < d_freeze < max(0.0, dt):  # on the changes: the subcooling rounds
+            pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
         released = 0.0
-        for lo, hi in zip(edges[:-1], edges[1:]):
-            u = lo + 0.5 * (hi - lo) * (_GL_X + 1.0)
-            values = boundary(self.t_onset - u**2) * 2.0 * u
-            released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
+        for t_a, d_a in pieces:
+            s_a, s_b = max(self.t_onset - t_a, 0.0), max(self.t_onset - t_a - d_a, 0.0)
+            u_a, u_b = float(_np.sqrt(s_a)), float(_np.sqrt(s_b))
+            if u_a + u_b > 0.0:
+                width = (-d_a if s_a > 0.0 and s_b > 0.0 else s_b - s_a) / (u_a + u_b)
+                above = t_a > self.t_freeze or (t_a == self.t_freeze and d_a > 0.0)
+                released += self._released_panel(u_a, width, above)
         return secular - released
+
+    @functools.cached_property
+    def _boundary(self):
+        """Latent plus gravitational capacity [J/K] at CMB temperatures, jitted once."""
+        return jax.jit(
+            jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
+        )
+
+    @functools.cached_property
+    def _freeze_out_edges(self):
+        """The last frozen and the first liquid float [K] of the capacity jump at freeze-out.
+
+        The float sign test of the superheat puts the jump a few floats from ``t_freeze``, on
+        either side; a scan of 16 floats each way finds it. Without one jump in the scan the
+        edges are ``t_freeze`` and the next float, with a warning when the scan holds liquid
+        capacity.
+        """
+        ts = [self.t_freeze]
+        for _ in range(16):
+            ts = [_np.nextafter(ts[0], -_np.inf), *ts, _np.nextafter(ts[-1], _np.inf)]
+        liquid = _np.asarray(self._boundary(jnp.asarray(ts))) > 0.0
+        k = int(_np.argmax(liquid))
+        one_jump = k > 0 and bool(liquid[k:].all())
+        if not one_jump and liquid.any():
+            logger.warning('no single freeze-out capacity jump within 16 floats of T_freeze')
+        i = k - 1 if one_jump else 16
+        return float(ts[i]), float(ts[i + 1])
+
+    def _released_panel(self, u_lo, width, above) -> float:
+        """Released energy [J] over one Gauss-Legendre panel from ``u_lo`` of signed ``width``,
+        its node temperatures clipped to the side of the freeze-out jump that ``above`` names,
+        so that a node rounding across the jump keeps the capacity of its piece."""
+        u = u_lo + 0.5 * width * (_GL_X + 1.0)
+        lo, hi = self._freeze_out_edges
+        t = self.t_onset - u**2
+        t = jnp.maximum(t, hi) if above else jnp.minimum(t, lo)
+        return 0.5 * width * float(jnp.sum(_GL_W * self._boundary(t) * 2.0 * u))
 
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of an unstratified core.

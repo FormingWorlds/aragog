@@ -129,6 +129,11 @@ class CoreShell:
         """Sensible heat [J] of the shell, ``c_p sum m_j T_j``."""
         return self.profiles.c_p * jnp.sum(self.mass * t_shell)
 
+    def heat_change(self, d_shell):
+        """Sensible heat change [J] of the shell for cell temperature changes ``d_shell`` [K],
+        ``c_p sum m_j dT_j``; exact for a change below the float spacing of the temperatures."""
+        return self.profiles.c_p * jnp.sum(self.mass * d_shell)
+
     def layer_base(self, t_shell, t_c):
         """Base radius [m] of the stable layer: the shell base plus the width of every cell whose
         lower face is not stably stratified (anomaly gradient below the reference gradient),

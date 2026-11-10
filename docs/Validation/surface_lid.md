@@ -6,7 +6,7 @@ This page checks the sub-grid surface lid, `subgrid_lid = true`: a conductive cr
 
 Three of the cases drive the lid functions of `aragog.surface_lid` through time, outside the solver. The growth law, the profile family and the rates are the ones the solver calls. The two cases that hold the surface at a fixed temperature use `fixed_surface_state`, which the solver calls under outer boundary 5, and the constant heat capacity of `LidEnthalpy.linear`, which it calls on a constant-property column. On the grey-body surface with the tables the solver uses `surface_state` and `LidEnthalpy.table`; the steady-crust case exercises the first, and the fine-mesh cases are the first to exercise both in the solver.
 
-The material properties are constant: thermal conductivity $k$ = 4 W/m/K, density $\rho$ = 3000 kg/m³ and heat capacity $c_p$ = 1200 J/kg/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 1.11 × 10⁻⁶ m²/s. The base of the lid is at $T_b$ = 1400 K. These three check the lid on its own; the coupling of the lid to the mesh is checked by the two fine-mesh cases and by the solver tests listed at the end.
+The material properties are constant: thermal conductivity $k$ = 4 W/m/K, density $\rho$ = 3000 kg/m³ and heat capacity $c_p$ = 1200 J/kg/K, so the thermal diffusivity is $\kappa = k / (\rho c_p)$ = 1.11 × 10⁻⁶ m²/s. The base of the lid is at $T_b$ = 1400 K. These three check the lid on its own; the coupling of the lid to the mesh is checked by the two fine-mesh cases and by the solver tests listed at the end. Two cases check the surface of the lid under an atmosphere, the Robin surface and the onset weight, on the NumPy and JAX functions, each with its own properties.
 
 ## A crust growing over melt
 
@@ -298,6 +298,52 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
     - Test id: `tests/test_surface_lid_v8.py::test_v8_the_mesh_converges_after_the_hand_over`, `::test_v8_the_lid_hands_over_at_the_growth_stop_on_all_meshes`, `::test_v8_the_flux_step_at_the_hand_over_misses_its_limit`, `::test_v8_the_flux_before_the_hand_over_lies_below_the_reference`. These read stored runs and do not run the code again, so a change of the code does not fail them.
     - Command: `pytest tests/test_surface_lid_v8.py` (add `--validation-plots` to write the plot pair)
 
+## The lid surface under an atmosphere
+
+**Why this check exists.** In a coupled step with an atmosphere the lid surface loses the heat of a Robin balance, so a balance solved wrongly gives the wrong heat loss of the planet. A lid that drops the slope $F'$ of the atmosphere flux ends 218.6 K too warm at $F'$ = 1000 W m$^{-2}$ K$^{-1}$, and the test sees it.
+
+**What it tests.** In a coupled run the atmosphere holds the lid surface at $T_\mathrm{held}$ and gives the lid a flux cap $C$. Where the held lid would conduct more than $C$, the surface warms to $T_s$ and loses $C + F' (T_s - T_\mathrm{held})$, with $F'$ the slope of the atmosphere flux with the surface temperature. Here a lid of $\delta$ = 100 m with $k$ = 3 W m$^{-1}$ K$^{-1}$, $T_b$ = 1400 K, and constant $\rho$ = 3000 kg/m³ and $c_p$ = 1200 J/kg/K holds the energy of a straight profile at a 600 K surface. The held surface is 500 K and the cap 14 W m$^{-2}$. The test solves for the surface temperature $T_s$ and the shape $s$ of the profile at 10 slopes $F'$ from 0 to 1000 W m$^{-2}$ K$^{-1}$, with `robin_surface_state` (NumPy) and the capped surface state of the JAX right-hand side.
+
+**How we know the right answer.** The surface of the lid holds no heat, so the heat conducted to it equals the heat the atmosphere takes: $k (T_b - T_s) f_s'(0) / \delta = C + F' (T_s - T_\mathrm{held})$. The profile must also hold the lid energy: for constant $c_p$, $E_\mathrm{lid} / \delta = -\rho c_p (T_b - T_s)(1 - m(s))$, with $m(s)$ the mean of the profile $f_s$. Both $f_s'(0)$ and $m(s)$ have closed forms from the error function for $s > 0$ and the imaginary error function for $s < 0$. The test solves the two equations for $s$ and $T_s$ with a root finder of its own, without the lid functions. At $F'$ = 0.1 the root is the straight profile at 600 K, since 3 × 800 / 100 = 14 + 0.1 × 100 W m$^{-2}$.
+
+**Why it matters.** This balance sets the heat the planet loses through a lid in a coupled step with an atmosphere, and so the cooling of the magma ocean once a crust forms.
+
+![Surface temperature of the lid against the slope of the atmosphere flux, NumPy and JAX on the closed form, between the cap alone and the held surface](../assets/validation/surface_lid_robin_surface.svg#only-light){ width="70%" }
+![Surface temperature of the lid against the slope of the atmosphere flux, NumPy and JAX on the closed form, between the cap alone and the held surface](../assets/validation/surface_lid_robin_surface_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The horizontal axis is the slope $F'$ on a log scale, the vertical axis the surface temperature $T_s$ in K. The line joins the closed-form roots at the 9 slopes, the dots are NumPy and the crosses JAX; they lie on the roots. The dashed line is the cap alone ($F'$ = 0, 718.6 K), and the dotted line the held surface (500 K). A larger slope pulls the surface toward the held one.
+
+??? info "Test details"
+    - Reference: analytical limit, the surface balance and the energy of the similarity profile (Turcotte and Schubert (2014)[^cite-turcotte2014] section 4.18 for the profile family).
+    - Tolerance: relative 10⁻⁹ on $T_s$ and on the surface flux; relative 10⁻⁷ and absolute 10⁻⁹ on $s$ (near 0 at $F'$ = 0.1); NumPy and JAX.
+    - Discrimination: the cap alone is 218.6 K warmer than the root at $F'$ = 1000 W m$^{-2}$ K$^{-1}$, which lies 0.02 K above the held surface.
+    - Test id: `tests/test_surface_lid_atmosphere.py::test_the_robin_surface_solves_the_energy_and_the_surface_balance`
+    - Command: `pytest tests/test_surface_lid_atmosphere.py` (add `--validation-plots` to write the plot pair)
+
+## The weight of the lid at its onset
+
+**Why this check exists.** Under a held surface the lid switches on through its weight $w$, from 0 (no lid) to 1 (a full lid). A weight with a step, 1 wherever a steady crust would be thicker than the onset thickness, jumps from 0 to 1 at one surface temperature: the heat loss of the planet then jumps too, and the coupled steps can flip between the two states. The test checks that the weight rises without a step.
+
+**What it tests.** For a held surface $T_s$ the steady crust that carries the base flux $F_b$ has the thickness $\delta_\mathrm{eq} = k (T_b - T_s) / F_b$. The weight is $w = \frac{1}{2}\left(1 + \tanh\left(\log_{10}(\delta_\mathrm{eq} / \delta_\mathrm{on}) / W\right)\right)$, with $\delta_\mathrm{on}$ the onset thickness and $W$ = `LID_EXIST_WIDTH` = 0.1, set to 0 below 10⁻¹⁰. The test compares `flux_weight` of NumPy and JAX with this form for $\delta_\mathrm{eq} / \delta_\mathrm{on}$ from 10⁻³ to 10², at $F_b$ = 10, 100 and 1000 W m$^{-2}$, with $T_b$ = 1400 K, $k$ = 4 W m$^{-1}$ K$^{-1}$ and $\delta_\mathrm{on}$ = 0.02 m, so that the surface stays at or above 900 K. On both it also checks $w$ = 0.5 where $T_b - T_s = F_b \delta_\mathrm{on} / k$, $w$ = 0 for a surface at or above $T_b$ (also for $F_b \le 0$), and $w$ = 1 for $F_b \le 0$ below $T_b$; on NumPy, $w$ = 0 in the last 0.06 $F_b \delta_\mathrm{on} / k$ below $T_b$.
+
+**How we know the right answer.** A steady crust conducts the base flux, which gives $\delta_\mathrm{eq}$; the weight form is a smooth step in $\log_{10} \delta_\mathrm{eq}$, centred at $\delta_\mathrm{on}$. The NumPy and JAX functions are two implementations of it, and the test checks both against the formula.
+
+**Why it matters.** The onset weight decides when the crust starts to insulate the magma ocean in a coupled run. A smooth weight lets the heat loss change over several coupled steps instead of in one.
+
+![Lid weight against the steady crust thickness over the onset thickness, NumPy and JAX at 3 base fluxes on one closed-form curve](../assets/validation/surface_lid_onset_weight.svg#only-light){ width="70%" }
+![Lid weight against the steady crust thickness over the onset thickness, NumPy and JAX at 3 base fluxes on one closed-form curve](../assets/validation/surface_lid_onset_weight_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The horizontal axis is $\delta_\mathrm{eq} / \delta_\mathrm{on}$ on a log scale, the vertical axis the weight $w$. The plot shows the window from 0.2 to 5, where the weight rises; the test asserts the full range. The line is the closed form; the dots are NumPy and the crosses JAX, one colour for each base flux. All three fluxes fall on one curve, which passes 0.5 at 1. In kelvin the half weight lies 0.05, 0.5 and 5 K below $T_b$ for the three fluxes.
+
+**Known limit.** The test takes the width $W$ from the code, so a change of `LID_EXIST_WIDTH` moves both sides of the comparison and is not caught; the floor 10⁻¹⁰ is typed in the test, so a change of it is caught. The form of the weight is a modelling choice; this case checks that the code computes it, not that it is the right physics.
+
+??? info "Test details"
+    - Reference: analytical form of the weight from the steady crust thickness.
+    - Tolerance: relative 10⁻¹² and absolute 10⁻¹⁵ at each point, NumPy and JAX, against the closed form at the surface temperature the code receives; the half weight to absolute 10⁻¹⁰, the rounding of $T_b - T_s$ at 1400 K.
+    - Discrimination: a step weight jumps from 0 to 1 at $\delta_\mathrm{eq} = \delta_\mathrm{on}$; the code gives 0.5 there.
+    - Test id: `tests/test_surface_lid_atmosphere.py::test_the_onset_weight_rises_without_a_step_below_the_base`
+    - Command: `pytest tests/test_surface_lid_atmosphere.py` (add `--validation-plots` to write the plot pair)
+
 ## The critical thickness of a dense layer
 
 **Why this check exists.** The lid reports how a drip from its base compares with conduction (see [Can the lid sink?](../Explanations/surface_lid.md#can-the-lid-sink)). A wrong power or a swapped ratio in the formula would give a thickness that is wrong by orders of magnitude, and nothing in a run would show it, because the solve does not read this output.
@@ -367,7 +413,7 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 - a solid shell whose lid base is not a fixed temperature at the start temperature;
 - the lid on the tables under a fixed surface temperature: a test shows only that it runs, keeps its surface at the boundary temperature and closes its energy ledger.
 
-**What we know about the molten shell with the solid rheology.** The lid base lies at the rheological temperature, at or below the solidus. With the `'local'` closure the lid never hands over; with the `'lid'` closure it does not hand over in this case either. A run of the same shell on 4000 nodes (cells of 6.25 m) without the lid used all of its 8 GB of memory before its first output at 100 years. The run on 4000 nodes without the solid rheology stopped the same way. So this case has no resolved reference. This page makes no claim on the error of the lid in it.
+**What we know about the molten shell with the solid rheology.** The lid base lies at the rheological temperature, at or below the solidus. Without `lid_mush_base`, the lid never hands over with the `'local'` closure, and with the `'lid'` closure it does not hand over in this case either. A run of the same shell on 4000 nodes (cells of 6.25 m) without the lid used all of its 8 GB of memory before its first output at 100 years. The run on 4000 nodes without the solid rheology stopped the same way. So this case has no resolved reference. This page makes no claim on the error of the lid in it.
 
 **Why it matters.** Until a mesh resolves that crust, the error of the lid for a molten start with the solid rheology is not known. Use the lid there only with this limit in mind.
 
@@ -392,7 +438,7 @@ These tests run the lid inside the full solver; they check exact properties of t
 - The hand-over of the lid to the mesh keeps the energy, and a run resumed after it evolves as a run without the lid: `tests/test_subgrid_lid_solver.py::test_merge_is_energy_exact`, `::test_resume_after_handover_matches_the_lid_off_run`.
 - Without the solid rheology the lid hands over where the top cell cools through its solidus, on every integrator path, and before the call when the top cell starts at or below it: `tests/test_subgrid_lid_solver.py::test_lid_hands_over_where_the_top_cell_freezes`, `::test_top_cell_at_or_below_the_solidus_hands_over_at_the_start`.
 
-**Known limit.** With the solid rheology the lid hands over only with `stress_closure_mode = 'lid'`, whose lid-base isotherm sets the hand-over depth; with another closure the lid never hands over (`tests/test_subgrid_lid_solver.py::test_no_handover_without_the_lid_closure`, `::test_no_solidus_handover_with_the_rheology`). Outside the solid regime (no active stagnant lid, or a top cell past the rheological transition) it does not hand over either (`::test_no_handover_outside_the_solid_regime`), and a hand-over whose isotherm has passed the face fires where the solid regime begins (`::test_handover_fires_where_the_solid_regime_begins`).
+**Known limit.** With the solid rheology and without `lid_mush_base`, the lid hands over only with `stress_closure_mode = 'lid'`, whose lid-base isotherm sets the hand-over depth; with another closure the lid never hands over (`tests/test_subgrid_lid_solver.py::test_no_handover_without_the_lid_closure`, `::test_no_solidus_handover_with_the_rheology`). Outside the solid regime (no active stagnant lid, or a top cell past the rheological transition) it does not hand over either (`::test_no_handover_outside_the_solid_regime`), and a hand-over whose isotherm has passed the face fires where the solid regime begins (`::test_handover_fires_where_the_solid_regime_begins`).
 
 [^cite-deschamps2021]: F. Deschamps, K. Vilella, *[Scaling laws for mixed-heated stagnant-lid convection and application to Europa](https://doi.org/10.1029/2021JE006963)*, Journal of Geophysical Research: Planets, 126, e2021JE006963, 2021. [SciX](https://scixplorer.org/abs/2021JGRE..12606963D/abstract).
 [^cite-korenaga2009]: J. Korenaga, *[Scaling of stagnant-lid convection with Arrhenius rheology and the effects of mantle melting](https://doi.org/10.1111/j.1365-246X.2009.04272.x)*, Geophysical Journal International, 179, 154–170, 2009. [SciX](https://scixplorer.org/abs/2009GeoJI.179..154K/abstract).

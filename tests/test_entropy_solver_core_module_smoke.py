@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import math
 
 import numpy as np
 import pytest
@@ -416,6 +417,110 @@ def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
 
 
+def _zero_flux_start(shared_eos, start, end, state=None, atol_sf=1.0, rtol_sf=1.0):
+    """A call of a core that starts at the temperature of a molten mantle base (zero CMB flux
+    at the start, as in a coupled run), from ``state`` (T_core, S) or the start state."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
+    n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
+    if state is None:
+        s0 = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+        state = (float(shared_eos.temperature(p_cmb, s0[:1])[0]), s0)
+    solver.parameters.solver.start_time, solver.parameters.solver.end_time = start, end
+    solver.set_initial_core_temperature(state[0])
+    solver.set_initial_entropy(state[1])
+    solver._atol_sf = atol_sf
+    solver.parameters.solver.rtol *= rtol_sf
+    solver.solve()
+    y = np.asarray(solver._solution.y)
+    return solver.get_state(), (float(y[n + 1, -1]), y[:n, -1])
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_the_core_ledger_residual_converges_with_the_tolerance(shared_eos):
+    """The per-call core ledger of a zero-flux start. The first call closes to 3e-4 of its CMB
+    heat at the default tolerances (measured 1.2e-4); with atol and rtol 1000 times tighter each
+    of the first 3 calls closes to 1e-5, its residual falls at least 20 times (measured 111, 121,
+    143) and step_core_tol_J falls with it. From the fourth call on each call closes to 2e-6 at
+    the default tolerances and its residual falls at least 20 times at 1000 times tighter
+    tolerances (calls 4 and 5: 1.3e-7 and 1.6e-6, falling 62 and 154 times). A leak independent
+    of the tolerance of 1.3e-7 or -6.8e-8 of the CMB heat or more fails call 3; the first call
+    alone, at the tight tolerances within 3e-6 (measured 1.1e-6), fails from a leak of 4.1e-6."""
+    residuals, scales = {}, {}
+    for sf in (1.0, 1.0e-3):
+        state, residuals[sf], scales[sf] = None, [], []
+        for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0, 22.0, 122.0)):
+            out, state = _zero_flux_start(shared_eos, start, end, state, atol_sf=sf, rtol_sf=sf)
+            cmb = out.step_dE_F_cmb_J
+            scales[sf].append(out.step_core_tol_J / cmb)
+            residuals[sf].append((out.step_dE_core_J + cmb) / cmb)
+    assert 1e-5 < abs(residuals[1.0][0]) < 3e-4
+    assert abs(residuals[1.0e-3][0]) < 3e-6, residuals
+    for loose, tight in zip(residuals[1.0][3:], residuals[1.0e-3][3:]):
+        assert abs(loose) < 2e-6 and abs(loose) > 20.0 * abs(tight), residuals
+    for values in zip(*[v[:3] for v in (*residuals.values(), *scales.values())]):
+        _assert_converges(*values)
+
+
+def _assert_converges(loose, tight, s_loose, s_tight):
+    """A residual that falls at least 20 times to below 1e-5 at 1000 times tighter tolerances,
+    and a tolerance scale that falls with it and bounds it."""
+    assert abs(tight) < 1e-5 and abs(loose) > 20.0 * abs(tight), (loose, tight)
+    assert s_loose > 20.0 * s_tight > 0.0, (s_loose, s_tight)
+    for res, scale in ((loose, s_loose), (tight, s_tight)):
+        assert abs(res) < 2.0 * scale < 2.0e3 * abs(res), (res, scale)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('stratified', [False, True])
+def test_a_call_across_the_onset_converges_with_the_tolerance(shared_eos, stratified):
+    """A 3 yr call of a core 0.5 K above the onset over a liquid base, with the entropy of
+    fusion of the test cores (170 J/kg/K), crosses the onset to 0.22 K below it: its ledger
+    residual falls at least 20 times to below 1e-5 at 1000 times tighter tolerances (measured
+    -6.2e-6 to -6.3e-8, stratified -2.4e-6 to -2.4e-8)."""
+    params = UNENRICHED_PARAMS | dict(
+        melting_curve='quadratic', t_m0=1.0, t_m1=2.55e-12, t_m2=0.0
+    )
+    if stratified:
+        params |= dict(stratification=True, k_core=130.0, layer_base_fraction=0.7)
+    probe = _build('core_module', shared_eos, params)
+    p_cmb = probe._P_basic_flat[:1]
+    S = np.full(probe._n_stag, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+    t_m = float(shared_eos.temperature(p_cmb, S[:1])[0])
+    params['t_m0'] = (t_m + 300.0) / probe._core_module_budget.t_onset
+    values = [[], []]
+    for sf in (1.0, 1.0e-3):
+        solver = _build('core_module', shared_eos, params, end_time=3.0, solver_method='cvode')
+        budget = solver._core_module_budget
+        solver.set_initial_core_temperature(budget.t_onset + 0.5)
+        solver.set_initial_entropy(S)
+        solver._atol_sf = sf
+        solver.parameters.solver.rtol *= sf
+        solver.solve()
+        out = solver.get_state()
+        assert float(solver._solution.y[solver._n_stag + 1, -1]) < budget.t_onset
+        cmb = out.step_dE_F_cmb_J
+        values[0].append((out.step_dE_core_J + cmb) / cmb)
+        values[1].append(out.step_core_tol_J / cmb)
+    _assert_converges(*values[0], *values[1])
+
+
+@needs_cvode
+def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
+    """The solve keeps the absolute tolerance at 1e-8 at least and says so once."""
+    for atol, n_warned in ((1.0e-8, 0), (1.0e-11, 1)):
+        caplog.clear()
+        solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+        solver.parameters.solver.atol = atol
+        with caplog.at_level('WARNING', logger='fwl.aragog.solver.entropy_solver'):
+            solver.solve()
+            solver.solve()
+        hits = [r for r in caplog.records if 'below the floor 1e-8' in r.getMessage()]
+        assert len(hits) == n_warned
+        assert solver._call_tol[0] == pytest.approx(1.0e-8, rel=1e-12)
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
@@ -558,10 +663,62 @@ def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
 
 @needs_cvode
 @pytest.mark.physics_invariant
+def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
+    """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-8
+    of its CMB heat (6.2e17 J, measured 1.7e-10): the core and shell heat changes are booked from
+    the integrated temperature changes, not from absolute temperatures, whose float spacing
+    (9e-13 K) times C_eff is 2.3e-4 of that heat; the same booking from the stored states misses
+    the bound."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
+    y = np.asarray(solver._solution.y)[:, [0, -1]]
+    old = solver._core_heat_change(solver._core_module_budget, y, y - y[:, :1])[0]
+    assert abs(old + out.step_dE_F_cmb_J) > 1e-8 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
+    """A 5 yr call of an unstratified core from the driven start moves T_core by only 2e-12 K
+    and books 3.9e15 J of CMB heat, 3.5 float spacings of the absolute core heat (8.95e30 J); at
+    tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat (measured 1.1e-7), which
+    the difference heat_content(T1) - heat_content(T0) misses."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        CORE_MODULE_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * abs(out.step_dE_F_cmb_J)
+    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+    budget = solver._core_module_budget
+    old = float(budget.heat_content(t1) - budget.heat_content(t0))
+    assert abs(old + out.step_dE_F_cmb_J) > 1e-6 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
 def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     """A core 300 K below the mantle gains heat through the CMB: the top shell cell warms toward
     the mantle while the convecting core below barely changes, and the heat the core gains is
-    the heat booked out of the mantle."""
+    the heat booked out of the mantle to 1e-7 (measured 2.0e-8)."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -581,7 +738,7 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     assert out.step_dE_F_cmb_J < 0.0
     assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
     assert out.core_T_top == y[-1, -1]
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-7 * abs(out.step_dE_F_cmb_J)
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])
@@ -863,3 +1020,31 @@ def test_a_resume_restarts_the_shell_where_the_previous_solve_ended():
     second.set_initial_shell_temperature(end[n + 3 :])
     with pytest.raises(ValueError, match='cells'):
         second.set_initial_entropy(end[:n])
+
+
+@needs_cvode
+def test_a_core_bc_without_the_core_module_reports_no_tolerance_scale(shared_eos):
+    """A bower2018 call with the EOS tables books a core heat change but no tolerance scale."""
+    solver = _build('bower2018', shared_eos, {}, solver_method='cvode')
+    n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
+    s0 = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+    solver.set_initial_core_temperature(float(shared_eos.temperature(p_cmb, s0[:1])[0]) + 300.0)
+    solver.set_initial_entropy(s0)
+    solver.parameters.solver.start_time, solver.parameters.solver.end_time = 0.0, 1.0
+    solver.solve()
+    out = solver.get_state()
+    assert out.step_dE_core_J != 0.0
+    assert math.isnan(out.step_core_tol_J)
+
+
+@pytest.mark.parametrize('method', ['radau', 'bdf', pytest.param('cvode', marks=needs_cvode)])
+def test_a_zero_span_call_reports_no_tolerance_scale(shared_eos, method):
+    """A call with start time equal to end time does not advance: no core heat change and a NaN
+    tolerance scale on every solver path, also where the trace holds 2 equal times."""
+    solver = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=0.0, solver_method=method
+    )
+    solver.solve()
+    out = solver.get_state()
+    assert out.step_dE_core_J == 0.0
+    assert math.isnan(out.step_core_tol_J)

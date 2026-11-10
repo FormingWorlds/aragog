@@ -57,7 +57,7 @@ At freeze-out completion, latent heat release ceases abruptly once the entire co
 
 The size of the drop depends on the core geometry and $\Delta s_\text{fusion}$.
 
-The melting curve is the PALEOS iron prescription (Anzellini et al., 2013[^cite-anzellini2013]) with a light-element depression, or the quadratic of Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Eq. 6. The piecewise Anzellini fit carries a ~0.73 K jump at the 98.5 GPa triple point, which is blended smoothly with a $C^2$ smootherstep over a 3.0 GPa half-width, bounding the temperature adjustment to 0.363 K and recovering exact branch values outside the range 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
+The melting curve is the PALEOS iron prescription (Anzellini et al., 2013[^cite-anzellini2013]) with a light-element depression, or the quadratic of Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Eq. 6. The liquidus of iron with S, C and O is `AlloyLiquidus` ([core alloy liquidus](core_alloy_liquidus.md)). It comes from the eutectic points and liquidus curves of the source papers. `melting_curve` takes only `iron` or `quadratic`, so `AlloyLiquidus` is used through the Python API. The piecewise Anzellini fit has a jump of about 0.73 K at the 98.5 GPa triple point. A $C^2$ smootherstep over a 3.0 GPa half-width blends the 2 branches. The blend changes the temperature by at most 0.363 K and gives the exact branch values outside 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
 
 ### Coupling to the mantle solver
 
@@ -221,12 +221,7 @@ Against the `leeds_thermal` model, integrated alone with SciPy BDF, it reproduce
 
 In the solver, an eroding layer stalls CVODE at the default tolerances: the step size collapses where the mixing switches on in the eroding cells. In the SciPy BDF comparison the centre temperature and the inner-core onset have not converged at a relative tolerance of 1e-8, and the comparison runs at 1e-11; the `solver.rtol` that CVODE needs for them is not measured.
 
-With a layer, the core heat of a 5 yr CVODE call that heats the core from above closes against the CMB heat to one of two values that a rounding-level change of the input selects:
-
-- $1.9 \times 10^{-6}$ or $8.2 \times 10^{-6}$ (a relative change of $10^{-15}$ in the core conductivity switches between them);
-- $7.7 \times 10^{-6}$ or $8.2 \times 10^{-6}$ with the exact adiabat and the boundary-layer properties at the mean temperature.
-
-An rtol of $10^{-10}$ does not change this. The core rate of a stratified state is ill-conditioned: a relative change of $10^{-14}$ in the shell temperatures moves it by $1.5 \times 10^{-6}$, which also sets the agreement of its NumPy and JAX evaluations. `test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-5}$.
+With a layer, the core heat of a 5 yr CVODE call that heats the core from above closes against the CMB heat to $2 \times 10^{-8}$ of it. This value is measured, and it holds under a relative change of $10^{-15}$ in the core conductivity. `test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-7}$. The core rate of a stratified state is ill-conditioned: a relative change of $10^{-14}$ in the shell temperatures moves it by $1.5 \times 10^{-6}$. This sets the agreement of its NumPy and JAX evaluations, not the closure of the ledger.
 
 Without a layer the smoke tests hold $10^{-6}$:
 
@@ -338,25 +333,54 @@ The light-element fraction of the outer core is fixed: the gravitational term us
 
 In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` (J), evaluating $\int \tilde{C} dT_\text{cmb}$ over the call, plus the shell's heat change with `stratification = true`; the shell temperatures (`core_T_shell`), the layer base (`core_layer_base`) and the temperature of the top shell cell (`core_T_top`) are in the output, the last two NaN without a shell, and a resumed run passes the shell back with `set_initial_shell_temperature`.
 
+`step_core_tol_J` (J) is a diagnostic scale of the error of `step_dE_core_J`: the error that the error control of the core temperature allows. It is an order-of-magnitude scale, not a limit.
+
+- **How it is computed.** The core temperature is integrated as its change within the call. CVODE therefore holds the local error of a step to about $\mathrm{atol} + \mathrm{rtol}\,|T_\text{cmb} - T_{\text{cmb},0}|$ (K). The scale sums this error times $\tilde{C}$ over the nodes of the energy trace after the call start. These nodes are every accepted step, every output point and, on a fired root, the root-search points.
+- **Size.** The scale grows with the number of nodes. A tighter `rtol` adds steps, so it can raise the scale.
+- **Why it is not a limit.** CVODE controls a norm over all states, and the CMB heat it is compared with is a trapezoid over the same nodes. The residual can therefore come near the scale or exceed it. The convergence tests bound each of the first 3 calls of a zero-flux start, and a call that crosses the inner-core onset, by twice the scale. For a stratified core, whose scale leaves out the shell, this bound is measured, not derived.
+- **Start-temperature rounding.** The per-call ledger does not book the rounding of the start temperature of the next call to the float spacing of $T_\text{cmb}$. This is at most $0.5\,\mathrm{ulp}(T_\text{cmb})\,\tilde{C}$ per call: $8.4 \times 10^{14}$ J at 4862 K for the core of the low-flux test, 0.21 of the CMB heat of its 5 yr call. It does not average out over calls that change $T_\text{cmb}$ by less than half its float spacing, because each of them starts the next call at the same temperature.
+- **Freeze-out.** The ledger splits a call at $T_\text{fr}$, but the capacity that the solver integrates jumps 1 or 2 float spacings above it. A call that crosses freeze-out therefore books that length with the liquid capacity, up to $1.7 \times 10^{15}$ J for the test cores.
+- **What it covers.** The scale covers the core temperature only, not the shell with `stratification = true`. It takes the tolerances of the call, not the tighter ones of sub-solidus rate-cap segments.
+- **When it is NaN.** It is NaN for every `core_bc` except `core_module`, after a failed call and after a call that does not advance.
+- **Floor of atol.** A requested `atol` below $10^{-8}$, 0 included, is raised to $10^{-8}$ before the scale factors of the call. The solver logs this once. A floor above 0 is needed: the change of the core temperature starts at 0, and CVODE needs a positive weight for it.
+
 ## Energy conservation and core closure
 
-From `SolverOutput`, the core energy closure residual of a call compares the core's heat change with the CMB heat transport:
+How does Aragog check that the core conserves energy in each call? The core ledger checks one balance per call: the heat the core loses, plus its radiogenic heat, equals the heat that crosses the core-mantle boundary (CMB). From `SolverOutput`, the core closure residual of a call compares the heat change of the core with the CMB heat transport:
 
 $$
 r_\text{core} = \frac{|\Delta E_\text{core} + \Delta E_\text{cmb} - Q_R\, \Delta t|}{\max(|\Delta E_\text{core}|, |\Delta E_\text{cmb}|)}
 $$
 
-where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$.
+where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$. The convergence tests of [core ledger closure](../Validation/core.md#core-ledger-closure) use the signed form $(\Delta E_\text{core} + \Delta E_\text{cmb}) / \Delta E_\text{cmb}$ with $Q_R = 0$; its size agrees with $r_\text{core}$ to a relative $r_\text{core}$.
 
-The solver integrates the core temperature, and the shell temperatures of a stratified core, as their change within the call: the state is offset by its value at the start of the call, so the solver tolerance acts on that change and not on the absolute temperature. The smoke test `test_a_hot_core_call_closes_its_heat_to_1e_minus_6` holds a 10-yr call in which the core cools by about $10^{-5}$ K to a residual below $10^{-6}$, and `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1.3 K over a partly molten base) holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
+The solver books the core heat change of a call in 2 steps:
 
-The core heat change of a call, $\int \tilde{C}\, dT_\text{cmb}$, uses 32-point Gauss-Legendre quadrature in $T_\text{cmb}$ on each segment between the inner-core onset and freeze-out temperatures, with a square-root substitution across nucleation; with `stratification = true` the capacity also depends on the layer base, so the integral is a trapezoid rule over the call's output points, and the shell adds the change of its heat content. The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along each cell's entropy path with a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, since $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes; the other modes use 16.
+1. It integrates the core temperature as its change over the call. The state is offset by its value at the start of the call, so the solver tolerance acts on that change, not on the absolute temperature. The shell temperatures of a stratified core are integrated in the same way.
+2. It books the core heat change of a call, $\int \tilde{C}\, dT_\text{cmb}$, from this integrated change of the core temperature. It does not book it as the difference of 2 heat contents or 2 temperatures (see the note below).
 
-[^cite-anzellini2013]: S. Anzellini, A. Dewaele, M. Mezouar, P. Loubeyre, G. Morard, *[Melting of Iron at Earth’s Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464–466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
-[^cite-deschamps2000]: F. Deschamps, C. Sotin, *[Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity](https://doi.org/10.1046/j.1365-246X.2000.00228.x)*, Geophysical Journal International, 143, 204–218, 2000. [SciX](https://scixplorer.org/abs/2000GeoJI.143..204D/abstract).
-[^cite-foley2016]: B. J. Foley, P. E. Driscoll, *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015GC006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885–1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
-[^cite-greenwood2021]: S. Greenwood, C. J. Davies, J. E. Mound, *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
-[^cite-labrosse2001]: S. Labrosse, J.-P. Poirier, J.-L. Le Mouël, *[The age of the inner core](https://doi.org/10.1016/S0012-821X(01)00387-9)*, Earth and Planetary Science Letters, 190, 111–123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
-[^cite-nimmo2015a]: F. Nimmo, *[Energetics of the Core](https://doi.org/10.1016/B978-0-444-53802-4.00139-1)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, 8, ch. 8.02, 27–55, Elsevier, 2015.
-[^cite-nimmo2015b]: F. Nimmo, *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/B978-0-444-53802-4.00160-3)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, 9, ch. 9.08, 201–219, Elsevier, 2015.
-[^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138–153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
+The integral takes one of 2 forms:
+
+- Without stratification, it is the closed form of the integral (`CoreEnergyBudget.heat_change`). It uses 48-point Gauss-Legendre quadrature in $u = \sqrt{T_\text{onset} - T_\text{cmb}}$ on each side of freeze-out. This substitution removes the square-root cusp at nucleation.
+- With `stratification = true`, the capacity also depends on the layer base. The integral is then a trapezoid rule over the nodes of the energy trace (every accepted step). The shell adds $c_p \sum_j m_j\, \Delta T_j$ of its cells (`CoreShell.heat_change`). A limit: where nucleation falls inside a call, this rule does not resolve the square-root cusp of the latent and gravitational terms as the closed form does.
+
+??? note "Why not the difference of 2 heat contents"
+    A heat content near $10^{31}$ J has a float spacing near $10^{15}$ J. A temperature near 5000 K has a float spacing of $9 \times 10^{-13}$ K. Times $\tilde{C}$, that spacing is about $8 \times 10^{14}$ to $7 \times 10^{15}$ J. Here $\tilde{C}$ is $9 \times 10^{26}$ to $8 \times 10^{27}$ J/K for the core profiles of the tests, with the upper end for an Earth-size core near freeze-out. Either rounding can exceed the CMB heat of a short call.
+
+Two smoke tests hold the residual:
+
+- `test_a_hot_core_call_closes_its_heat_to_1e_minus_6` holds a 10-yr call, in which the core cools by about $10^{-5}$ K, to a residual below $10^{-6}$.
+- `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` has a core that cools by about 1.3 K over a partly molten base. It holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
+
+The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along the entropy path of each cell. It uses a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, because $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes. The other modes use 16 points.
+
+**Where this is checked.** [Core ledger closure](../Validation/core.md#core-ledger-closure) and [a CVODE solve across the inner-core onset](../Validation/core.md#9-a-cvode-solve-across-the-inner-core-onset).
+
+[^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-deschamps2000]: Deschamps, F. & Sotin, C., *[Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity](https://doi.org/10.1046/j.1365-246x.2000.00228.x)*, Geophysical Journal International, 143, 204-218, 2000. [SciX](https://scixplorer.org/abs/2000GeoJI.143..204D/abstract).
+[^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
+[^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
+[^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
+[^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
+[^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
+[^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
