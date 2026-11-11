@@ -1,6 +1,6 @@
 # Capping melt-fraction steps with `phi_step_cap`
 
-The `energy.phi_step_cap` knob limits the per-call change in volume-weighted mean melt fraction $\Phi_\mathrm{global}$. It is implemented as a SUNDIALS root function that intercepts the integrator at the exact step where $|\Delta\Phi_\mathrm{global}|$ first reaches the cap. Use it when the rheological transition is being traversed quickly enough that the integrator's adaptive step would otherwise overshoot a physically meaningful melt-fraction excursion in a single call.
+The `energy.phi_step_cap` parameter limits the per-call change in volume-weighted mean melt fraction $\Phi_\mathrm{global}$. It is implemented as a SUNDIALS root function that intercepts the integrator at the exact step where $|\Delta\Phi_\mathrm{global}|$ first reaches the cap. Use it when the rheological transition is being traversed quickly enough that the integrator's adaptive step would otherwise overshoot a physically meaningful melt-fraction excursion in a single call.
 
 ## When to enable it
 

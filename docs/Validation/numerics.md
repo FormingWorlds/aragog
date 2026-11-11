@@ -303,7 +303,7 @@ The physical case for this regime is the [full solidification check](#full-solid
 
 **Not checked.**
 A stiff-zone cell that cools at a segment start and heats inside a relaxed segment.
-A segment that starts with a cell heating within $\delta$ of the solidus: no segment of this case starts that way; the [next case](#heated-sub-solidus-segment-that-ends-at-the-solidus) checks it.
+A segment that starts with a cell heating within $\delta$ of the solidus. No segment of this case starts that way; [Heated sub-solidus segment that ends at the solidus](#heated-sub-solidus-segment-that-ends-at-the-solidus) checks one that reaches the solidus.
 
 ??? info "Test details"
     - Reference: $1\text{ yr}$ steps at rtol $10^{-10}$ and physical atol at most $10^{-10}$; 5 round-off starts
@@ -317,42 +317,51 @@ A segment that starts with a cell heating within $\delta$ of the solidus: no seg
 A segment that starts with every cell at or below the solidus has no $100\text{ yr}$ step ceiling.
 The step rule is read only at the start of a segment.
 A cell that heats and passes its solidus inside such a segment would keep the large step and the tight sub-solidus tolerances while it melts.
-The segment root therefore ends a sub-solidus segment where a cell passes its solidus; without that root this case fails.
+The solidus root, an event that CVODE watches during such a segment, ends it where a cell passes its solidus.
+Without that root this case fails: the run stays one segment without the $100\text{ yr}$ ceiling.
 
 **What it tests.**
 A 12-node column (11 cells) on the CI test table is heated through its surface by $400\text{ W/m}^2$ for $10\,000\text{ yr}$, with `convective_threshold` $= 0$.
 The default `matprop_smooth_width` $= 0.01$ sets the stiff-zone half-width $\delta = 251.8\text{ J/(kg K)}$.
 The top cell starts $2\text{ J/(kg K)}$ below its solidus, closer than $0.5\,\delta$; the other cells start $300\text{ J/(kg K)}$ below theirs.
 This case checks the step controller only; it is not a model of a planet.
-The first segment must take a step above $100\text{ yr}$ and end at the solidus root.
+The first segment must have a step ceiling (`max_step`) above $100\text{ yr}$ and end at the solidus root.
 The next segment starts with the top cell just above its solidus, so its step is at most $100\text{ yr}$ and it uses the caller's tolerances.
 
 **How we know the right answer.**
 The reference solve uses $1\text{ yr}$ steps (`phase_boundary_cap = 'fixed'`) at rtol $=$ atol $= 10^{-10}$.
 The error is the largest temperature difference to the reference at the end.
-Five starts with relative round-off perturbations of $10^{-12}$ give the round-off envelope $\Delta_{\text{pert}}$.
+A $1\text{ yr}$ step at rtol $10^{-10}$ resolves the solidus crossing on its own, so the reference does not depend on the step controller.
+Five starts with relative round-off perturbations of $10^{-12}$ give the round-off envelope $\Delta_{\text{pert}}$, the largest difference of a perturbed run from the unperturbed run.
 The bound is the $1.3 \times 10^{-4}\text{ K}$ of the sub-solidus case above.
 
 **Why it matters.**
 A cooled mantle can heat and melt again.
-Without the solidus root, this case runs as one segment with a $1915\text{ yr}$ step, while the top cell melts.
+Without the solidus root, this case runs as one segment with a step ceiling of $1915\text{ yr}$, so the top cell melts without the $100\text{ yr}$ ceiling.
+Its end temperatures still meet the bound ($9.75 \times 10^{-5}\text{ K}$): the case checks the segment structure and the error bound as two separate things.
 
 ![Entropy of the top cell above its solidus against time, for the rate run and the 1 yr reference](../assets/validation/rate_cap_subsolidus_solidus_root.svg#only-light){ width="70%" }
 ![Entropy of the top cell above its solidus against time, for the rate run and the 1 yr reference](../assets/validation/rate_cap_subsolidus_solidus_root_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.**
 The horizontal axis is time in years, linear up to $100\text{ yr}$ and logarithmic above.
-The vertical axis is the entropy of the top cell minus its solidus entropy; the cell melts above the line at zero.
+The vertical axis is the entropy of the top cell minus its solidus entropy; the top cell is partly molten above the line at zero.
 The solid line is the $1\text{ yr}$ reference, the dashed line the rate run; the dots are the segment starts.
 The second dot sits where the top cell passes its solidus: there the solidus root ends the first segment.
-A pass shows the two lines on top of each other and a segment start at zero.
+A pass shows the two lines on top of each other and a segment start at zero; a run without the root also gives two such lines, but no dot at zero.
+
+**Known limit.**
+A heated start that stays below the solidus can be outside this bound.
+With the top cell 80, 100 or 120 J/(kg K) below its solidus, the run stays sub-solidus and ends $1.4 \times 10^{-4}$, $3.4 \times 10^{-4}$ and $3.5 \times 10^{-4}\text{ K}$ from the reference.
+The code without the relaxed step ceiling gives the same errors, so the ceiling does not cause them.
+The sub-solidus tolerance rtol $10^{-9}$ does: at rtol $10^{-10}$ the error at 100 J/(kg K) falls to $2.7 \times 10^{-5}\text{ K}$.
 
 **Not checked.**
 The same case on the PALEOS low-temperature table; this case uses the CI test table.
 
 ??? info "Test details"
-    - Reference: $1\text{ yr}$ steps at rtol $=$ atol $= 10^{-10}$; 5 round-off starts
-    - Tolerance: $\|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $5.83 \times 10^{-5}\text{ K}$ in 118 steps and 2 segments; the first segment takes a $1915\text{ yr}$ step and ends at the solidus root at $304.9\text{ yr}$; the reference takes 10002 steps; envelope $\Delta_{\text{pert}} = 5.2 \times 10^{-9}\text{ K}$). With a start gap of 0, 0.5, 2 or $10\text{ J/(kg K)}$ and a heat flux of 200 to $800\text{ W/m}^2$ the error is $4.7 \times 10^{-5}$ to $8.5 \times 10^{-5}\text{ K}$
+    - Reference: $1\text{ yr}$ steps at rtol $=$ atol $= 10^{-10}$; 5 round-off starts (measured with a probe script outside the repository; the test runs the unperturbed case)
+    - Tolerance: $\|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $5.83 \times 10^{-5}\text{ K}$ in 118 steps and 2 segments; the first segment has a step ceiling of $1915\text{ yr}$ and ends at the solidus root at $304.9\text{ yr}$; the reference takes 10002 steps; envelope $\Delta_{\text{pert}} = 5.2 \times 10^{-9}\text{ K}$). With a start gap of 0, 0.5, 2 or $10\text{ J/(kg K)}$ and a heat flux of 200 to $800\text{ W/m}^2$ the error is $4.7 \times 10^{-5}$ to $8.5 \times 10^{-5}\text{ K}$ (the same probe script)
     - Test id: `tests/test_phase_boundary_cap.py::test_rate_mode_ends_a_subsolidus_segment_at_the_solidus`
     - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_ends_a_subsolidus_segment_at_the_solidus` (add `--validation-plots` to write the plot pair)
 

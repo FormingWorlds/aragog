@@ -5345,9 +5345,7 @@ class EntropySolver:
             inside = False if last else roots.inside
             h = h_min if last else h_at(t, y)
             seg_kw = cvode_kw
-            if isinstance(roots, _PhaseBoundarySegmentRoot) and _subsolidus(
-                roots.S0, roots.S_sol
-            ):
+            if isinstance(roots, _PhaseBoundarySegmentRoot) and roots.solid:
                 if atol_cap is None:
                     atol_cap = _SUBSOLIDUS_ATOL / self._build_nondim_scales().state_scale
                 seg_kw = {

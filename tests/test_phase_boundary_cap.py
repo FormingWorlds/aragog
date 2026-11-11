@@ -505,9 +505,9 @@ def _heated_subsolidus_end(eos, mode, tol, gap=2.0):
 @pytest.mark.reference_pinned
 @pytest.mark.timeout(240, method='signal')
 def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos, validation_plot):
-    """A segment that starts sub-solidus takes a step above 100 yr and ends where the heated
-    top cell passes its solidus; the next segment starts mushy at 100 yr or less. The end state
-    stays within 1.3e-4 K (the V3-R4 tolerance) of 'fixed' at 1 yr, rtol 1e-10."""
+    """A segment that starts sub-solidus has a step ceiling above 100 yr and ends where the
+    heated top cell passes its solidus; the next segment starts mushy at 100 yr or less. The end
+    state stays within 1.3e-4 K (the V3-R4 tolerance) of 'fixed' at 1 yr, rtol 1e-10."""
     ref, S_ref, _, T_ref = _heated_subsolidus_end(shared_eos, 'fixed', 1e-10)
     s, S, S_sol, T = _heated_subsolidus_end(shared_eos, 'rate', 1e-8)
     segs, t = s._solution.segments, np.asarray(s._solution.t)
