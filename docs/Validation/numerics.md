@@ -303,6 +303,7 @@ The physical case for this regime is the [full solidification check](#full-solid
 
 **Not checked.**
 A stiff-zone cell that cools at a segment start and heats inside a relaxed segment.
+A segment that starts with a cell heating within $\delta$ of the solidus and has a step bound above $100\text{ yr}$: this case has no such segment.
 
 ??? info "Test details"
     - Reference: $1\text{ yr}$ steps at rtol $10^{-10}$ and physical atol at most $10^{-10}$; 5 round-off starts

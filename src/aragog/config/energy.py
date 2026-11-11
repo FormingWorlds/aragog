@@ -182,9 +182,8 @@ class EnergyConfig:
         band. ``None`` (default) means ``'rate'``. ``'fixed'`` uses 1 yr.
         ``'rate'`` uses event-driven CVODE segments with ``max_step`` set to
         0.1 of the shortest time to reach a phase boundary, clipped to
-        [1, 100] yr; with every cell at or below the solidus and no cell within
-        delta of a boundary heating, the upper clip is infinite, and segments that
-        start sub-solidus use rtol <= 1e-9 and atol <= 1e-8. Inside the stiff zone,
+        [1, 100] yr; with every cell at or below the solidus the upper clip is
+        infinite, and segments that start sub-solidus use rtol <= 1e-9 and atol <= 1e-8. Inside the stiff zone,
         or above the solidus and below the rate floor, the estimate uses the
         distance to the nearer boundary, at least 0.5 delta. The gradient core and
         the scipy integrators keep 1 yr, with one log line per solver (INFO when

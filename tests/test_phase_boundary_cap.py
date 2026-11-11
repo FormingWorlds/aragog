@@ -183,11 +183,11 @@ def test_rate_cap_relaxes_upper_bound_for_a_heating_subsolidus_cell_in_the_stiff
     assert _cap([950.0, 900.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e4)
     assert _cap([S_SOL - 1e-10, 950.0], [-1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
     assert _cap([S_SOL - 0.7 * DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(7.0e3)
-    # A cell at the solidus counts as sub-solidus; with the rate floor the heating cell sets 500 yr.
+    # A cell at the solidus counts as sub-solidus; the rate floor 2e-3 sets 250 yr (500 yr without it).
     assert _cap([S_SOL, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
     assert _cap(
-        [S_SOL - 2.0, 950.0], [1e-3, -1e-3], mass=[1.0, 1.0], rate_floor=True, **kw
-    ) == pytest.approx(500.0)
+        [S_SOL - 2.0, 950.0], [1e-3, -3e-3], mass=[1.0, 1.0], rate_floor=True, **kw
+    ) == pytest.approx(250.0)
     # dS/dt = 0 sets no time; a cell at exactly delta uses the distance ahead.
     assert _cap([S_SOL - 1.0, 950.0], [0.0, -1e-2], **kw) == np.inf
     assert _cap([S_SOL - DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(1.0e4)

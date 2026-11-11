@@ -454,9 +454,7 @@ def _rate_phase_boundary_max_step(
     rate floor covers an isentropic molten or mushy start, where interior cells
     have almost no rate until the thermal boundary layers form. Once every
     entry is at or below the solidus (``np.all(S <= S_sol)``), the upper
-    bound relaxes from ``bounds[1]`` to ``np.inf``. A sub-solidus entry that
-    heats within ``delta`` of the solidus still sets ``fraction * t_c`` from
-    its floored distance.
+    bound relaxes from ``bounds[1]`` to ``np.inf``.
 
     Parameters
     ----------
