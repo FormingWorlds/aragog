@@ -61,7 +61,7 @@ The conservation tests are the strongest class of verification because they hold
 
 ![Radioactive decay](../figures/vv/fig_06_radio_decay.png)
 
-**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ for the bundled isotope cocktail (Ruedas 2017): present-day specific powers ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) decayed back to Solar System formation. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to solver tolerance.
+**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ for the bundled isotope cocktail of Ruedas (2017)[^cite-ruedas2017]: present-day specific powers ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) decayed back to Solar System formation. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to solver tolerance.
 
 ### JAX path tests (`tests/test_jax_entropy.py`)
 
@@ -420,3 +420,5 @@ Which rule causes the gap in this run is not measured; near $96\text{ Myr}$ in t
     - Test id: V5b (coupled run through the solidus): the commands below; `tests/test_compare_v5_runs.py` tests the comparison and `tests/test_step_cap_validation_tool.py` the driver
     - Config: `tools/verification/data/v5b_aragog_calliope.toml`; its header records the PROTEUS commit of the case and the Aragog commit of the second run
     - Command: `python tools/verification/run_v5b_proteus.py --output-dir RUN` with this Aragog, `--reference --output-dir REF` for the reference, `--s0-eps=1e-12 --output-dir RUN_P` and `--s0-eps=-1e-12 --output-dir RUN_M` for the floor; the same runs `MAIN`, `MAIN_P` and `MAIN_M` with the Aragog commit of the config header; then `python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF --floor RUN_P RUN_M MAIN_P MAIN_M`
+
+[^cite-ruedas2017]: T. Ruedas, *[Radioactive heat production of six geologically important nuclides](https://doi.org/10.1002/2017GC006997)*, Geochemistry, Geophysics, Geosystems, 18, 3530–3541, 2017. [SciX](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).
