@@ -158,7 +158,7 @@ Thermal boundary conditions at the surface and CMB.
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
 | `emissivity` | -- | Surface emissivity (used in mode `1`) |
 | `equilibrium_temperature` | K | Radiative equilibrium temperature (mode `1`) |
-| `core_heat_capacity` | J/kg/K | Core specific heat capacity |
+| `core_heat_capacity` | J/kg/K | Core specific heat capacity; not read with `core_bc = "core_module"`, which takes `c_p` from `core_module_params` |
 | `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
@@ -185,7 +185,7 @@ Spatial discretisation and pressure-density profile.
 | `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
 | `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below); with `outer_boundary_condition = 5`, `"constant"` is refused unless `mixing_length_constant_fraction = 0` |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
-| `core_density` | kg/m³ | Mean core density |
+| `core_density` | kg/m³ | Mean core density; not read with `core_bc = "core_module"`, which takes the core density profile from `core_module_params` |
 | `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
 | `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or `initialize()` raises. Default 9.81 |
