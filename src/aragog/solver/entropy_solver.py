@@ -453,10 +453,10 @@ def _rate_phase_boundary_max_step(
     minimum segment progress distance of ``_PhaseBoundarySegmentRoot``. The
     rate floor covers an isentropic molten or mushy start, where interior cells
     have almost no rate until the thermal boundary layers form. Once every
-    entry is at or below the solidus (``np.all(S <= S_sol)``) and no entry
-    within ``delta`` of a boundary heats, the upper bound relaxes from
-    ``bounds[1]`` to ``np.inf``. An entry heats when ``dSdt > 0``, with no
-    threshold: ``dSdt == 0`` does not count as heating.
+    entry is at or below the solidus (``np.all(S <= S_sol)``), the upper
+    bound relaxes from ``bounds[1]`` to ``np.inf``. A sub-solidus entry that
+    heats within ``delta`` of the solidus still sets ``fraction * t_c`` from
+    its floored distance.
 
     Parameters
     ----------
@@ -490,8 +490,7 @@ def _rate_phase_boundary_max_step(
     if t_c is None:
         return bounds[0]
     t_c = t_c[np.isfinite(t_c)]
-    heating = np.any((_boundary_distance(S, S_liq, S_sol) < delta) & (dSdt > 0.0))
-    hi = np.inf if _subsolidus(S, S_sol) and not heating else bounds[1]
+    hi = np.inf if _subsolidus(S, S_sol) else bounds[1]
     return float(np.clip(fraction * t_c.min(), bounds[0], hi)) if t_c.size else hi
 
 

@@ -289,7 +289,7 @@ A 12-node column on the CI test table cools for $200\,000\text{ yr}$ under a pre
 Every cell starts at the solidus entropy of the top cell plus $5\text{ J/(kg K)}$: the top cell starts above its solidus, the deeper cells start $306$ to $485\text{ J/(kg K)}$ below theirs.
 This case checks the step controller only; it is not a model of a planet.
 The flux is chosen so that every cell stays inside the entropy range of the CI test table.
-A segment that starts with all cells at or below the solidus, and no cell within $\delta$ of a boundary that heats, has no upper step bound.
+A segment that starts with all cells at or below the solidus has no upper step bound.
 Every segment that starts with all cells at or below the solidus uses the tighter tolerances $\mathtt{rtol} \le 10^{-9}$ and $\mathtt{atol} \le 10^{-8}/\text{scale}$.
 
 **How we know the right answer.**
