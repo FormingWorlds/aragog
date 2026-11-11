@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -29,6 +31,10 @@ needs_cvode = pytest.mark.skipif(
 )
 S_SOL, S_LIQ, DELTA = 1000.0, 1300.0, 10.0
 WIDE = (0.0, 1e9)
+# Step ends of the long-steps case, written by run_subsolidus_heating_cases.py --step-ends
+LONG_STEPS_DATA = (
+    Path(__file__).parent / 'validation' / 'data' / 'rate_cap_subsolidus_long_steps.json'
+)
 # Long enough for the mushy fixture to reach a progress root after the start segment.
 _SEGMENT_SPAN_YR = 400.0
 
@@ -526,13 +532,17 @@ def _max_dT_at_shared_outputs(ref, run):
     return max(float(np.abs(T[:, i] - T_ref[:, j]).max()) for i, j in pairs)
 
 
-def _largest_step_before(s, t_lim):
-    """Largest accepted CVODE step [yr] that ends at or before ``t_lim``, from the energy trace
-    with the output times taken out."""
+def _step_ends(s):
+    """Ends [yr] of the accepted CVODE steps: the energy trace with the output times taken out."""
     t_ref = s._build_nondim_scales().t_ref
     grid = np.asarray(s._output_grid(0.0, s._solution.t[-1] / t_ref)) * t_ref
     nodes = np.asarray(s._solution.energy_trace[0])
-    ends = nodes[~np.isclose(nodes[:, None], grid[None, :], rtol=1e-12, atol=1e-9).any(axis=1)]
+    return nodes[~np.isclose(nodes[:, None], grid[None, :], rtol=1e-12, atol=1e-9).any(axis=1)]
+
+
+def _largest_step_before(s, t_lim):
+    """Largest accepted CVODE step [yr] that ends at or before ``t_lim``."""
+    ends = _step_ends(s)
     steps = np.diff(ends)
     return float(steps[ends[1:] <= t_lim + 1e-9].max())
 
@@ -608,22 +618,18 @@ def test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus(
     def figure():
         import matplotlib.pyplot as plt
 
-        t_r = s._build_nondim_scales().t_ref
-        grid = np.asarray(s._output_grid(0.0, t[-1] / t_r)) * t_r
-        nodes = np.asarray(s._solution.energy_trace[0])
-        ends = nodes[~np.isclose(nodes[:, None], grid[None, :], rtol=1e-12, atol=1e-9).any(1)]
-        ends = ends[ends <= segs[1][0] + 1e-9]
+        steps = json.loads(LONG_STEPS_DATA.read_text())
         fig, ax = plt.subplots(figsize=(5.4, 3.9))
         ax.plot(t_ref, S_ref[-1] - S_sol[-1], '-', color='C0', lw=2.5, label="'fixed', 1 yr")
         ax.plot(t, S[-1] - S_sol[-1], '--', color='C1', label="'rate'")
         ax.plot(
-            ends,
-            np.interp(ends, t, S[-1] - S_sol[-1]),
+            steps['step_end_yr'],
+            steps['top_above_solidus'],
             '|',
             color='C3',
             ms=12,
             mew=1.6,
-            label='CVODE step end before the solidus',
+            label=f'CVODE step end, {steps["platform"]}',
         )
         ax.axhline(0.0, color=plt.rcParams['text.color'], lw=0.8)
         ax.set_xlabel('time [yr]')

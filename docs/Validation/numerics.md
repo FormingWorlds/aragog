@@ -395,13 +395,14 @@ In a long run the speed-up of a solid mantle comes from such long steps, also wh
 The horizontal axis is time in years; the vertical axis is the entropy of the top cell minus its solidus entropy.
 The solid line is the $1\text{ yr}$ reference and the dashed line the rate run.
 The short vertical marks are the ends of the CVODE steps before the top cell reaches its solidus at the line at zero.
+The step ends depend on the platform round-off (12 marks on macOS arm64, 13 on the Linux CI runner), so the marks come from a stored macOS arm64 run in `tests/validation/data/rate_cap_subsolidus_long_steps.json`; the test checks the long step on every platform.
 A pass shows the two lines on top of each other and marks several thousand years apart.
 
 ??? info "Test details"
     - Reference: $1\text{ yr}$ steps (`phase_boundary_cap = 'fixed'`) at rtol $10^{-10}$ and a physical atol of $10^{-10}$
     - Tolerance: $\max_t \|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ over the shared output times, and a step of at least $1000\text{ yr}$ before the solidus (observed: $4.69 \times 10^{-7}\text{ K}$, $2.61 \times 10^{-7}\text{ K}$ at the end; largest step before the solidus $4589\text{ yr}$; solidus root at $13\,448\text{ yr}$; 28 steps against 15002 for the reference; round-off envelope $\Delta_{\text{pert}} = 2.2 \times 10^{-6}\text{ K}$ over 5 starts $S_0 (1 + m \cdot 10^{-12})$, so the error lies inside the round-off spread)
     - Test id: `tests/test_phase_boundary_cap.py::test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus`
-    - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus` (add `--validation-plots` to write the plot pair); the numbers: `python tools/verification/run_subsolidus_heating_cases.py --case long_steps --check`
+    - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus` (add `--validation-plots` to write the plot pair); the numbers: `python tools/verification/run_subsolidus_heating_cases.py --case long_steps --check`; the stored marks: add `--step-ends tests/validation/data/rate_cap_subsolidus_long_steps.json`
 
 ### Full solidification without solver stalling
 

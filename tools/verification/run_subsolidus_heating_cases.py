@@ -26,7 +26,10 @@ before the solidus; ``sweep`` and ``limit`` only report. Run from the repository
 
     python tools/verification/run_subsolidus_heating_cases.py --case heated [--check]
 
-``--eos-dir`` defaults to ``ARAGOG_TEST_EOS_DIR``. The result goes to ``--output`` (default
+``--step-ends`` writes the CVODE step ends before the solidus of ``long_steps`` and the top
+cell entropy above its solidus there, the marks of its plot
+(``tests/validation/data/rate_cap_subsolidus_long_steps.json``); the step ends depend on the
+platform. ``--eos-dir`` defaults to ``ARAGOG_TEST_EOS_DIR``. The result goes to ``--output`` (default
 ``subsolidus_heating_<case>.json`` in the working directory).
 """
 
@@ -35,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -49,6 +53,7 @@ from aragog.eos.entropy import EntropyEOS  # noqa: E402
 
 BOUND_K = 1.3e-4  # the V3-R4 tolerance of the sub-solidus controller
 LONG_STEP_YR = 1000.0
+STEP_KEYS = ('step_end_yr', 'top_above_solidus')
 RUNS = {
     'heated': [dict(gap=2.0)],
     'long_steps': [dict(gap=2.0, isothermal=True)],
@@ -64,6 +69,7 @@ def one(eos, run):
         _heated_subsolidus,
         _largest_step_before,
         _max_dT_at_shared_outputs,
+        _step_ends,
     )
 
     kw = {k: v for k, v in run.items() if k != 'rate_tol'}
@@ -77,6 +83,8 @@ def one(eos, run):
     segs = [(float(a), b, float(c)) for a, b, c in s._solution.segments]
     root = next((a for a, b, _ in segs if b == 'solidus'), None)
     shared = [(i, int(np.argmin(np.abs(t_ref - x)))) for i, x in enumerate(t)]
+    ends = _step_ends(s)
+    ends = ends[ends <= (root if root else t[-1]) + 1e-9]
     worst = max(
         (float(np.abs(T[:, i] - T_ref[:, j]).max()), float(t[i]))
         for i, j in shared
@@ -94,6 +102,8 @@ def one(eos, run):
         reference_steps=int(ref._solution.cvode_nst),
         reference_wall_s=wall_ref,
         top_end_above_solidus=float(S[-1, -1] - S_sol[-1]),
+        step_end_yr=ends.tolist(),
+        top_above_solidus=np.interp(ends, t, S[-1] - S_sol[-1]).tolist(),
     )
 
 
@@ -128,6 +138,12 @@ def main(argv=None) -> int:
     ap.add_argument('--eos-dir', default=os.environ.get('ARAGOG_TEST_EOS_DIR'))
     ap.add_argument('--output', type=Path, default=None)
     ap.add_argument('--check', action='store_true', help='exit 1 when a tolerance fails')
+    ap.add_argument(
+        '--step-ends',
+        type=Path,
+        default=None,
+        help='long_steps only: write the step ends of the plot data file to this path',
+    )
     args = ap.parse_args(argv)
     if not args.eos_dir:
         ap.error('--eos-dir or ARAGOG_TEST_EOS_DIR is required')
@@ -137,11 +153,16 @@ def main(argv=None) -> int:
     if args.case in ('heated', 'long_steps'):
         result['round_off_envelope_K'] = envelope(eos, RUNS[args.case][0])
     for r in result['runs']:
-        print(json.dumps({k: r[k] for k in r if k != 'segments'}))
+        print(json.dumps({k: r[k] for k in r if k not in ('segments', *STEP_KEYS)}))
     if 'round_off_envelope_K' in result:
         print(f'round-off envelope {result["round_off_envelope_K"]:.3e} K')
     out = args.output or Path(f'subsolidus_heating_{args.case}.json')
     out.write_text(json.dumps(dict(eos_dir=str(args.eos_dir), **result)) + '\n')
+    if args.step_ends and args.case == 'long_steps':
+        r = result['runs'][0]
+        system = {'Darwin': 'macOS'}.get(platform.system(), platform.system())
+        data = dict(platform=f'{system} {platform.machine()}')
+        args.step_ends.write_text(json.dumps(dict(data, **{k: r[k] for k in STEP_KEYS})) + '\n')
     fails = check(args.case, result)
     print(f'{args.case}: ' + ('FAIL ' + ', '.join(fails) if fails else 'PASS'))
     return 1 if args.check and fails else 0
