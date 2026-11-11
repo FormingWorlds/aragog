@@ -506,6 +506,10 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
       ``delta`` over the entries that start outside it.
     - ``progress``: ``alpha`` times each entry's start distance to its nearer
       boundary, at least ``delta``, minus the distance it has moved.
+    - ``solidus``: with every entry at or below its solidus at the start, the
+      smallest ``S_sol + beyond * delta - S``; it ends the segment once an entry
+      passes its solidus, so the next segment starts mushy (an entry left exactly
+      at the solidus would count as sub-solidus again).
 
     Parameters
     ----------
@@ -527,6 +531,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
     """
 
     alpha = 0.5  # fraction of the start distance that ends a segment
+    beyond = 1e-6  # fraction of delta past the solidus at which 'solidus' fires
 
     def __init__(self, S_liq, S_sol, y0, delta, inside, state_scale, n_stag, cap=None):
         self.S_liq, self.S_sol, self.delta, self.step_cap = S_liq, S_sol, delta, cap
@@ -538,11 +543,13 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
         self.moving = np.isfinite(self.d0)
         self.reach = self.alpha * np.maximum(self.d0, delta)
+        self.solid = _subsolidus(self.S0, self.S_sol)
         self.names = (
             (['cap'] if cap is not None else [])
             + ['stiff']
             + (['entry'] if self.inside and self.watch.any() else [])
             + (['progress'] if self.moving.any() else [])
+            + (['solidus'] if self.solid else [])
         )
         self.n_roots = len(self.names)
 
@@ -565,6 +572,8 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         if 'progress' in self.names:
             moved = np.abs(S - self.S0)[self.moving]
             g.append(float(np.min(self.reach[self.moving] - moved)))
+        if self.solid:
+            g.append(float(np.min(self.S_sol + self.beyond * self.delta - S)))
         g = np.asarray(g, dtype=float)
         return np.where(np.isfinite(g), g, 1.0)
 
@@ -575,7 +584,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
     def fired(self, t, y):
         """Name of the component closest to zero at the root ``(t, y)``."""
         g = np.abs(self.components(t, y))
-        scale = {'stiff': self.delta, 'entry': self.delta}
+        scale = {'stiff': self.delta, 'entry': self.delta, 'solidus': self.delta}
         if self.step_cap is not None:
             c = self.step_cap  # scaled by the cap that binds, in that cap's own unit
             by_cap = dict(
@@ -5271,7 +5280,8 @@ class EntropySolver:
         Each segment is a new CVODE solve from the previous segment's end. A segment ends at
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
         ends the call. The segments' trajectories and energy traces are joined. Segments
-        starting with every entry at or below the solidus (``np.all(S <= S_sol)``) use
+        starting with every entry at or below the solidus (``np.all(S <= S_sol)``) end where an
+        entry passes its solidus (the ``solidus`` component), and they use
         ``rtol`` at most ``_SUBSOLIDUS_RTOL`` and a physical ``atol`` at most
         ``_SUBSOLIDUS_ATOL`` in the unit of each state entry (J/(kg K) for entropy, K for a
         temperature). The limits also hold after a retry loosens ``solver.rtol`` or raises
