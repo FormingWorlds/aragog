@@ -20,7 +20,7 @@ from aragog.solver.entropy_solver import (
     _PhaseBoundarySegmentRoot,
     _rate_phase_boundary_max_step,
 )
-from tests.conftest import entropy_eos_copy
+from tests.conftest import assert_legend_clear, entropy_eos_copy, opaque_legend
 
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S, needs_eos
 
@@ -478,7 +478,7 @@ def test_rate_mode_at_the_default_width_matches_a_tight_fixed_run(shared_eos, mo
 
 
 def _heated_subsolidus_end(eos, mode, tol, gap=2.0):
-    """12 cells 300 J/kg/K below the solidus, the top one ``gap`` below; 400 W/m2 in, 10 kyr."""
+    """11 cells (12 nodes) 300 J/kg/K below the solidus, the top one ``gap`` below; 400 W/m2 in."""
     s = _solver(
         eos,
         mode,
@@ -502,12 +502,13 @@ def _heated_subsolidus_end(eos, mode, tol, gap=2.0):
 @needs_eos
 @needs_cvode
 @pytest.mark.smoke
+@pytest.mark.reference_pinned
 @pytest.mark.timeout(240, method='signal')
-def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos):
+def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos, validation_plot):
     """A segment that starts sub-solidus takes a step above 100 yr and ends where the heated
     top cell passes its solidus; the next segment starts mushy at 100 yr or less. The end state
     stays within 1.3e-4 K (the V3-R4 tolerance) of 'fixed' at 1 yr, rtol 1e-10."""
-    _, _, _, T_ref = _heated_subsolidus_end(shared_eos, 'fixed', 1e-10)
+    ref, S_ref, _, T_ref = _heated_subsolidus_end(shared_eos, 'fixed', 1e-10)
     s, S, S_sol, T = _heated_subsolidus_end(shared_eos, 'rate', 1e-8)
     segs, t = s._solution.segments, np.asarray(s._solution.t)
     assert segs[0][2] > 100.0
@@ -515,6 +516,32 @@ def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos):
     top = S[-1, int(np.argmin(np.abs(t - segs[1][0])))] - S_sol[-1]
     assert 0.0 <= top <= 1e-3
     assert np.abs(T - T_ref).max() <= 1.3e-4
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.4, 3.9))
+        t_ref = np.asarray(ref._solution.t)
+        ax.plot(t_ref, S_ref[-1] - S_sol[-1], '-', color='C0', lw=2.5, label="'fixed', 1 yr")
+        ax.plot(t, S[-1] - S_sol[-1], '--', color='C1', label="'rate'")
+        ax.plot(
+            [g[0] for g in segs],
+            [S[-1, int(np.argmin(np.abs(t - g[0])))] - S_sol[-1] for g in segs],
+            'o',
+            color='C3',
+            label='segment start',
+        )
+        ax.axhline(0.0, color=plt.rcParams['text.color'], lw=0.8)
+        ax.set_xscale('symlog', linthresh=100.0)
+        ax.set_xlabel('time [yr]')
+        ax.set_xlim(0.0, t[-1])
+        ax.set_ylabel(r'top cell $S - S_\mathrm{sol}$ [J/kg/K]')
+        opaque_legend(ax)
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'rate_cap_subsolidus_solidus_root')
 
 
 @needs_eos
