@@ -110,7 +110,7 @@ As a worked example of `_rate_phase_boundary_max_step` (`src/aragog/solver/entro
 The controller enforces four bounds and regime transitions:
 
 - In a partially molten or super-solidus mantle ($\max_i(S_i - S_{\mathrm{sol},i}) > 0$), the segment upper bound is $t_{\max} = 100.0\ \mathrm{yr}$ and the lower bound is $t_{\min} = 1.0\ \mathrm{yr}$, with CVODE using the caller's `rtol` and `atol`.
-- In a fully sub-solidus mantle ($\max_i(S_i - S_{\mathrm{sol},i}) \le 0$), no phase boundary remains in the cooling direction, so the upper bound relaxes to $t_{\max} = \infty$ (`np.inf`).
+- In a fully sub-solidus mantle ($\max_i(S_i - S_{\mathrm{sol},i}) \le 0$), the upper bound relaxes to $t_{\max} = \infty$ (`np.inf`). A cooling cell has no phase boundary ahead; a heating cell still has the solidus ahead, and the sub-items below say how it sets the step.
     - A cell within $\delta$ of the solidus that heats ($\dot{S}_i > 0$) still has the solidus ahead. Its time to the solidus $t_{c,i}$ uses a distance of at least $0.5\,\delta$ and a rate of at least the rate floor.
     - The cell with the smallest $t_{c,i}$ sets `max_step` to $0.1\,t_{c,i}$, at least $1\ \mathrm{yr}$.
     - The progress root ends the segment at the latest once the heating cell has moved $0.5\,\delta$.

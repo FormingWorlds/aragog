@@ -61,7 +61,7 @@ The conservation tests are the strongest class of verification because they hold
 
 ![Radioactive decay](../figures/vv/fig_06_radio_decay.png)
 
-**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ for the bundled isotope cocktail of Ruedas (2017)[^cite-ruedas2017]: present-day specific powers ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) decayed back to Solar System formation. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to solver tolerance.
+**Figure 3.** Radioactive heating $H_\mathrm{radio}(t)$ per unit mass from Solar System formation to the present. (a) The 6 nuclides and their total from the NumPy and the JAX code: the long-lived $^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$ and $^{238}\mathrm{U}$ with the present-day values of the bundled configuration (Ruedas (2017)[^cite-ruedas2017]) decayed back to formation, and the short-lived $^{26}\mathrm{Al}$ and $^{60}\mathrm{Fe}$ from the initial ratios $^{26}\mathrm{Al}/^{27}\mathrm{Al} = 5.25 \times 10^{-5}$ and $^{60}\mathrm{Fe}/^{56}\mathrm{Fe} = 1.0 \times 10^{-8}$ in a bulk silicate Earth with 2.36 wt % Al and 6.26 wt % Fe, close to the values of Jacobsen et al. (2008)[^cite-jacobsen2008], Tang & Dauphas (2012)[^cite-tangdauphas2012] and McDonough & Sun (1995)[^cite-mcdonoughsun1995]. (b) Relative difference of the JAX total from the NumPy total: at most $2.91 \times 10^{-16}$, near the float64 machine precision. Used as the source-term verification for the closed-mantle energy balance: the cumulative `step_dE_Q_radio_J` integral must match the time integral of $\rho \cdot H_\mathrm{radio}$ over each call to solver tolerance.
 
 ### JAX path tests (`tests/test_jax_entropy.py`)
 
@@ -314,31 +314,29 @@ A segment that starts with a cell heating within $\delta$ of the solidus. No seg
 ### Heated sub-solidus segment that ends at the solidus
 
 **Why this check exists.**
-A segment that starts with every cell at or below the solidus has no $100\text{ yr}$ step ceiling.
-The step rule is read only at the start of a segment.
-A cell that heats and passes its solidus inside such a segment would keep the large step and the tight sub-solidus tolerances while it melts.
-The solidus root, an event that CVODE watches during such a segment, ends it where a cell passes its solidus.
-Without that root this case fails: the run stays one segment without the $100\text{ yr}$ ceiling.
+A segment that starts with every cell at or below the solidus has no $100\text{ yr}$ step ceiling, and the step rule is read only at the start of a segment.
+A cell that heats and passes its solidus inside such a segment would melt with the large step ceiling and the tight sub-solidus tolerances.
+Without the solidus root this case fails: the run stays one segment without the $100\text{ yr}$ ceiling.
 
 **What it tests.**
 A 12-node column (11 cells) on the CI test table is heated through its surface by $400\text{ W/m}^2$ for $10\,000\text{ yr}$, with `convective_threshold` $= 0$.
 The default `matprop_smooth_width` $= 0.01$ sets the stiff-zone half-width $\delta = 251.8\text{ J/(kg K)}$.
 The top cell starts $2\text{ J/(kg K)}$ below its solidus, closer than $0.5\,\delta$; the other cells start $300\text{ J/(kg K)}$ below theirs.
 This case checks the step controller only; it is not a model of a planet.
-The first segment must have a step ceiling (`max_step`) above $100\text{ yr}$ and end at the solidus root.
-The next segment starts with the top cell just above its solidus, so its step is at most $100\text{ yr}$ and it uses the caller's tolerances.
+The first segment must have a step ceiling (`max_step`) above $100\text{ yr}$ and end at the solidus root, an event that CVODE watches during the segment.
+The next segment starts with the top cell just above its solidus, so its step ceiling is at most $100\text{ yr}$ and it uses the caller's tolerances.
+The case checks this segment structure; its largest CVODE step before the solidus is $135\text{ yr}$, so the accuracy of much longer steps is the [next case](#long-steps-while-a-cell-heats-to-the-solidus).
 
 **How we know the right answer.**
-The reference solve uses $1\text{ yr}$ steps (`phase_boundary_cap = 'fixed'`) at rtol $=$ atol $= 10^{-10}$.
-The error is the largest temperature difference to the reference at the end.
+The reference solve uses $1\text{ yr}$ steps (`phase_boundary_cap = 'fixed'`) at rtol $10^{-10}$ and a physical atol of $10^{-10}$.
 A $1\text{ yr}$ step at rtol $10^{-10}$ resolves the solidus crossing on its own, so the reference does not depend on the step controller.
+The error is the largest temperature difference to the reference over the output times that both runs share.
 Five starts with relative round-off perturbations of $10^{-12}$ give the round-off envelope $\Delta_{\text{pert}}$, the largest difference of a perturbed run from the unperturbed run.
 The bound is the $1.3 \times 10^{-4}\text{ K}$ of the sub-solidus case above.
 
 **Why it matters.**
-A cooled mantle can heat and melt again.
-Without the solidus root, this case runs as one segment with a step ceiling of $1915\text{ yr}$, so the top cell melts without the $100\text{ yr}$ ceiling.
-Its end temperatures still meet the bound ($9.75 \times 10^{-5}\text{ K}$): the case checks the segment structure and the error bound as two separate things.
+A cooled mantle can heat and melt again; once a cell melts, the solver must return to the $100\text{ yr}$ ceiling.
+The temperatures alone do not show it: without the solidus root this case still meets the bound at the end ($9.75 \times 10^{-5}\text{ K}$), so the segment structure is checked by itself.
 
 ![Entropy of the top cell above its solidus against time, for the rate run and the 1 yr reference](../assets/validation/rate_cap_subsolidus_solidus_root.svg#only-light){ width="70%" }
 ![Entropy of the top cell above its solidus against time, for the rate run and the 1 yr reference](../assets/validation/rate_cap_subsolidus_solidus_root_dark.svg#only-dark){ width="70%" }
@@ -347,23 +345,63 @@ Its end temperatures still meet the bound ($9.75 \times 10^{-5}\text{ K}$): the 
 The horizontal axis is time in years, linear up to $100\text{ yr}$ and logarithmic above.
 The vertical axis is the entropy of the top cell minus its solidus entropy; the top cell is partly molten above the line at zero.
 The solid line is the $1\text{ yr}$ reference, the dashed line the rate run; the dots are the segment starts.
-The second dot sits where the top cell passes its solidus: there the solidus root ends the first segment.
+The first dot lies $2\text{ J/(kg K)}$ below the line at zero; the second lies on it, where the solidus root ends the first segment.
 A pass shows the two lines on top of each other and a segment start at zero; a run without the root also gives two such lines, but no dot at zero.
 
-**Known limit.**
-A heated start that stays below the solidus can be outside this bound.
-With the top cell 80, 100 or 120 J/(kg K) below its solidus, the run stays sub-solidus and ends $1.4 \times 10^{-4}$, $3.4 \times 10^{-4}$ and $3.5 \times 10^{-4}\text{ K}$ from the reference.
-The code without the relaxed step ceiling gives the same errors, so the ceiling does not cause them.
-The sub-solidus tolerance rtol $10^{-9}$ does: at rtol $10^{-10}$ the error at 100 J/(kg K) falls to $2.7 \times 10^{-5}\text{ K}$.
+**Known limit: start gap and heat flux.**
+Over start gaps of 0, 0.5, 2 and $10\text{ J/(kg K)}$ and heat fluxes of 200 and $800\text{ W/m}^2$, the error over time is $4.67 \times 10^{-5}$ to $1.39 \times 10^{-4}\text{ K}$.
+At a start gap of $0.5\text{ J/(kg K)}$ it is above the bound: $1.39 \times 10^{-4}\text{ K}$ at $2659\text{ yr}$, long after the solidus root at $76.5\text{ yr}$ (at the end $8.27 \times 10^{-5}\text{ K}$).
+The error comes from the mushy segment after the root, which runs at the caller's rtol $10^{-8}$, as every mushy segment does.
+The code without the solidus root integrates this whole call at rtol $10^{-9}$, because its only segment starts sub-solidus.
+
+**Known limit: a heated cell that stays below the solidus.**
+With the top cell 80, 100 or 120 J/(kg K) below its solidus, the run stays sub-solidus and the error over time is $2.90 \times 10^{-4}$, $3.44 \times 10^{-4}$ and $3.52 \times 10^{-4}\text{ K}$.
+The code without the relaxed step ceiling gives the same end temperatures, so the ceiling does not cause these errors.
+The sub-solidus tolerance rtol $10^{-9}$ does: with the rate run at rtol $10^{-10}$ the error at 100 J/(kg K) falls to $2.74 \times 10^{-5}\text{ K}$.
 
 **Not checked.**
 The same case on the PALEOS low-temperature table; this case uses the CI test table.
 
 ??? info "Test details"
-    - Reference: $1\text{ yr}$ steps at rtol $=$ atol $= 10^{-10}$; 5 round-off starts (measured with a probe script outside the repository; the test runs the unperturbed case)
-    - Tolerance: $\|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ (observed: $5.83 \times 10^{-5}\text{ K}$ in 118 steps and 2 segments; the first segment has a step ceiling of $1915\text{ yr}$ and ends at the solidus root at $304.9\text{ yr}$; the reference takes 10002 steps; envelope $\Delta_{\text{pert}} = 5.2 \times 10^{-9}\text{ K}$). With a start gap of 0, 0.5, 2 or $10\text{ J/(kg K)}$ and a heat flux of 200 to $800\text{ W/m}^2$ the error is $4.7 \times 10^{-5}$ to $8.5 \times 10^{-5}\text{ K}$ (the same probe script)
+    - Reference: $1\text{ yr}$ steps at rtol $10^{-10}$ and a physical atol of $10^{-10}$; 5 round-off starts $S_0 (1 + m \cdot 10^{-12})$, $m = -2, \dots, 2$
+    - Tolerance: $\max_t \|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ over the shared output times (observed: $7.60 \times 10^{-5}\text{ K}$, $5.83 \times 10^{-5}\text{ K}$ at the end; 118 steps in 2 segments; the first segment has a step ceiling of $1915\text{ yr}$ and ends at the solidus root at $304.9\text{ yr}$; the reference takes 10002 steps; envelope $\Delta_{\text{pert}} = 5.9 \times 10^{-9}\text{ K}$)
     - Test id: `tests/test_phase_boundary_cap.py::test_rate_mode_ends_a_subsolidus_segment_at_the_solidus`
-    - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_ends_a_subsolidus_segment_at_the_solidus` (add `--validation-plots` to write the plot pair)
+    - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_ends_a_subsolidus_segment_at_the_solidus` (add `--validation-plots` to write the plot pair); the numbers of this case and of its known limits: `python tools/verification/run_subsolidus_heating_cases.py --case heated --check`, `--case sweep` and `--case limit`
+
+### Long steps while a cell heats to the solidus
+
+**Why this check exists.**
+The relaxed step ceiling saves time only when CVODE takes steps far above $100\text{ yr}$ while a cell heats towards its solidus.
+In the [case above](#heated-sub-solidus-segment-that-ends-at-the-solidus) the largest such step is $135\text{ yr}$, so it does not check the accuracy of long steps.
+This case does: it fails if a step of at least $1000\text{ yr}$ is not taken before the solidus, or if the error leaves the bound.
+
+**What it tests.**
+A 12-node column (11 cells) on the CI test table starts at one temperature, with the top cell $2\text{ J/(kg K)}$ below its solidus and every other cell further below its own.
+Internal heating of $10^{-8}\text{ W/kg}$ warms every cell, the surface is insulated, and the run lasts $15\,000\text{ yr}$, with `convective_threshold` $= 0$ and the default `matprop_smooth_width`.
+This case checks the step controller only; it is not a model of a planet.
+CVODE must take a step of at least $1000\text{ yr}$ before the top cell reaches its solidus; then the solidus root ends the segment, and the next segment has a step ceiling of at most $100\text{ yr}$.
+The code that keeps the $100\text{ yr}$ ceiling for a heating cell within $\delta$ of the solidus cannot take such a step.
+
+**How we know the right answer.**
+The reference and the bound are those of the case above: $1\text{ yr}$ steps at rtol $10^{-10}$ and a physical atol of $10^{-10}$, and $1.3 \times 10^{-4}\text{ K}$ at every output time that both runs share.
+
+**Why it matters.**
+In a long run the speed-up of a solid mantle comes from such long steps, also when a cell heats slowly towards its solidus.
+
+![Entropy of the top cell above its solidus against time, with the CVODE step ends before the solidus](../assets/validation/rate_cap_subsolidus_long_steps.svg#only-light){ width="70%" }
+![Entropy of the top cell above its solidus against time, with the CVODE step ends before the solidus](../assets/validation/rate_cap_subsolidus_long_steps_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.**
+The horizontal axis is time in years; the vertical axis is the entropy of the top cell minus its solidus entropy.
+The solid line is the $1\text{ yr}$ reference and the dashed line the rate run.
+The short vertical marks are the ends of the CVODE steps before the top cell reaches its solidus at the line at zero.
+A pass shows the two lines on top of each other and marks several thousand years apart.
+
+??? info "Test details"
+    - Reference: $1\text{ yr}$ steps (`phase_boundary_cap = 'fixed'`) at rtol $10^{-10}$ and a physical atol of $10^{-10}$
+    - Tolerance: $\max_t \|T_{\text{rate}} - T_{\text{fixed}, 10^{-10}}\|_\infty \le 1.3 \times 10^{-4}\text{ K}$ over the shared output times, and a step of at least $1000\text{ yr}$ before the solidus (observed: $4.69 \times 10^{-7}\text{ K}$, $2.61 \times 10^{-7}\text{ K}$ at the end; largest step before the solidus $4589\text{ yr}$; solidus root at $13\,448\text{ yr}$; 28 steps against 15002 for the reference; round-off envelope $\Delta_{\text{pert}} = 2.2 \times 10^{-6}\text{ K}$ over 5 starts $S_0 (1 + m \cdot 10^{-12})$, so the error lies inside the round-off spread)
+    - Test id: `tests/test_phase_boundary_cap.py::test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus`
+    - Command: `ARAGOG_TEST_EOS_DIR=... pytest tests/test_phase_boundary_cap.py -k test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus` (add `--validation-plots` to write the plot pair); the numbers: `python tools/verification/run_subsolidus_heating_cases.py --case long_steps --check`
 
 ### Full solidification without solver stalling
 
@@ -477,3 +515,6 @@ Which rule causes the gap in this run is not measured; near $96\text{ Myr}$ in t
     - Command: `python tools/verification/run_v5b_proteus.py --output-dir RUN` with this Aragog, `--reference --output-dir REF` for the reference, `--s0-eps=1e-12 --output-dir RUN_P` and `--s0-eps=-1e-12 --output-dir RUN_M` for the floor; the same runs `MAIN`, `MAIN_P` and `MAIN_M` with the Aragog commit of the config header; then `python tools/verification/compare_v5_runs.py --case v5b RUN MAIN --reference REF --floor RUN_P RUN_M MAIN_P MAIN_M`
 
 [^cite-ruedas2017]: T. Ruedas, *[Radioactive heat production of six geologically important nuclides](https://doi.org/10.1002/2017GC006997)*, Geochemistry, Geophysics, Geosystems, 18, 3530–3541, 2017. [SciX](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).
+[^cite-jacobsen2008]: B. Jacobsen, Q.-Z. Yin, F. Moynier, Y. Amelin, A. N. Krot, K. Nagashima, I. D. Hutcheon, H. Palme, *[26Al-26Mg and 207Pb-206Pb systematics of Allende CAIs: Canonical solar initial 26Al/27Al ratio reinstated](https://doi.org/10.1016/j.epsl.2008.05.003)*, Earth and Planetary Science Letters, 272, 353-364, 2008. [SciX](https://scixplorer.org/abs/2008E%26PSL.272..353J/abstract).
+[^cite-tangdauphas2012]: H. Tang, N. Dauphas, *[Abundance, distribution, and origin of 60Fe in the solar protoplanetary disk](https://doi.org/10.1016/j.epsl.2012.10.011)*, Earth and Planetary Science Letters, 359-360, 248-263, 2012. [SciX](https://scixplorer.org/abs/2012E%26PSL.359..248T/abstract).
+[^cite-mcdonoughsun1995]: W. F. McDonough, S.-s. Sun, *[The composition of the Earth](https://doi.org/10.1016/0009-2541%2894%2900140-4)*, Chemical Geology, 120, 223-253, 1995. [SciX](https://scixplorer.org/abs/1995ChGeo.120..223M/abstract).
