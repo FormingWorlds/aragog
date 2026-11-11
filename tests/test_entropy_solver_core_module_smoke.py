@@ -612,6 +612,26 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
     assert records(CORE_MODULE_PARAMS) == []
 
 
+@pytest.mark.parametrize(
+    ('core_bc', 'params', 'expected'),
+    [('core_module', CORE_MODULE_PARAMS, ['WARNING'])]
+    + [(m, None, []) for m in ('energy_balance', 'quasi_steady', 'gradient', 'bower2018')],
+)
+def test_only_core_module_warns_once_that_it_does_not_read_the_core_fields(
+    shared_eos, caplog, core_bc, params, expected
+):
+    solver = _build(core_bc, shared_eos, params)
+    with caplog.at_level('WARNING', logger='fwl.aragog'):
+        solver.reset()
+        solver.reset()
+    found = [r for r in caplog.records if 'core_heat_capacity' in r.getMessage()]
+    assert [r.levelname for r in found] == expected
+    for r in found:
+        msg = r.getMessage()
+        assert 'core_density' in msg and '880' in msg
+        assert f'{solver.parameters.mesh.core_density:g}' in msg
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
