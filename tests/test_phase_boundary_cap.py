@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from scipy.optimize import OptimizeResult
 
@@ -115,11 +115,12 @@ _cells = st.lists(
 @pytest.mark.unit
 @settings(max_examples=300, deadline=None)
 @given(cells=_cells)
+@example(cells=[(995.0, 1e-3, 1.0), (950.0, -1e-3, 1.0)])
 def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
     """max_step lies in [1, 100] yr with a cell above the solidus and in [1, inf] without.
 
     With every cell cooling (dS/dt < 0) below S_sol - delta no boundary lies ahead, so the step
-    is inf.
+    is inf. With every cell at or below S_sol the step is fraction * min t_c, clipped below only.
     """
     S, dSdt, mass = (np.array(c, dtype=float) for c in zip(*cells))
     h = _cap(S, dSdt, mass, rate_floor=True, bounds=(1.0, 100.0))
@@ -128,6 +129,12 @@ def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
         assert h <= 100.0
     if np.all(S < S_SOL - DELTA) and np.all(dSdt < 0.0):
         assert np.isinf(h)
+    if np.all(S <= S_SOL):
+        t_c = es._rate_phase_boundary_times(
+            S, dSdt, np.full(S.size, S_LIQ), np.full(S.size, S_SOL), mass, DELTA, True
+        )
+        t_c = t_c[np.isfinite(t_c)]
+        assert h == (max(0.1 * t_c.min(), 1.0) if t_c.size else np.inf)
 
 
 @pytest.mark.unit
@@ -169,16 +176,30 @@ def test_rate_cap_relaxes_upper_bound_when_all_cells_are_subsolidus():
 
 
 @pytest.mark.unit
-def test_rate_cap_keeps_upper_bound_for_a_heating_cell_in_the_stiff_zone():
-    """A sub-solidus cell heating within delta of the solidus keeps the 100 yr ceiling."""
+def test_rate_cap_relaxes_upper_bound_for_a_heating_subsolidus_cell_in_the_stiff_zone():
+    """A sub-solidus cell heating within delta of the solidus sets fraction * t_c with no 100 yr ceiling."""
     kw = dict(fraction=0.1, bounds=(1.0, 100.0))
-    assert _cap([S_SOL - 1e-10, 950.0], [1e-4, -1e-2], **kw) == 100.0
+    assert _cap([S_SOL - 1e-10, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
     assert _cap([950.0, 900.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e4)
     assert _cap([S_SOL - 1e-10, 950.0], [-1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
-    assert _cap([S_SOL - 0.7 * DELTA, 950.0], [1e-4, -1e-2], **kw) == 100.0
-    # dS/dt = 0 is not heating; a cell at exactly delta is outside the stiff zone.
+    assert _cap([S_SOL - 0.7 * DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(7.0e3)
+    # A cell at the solidus counts as sub-solidus; with the rate floor the heating cell sets 500 yr.
+    assert _cap([S_SOL, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
+    assert _cap(
+        [S_SOL - 2.0, 950.0], [1e-3, -1e-3], mass=[1.0, 1.0], rate_floor=True, **kw
+    ) == pytest.approx(500.0)
+    # dS/dt = 0 sets no time; a cell at exactly delta uses the distance ahead.
     assert _cap([S_SOL - 1.0, 950.0], [0.0, -1e-2], **kw) == np.inf
     assert _cap([S_SOL - DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(1.0e4)
+
+
+@pytest.mark.unit
+def test_rate_cap_keeps_upper_bound_while_a_cell_is_mushy():
+    """A mushy cell keeps the 100 yr ceiling, also a slow cell heating within delta of the liquidus."""
+    kw = dict(fraction=0.1, bounds=(1.0, 100.0))
+    assert _cap([1100.0, 950.0], [1e-6, -1e-2], **kw) == 100.0
+    assert _cap([1295.0, 950.0], [1e-6, -1e-2], **kw) == 100.0
+    assert _cap([S_SOL + 1e-10, 950.0], [1e-4, -1e-2], **kw) == 100.0
 
 
 def _roots(S0, inside, cap=None):
