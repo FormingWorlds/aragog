@@ -287,10 +287,10 @@ def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
     d.stored_column(c, surface_cell)
     assert c.phase_solid.rheology.mlt_bottom_slope == 1.0
     assert c.phase_solid.rheology.stress_closure_mode == 'lid'
-    old = Config.from_file(str(cfg))  # the mesh of the defaults before the 3000 m CMB cell
-    old.mesh.cmb_cell_thickness = 0.0
-    old.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
-    assert np.array_equal(np.ravel(Mesh(c).basic.radii), np.ravel(Mesh(old).basic.radii))
+    ref = Config.from_file(str(cfg))  # the mesh of the stored runs, set field by field
+    ref.mesh.cmb_cell_thickness = 0.0
+    ref.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
+    assert np.array_equal(np.ravel(Mesh(c).basic.radii), np.ravel(Mesh(ref).basic.radii))
 
 
 @pytest.mark.unit
