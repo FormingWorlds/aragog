@@ -194,8 +194,8 @@ Spatial discretisation and pressure-density profile.
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
-| `surface_cell_thickness` | m | Thickness of the outermost basic cell. `0` (default) leaves that end unset; otherwise a value of at least 2 m and below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With only one end set, the cells at the other end grow. See [Mesh refinement](mesh-refinement.md) |
-| `cmb_cell_thickness` | m | Thickness of the innermost basic cell, with the same range as `surface_cell_thickness`. Default `0` |
+| `surface_cell_thickness` | m or `"uniform"` | Thickness of the outermost basic cell. `"uniform"` (default) makes it the top cell of the uniform mesh of the same coordinate mode. `0` leaves that end unset; otherwise a value of at least 2 m and below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With only one end set, the cells at the other end grow. See [Mesh refinement](mesh-refinement.md) |
+| `cmb_cell_thickness` | m | Thickness of the innermost basic cell, with the same range as a number for `surface_cell_thickness`. Default `1000.0`; set `0` for a mesh whose uniform radial cell is 1000 m or less. With `0` here and `"uniform"` at the surface the mesh is the uniform mesh |
 
 ### `[energy]`
 
@@ -275,7 +275,7 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
 | `lid_mask_width_cells` | `float` | cells | `1.0` | (0, inf) | Smoothing transition width at stagnant-lid base in cell units |
 | `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
-| `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
+| `mlt_bottom_slope` | `float` | -- | `0.82` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
 | `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local" |
 | `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |

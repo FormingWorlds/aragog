@@ -386,7 +386,7 @@ $$
 l_v(r) = \min\big( s_\text{bot} (r - r_\text{in}), \; s_\text{top}(\theta) (r_\text{out} - r) \big)
 $$
 
-Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $1.0$). `compute_mlt_top_slope` calculates the upper boundary slope:
+Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $0.82$, the value of Tachinami et al. (2011)[^cite-tachinami2011] at which the mixing-length Nusselt number at the base of the mantle matches boundary-layer theory). `compute_mlt_top_slope` calculates the upper boundary slope:
 
 $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
@@ -506,7 +506,7 @@ In this mode, yielding is not a stress cap. The two-pass update works in these s
 | `lid_contrast_coeff` | - | `2.2` |
 | `lid_mask_width_cells` | - | `1.0` |
 | `phi_visc_single` | - | `0.5` |
-| `mlt_bottom_slope` | - | `1.0` |
+| `mlt_bottom_slope` | - | `0.82` |
 | `s_top_inf` | - | `0.22` |
 | `c_theta` | - | `0.15` |
 | `activation_energy` | J/mol | `None` |
@@ -783,6 +783,7 @@ The effect of the rheology on the trajectory, and the spread of 5 perturbed star
 [^cite-moresi1998]: L. Moresi, V. Solomatov, *[Mantle convection with a brittle lithosphere: thoughts on the global tectonic styles of the Earth and Venus](https://doi.org/10.1046/j.1365-246X.1998.00521.x)*, Geophysical Journal International, 133, 669–682, 1998. [SciX](https://scixplorer.org/abs/1998GeoJI.133..669M/abstract).
 [^cite-solomatov1995]: V. S. Solomatov, *[Scaling of temperature- and stress-dependent viscosity convection](https://doi.org/10.1063/1.868624)*, Physics of Fluids, 7, 266–274, 1995. [SciX](https://scixplorer.org/abs/1995PhFl....7..266S/abstract).
 [^cite-solomatov2000]: V. S. Solomatov, L.-N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
+[^cite-tachinami2011]: C. Tachinami, H. Senshu, S. Ida, *[Thermal evolution and lifetime of intrinsic magnetic fields of super-Earths in habitable zones](https://doi.org/10.1088/0004-637X/726/2/70)*, The Astrophysical Journal, 726, 70, 2011. [SciX](https://scixplorer.org/abs/2011ApJ...726...70T/abstract).
 [^cite-tackley2000]: P. J. Tackley, *[Self-consistent generation of tectonic plates in time-dependent, three-dimensional mantle convection simulations](https://doi.org/10.1029/2000GC000036)*, Geochemistry, Geophysics, Geosystems, 1, 1021, 2000. [SciX](https://scixplorer.org/abs/2000GGG.....1.1021T/abstract).
 [^cite-tackley2013]: P. J. Tackley, M. Ammann, J. P. Brodholt, D. P. Dobson, D. Valencia, *[Mantle dynamics in super-Earths: Post-perovskite rheology and self-regulation of viscosity](https://doi.org/10.1016/j.icarus.2013.03.013)*, Icarus, 225, 50–61, 2013. [SciX](https://scixplorer.org/abs/2013Icar..225...50T/abstract).
 [^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138–153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).

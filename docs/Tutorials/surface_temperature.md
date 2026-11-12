@@ -45,6 +45,7 @@ mixing_length_profile = "nearest_boundary"
 core_density = 10500
 eos_method = 1
 mass_coordinates = false
+cmb_cell_thickness = 0.0   # the uniform 250 m cells are thinner than the default 1000 m CMB cell
 
 [energy]
 conduction = true
@@ -128,7 +129,7 @@ For a half space that starts at $T_i$ and has its surface held at $T_s$, the sur
 
 $$F(t) = \frac{k\,(T_i - T_s)}{\sqrt{\pi \kappa t}}$$
 
-(Turcotte and Schubert 2014, *Geodynamics*, 3rd ed., section 4.15, eq. 4.116, p. 189). Our shell is thin compared with the planet and deep compared with the cooled layer, so it behaves like a half space.
+(Turcotte & Schubert (2014)[^cite-turcotte2014] section 4.15, Eq. 4.116, p. 189). Our shell is thin compared with the planet and deep compared with the cooled layer, so it behaves like a half space.
 
 ```python
 from scipy.constants import Julian_year
@@ -147,7 +148,7 @@ The two agree to 7.52 × 10⁻⁴. The estimate is the grid error (+1.248 × 10�
 
 ## 4. Compare the temperature profile
 
-The half-space temperature at depth $z$ below the surface is $T = T_s + (T_i - T_s)\,\mathrm{erf}\big(z / (2\sqrt{\kappa t})\big)$ (Turcotte and Schubert 2014, eq. 4.113, p. 188).
+The half-space temperature at depth $z$ below the surface is $T = T_s + (T_i - T_s)\,\mathrm{erf}\big(z / (2\sqrt{\kappa t})\big)$ (Turcotte & Schubert (2014) Eq. 4.113, p. 188).
 
 ```python
 from scipy.special import erf
@@ -166,3 +167,5 @@ The profile agrees with the error-function solution to 0.05 K. After 10⁵ years
 - Change `outer_boundary_value` and check that $F$ scales with $T_i - T_s$.
 - Use fewer nodes and watch the flux error grow as $(h/\delta)^2$.
 - Read how the solver sets the surface node in [Surface boundary conditions](../Explanations/surface_bc.md), and the validation cases in [Surface boundary](../Validation/surface.md).
+
+[^cite-turcotte2014]: D. L. Turcotte, G. Schubert, *[Geodynamics](https://doi.org/10.1017/CBO9780511843877)*, 3rd edition, Cambridge University Press, 2014. [SciX](https://scixplorer.org/abs/2014geod.book.....T/abstract).

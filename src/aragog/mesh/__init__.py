@@ -12,7 +12,7 @@ import numpy.typing as npt
 from scipy.optimize import brentq
 
 from aragog.config.boundary import check_top_node
-from aragog.config.mesh import check_cell_thickness
+from aragog.config.mesh import UNIFORM_CELL, check_cell_thickness
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
@@ -298,7 +298,19 @@ class Mesh:
                 span = r_surf - r_core
                 c, t = self.settings.cmb_cell_thickness, self.settings.surface_cell_thickness
                 first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
-                last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
+                if self._uniform_top:
+                    last = 1.0 / (self.settings.number_of_nodes - 1)
+                    # Independent target for the radii check: node n-2 of the uniform mesh.
+                    self._top_cell_target = r_surf - _radius_for_mass_coordinate(
+                        _xi_of_r,
+                        float(basic_mass_coordinates[-2, 0]),
+                        r_core + 1.0,
+                        r_surf - 1.0,
+                        node='uniform top',
+                        xtol=REFINED_XTOL,
+                    )
+                else:
+                    last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
                 grid = self._refined_unit_grid(first, last)
                 basic_mass_coordinates = (r_core + span * grid).reshape(-1, 1)
 
@@ -333,9 +345,14 @@ class Mesh:
         else:
             if self._refined:
                 r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+                n = self.settings.number_of_nodes
+                if self._uniform_top:
+                    last = 1.0 / (n - 1)
+                    self._top_cell_target = (r_out - r_in) / (n - 1)
+                else:
+                    last = self.settings.surface_cell_thickness / (r_out - r_in)
                 initial_spatial = r_in + (r_out - r_in) * self._refined_unit_grid(
-                    self.settings.cmb_cell_thickness / (r_out - r_in),
-                    self.settings.surface_cell_thickness / (r_out - r_in),
+                    self.settings.cmb_cell_thickness / (r_out - r_in), last
                 ).reshape(-1, 1)
                 initial_spatial[[0, -1], 0] = r_in, r_out
             basic_coordinates = initial_spatial
@@ -461,13 +478,22 @@ class Mesh:
         return dxidr
 
     @property
+    def _uniform_top(self) -> bool:
+        return self.settings.surface_cell_thickness == UNIFORM_CELL
+
+    @property
     def _refined(self) -> bool:
-        return bool(self.settings.surface_cell_thickness or self.settings.cmb_cell_thickness)
+        """True unless both ends are uniform: a CMB cell of 0 and a surface cell of 0 or
+        ``'uniform'``."""
+        return bool(self.settings.cmb_cell_thickness) or not (
+            self._uniform_top or self.settings.surface_cell_thickness == 0
+        )
 
     def _check_refined_radii(self, r) -> None:
         """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
         start and end at the shell radii exactly, and each set end cell has its thickness to
-        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger."""
+        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger. The
+        target of a ``'uniform'`` surface cell is the top cell of the uniform mesh of the mode."""
         r_inner, r_outer = self.settings.inner_radius, self.settings.outer_radius
         # brentq places a solved node to REFINED_XTOL; an end cell holds twice that.
         atol = 2 * REFINED_XTOL if self.settings.mass_coordinates else 0.0
@@ -479,8 +505,12 @@ class Mesh:
             )
         for name, cell in (('cmb_cell_thickness', d[0]), ('surface_cell_thickness', d[-1])):
             target = getattr(self.settings, name)
+            label = f'{target} m'
+            if target == UNIFORM_CELL:
+                target = self._top_cell_target
+                label = f'{UNIFORM_CELL} ({target} m)'
             if target and not abs(cell - target) <= max(atol, 1e-6 * target):
-                bad.append(f'mesh.{name} = {target} m gives an end cell of {cell} m')
+                bad.append(f'mesh.{name} = {label} gives an end cell of {cell} m')
         if bad:
             raise ValueError('refined mesh: ' + '; '.join(bad))
 

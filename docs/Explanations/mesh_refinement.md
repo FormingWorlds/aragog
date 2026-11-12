@@ -20,7 +20,7 @@ $$
 
 where $\beta > 0$ is a dimensionless stretching parameter. A larger $\beta$ puts the nodes closer together near $\xi = 1$. Aragog solves for the $\beta$ that makes the last cell, $1 - s(1 - h)$ with $h = 1/(n - 1)$ and $n$ the number of nodes, equal to the target fraction. A target only at the CMB uses the mirror image of the same map.
 
-With targets at both ends, Aragog uses the two-sided function of [Vinokur (1983)](https://doi.org/10.1016/0021-9991(83)90065-7),
+With targets at both ends, Aragog uses the two-sided function of Vinokur (1983)[^cite-vinokur1983],
 
 $$
 s(\xi) = \frac{u}{A + (1 - A)\, u}, \qquad u = \frac{1}{2} \left( 1 + \frac{\tanh\left(\delta (\xi - 1/2)\right)}{\tanh(\delta / 2)} \right),
@@ -41,12 +41,18 @@ With `mass_coordinates = true` (the default), the uniform grid is uniform in the
 
 In mass-coordinate mode the same settings give a bottom cell of 22.1 km in the first case and a largest cell of 21.5 km in the second.
 
+## The default mesh
+
+Without the two fields the CMB cell is 1000 m and the top cell is `"uniform"`: the top cell of the uniform mesh of the same coordinate mode, $(r_\mathrm{s} - r_\mathrm{c})/(n - 1)$ in radius mode and the top cell of the uniform mass-coordinate mesh in mass-coordinate mode. The stretched grid then holds both ends, so the cells grow from the CMB towards the middle of the mantle and shrink again to the top cell. For `abe_solid.toml` (1000 km mantle, 100 nodes, mass-coordinate mode) the top cell stays 10.9 km and the largest cell is 18.2 km, the 74th of 99 cells from the CMB. The core heat flow is computed over the first cell, so a 1000 m cell resolves a thermal boundary layer above the core that is thicker than 1000 m. With `cmb_cell_thickness = 0` the `"uniform"` top cell gives the uniform mesh.
+
 ## Limits
 
-- **0**: that end is not set. With the other end set, its cells grow to keep the node count: on `abe_solid.toml` a 1 km, 200 m or 50 m top cell makes the CMB cell 22.1, 31.0 or 38.5 km in mass-coordinate mode (23.4, 33.0 or 41.1 km in radius mode), against 9.33 km on the uniform mesh. Set the other field too to hold that end. 0 is the default for both fields.
+- **0**: that end is not set. With the other end set, its cells grow to keep the node count: on `abe_solid.toml` a 1 km, 200 m or 50 m top cell makes the CMB cell 22.1, 31.0 or 38.5 km in mass-coordinate mode (23.4, 33.0 or 41.1 km in radius mode), against 9.33 km on the uniform mesh. Set the other field too to hold that end.
 - **A bool, a string or any other non-number**: refused when the config is read and when the mesh is built, with an error that names the field. A TOML `true` is not read as 1 m.
 - **Negative, NaN, infinite, below 2 m, or at least the uniform radial cell** $(r_\mathrm{s} - r_\mathrm{c})/(n - 1)$: refused when the config is read and when the mesh is built. The 2 m floor is a margin of 2 over the 1 m by which the node solve of the mass-coordinate mode stays inside the boundaries, so that it would clamp a node only below 1 m; at 2 m the CMB half cell also meets the 1 m floor of the `bower2018` core flux.
 - **Too few nodes**: a set cell needs at least 4 nodes; fewer are refused.
+- **`"uniform"`**: accepted only for the surface cell; any other string is refused. With a CMB cell of 0 it needs no node count; with a CMB cell it needs 4 nodes.
+- **The default on a thin shell**: where the uniform radial cell is 1000 m or less, the default CMB cell is refused; set `cmb_cell_thickness = 0` or a thinner cell.
 - **Below $10^{-7}$ of the mantle thickness**: refused by the grid itself when the mesh is built. With the 2 m floor this applies only to a mantle thicker than 20,000 km in radius mode, and about the same in mass-coordinate mode, where the fraction of a 2 m cell depends on the density profile.
 - **Mass-coordinate mode near the uniform cell**: the uniform end cells in mass coordinates differ from the radial uniform cell. For `abe_solid.toml` the uniform CMB cell is 9.33 km, below the radial 10.1 km, so a CMB cell between the two passes the config check and is refused when the mesh is built, with both field values in the error.
 - **Cell density with an external profile** (`eos_method = 2`): on a refined mesh each cell's density is its mass over its volume, in both mesh modes, as on every mass-coordinate mesh. A uniform radius-mode mesh with an external profile takes the mean of the two face densities instead; on the test profile the two differ by up to $10^{-4}$ relative.
@@ -57,3 +63,5 @@ In mass-coordinate mode the same settings give a bottom cell of 22.1 km in the f
 The convergence study on the Validation page gives the number of solver steps up to $10^5$ years on the uniform 100-node mesh and with a 200 m and a 50 m top cell.
 
 **Where this is checked.** [Validation: mesh refinement](../Validation/mesh_refinement.md).
+
+[^cite-vinokur1983]: M. Vinokur, *[On one-dimensional stretching functions for finite-difference calculations](https://doi.org/10.1016/0021-9991(83)90065-7)*, Journal of Computational Physics, 50, 215-234, 1983. [SciX](https://scixplorer.org/abs/1983JCoPh..50..215V/abstract).

@@ -111,7 +111,7 @@ class SolidRheologyParams:
     lid_mask_width_cells: float = 1.0
     phi_visc_single: float = 0.5
     # Viscous-branch mixing-length boundary slopes and theta-dependent top-slope parameters.
-    mlt_bottom_slope: float = 1.0
+    mlt_bottom_slope: float = 0.82
     s_top_inf: float = 0.22
     c_theta: float = 0.15
     # Optional saturating integral activation enthalpy law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)).
