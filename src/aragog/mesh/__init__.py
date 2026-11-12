@@ -296,22 +296,24 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
-            if self._cmb_cell and self.settings.number_of_nodes < 2:
-                self._cmb_fallback(math.inf)  # no uniform bottom cell: refused below 4 nodes
-            elif self._cmb_cell:
-                # Bottom cell of the uniform mass-coordinate mesh, solved as its node 1 is.
-                uniform_bottom = (
-                    _radius_for_mass_coordinate(
-                        _xi_of_r,
-                        float(basic_mass_coordinates[1, 0]),
-                        r_core + 1.0,
-                        r_surf - 1.0,
-                        node=1,
-                        xtol=RADIUS_XTOL,
-                    )
-                    - r_core
+            if self._cmb_cell:
+                span = r_surf - r_core
+                c = self._cmb_cell
+                self._cmb_fallback(
+                    (_xi_of_r(r_core + c) - r_core) / span if c < span else math.inf,
+                    # bottom cell of the uniform mass-coordinate mesh
+                    lambda: (
+                        _radius_for_mass_coordinate(
+                            _xi_of_r,
+                            float(basic_mass_coordinates[1, 0]),
+                            r_core + 1.0,
+                            r_surf - 1.0,
+                            node=1,
+                            xtol=REFINED_XTOL,
+                        )
+                        - r_core
+                    ),
                 )
-                self._cmb_fallback(uniform_bottom)
             if self._refined:
                 span = r_surf - r_core
                 c, t = self._cmb_cell, self.settings.surface_cell_thickness
@@ -362,10 +364,11 @@ class Mesh:
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
         else:
             r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
-            if self._cmb_cell and self.settings.number_of_nodes < 2:
-                self._cmb_fallback(math.inf)  # no uniform bottom cell: refused below 4 nodes
-            elif self._cmb_cell:
-                self._cmb_fallback(float(initial_spatial[1, 0] - initial_spatial[0, 0]))
+            if self._cmb_cell:
+                self._cmb_fallback(
+                    self._cmb_cell / (r_out - r_in),
+                    lambda: float(initial_spatial[1, 0] - initial_spatial[0, 0]),
+                )
             if self._refined:
                 n = self.settings.number_of_nodes
                 if self._uniform_top:
@@ -511,19 +514,23 @@ class Mesh:
             self._uniform_top or self.settings.surface_cell_thickness == 0
         )
 
-    def _cmb_fallback(self, uniform_bottom: float) -> None:
-        """Set the CMB cell to 0 (no CMB refinement) when it is at or above ``uniform_bottom``
-        [m], the bottom cell of the uniform mesh of the mode, and log that at INFO level. Raise
-        ``ValueError`` when a CMB cell that refines the mesh has fewer than 4 nodes."""
-        if self._cmb_cell >= uniform_bottom:
+    def _cmb_fallback(self, first: float, uniform_bottom: Callable[[], float]) -> None:
+        """Set the CMB cell to 0 (no CMB refinement) when it is at or above the bottom cell of
+        the uniform mesh of the mode: ``first``, the CMB cell as a fraction of the coordinate
+        span, at or above 1/(n - 1) (the test of the stretched grid), or the CMB cell at or
+        above ``uniform_bottom()`` [m]; log that at INFO level. Raise ``ValueError`` when a CMB
+        cell that refines the mesh has fewer than 4 nodes."""
+        n = self.settings.number_of_nodes
+        bottom = uniform_bottom() if n >= 2 else math.inf  # 1 node: no uniform bottom cell
+        if n >= 2 and (first >= 1.0 / (n - 1) or self._cmb_cell >= bottom):
             logger.info(
                 'mesh.cmb_cell_thickness = %.6g m is not below the bottom cell of the uniform '
                 'mesh, %.6g m: no CMB refinement',
                 self._cmb_cell,
-                uniform_bottom,
+                bottom,
             )
             self._cmb_cell = 0.0
-        elif self.settings.number_of_nodes < 4:
+        elif n < 4:
             raise ValueError(
                 f'mesh.cmb_cell_thickness = {self._cmb_cell} m refines the mesh, which needs '
                 f'number_of_nodes >= 4, got {self.settings.number_of_nodes}'
@@ -562,9 +569,11 @@ class Mesh:
         try:
             return stretched_unit_grid(self.settings.number_of_nodes, first, last)
         except ValueError as exc:
+            top = self.settings.surface_cell_thickness
+            top = top if top == UNIFORM_CELL else f'{top} m'
             raise ValueError(
-                f'mesh.cmb_cell_thickness = {self.settings.cmb_cell_thickness} m and '
-                f'mesh.surface_cell_thickness = {self.settings.surface_cell_thickness} m '
+                f'mesh.cmb_cell_thickness = {self._cmb_cell} m and '
+                f'mesh.surface_cell_thickness = {top} '
                 f'give no refined grid of {self.settings.number_of_nodes} nodes: {exc}'
             ) from exc
 
