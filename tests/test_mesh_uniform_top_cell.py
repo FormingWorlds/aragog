@@ -21,7 +21,7 @@ import aragog
 import aragog.mesh as mesh_module
 from aragog.config import MeshConfig
 from aragog.config.mesh import UNIFORM_CELL
-from aragog.mesh import RADIUS_XTOL, Mesh
+from aragog.mesh import CMB_FALLBACK_RTOL, RADIUS_XTOL, Mesh
 from aragog.mesh.stretching import stretched_unit_grid
 from aragog.parser import Parameters, _MeshParameters
 from aragog.rheology import SolidRheologyParams
@@ -251,7 +251,8 @@ def test_a_cmb_cell_with_the_uniform_top_builds_or_names_the_field(
     the bottom cell of the uniform mesh and at the uniform bottom cell otherwise, and the top
     cell of the uniform mesh (to 1e-6 relative or the 2 m to which mass mode places the
     uniform radii); a ValueError that names mesh.cmb_cell_thickness only for a cell above 0
-    and below 2 m. Within 2 m of the uniform bottom cell in mass mode, either bottom cell."""
+    and below 2 m. Within the fallback margin below the uniform bottom cell, and 2 m of it in
+    mass mode, either bottom cell."""
     if 0.0 < cmb < 2.0:
         with pytest.raises(ValueError, match='mesh.cmb_cell_thickness'):
             _mesh('uniform', cmb, mass_coordinates, n, r_in)
@@ -263,7 +264,8 @@ def test_a_cmb_cell_with_the_uniform_top_builds_or_names_the_field(
     assert np.all(d > 0.0)
     uni = np.diff(_radii(_mesh(0.0, 0.0, mass_coordinates, n, r_in)))
     refined = d[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
-    if cmb and mass_coordinates and abs(cmb - uni[0]) <= 2.0:
+    band = 2.0 if mass_coordinates else 0.0
+    if cmb and uni[0] * (1 - CMB_FALLBACK_RTOL) - band <= cmb <= uni[0] + band:
         event('boundary band')
         assert refined or d[0] == uni[0]
     elif cmb and cmb < uni[0]:

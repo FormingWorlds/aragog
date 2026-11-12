@@ -19,7 +19,7 @@ from hypothesis import HealthCheck, event, given, settings
 from hypothesis import strategies as st
 
 import aragog
-from aragog.mesh import Mesh
+from aragog.mesh import CMB_FALLBACK_RTOL, Mesh
 from aragog.parser import Parameters
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
@@ -155,11 +155,13 @@ def test_the_bottom_cell_is_the_cmb_cell_below_the_uniform_cell_and_uniform_abov
 
 
 def _assert_refined_or_uniform(r, cmb, h, mass_coordinates, n):
-    """Bottom cell = cmb below h, uniform mesh at or above h; within 2 m of h in mass mode,
-    where h comes from a node solve to 1 m, either one. Return the branch checked."""
+    """Bottom cell = cmb below h, uniform mesh at or above h. Either one within the fallback
+    margin below h, and within 2 m of h in mass mode, where h comes from a node solve to 1 m.
+    Return the branch checked."""
     uniform = np.array_equal(r, _radii(_mesh(0.0, mass_coordinates, n)))
     refined = r[1] - r[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
-    if mass_coordinates and abs(cmb - h) <= 2.0:
+    band = 2.0 if mass_coordinates else 0.0
+    if h * (1 - CMB_FALLBACK_RTOL) - band <= cmb <= h + band:
         assert uniform or refined
         return 'boundary band'
     if cmb < h:
@@ -183,3 +185,39 @@ def test_a_cmb_cell_next_to_the_uniform_bottom_cell_is_never_refused(mass_coordi
         except ValueError as exc:
             pytest.fail(f'CMB cell {cmb!r} m next to the uniform cell {h!r} m refused: {exc}')
         _assert_refined_or_uniform(r, cmb, h, mass_coordinates, n)
+
+
+@pytest.mark.parametrize('top', ['uniform', 0.0], ids=['uniform-top', 'no-top'])
+def test_a_cmb_cell_in_the_last_ppm_below_the_uniform_cell_is_never_refused(top):
+    """A dense sweep of CMB cells 1e-16 to 1e-5 relative below the uniform cell, radius mode,
+    4 to 120 and 300 nodes, plus mass mode at 40 and 80 nodes: every mesh builds, with the
+    bottom cell at the CMB cell or the uniform mesh at that end. The stretched-grid solves do
+    not converge in parts of this band (measured up to 2.2e-6), so the band falls back."""
+    offsets = np.logspace(-16, -5, 23)
+    cases = [(False, n) for n in [*range(4, 121), 300]] + [(True, 40), (True, 80)]
+    for mass_coordinates, n in cases:
+        h = _uniform_bottom(mass_coordinates, n)
+        uniform_end = np.diff(_radii(_mesh(0.0, mass_coordinates, n, top=top)))[0]
+        for f in offsets:
+            cmb = h * (1 - f)
+            try:
+                r = _radii(_mesh(cmb, mass_coordinates, n, top=top))
+            except (ValueError, RuntimeError) as exc:
+                pytest.fail(f'n={n} mass={mass_coordinates} cmb={cmb!r} (1-{f:.1e}) h: {exc}')
+            d0 = r[1] - r[0]
+            assert d0 == uniform_end or d0 == pytest.approx(cmb, rel=1e-6, abs=2e-3), (n, f)
+
+
+def test_a_surface_cell_next_to_the_uniform_cell_builds_or_names_the_fields():
+    """A surface cell 1e-15 to 3e-14 relative below the uniform radial cell, with no CMB cell:
+    the mesh builds, or a ValueError names the surface field; a solver RuntimeError never
+    escapes."""
+    for n in range(4, 121):
+        h = _uniform_bottom(False, n)
+        for f in (1e-15, 3e-15, 1e-14, 3e-14):
+            try:
+                _mesh(0.0, False, n, top=h * (1 - f))
+            except ValueError as exc:  # the config check or the grid, by name
+                assert 'mesh.surface_cell_thickness' in str(exc), exc
+            except RuntimeError as exc:
+                pytest.fail(f'n={n} surface (1-{f:.0e}) h: {type(exc).__name__}: {exc}')
