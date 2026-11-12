@@ -95,6 +95,9 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
 # refined mesh, whose end cells must hold their set thickness.
 RADIUS_XTOL = 1.0
 REFINED_XTOL = 1e-3
+# The stretched-grid solves do not converge for an end cell up to about 2.2e-6 relative below
+# the uniform cell (measured); a CMB cell that close to it falls back.
+CMB_FALLBACK_RTOL = 1.0e-5
 
 
 def _radius_for_mass_coordinate(
@@ -503,18 +506,20 @@ class Mesh:
 
     def _cmb_fallback(self, first: float, uniform_bottom: Callable[[], float]) -> None:
         """Set the CMB cell to 0 (no CMB refinement) when it is at or above the bottom cell of
-        the uniform mesh of the mode: ``first``, the CMB cell as a fraction of the coordinate
-        span, at or above 1/(n - 1) (the test of the stretched grid), or the CMB cell at or
-        above ``uniform_bottom()`` [m]; log that at INFO level. Raise ``ValueError`` when a CMB
-        cell that refines the mesh has fewer than 4 nodes."""
+        the uniform mesh of the mode to ``CMB_FALLBACK_RTOL`` relative: ``first``, the CMB cell
+        as a fraction of the coordinate span, against 1/(n - 1) (the test of the stretched
+        grid), or the CMB cell against ``uniform_bottom()`` [m]; log that at INFO level. Raise
+        ``ValueError`` when a CMB cell that refines the mesh has fewer than 4 nodes."""
         n = self.settings.number_of_nodes
         bottom = uniform_bottom() if n >= 2 else math.inf  # 1 node: no uniform bottom cell
-        if n >= 2 and (first >= 1.0 / (n - 1) or self._cmb_cell >= bottom):
+        keep = 1.0 - CMB_FALLBACK_RTOL
+        if n >= 2 and (first >= keep / (n - 1) or self._cmb_cell >= keep * bottom):
             logger.info(
                 'mesh.cmb_cell_thickness = %.6g m is not below the bottom cell of the uniform '
-                'mesh, %.6g m: no CMB refinement',
+                'mesh, %.6g m, by more than %g of it: no CMB refinement',
                 self._cmb_cell,
                 bottom,
+                CMB_FALLBACK_RTOL,
             )
             self._cmb_cell = 0.0
         elif n < 4:
@@ -555,7 +560,7 @@ class Mesh:
         ``mesh.surface_cell_thickness``, as fractions of the coordinate span."""
         try:
             return stretched_unit_grid(self.settings.number_of_nodes, first, last)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:  # RuntimeError: a brentq without convergence
             top = self.settings.surface_cell_thickness
             top = top if top == UNIFORM_CELL else f'{top} m'
             raise ValueError(
