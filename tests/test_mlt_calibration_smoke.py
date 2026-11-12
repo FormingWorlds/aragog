@@ -244,6 +244,8 @@ adiabatic_bulk_modulus = 260000000000.0
 adams_williamson_beta = 0.0
 surface_pressure = 0.0
 mass_coordinates = false
+cmb_cell_thickness = 0.0
+surface_cell_thickness = 0.0
 
 [phase_liquid]
 density = {fp['rho_kg_m3']}

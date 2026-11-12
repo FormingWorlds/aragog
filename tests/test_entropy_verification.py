@@ -508,6 +508,8 @@ class TestSolverResidualTelescoping:
             adiabatic_bulk_modulus=260e9,
             gravitational_acceleration=9.81,
             surface_pressure=0.0,
+            cmb_cell_thickness=0.0,  # uniform mesh: the reference numbers of its tests
+            surface_cell_thickness=0.0,
         )
         pm = PM(
             latent_heat_of_fusion=4e5,
@@ -844,6 +846,8 @@ class TestCvodeEnergyOutputGrid:
             adiabatic_bulk_modulus=260e9,
             gravitational_acceleration=9.81,
             surface_pressure=0.0,
+            cmb_cell_thickness=0.0,  # uniform mesh: the reference numbers of its tests
+            surface_cell_thickness=0.0,
         )
         pm = PM(
             latent_heat_of_fusion=4e5,

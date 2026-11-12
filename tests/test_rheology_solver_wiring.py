@@ -114,7 +114,12 @@ def _make_abe_solid_params(
         params = Parameters.from_file(p)
     return replace(
         params,
-        mesh=replace(params.mesh, number_of_nodes=number_of_nodes),
+        mesh=replace(  # uniform mesh: the reference numbers of its tests
+            params.mesh,
+            number_of_nodes=number_of_nodes,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
+        ),
         boundary_conditions=replace(
             params.boundary_conditions,
             core_bc='quasi_steady',

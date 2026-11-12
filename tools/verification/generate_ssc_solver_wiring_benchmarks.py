@@ -123,6 +123,16 @@ EXPECTED_COST_KEYS = ('modes', 'ratios', 'six_row_call_count_table')
 EXPECTED_STARTS_KEYS = ('epsilons', 'abe_solid_default', 'abe_solid_kappah_floor_0')
 
 
+def _uniform_mesh_config(cfg_path: Path) -> Any:
+    """The bundled config on the uniform mesh, on which the committed benchmarks were made."""
+    from aragog.config import Config
+
+    cfg = Config.from_file(str(cfg_path))
+    cfg.mesh.cmb_cell_thickness = 0.0
+    cfg.mesh.surface_cell_thickness = 0.0
+    return cfg
+
+
 def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
     """Compute MD5 hashes of canonical equation of state table files."""
     hashes = {}
@@ -202,11 +212,10 @@ def measure_per_rhs_call_counts(
     import aragog.rheology as rheo_mod
     import aragog.rheology_lid as rheo_lid_mod
     import aragog.solver.entropy_state as entropy_state_mod
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.solver.entropy_solver import EntropySolver
 
-    cfg = Config.from_file(str(cfg_path))
+    cfg = _uniform_mesh_config(cfg_path)
     cfg.boundary_conditions.inner_boundary_condition = 1
     cfg.boundary_conditions.core_bc = 'quasi_steady'
     cfg.energy.kappah_floor = 0.0
@@ -393,7 +402,6 @@ def run_rhs_cost_benchmarks(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
@@ -410,7 +418,7 @@ def run_rhs_cost_benchmarks(
 
     for label, rheo in modes:
         call_counts[label] = measure_per_rhs_call_counts(cfg_path, eos_np, eos_jax, rheo)
-        cfg = Config.from_file(str(cfg_path))
+        cfg = _uniform_mesh_config(cfg_path)
         cfg.boundary_conditions.inner_boundary_condition = 1
         cfg.boundary_conditions.core_bc = 'quasi_steady'
         cfg.energy.kappah_floor = 0.0
@@ -504,7 +512,6 @@ def _evaluate_100_trajectory_states_parity(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.phase import compute_fluxes
     from aragog.jax.solver import dSdt
     from aragog.rheology import SolidRheologyParams
@@ -521,7 +528,7 @@ def _evaluate_100_trajectory_states_parity(
     rheo_yield_off = replace(rheo_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
     rheo_off = SolidRheologyParams(enabled=False)
 
-    cfg_traj = Config.from_file(str(cfg_path))
+    cfg_traj = _uniform_mesh_config(cfg_path)
     cfg_traj.solver.end_time = end_time
     cfg_traj.energy.kappah_floor = kappah_floor
     cfg_traj.phase_solid.viscosity = viscosity_solid
@@ -537,7 +544,7 @@ def _evaluate_100_trajectory_states_parity(
     n_traj = len(sol_t)
 
     def _make_eval_solver(rheo_param: Any, eos_inst: Any) -> EntropySolver:
-        cfg_inst = Config.from_file(str(cfg_path))
+        cfg_inst = _uniform_mesh_config(cfg_path)
         cfg_inst.boundary_conditions.inner_boundary_condition = 1
         cfg_inst.boundary_conditions.core_bc = 'quasi_steady'
         cfg_inst.energy.kappah_floor = kappah_floor
@@ -791,7 +798,6 @@ def _diagnose_flux_vs_rhs(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.phase import compute_fluxes, entropy_at_basic_nodes, evaluate_phase
     from aragog.jax.solver import _dSdt_parts, dSdt
     from aragog.rheology import SolidRheologyParams
@@ -804,7 +810,7 @@ def _diagnose_flux_vs_rhs(
         yield_stress_mu=0.1,
         yield_stress_max=1.0e8,
     )
-    cfg_on = Config.from_file(str(cfg_path))
+    cfg_on = _uniform_mesh_config(cfg_path)
     cfg_on.boundary_conditions.inner_boundary_condition = 1
     cfg_on.boundary_conditions.core_bc = 'quasi_steady'
     cfg_on.energy.kappah_floor = 0.0
@@ -1077,7 +1083,6 @@ def _run_perturbed_suite(
     table_hashes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run 1% cost probe and 5 round-off perturbed starts for off and on."""
-    from aragog.config import Config
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -1096,7 +1101,7 @@ def _run_perturbed_suite(
             yield_stress_max=1.0e8,
         )
 
-        cfg_probe = Config.from_file(str(cfg_path))
+        cfg_probe = _uniform_mesh_config(cfg_path)
         cfg_probe.solver.end_time = max(0.01 * end_time, 1.0)
         cfg_probe.energy.kappah_floor = kappah_floor
         cfg_probe.phase_solid.viscosity = viscosity_solid
@@ -1118,7 +1123,7 @@ def _run_perturbed_suite(
         s_final_arrays = []
 
         for idx, eps in enumerate(epsilons):
-            cfg = Config.from_file(str(cfg_path))
+            cfg = _uniform_mesh_config(cfg_path)
             cfg.solver.end_time = end_time
             cfg.energy.kappah_floor = kappah_floor
             cfg.phase_solid.viscosity = viscosity_solid
@@ -1322,7 +1327,6 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
@@ -1355,7 +1359,7 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     def _make_solver(
         kappah_floor: float, viscosity: float, rheo: SolidRheologyParams
     ) -> EntropySolver:
-        cfg = Config.from_file(str(cfg_path))
+        cfg = _uniform_mesh_config(cfg_path)
         cfg.boundary_conditions.inner_boundary_condition = 1
         cfg.boundary_conditions.core_bc = 'quasi_steady'
         cfg.energy.kappah_floor = kappah_floor
