@@ -195,7 +195,7 @@ Spatial discretisation and pressure-density profile.
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
 | `surface_cell_thickness` | m or `"uniform"` | Thickness of the outermost basic cell. `"uniform"` (default) makes it the top cell of the uniform mesh of the same coordinate mode. `0` leaves that end unset; otherwise a value of at least 2 m and below the uniform radial cell `(outer_radius - inner_radius) / (number_of_nodes - 1)`. With only one end set, the cells at the other end grow. See [Mesh refinement](mesh-refinement.md) |
-| `cmb_cell_thickness` | m | Thickness of the innermost basic cell, with the same range as a number for `surface_cell_thickness`. Default `1000.0`; set `0` for a mesh whose uniform radial cell is 1000 m or less. With `0` here and `"uniform"` at the surface the mesh is the uniform mesh |
+| `cmb_cell_thickness` | m | Thickness of the innermost basic cell: `0` leaves that end unset, otherwise a finite value of at least 2 m. Default `3000.0`. A value at or above the bottom cell of the uniform mesh of the same coordinate mode gives no CMB refinement. With `0` here and `"uniform"` at the surface the mesh is the uniform mesh |
 
 ### `[energy]`
 

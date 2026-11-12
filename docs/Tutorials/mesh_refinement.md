@@ -9,7 +9,7 @@ In this tutorial we run the same short mantle cooling case twice: once on the un
 
 ## 1. Run the two meshes
 
-The script loads the bundled `abe_solid.toml` (1000 km mantle, 100 nodes, mass-coordinate mesh), sets the CMB cell to 0 (uniform at that end; the default is 1000 m) and the top cell, shortens the run to 100 years and starts from a uniform entropy of 2900 J/kg/K. Save it as `refined.py`:
+The script loads the bundled `abe_solid.toml` (1000 km mantle, 100 nodes, mass-coordinate mesh), sets the CMB cell to 0 (uniform at that end; the default is 3000 m) and the top cell, shortens the run to 100 years and starts from a uniform entropy of 2900 J/kg/K. Save it as `refined.py`:
 
 ```python
 import os
@@ -64,7 +64,7 @@ For a config file, set the field in the `[mesh]` table instead of in Python:
 
 ```toml
 [mesh]
-cmb_cell_thickness = 0.0          # m; without this line the CMB cell is 1000 m
+cmb_cell_thickness = 0.0          # m; without this line the CMB cell is 3000 m
 surface_cell_thickness = 1000.0   # m
 ```
 

@@ -151,7 +151,7 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **How we know the right answer.** The reference is the same set of arrays written by the code without the refinement option, with `tools/verification/generate_mesh_refinement_off_reference.py`.
 
-**Why it matters.** A run with both fields at 0, the uniform mesh, must give the same results as the code without the option. The default mesh is refined (a 1000 m CMB cell, the top cell of the uniform mesh), so this case covers the runs that set the uniform mesh.
+**Why it matters.** A run with both fields at 0, the uniform mesh, must give the same results as the code without the option. The default mesh is refined (a 3000 m CMB cell, the top cell of the uniform mesh), so this case covers the runs that set the uniform mesh.
 
 This case has no plot: it checks that two sets of arrays are equal, which a plot cannot show.
 

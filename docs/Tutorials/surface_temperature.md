@@ -45,7 +45,6 @@ mixing_length_profile = "nearest_boundary"
 core_density = 10500
 eos_method = 1
 mass_coordinates = false
-cmb_cell_thickness = 0.0   # the uniform 250 m cells are thinner than the default 1000 m CMB cell
 
 [energy]
 conduction = true
