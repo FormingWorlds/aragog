@@ -58,9 +58,14 @@ def stored_column(c, surface_cell) -> None:
 
 
 def check_stored_mesh(part, mesh, name) -> None:
-    """Stop when the radii stored in a part file differ from the rebuilt mesh."""
-    if 'r_basic' in part.files and not np.array_equal(
-        part['r_basic'], np.ravel(mesh.basic.radii)
+    """Stop when the radii stored in a part file differ from the rebuilt mesh by more than 2 m,
+    twice the tolerance of the node solve (a changed mesh moves them by km); warn when the part
+    file holds no radii."""
+    r = np.ravel(mesh.basic.radii)
+    if 'r_basic' not in part.files:
+        print(f'{name}: no stored radii, the mesh is not checked', file=sys.stderr)
+    elif part['r_basic'].shape != r.shape or not np.allclose(
+        part['r_basic'], r, rtol=0, atol=2.0
     ):
         raise SystemExit(f'{name}: the stored mesh differs from the rebuilt mesh')
 

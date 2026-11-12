@@ -66,12 +66,17 @@ def _state(s, y):
     )
 
 
-def over_the_merge(a, t0: float, y0: np.ndarray, t_ho: float) -> tuple[dict, object, float]:
+def over_the_merge(
+    a, t0: float, y0: np.ndarray, t_ho: float, part=None
+) -> tuple[dict, object, float]:
     """Run the lid column from the state ``y0`` at ``t0`` to 2e4 yr after the hand-over near
-    ``t_ho``; return the merge values, the solver and the top-node offset of the lid base."""
+    ``t_ho``; return the merge values, the solver and the top-node offset of the lid base.
+    ``part``, a (part file, name) pair, is checked against the mesh before the run."""
     from aragog.solver.entropy_solver import EntropySolver
 
     s = _solver(a, lid=True, nodes=a.nodes, cell=None, end=t_ho + 2.0e4)
+    if part is not None:
+        check_stored_mesh(*part, s.evaluator.mesh)
     s.set_initial_lid(float(y0[-2]), float(y0[-1]))
     s.set_initial_entropy(2437.5)
     _install_factory(s, a.eos_dir)
@@ -134,8 +139,9 @@ def main(argv=None) -> None:
     z = np.load(a.run / f'{STEM}_part{part}.npz')
     before = np.flatnonzero(z['t'] < t_ho * (1.0 - 1.0e-6))[-1]
     t0, y0 = float(z['t'][before]), np.asarray(z['y'][:, before], dtype=float)
-    values, s, offset = over_the_merge(a, t0, y0, t_ho)
-    check_stored_mesh(z, s.evaluator.mesh, f'{a.run.name}/{STEM}_part{part}.npz')
+    values, s, offset = over_the_merge(
+        a, t0, y0, t_ho, (z, f'{a.run.name}/{STEM}_part{part}.npz')
+    )
 
     refs = json.loads((a.ref / f'{STEM}.json').read_text())
     k_ref = next(k for k, r in enumerate(refs) if r['t_target'] > t0)

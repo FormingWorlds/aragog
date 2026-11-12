@@ -294,8 +294,9 @@ def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
 
 
 @pytest.mark.unit
-def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path):
-    """check_stored_mesh passes the rebuilt mesh and stops on a part file with other radii."""
+def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path, capsys):
+    """check_stored_mesh passes the rebuilt mesh and its round-off, stops on a part file whose
+    radii moved by km, and warns on a part file without radii."""
     from aragog.config import Config
     from aragog.mesh import Mesh
 
@@ -305,8 +306,13 @@ def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path):
     d.stored_column(c, None)
     mesh = Mesh(c)
     r = np.ravel(mesh.basic.radii)
-    np.savez(tmp_path / 'same.npz', r_basic=r)
-    np.savez(tmp_path / 'other.npz', r_basic=r * (1 + 1e-12))
+    moved = r.copy()
+    moved[1] = r[0] + 3000.0  # a 3000 m CMB cell
+    np.savez(tmp_path / 'same.npz', r_basic=r * (1 + 1e-12))
+    np.savez(tmp_path / 'other.npz', r_basic=moved)
+    np.savez(tmp_path / 'none.npz', t=np.zeros(1))
     d.check_stored_mesh(np.load(tmp_path / 'same.npz'), mesh, 'same')
     with pytest.raises(SystemExit, match='other: the stored mesh differs'):
         d.check_stored_mesh(np.load(tmp_path / 'other.npz'), mesh, 'other')
+    d.check_stored_mesh(np.load(tmp_path / 'none.npz'), mesh, 'none')
+    assert 'none: no stored radii' in capsys.readouterr().err
