@@ -616,17 +616,17 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
 
 @pytest.mark.parametrize(
     ('core_bc', 'params', 'expected'),
-    [('core_module', CORE_MODULE_PARAMS, ['WARNING'])]
+    [('core_module', CORE_MODULE_PARAMS, ['INFO'])]
     + [(m, None, []) for m in ('energy_balance', 'quasi_steady', 'gradient', 'bower2018')],
 )
-def test_only_core_module_warns_once_that_it_does_not_use_the_core_fields(
+def test_only_core_module_logs_once_that_it_does_not_use_the_core_fields(
     shared_eos, caplog, core_bc, params, expected
 ):
-    """With core_bc = 'core_module' a solver logs one warning over its build and 2
+    """With core_bc = 'core_module' a solver logs one INFO record over its build and 2
     resets, naming the configured core_heat_capacity and core_density (values off the
     defaults) each next to its own field; a second solver logs its own. The other
     modes use both fields and log nothing."""
-    caplog.set_level('WARNING', logger='fwl.aragog')
+    caplog.set_level('INFO', logger='fwl.aragog')
     for cp, rho in ((731.5, 11234.5), (802.25, 9876.5)):
         solver = _build(core_bc, shared_eos, params, core_heat_capacity=cp, core_density=rho)
         solver.reset()
