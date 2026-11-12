@@ -23,13 +23,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ssc_helpers import entropy_eos_copy  # noqa: E402
-from run_surface_lid_case import RHEOLOGY, STEM, _install_factory  # noqa: E402
+from run_surface_lid_case import (  # noqa: E402
+    STEM,
+    _install_factory,
+    check_stored_mesh,
+    stored_column,
+)
 
 
 def _solver(a, *, lid, nodes, cell, end):
     """A solver of the column of ``run_surface_lid_case``, with its first start set."""
     from aragog.config import Config
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     text = Path('src/aragog/cfg/abe_solid.toml').read_text()
@@ -44,10 +48,8 @@ def _solver(a, *, lid, nodes, cell, end):
     c.solver.end_time, c.solver.max_steps = end, 800_000
     c.energy.kappah_floor, c.phase_solid.viscosity = 10.0, a.eta
     c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
-    c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
+    stored_column(c, cell)
     c.boundary_conditions.emissivity, c.mesh.number_of_nodes = 1.0, nodes
-    if cell is not None:
-        c.mesh.surface_cell_thickness = cell
     s = EntropySolver(c, entropy_eos=entropy_eos_copy(a.eos_dir))
     s.initialize()
     s.set_initial_entropy(2437.5)
@@ -133,12 +135,14 @@ def main(argv=None) -> None:
     before = np.flatnonzero(z['t'] < t_ho * (1.0 - 1.0e-6))[-1]
     t0, y0 = float(z['t'][before]), np.asarray(z['y'][:, before], dtype=float)
     values, s, offset = over_the_merge(a, t0, y0, t_ho)
+    check_stored_mesh(z, s.evaluator.mesh, f'{a.run.name}/{STEM}_part{part}.npz')
 
     refs = json.loads((a.ref / f'{STEM}.json').read_text())
     k_ref = next(k for k, r in enumerate(refs) if r['t_target'] > t0)
     zr = np.load(a.ref / f'{STEM}_part{k_ref}.npz')
     j = int(np.argmin(np.abs(zr['t'] - t0)))
     r = _solver(a, lid=False, nodes=400, cell=a.ref_cell, end=1.0)
+    check_stored_mesh(zr, r.evaluator.mesh, f'{a.ref.name}/{STEM}_part{k_ref}.npz')
     r._dSdt_single(0.0, zr['y'][:, j])
     T_ref = np.asarray(r.state.phase_staggered.temperature()).ravel()[::-1]
     mesh = r.evaluator.mesh

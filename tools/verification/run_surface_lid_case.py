@@ -47,6 +47,24 @@ RHEOLOGY = dict(
 )
 
 
+def stored_column(c, surface_cell) -> None:
+    """Set the mesh and the rheology of the stored runs on config ``c``: the uniform mesh, or
+    the given surface cell with no CMB refinement, and the MLT bottom slope 1.0."""
+    from aragog.rheology import SolidRheologyParams
+
+    c.mesh.cmb_cell_thickness = 0.0
+    c.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
+    c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY, mlt_bottom_slope=1.0)
+
+
+def check_stored_mesh(part, mesh, name) -> None:
+    """Stop when the radii stored in a part file differ from the rebuilt mesh."""
+    if 'r_basic' in part.files and not np.array_equal(
+        part['r_basic'], np.ravel(mesh.basic.radii)
+    ):
+        raise SystemExit(f'{name}: the stored mesh differs from the rebuilt mesh')
+
+
 def parse(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('outdir', type=Path, nargs='?')
@@ -190,7 +208,6 @@ def main(argv=None) -> int:
     import aragog
     import aragog.surface_lid as sl
     from aragog.config import Config
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     _check_options(a)
@@ -259,11 +276,9 @@ def main(argv=None) -> int:
         )
         if a.heating:
             c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
-        c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
+        stored_column(c, a.surface_cell)
         c.boundary_conditions.emissivity = 1.0
         c.mesh.number_of_nodes = a.nodes
-        if a.surface_cell is not None:
-            c.mesh.surface_cell_thickness = a.surface_cell
         s = EntropySolver(c, entropy_eos=eos_np)
         s.initialize()
         if y_prev is not None and not a.no_lid:

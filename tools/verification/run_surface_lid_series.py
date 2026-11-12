@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ssc_helpers import entropy_eos_copy  # noqa: E402
-from run_surface_lid_case import RHEOLOGY, STEM  # noqa: E402
+from run_surface_lid_case import STEM, check_stored_mesh, stored_column  # noqa: E402
 
 
 def isotherm_depth(T_top_first: np.ndarray, z: np.ndarray, T_iso: float) -> float:
@@ -41,7 +41,6 @@ def isotherm_depth(T_top_first: np.ndarray, z: np.ndarray, T_iso: float) -> floa
 
 def main(argv=None) -> None:
     from aragog.config import Config
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
@@ -66,10 +65,8 @@ def main(argv=None) -> None:
     c = Config.from_file(str(cfg))
     c.solver.end_time, c.energy.kappah_floor, c.phase_solid.viscosity = 1.0, 10.0, a.eta
     c.energy.tidal, c.energy.tidal_array = True, np.array([a.heating])
-    c.phase_solid.rheology = SolidRheologyParams(**RHEOLOGY)
+    stored_column(c, a.surface_cell)
     c.boundary_conditions.emissivity, c.mesh.number_of_nodes = 1.0, a.nodes
-    if a.surface_cell is not None:
-        c.mesh.surface_cell_thickness = a.surface_cell
     s = EntropySolver(c, entropy_eos=entropy_eos_copy(a.eos_dir))
     s.initialize()
     s.set_initial_entropy(a.s_init)
@@ -79,6 +76,7 @@ def main(argv=None) -> None:
     t_all, flux, depth, delta = [], [], [], []
     for k in range(len(rows)):
         part = np.load(a.run / f'{STEM}_part{k}.npz')
+        check_stored_mesh(part, mesh, f'{STEM}_part{k}.npz')
         for t, y in zip(part['t'], part['y'].T):
             if t_all and t <= t_all[-1]:
                 continue
