@@ -71,6 +71,8 @@ def _build(
     radionuclides=(),
     tidal_array=None,
     cvode_output_points: int | None = None,
+    core_heat_capacity: float = 880.0,
+    core_density: float = 10500.0,
 ):
     from aragog.parser import (
         Parameters,
@@ -91,7 +93,7 @@ def _build(
         inner_boundary_value=0.0,
         emissivity=1.0,
         equilibrium_temperature=255.0,
-        core_heat_capacity=880.0,
+        core_heat_capacity=core_heat_capacity,
         core_bc=core_bc,
         core_module_params=core_module_params,
     )
@@ -115,7 +117,7 @@ def _build(
         inner_radius=3.480e6,
         number_of_nodes=n_nodes,
         mixing_length_profile='nearest_boundary',
-        core_density=10500.0,
+        core_density=core_density,
         eos_method=1,
     )
     pl = _PhaseParameters(
@@ -617,19 +619,27 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
     [('core_module', CORE_MODULE_PARAMS, ['WARNING'])]
     + [(m, None, []) for m in ('energy_balance', 'quasi_steady', 'gradient', 'bower2018')],
 )
-def test_only_core_module_warns_once_that_it_does_not_read_the_core_fields(
+def test_only_core_module_warns_once_that_it_does_not_use_the_core_fields(
     shared_eos, caplog, core_bc, params, expected
 ):
-    solver = _build(core_bc, shared_eos, params)
-    with caplog.at_level('WARNING', logger='fwl.aragog'):
+    """With core_bc = 'core_module' a solver logs one warning over its build and 2
+    resets, naming the configured core_heat_capacity and core_density (values off the
+    defaults) each next to its own field; a second solver logs its own. The other
+    modes use both fields and log nothing."""
+    caplog.set_level('WARNING', logger='fwl.aragog')
+    for cp, rho in ((731.5, 11234.5), (802.25, 9876.5)):
+        solver = _build(core_bc, shared_eos, params, core_heat_capacity=cp, core_density=rho)
         solver.reset()
         solver.reset()
-    found = [r for r in caplog.records if 'core_heat_capacity' in r.getMessage()]
-    assert [r.levelname for r in found] == expected
-    for r in found:
-        msg = r.getMessage()
-        assert 'core_density' in msg and '880' in msg
-        assert f'{solver.parameters.mesh.core_density:g}' in msg
+        found = [r for r in caplog.records if 'core_heat_capacity' in r.getMessage()]
+        caplog.clear()
+        assert [r.levelname for r in found] == expected
+        for r in found:
+            assert (
+                f"core_bc = 'core_module' does not use core_heat_capacity = {cp} "
+                in r.getMessage()
+            )
+            assert f'core_density = {rho} kg/m^3' in r.getMessage()
 
 
 @needs_cvode
