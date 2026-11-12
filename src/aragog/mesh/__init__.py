@@ -296,39 +296,26 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
-            if self._cmb_cell:
-                span = r_surf - r_core
-                c = self._cmb_cell
+            def _uniform_node(i: int, node) -> float:
+                """Radius [m] of node ``i`` of the uniform mass-coordinate mesh."""
+                xi = float(basic_mass_coordinates[i, 0])
+                return _radius_for_mass_coordinate(
+                    _xi_of_r, xi, r_core + 1.0, r_surf - 1.0, node=node, xtol=REFINED_XTOL
+                )
+
+            span = r_surf - r_core
+            if c := self._cmb_cell:
                 self._cmb_fallback(
                     (_xi_of_r(r_core + c) - r_core) / span if c < span else math.inf,
-                    # bottom cell of the uniform mass-coordinate mesh
-                    lambda: (
-                        _radius_for_mass_coordinate(
-                            _xi_of_r,
-                            float(basic_mass_coordinates[1, 0]),
-                            r_core + 1.0,
-                            r_surf - 1.0,
-                            node=1,
-                            xtol=REFINED_XTOL,
-                        )
-                        - r_core
-                    ),
+                    lambda: _uniform_node(1, 1) - r_core,
                 )
             if self._refined:
-                span = r_surf - r_core
                 c, t = self._cmb_cell, self.settings.surface_cell_thickness
                 first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
                 if self._uniform_top:
                     last = 1.0 / (self.settings.number_of_nodes - 1)
                     # Independent target for the radii check: node n-2 of the uniform mesh.
-                    self._top_cell_target = r_surf - _radius_for_mass_coordinate(
-                        _xi_of_r,
-                        float(basic_mass_coordinates[-2, 0]),
-                        r_core + 1.0,
-                        r_surf - 1.0,
-                        node='uniform top',
-                        xtol=REFINED_XTOL,
-                    )
+                    self._top_cell_target = r_surf - _uniform_node(-2, 'uniform top')
                 else:
                     last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
                 grid = self._refined_unit_grid(first, last)
