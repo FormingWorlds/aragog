@@ -250,20 +250,25 @@ def test_a_cmb_cell_with_the_uniform_top_builds_or_names_the_field(
     builds with strictly increasing radii, the bottom cell at the CMB cell when that is below
     the bottom cell of the uniform mesh and at the uniform bottom cell otherwise, and the top
     cell of the uniform mesh (to 1e-6 relative or the 2 m to which mass mode places the
-    uniform radii), or a ValueError names mesh.cmb_cell_thickness."""
-    try:
-        m = _mesh('uniform', cmb, mass_coordinates, n, r_in)
-    except ValueError as exc:
-        assert 'mesh.cmb_cell_thickness' in str(exc)
-        event('refused')
+    uniform radii); a ValueError that names mesh.cmb_cell_thickness only for a cell above 0
+    and below 2 m. Within 2 m of the uniform bottom cell in mass mode, either bottom cell."""
+    if 0.0 < cmb < 2.0:
+        with pytest.raises(ValueError, match='mesh.cmb_cell_thickness'):
+            _mesh('uniform', cmb, mass_coordinates, n, r_in)
+        event('refused below 2 m')
         return
+    m = _mesh('uniform', cmb, mass_coordinates, n, r_in)
     event('built')
     d = np.diff(_radii(m))
     assert np.all(d > 0.0)
     uni = np.diff(_radii(_mesh(0.0, 0.0, mass_coordinates, n, r_in)))
-    if cmb and cmb < uni[0]:
+    refined = d[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
+    if cmb and mass_coordinates and abs(cmb - uni[0]) <= 2.0:
+        event('boundary band')
+        assert refined or d[0] == uni[0]
+    elif cmb and cmb < uni[0]:
         event('refined')
-        assert d[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
+        assert refined
     else:
         event('uniform bottom')
         assert d[0] == uni[0]

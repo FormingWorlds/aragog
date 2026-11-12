@@ -144,21 +144,42 @@ def test_a_cmb_cell_that_is_not_finite_or_below_2_m_is_still_refused(mass_coordi
 def test_the_bottom_cell_is_the_cmb_cell_below_the_uniform_cell_and_uniform_above(
     n, ratio, mass_coordinates
 ):
-    """For a CMB cell of ratio times the uniform bottom cell (at least 2 m): below 1 the bottom
-    cell is the CMB cell to 1e-6 relative, at or above 1 the mesh is the uniform mesh; or a
-    ValueError names mesh.cmb_cell_thickness (the near-uniform limits of the stretched grid)."""
+    """For a CMB cell of ratio times the uniform bottom cell (at least 2 m), with no ValueError:
+    below 1 the bottom cell is the CMB cell to 1e-6 relative, at or above 1 the mesh is the
+    uniform mesh."""
     h = _uniform_bottom(mass_coordinates, n)
     cmb = max(ratio * h, 2.0)
-    try:
-        r = _radii(_mesh(cmb, mass_coordinates, n))
-    except ValueError as exc:
-        assert 'mesh.cmb_cell_thickness' in str(exc)
-        event('refused')
-        return
+    r = _radii(_mesh(cmb, mass_coordinates, n))
     assert np.all(np.diff(r) > 0.0)
+    event(_assert_refined_or_uniform(r, cmb, h, mass_coordinates, n))
+
+
+def _assert_refined_or_uniform(r, cmb, h, mass_coordinates, n):
+    """Bottom cell = cmb below h, uniform mesh at or above h; within 2 m of h in mass mode,
+    where h comes from a node solve to 1 m, either one. Return the branch checked."""
+    uniform = np.array_equal(r, _radii(_mesh(0.0, mass_coordinates, n)))
+    refined = r[1] - r[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
+    if mass_coordinates and abs(cmb - h) <= 2.0:
+        assert uniform or refined
+        return 'boundary band'
     if cmb < h:
-        event('refined')
-        assert r[1] - r[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
-    else:
-        event('uniform')
-        assert np.array_equal(r, _radii(_mesh(0.0, mass_coordinates, n)))
+        assert refined
+        return 'refined'
+    assert uniform
+    return 'uniform'
+
+
+@MODES
+@pytest.mark.parametrize('n', [24, 100, 400])
+def test_a_cmb_cell_next_to_the_uniform_bottom_cell_is_never_refused(mass_coordinates, n):
+    """CMB cells a hair below, at and above the uniform bottom cell build the refined or the
+    uniform mesh; none gives a ValueError from the near-uniform limits of the stretched grid."""
+    h = _uniform_bottom(mass_coordinates, n)
+    cells = [h * (1 - f) for f in (1e-15, 1e-12, 1e-9, 1e-6, 1e-5, 1e-4)]
+    cells += [h + d for d in (-2.0, -1.0, -0.1, -0.01, 0.0, 0.01, 1.0)]
+    for cmb in cells:
+        try:
+            r = _radii(_mesh(cmb, mass_coordinates, n))
+        except ValueError as exc:
+            pytest.fail(f'CMB cell {cmb!r} m next to the uniform cell {h!r} m refused: {exc}')
+        _assert_refined_or_uniform(r, cmb, h, mass_coordinates, n)
