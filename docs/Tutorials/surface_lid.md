@@ -156,7 +156,7 @@ The stagnant-lid benchmarks of [Solid-state convection](../Validation/solid_stat
 
 The function below takes the configuration of step 1 and changes it to a shell 300 km thick on 20 nodes of the uniform mesh (cells of 16 km), with the surface held at 300 K, constant properties and the solid rheology. It passes `entropy_eos=None`, because the lid refuses this mode when tables are attached. The shell starts at 3200 J/kg/K at the bottom and 2800 J/kg/K at the top, 1878 K and 1363 K.
 
-The function sets `cmb_cell_thickness = 0`, because the benchmarks run on the uniform mesh; with the default 3000 m CMB cell the cells of the upper mantle are larger and the start profile differs. `phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the lid-base isotherm of the closure already lies about 150 km deep at the start, 9 cells of this mesh, so the lid hands over at once.
+The function sets `cmb_cell_thickness = 0`, because the benchmarks run on the uniform mesh; with the default 3000 m CMB cell the cells of the upper mantle are larger and the start profile differs. `phase_solid.viscosity = 1e16` Pa s is a demonstration value, chosen so that the stagnant lid of the closure starts thin and the sub-grid lid hands over within a short run. With 1e21 Pa s the lid-base isotherm of the closure already lies about 100 km deep at the start, 6 cells of this mesh, so the lid hands over at once.
 
 ```python
 import numpy as np

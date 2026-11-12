@@ -114,7 +114,7 @@ With the CI test EOS tables, the two runs produce:
 | Near-surface magma temperature $T_\mathrm{magma}$ (`out.T_magma`) \[K\] | `$782.15$` | `$782.06$` |
 | Core temperature $T_\mathrm{core}$ (`out.T_core`) \[K\] | `$3566.07$` | `$3566.07$` |
 
-With `enabled = False`, the cold upper boundary layer keeps the uniform solid viscosity ($\eta_\mathrm{surf} = 3.000e+17\,\mathrm{Pa\,s}$), allowing vigorous near-surface overturn ($\max(F_\mathrm{conv}) = 161063.04\,\mathrm{W/m^2}$). With `enabled = True`, Arrhenius stiffening raises the surface viscosity to $\eta_\mathrm{surf} = 9.076e+27\,\mathrm{Pa\,s}$ and forms a conductive stagnant lid that suppresses convective transport in the cold upper shell ($\max(F_\mathrm{conv}) = 470.53\,\mathrm{W/m^2}$). At the partially molten CMB node, `phase_basic.eta_diff()[0]` reports the pure solid-phase diffusion viscosity ($3.000e+17\,\mathrm{Pa\,s}$ vs $3.601e+18\,\mathrm{Pa\,s}$), whereas `phase_basic.viscosity()[0]` blends that solid viscosity with the liquid phase across the melt fraction ($1.664e+17\,\mathrm{Pa\,s}$ vs $1.916e+18\,\mathrm{Pa\,s}$).
+With `enabled = False`, the cold upper boundary layer keeps the uniform solid viscosity ($\eta_\mathrm{surf} = 3.000e+17\,\mathrm{Pa\,s}$), and the convective heat flux peaks at $\max(F_\mathrm{conv}) = 161063.04\,\mathrm{W/m^2}$, about 470 km below the surface. With `enabled = True`, Arrhenius stiffening raises the surface viscosity to $\eta_\mathrm{surf} = 9.076e+27\,\mathrm{Pa\,s}$ and forms a conductive stagnant lid: above its base the convective heat flux is below 0.01 W/m$^2$, and the peak falls to $\max(F_\mathrm{conv}) = 470.53\,\mathrm{W/m^2}$, about 730 km below the surface (see the profile figure). At the partially molten CMB node, `phase_basic.eta_diff()[0]` reports the pure solid-phase diffusion viscosity ($3.000e+17\,\mathrm{Pa\,s}$ vs $3.601e+18\,\mathrm{Pa\,s}$), whereas `phase_basic.viscosity()[0]` blends that solid viscosity with the liquid phase across the melt fraction ($1.664e+17\,\mathrm{Pa\,s}$ vs $1.916e+18\,\mathrm{Pa\,s}$).
 
 ## 3. Read the stagnant-lid diagnostics
 
@@ -168,7 +168,7 @@ With `yield_stress_c = 150.0` Pa and `yield_stress_mu = 0.0`:
 
 - The lid yield strength is $\tau_{y,\mathrm{lid}} = 150.0\,\mathrm{Pa}$, below $\tau_{d,\mathrm{lid}} = 831.16\,\mathrm{kPa}$.
 - The yielding blend weight reaches $w_y = 1.0$, and `13` basic nodes inside the upper boundary layer yield plastically (`eta_eff < eta_diff`).
-- At the surface basic node, plastic yielding reduces the effective viscosity from $\eta_\mathrm{diff,surf} = 8.919e+27\,\mathrm{Pa\,s}$ to $\eta_\mathrm{eff,surf} = 9.315e+14\,\mathrm{Pa\,s}$, increasing the peak convective heat flux from $470.53\,\mathrm{W/m^2}$ to $470.81\,\mathrm{W/m^2}$.
+- At the surface basic node, plastic yielding reduces the effective viscosity from $\eta_\mathrm{diff,surf} = 8.919e+27\,\mathrm{Pa\,s}$ to $\eta_\mathrm{eff,surf} = 9.315e+14\,\mathrm{Pa\,s}$. The lid then carries convective heat flux near the surface: about 11 km down it rises from below 0.01 to about 64 W/m$^2$. The peak deep in the mantle changes by less than 0.1 % (470.53 to 470.81 W/m$^2$).
 
 ![Radial profiles of viscosity and convective heat flux for rheology-off, default stagnant-lid, and plastic-yielding cases](../assets/tutorials/ssc_tutorial_profiles.svg#only-light)
 ![Radial profiles of viscosity and convective heat flux for rheology-off, default stagnant-lid, and plastic-yielding cases](../assets/tutorials/ssc_tutorial_profiles_dark.svg#only-dark)
