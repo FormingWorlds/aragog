@@ -78,7 +78,7 @@ Aragog reads the current planet boundary state from `hf_row`, runs its time step
 | `gravity` | Surface gravity [m s$^{-2}$] | `mesh.gravitational_acceleration` when `eos_method != 2`. |
 | `P_surf` | Atmospheric pressure [bar] | `mesh.surface_pressure` (converted to Pa). |
 | `ini_entropy` | Initial entropy IC [J kg$^{-1}$ K$^{-1}$] | `set_initial_entropy()` on first call only. |
-| `core_density`, `core_heatcap` | Core thermal properties | Energy-balance core BC. |
+| `core_density`, `core_heatcap` | Core thermal properties | Energy-balance core BC; not used with `core_bc = "core_module"` ([parameters](core_bc.md#parameters)). |
 
 ### Writes to `hf_row`
 
