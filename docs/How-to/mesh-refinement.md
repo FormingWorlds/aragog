@@ -1,6 +1,6 @@
 # Refining the mesh towards the surface and the CMB
 
-This page shows how to make the outermost or innermost mantle cell thinner than the uniform cell. [Mesh refinement](../Explanations/mesh_refinement.md) explains the stretched grid and its limits. The tutorial [Refining the mesh at the surface](../Tutorials/mesh_refinement.md) runs a case on both meshes.
+This page shows how to set the thickness of the CMB cell and the top cell, and how to get the uniform mesh. [Mesh refinement](../Explanations/mesh_refinement.md) explains the stretched grid and its limits. The tutorial [Refining the mesh at the surface](../Tutorials/mesh_refinement.md) runs a case on both meshes.
 
 ## The default mesh
 
@@ -60,5 +60,6 @@ top cell 200.000 m, CMB cell 2000.000 m, largest cell 26584 m
 
 - `mesh.surface_cell_thickness must be 0 (off) or 'uniform' or in [2, ...) m, the uniform radial cell`: the value is not a number or `"uniform"`, is negative, is below 2 m, or is not below the uniform radial cell. A TOML `true` gives this error too.
 - `mesh.cmb_cell_thickness must be 0 (off) or a finite value of at least 2 m`: the CMB value is not a number, is NaN, infinite or negative, or is below 2 m. A TOML `true` gives this error too.
-- `mesh.cmb_cell_thickness = ... m refines the mesh, which needs number_of_nodes >= 4`: a CMB cell below the uniform bottom cell needs at least 4 nodes.
-- `mesh.cmb_cell_thickness = ... m and mesh.surface_cell_thickness = ... m give no refined grid of ... nodes`: the stretched grid cannot hold the cells (see the limits in [Mesh refinement](../Explanations/mesh_refinement.md#limits)). Use a thinner cell or more nodes.
+- `mesh.cmb_cell_thickness = ... m refines the mesh, which needs number_of_nodes >= 4`: a CMB cell below the CMB cell of the uniform mesh needs at least 4 nodes.
+- `mesh.surface_cell_thickness needs number_of_nodes >= 4`: a numeric surface cell needs at least 4 nodes.
+- `mesh.cmb_cell_thickness = ... m and mesh.surface_cell_thickness = ... give no refined grid of ... nodes`: the stretched grid cannot hold the cells (see the limits in [Mesh refinement](../Explanations/mesh_refinement.md#limits)). Use a thinner cell or more nodes.

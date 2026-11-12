@@ -386,7 +386,7 @@ $$
 l_v(r) = \min\big( s_\text{bot} (r - r_\text{in}), \; s_\text{top}(\theta) (r_\text{out} - r) \big)
 $$
 
-Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $0.82$, the value of Tachinami et al. (2011)[^cite-tachinami2011] at which the mixing-length Nusselt number at the base of the mantle matches boundary-layer theory). `compute_mlt_top_slope` calculates the upper boundary slope:
+Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $0.82$, read only with the solid rheology on; Tachinami et al. (2011)[^cite-tachinami2011] set the mixing length to 0.82 times the distance from the boundary so that the heat flux at the base of the mantle of the mixing-length model matches parameterised convection and boundary-layer theory, for a radially constant viscosity without internal heating, their Appendix A). `compute_mlt_top_slope` calculates the upper boundary slope:
 
 $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)

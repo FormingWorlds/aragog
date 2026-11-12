@@ -149,14 +149,14 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **What it tests.** With both fields at 0, the test builds the `abe_solid.toml` mesh in mass-coordinate and in radius mode, evaluates the right-hand side once and solves for 100 years with the NumPy right-hand side and with the JAX right-hand side. The mesh arrays and the right-hand side must equal those of the stored reference to $10^{-10}$ and the end states to $10^{-6}$, relative to each value or to the largest value of the array. The arrays are not compared exactly because the reference comes from macOS and the round-off of Linux differs. The mesh arrays and the right-hand side have the tight tolerance; the end-state comparison is a coarse check. In radius mode a refined branch run with both fields at 0 gives the uniform mesh to round-off, which no tolerance that covers the round-off of another platform can tell apart. So a unit test checks that the mesh with both fields at 0 does not call the refined grid, its radii check or, in radius mode, the cell-mass density, and that it solves every mass-coordinate radius to 1 m. The test also requires that the JAX solve called the JAX right-hand side, in the stored reference and in the test.
 
-**How we know the right answer.** The reference is the same set of arrays written by the code without the refinement option, with `tools/verification/generate_mesh_refinement_off_reference.py`.
+**How we know the right answer.** The reference is the same set of arrays on the uniform mesh, stored by `tools/verification/generate_mesh_refinement_off_reference.py` at the commit named in the file.
 
-**Why it matters.** A run with both fields at 0, the uniform mesh, must give the same results as the code without the option. The default mesh is refined (a 3000 m CMB cell, the top cell of the uniform mesh), so this case covers the runs that set the uniform mesh.
+**Why it matters.** A run with both fields at 0 gets the uniform mesh and must give the stored results of the uniform mesh. The default mesh is refined (a 3000 m CMB cell, the top cell of the uniform mesh), so this case covers the runs that set the uniform mesh.
 
 This case has no plot: it checks that two sets of arrays are equal, which a plot cannot show.
 
 ??? info "Test details"
-    - Reference: `tests/reference/mesh_refinement_off_reference.npz`, written by the code without the refinement option, with its commit, its platform and the JAX call count.
+    - Reference: `tests/reference/mesh_refinement_off_reference.npz`, the arrays of the uniform mesh, with the commit, the platform and the JAX call count that wrote them.
     - Tolerance: mesh arrays and right-hand side $10^{-10}$; end states $10^{-6}$.
     - Test id: `tests/test_mesh_refinement_off_reference.py::test_the_refinement_off_path_equals_the_stored_reference`
     - Command: `pytest tests/test_mesh_refinement_off_reference.py`

@@ -52,7 +52,7 @@ $$
 
 When `mass_coordinates = false`, $\xi$ is identified with $r$ and the chain rule above reduces to the identity.
 
-In both modes the mesh can be refined towards the surface and the CMB with `surface_cell_thickness` and `cmb_cell_thickness` ([Mesh refinement](mesh_refinement.md)).
+In both modes the default mesh has a 3000 m CMB cell and the top cell of the uniform mesh; `surface_cell_thickness` and `cmb_cell_thickness` change this ([Mesh refinement](mesh_refinement.md)).
 
 ## Heat fluxes
 
