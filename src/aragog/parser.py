@@ -341,7 +341,7 @@ class _MeshParameters:
     # Thickness [m] of the outermost and innermost basic cell, at least 2 m; 0 leaves that end
     # unset. 'uniform' sets the outer cell to the top cell of the uniform mesh. See MeshConfig.
     surface_cell_thickness: float | str = UNIFORM_CELL
-    cmb_cell_thickness: float = 1000.0
+    cmb_cell_thickness: float = 3000.0
 
     def __post_init__(self):
         check_cell_thickness(self)

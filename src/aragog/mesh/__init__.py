@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import field
 from functools import cached_property
@@ -248,6 +249,7 @@ class Mesh:
         # STEP 1: Set up the basic mesh
         self.settings: _MeshParameters = parameters.mesh
         check_cell_thickness(self.settings)
+        self._cmb_cell = float(self.settings.cmb_cell_thickness)
         # Start with uniform spatial spacing to initialize EOS/density
         initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
@@ -294,9 +296,25 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
+            if self._cmb_cell and self.settings.number_of_nodes < 2:
+                self._cmb_fallback(math.inf)  # no uniform bottom cell: refused below 4 nodes
+            elif self._cmb_cell:
+                # Bottom cell of the uniform mass-coordinate mesh, solved as its node 1 is.
+                uniform_bottom = (
+                    _radius_for_mass_coordinate(
+                        _xi_of_r,
+                        float(basic_mass_coordinates[1, 0]),
+                        r_core + 1.0,
+                        r_surf - 1.0,
+                        node=1,
+                        xtol=RADIUS_XTOL,
+                    )
+                    - r_core
+                )
+                self._cmb_fallback(uniform_bottom)
             if self._refined:
                 span = r_surf - r_core
-                c, t = self.settings.cmb_cell_thickness, self.settings.surface_cell_thickness
+                c, t = self._cmb_cell, self.settings.surface_cell_thickness
                 first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
                 if self._uniform_top:
                     last = 1.0 / (self.settings.number_of_nodes - 1)
@@ -343,8 +361,12 @@ class Mesh:
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
         else:
+            r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+            if self._cmb_cell and self.settings.number_of_nodes < 2:
+                self._cmb_fallback(math.inf)  # no uniform bottom cell: refused below 4 nodes
+            elif self._cmb_cell:
+                self._cmb_fallback(float(initial_spatial[1, 0] - initial_spatial[0, 0]))
             if self._refined:
-                r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
                 n = self.settings.number_of_nodes
                 if self._uniform_top:
                     last = 1.0 / (n - 1)
@@ -352,7 +374,7 @@ class Mesh:
                 else:
                     last = self.settings.surface_cell_thickness / (r_out - r_in)
                 initial_spatial = r_in + (r_out - r_in) * self._refined_unit_grid(
-                    self.settings.cmb_cell_thickness / (r_out - r_in), last
+                    self._cmb_cell / (r_out - r_in), last
                 ).reshape(-1, 1)
                 initial_spatial[[0, -1], 0] = r_in, r_out
             basic_coordinates = initial_spatial
@@ -485,9 +507,27 @@ class Mesh:
     def _refined(self) -> bool:
         """True unless both ends are uniform: a CMB cell of 0 and a surface cell of 0 or
         ``'uniform'``."""
-        return bool(self.settings.cmb_cell_thickness) or not (
+        return bool(self._cmb_cell) or not (
             self._uniform_top or self.settings.surface_cell_thickness == 0
         )
+
+    def _cmb_fallback(self, uniform_bottom: float) -> None:
+        """Set the CMB cell to 0 (no CMB refinement) when it is at or above ``uniform_bottom``
+        [m], the bottom cell of the uniform mesh of the mode, and log that at INFO level. Raise
+        ``ValueError`` when a CMB cell that refines the mesh has fewer than 4 nodes."""
+        if self._cmb_cell >= uniform_bottom:
+            logger.info(
+                'mesh.cmb_cell_thickness = %.6g m is not below the bottom cell of the uniform '
+                'mesh, %.6g m: no CMB refinement',
+                self._cmb_cell,
+                uniform_bottom,
+            )
+            self._cmb_cell = 0.0
+        elif self.settings.number_of_nodes < 4:
+            raise ValueError(
+                f'mesh.cmb_cell_thickness = {self._cmb_cell} m refines the mesh, which needs '
+                f'number_of_nodes >= 4, got {self.settings.number_of_nodes}'
+            )
 
     def _check_refined_radii(self, r) -> None:
         """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
@@ -504,7 +544,9 @@ class Mesh:
                 f'the end radii {r[0]!r}, {r[-1]!r} m are not {r_inner!r}, {r_outer!r} m'
             )
         for name, cell in (('cmb_cell_thickness', d[0]), ('surface_cell_thickness', d[-1])):
-            target = getattr(self.settings, name)
+            target = (
+                self._cmb_cell if name == 'cmb_cell_thickness' else getattr(self.settings, name)
+            )
             label = f'{target} m'
             if target == UNIFORM_CELL:
                 target = self._top_cell_target

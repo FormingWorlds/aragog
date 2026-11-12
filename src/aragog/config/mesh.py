@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import numbers
 
 import attrs
@@ -20,44 +21,42 @@ UNIFORM_CELL = 'uniform'
 
 
 def check_cell_thickness(mesh) -> None:
-    """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
-    ``mesh`` are each 0 or a real number in [``MIN_CELL_THICKNESS``, uniform cell) m, or
-    ``surface_cell_thickness`` is ``UNIFORM_CELL``.
+    """Raise ``ValueError`` unless ``surface_cell_thickness`` of ``mesh`` is 0, a real number
+    in [``MIN_CELL_THICKNESS``, uniform cell) m or ``UNIFORM_CELL``, and ``cmb_cell_thickness``
+    is 0 or a finite real number of at least ``MIN_CELL_THICKNESS`` m.
 
     The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a refined
-    mesh needs at least 4 nodes, as the end rows of the d/dr transform do. A bool (a TOML
-    ``true``) is refused, not read as 1 m.
+    surface cell needs at least 4 nodes, as the end rows of the d/dr transform do. A CMB cell
+    at or above the uniform bottom cell gives no CMB refinement; ``Mesh`` decides that, and the
+    4 nodes of a refining CMB cell, in its own coordinate mode. A bool (a TOML ``true``) is
+    refused, not read as 1 m.
     """
+    cmb = mesh.cmb_cell_thickness
+    real = isinstance(cmb, numbers.Real) and not isinstance(cmb, bool)
+    try:
+        finite = real and math.isfinite(cmb)
+    except OverflowError:  # an int beyond any float
+        finite = False
+    if not (real and cmb == 0) and not (finite and cmb >= MIN_CELL_THICKNESS):
+        raise ValueError(
+            f'mesh.cmb_cell_thickness must be 0 (off) or a finite value of at least '
+            f'{MIN_CELL_THICKNESS:g} m; got {cmb!r}'
+        )
+    name, value = 'surface_cell_thickness', mesh.surface_cell_thickness
+    real = isinstance(value, numbers.Real) and not isinstance(value, bool)
+    if (real and value == 0) or (isinstance(value, str) and value == UNIFORM_CELL):
+        return
     need = 4
-    for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
-        value = getattr(mesh, name)
-        real = isinstance(value, numbers.Real) and not isinstance(value, bool)
-        if real and value == 0:
-            continue
-        if (
-            name == 'surface_cell_thickness'
-            and isinstance(value, str)
-            and value == UNIFORM_CELL
-        ):
-            if mesh.cmb_cell_thickness == 0:  # the uniform mesh
-                continue
-            if mesh.number_of_nodes < need:
-                raise ValueError(
-                    f'mesh.cmb_cell_thickness with mesh.{name} = {UNIFORM_CELL!r} needs '
-                    f'number_of_nodes >= {need}, got {mesh.number_of_nodes}'
-                )
-            continue
-        if mesh.number_of_nodes < need:
-            raise ValueError(
-                f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
-            )
-        uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
-        if not (real and MIN_CELL_THICKNESS <= value < uniform):
-            rule = f' or {UNIFORM_CELL!r}' if name == 'surface_cell_thickness' else ''
-            raise ValueError(
-                f'mesh.{name} must be 0 (off){rule} or in [{MIN_CELL_THICKNESS:g}, '
-                f'{uniform:.6g}) m, the uniform radial cell; got {value!r}'
-            )
+    if mesh.number_of_nodes < need:
+        raise ValueError(
+            f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
+        )
+    uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
+    if not (real and MIN_CELL_THICKNESS <= value < uniform):
+        raise ValueError(
+            f'mesh.{name} must be 0 (off) or {UNIFORM_CELL!r} or in [{MIN_CELL_THICKNESS:g}, '
+            f'{uniform:.6g}) m, the uniform radial cell; got {value!r}'
+        )
 
 
 @attrs.define
@@ -107,16 +106,19 @@ class MeshConfig:
         Path to user-defined EOS file.
     surface_cell_thickness, cmb_cell_thickness : float or str
         Radial thickness [m] of the outermost and innermost basic cell. 0 leaves that end
-        unset; with only the other end set, its cells grow. A set value lies in [2 m, uniform
-        radial cell) and refines towards that boundary with a tanh stretching (both ends: the
-        two-sided Vinokur form). In mass-coordinate mode the stretching acts on the mass
-        coordinate and the end cells still have the given radial thickness; there a value at
-        or above the uniform end cell of that mode is refused when the mesh is built.
-        ``surface_cell_thickness = 'uniform'`` (default) sets the outer cell to the top cell
-        of the uniform mesh of the same mode: (outer_radius - inner_radius) /
-        (number_of_nodes - 1) in radius mode, the top cell of the uniform mass-coordinate
-        mesh in mass-coordinate mode. Default CMB cell: 1000 m. With
-        ``cmb_cell_thickness = 0`` and ``'uniform'`` the mesh is the uniform mesh.
+        unset; with only the other end set, its cells grow. A set surface value lies in
+        [2 m, uniform radial cell); a set CMB value is finite and at least 2 m. A set value
+        refines towards that boundary with a tanh stretching (both ends: the two-sided Vinokur
+        form). In mass-coordinate mode the stretching acts on the mass coordinate and the end
+        cells still have the given radial thickness; there a surface value at or above the
+        uniform end cell of that mode is refused when the mesh is built. A CMB value at or
+        above the bottom cell of the uniform mesh of the same mode gives no CMB refinement
+        (that uniform bottom cell), with an INFO log line. ``surface_cell_thickness =
+        'uniform'`` (default) sets the outer cell to the top cell of the uniform mesh of the
+        same mode: (outer_radius - inner_radius) / (number_of_nodes - 1) in radius mode, the
+        top cell of the uniform mass-coordinate mesh in mass-coordinate mode. Default CMB
+        cell: 3000 m. With ``cmb_cell_thickness = 0`` and ``'uniform'`` the mesh is the
+        uniform mesh.
     """
 
     outer_radius: float
@@ -134,7 +136,7 @@ class MeshConfig:
     eos_file: str = ''
     mixing_length_constant_fraction: float = 0.25
     surface_cell_thickness: float | str = UNIFORM_CELL
-    cmb_cell_thickness: float = 1000.0
+    cmb_cell_thickness: float = 3000.0
 
     def __attrs_post_init__(self):
         check_cell_thickness(self)
