@@ -212,6 +212,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         lid_base_mode='rheological',
         s_top_inf=0.25,
         c_theta=0.25,
+        mlt_bottom_slope=1.0,  # the stored 4.5 Gyr trajectory ran with slope 1.0
         yield_stress_c=500.0e6,
         yield_stress_mu=0.6,
         yield_stress_max=500.0e6,
@@ -235,7 +236,13 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
             rtol=1.0e-8,
             tsurf_poststep_change=100.0,
         ),
-        mesh=dataclasses.replace(base_params.mesh, number_of_nodes=100, mass_coordinates=False),
+        mesh=dataclasses.replace(  # the stored trajectory ran on the uniform mesh
+            base_params.mesh,
+            number_of_nodes=100,
+            mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
+        ),
         energy=dataclasses.replace(base_params.energy, kappah_floor=0.0),
         phase_solid=dataclasses.replace(
             base_params.phase_solid, viscosity=p0d.viscosity_solid, rheology=rheo_cal
@@ -396,6 +403,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
                 surface_density=rho_m,
                 gravitational_acceleration=g_m,
                 mass_coordinates=False,
+                cmb_cell_thickness=0.0,  # the stored state vectors are on the uniform mesh
+                surface_cell_thickness=0.0,
             ),
             phase_liquid=_PhaseParameters(
                 melt_fraction=1.0,
