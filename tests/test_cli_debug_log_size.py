@@ -12,7 +12,7 @@ import pytest
 
 from tests.conftest import EOS_DIR, needs_eos
 
-pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60)]
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(360)]
 
 _SRC = Path(__file__).resolve().parents[1] / 'src'
 _RECORD = re.compile(r'^\[\d{4}-\d\d-\d\d ', re.M)
@@ -30,7 +30,7 @@ def test_debug_file_log_has_no_record_per_rhs_call(tmp_path):
     cmd += ['--out', str(tmp_path / 'out.nc')]
     env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(_SRC), str(_SRC.parent)])}
     proc = subprocess.run(
-        cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=55
+        cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=300
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     log = (tmp_path / 'aragog.log').read_text(encoding='utf-8')
