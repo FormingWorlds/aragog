@@ -1582,6 +1582,9 @@ class TestMassCoordinates:
             gravitational_acceleration=9.81,
             adiabatic_bulk_modulus=K_S,
             mass_coordinates=mass_coordinates,
+            # the uniform mesh these tests check, not the refined default
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
         )
         energy = _EnergyParameters(
             conduction=True,

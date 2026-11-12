@@ -3,8 +3,9 @@
 Module under test: the mesh config classes ``aragog.parser._MeshParameters`` (the path of
 the TOML loader and of PROTEUS) and ``aragog.config.MeshConfig``. Invariants: 0 is off; a
 real number in [2, (outer_radius - inner_radius) / (number_of_nodes - 1)) m is kept as
-given; every other value, a bool and a string included, is refused with a ValueError that
-names the field.
+given; every other value, a bool and a string other than the surface rule "uniform"
+included, is refused with a ValueError that names the field. The defaults and the "uniform"
+rule are tested in test_mesh_uniform_top_cell.py.
 """
 
 from __future__ import annotations
@@ -51,13 +52,6 @@ def _refused(build, name, value):
     except Exception as err:  # noqa: BLE001
         pytest.fail(f'{name} = {value!r} raised {type(err).__name__}, not ValueError: {err}')
     pytest.fail(f'{name} = {value!r} was kept')
-
-
-@BUILDERS
-@FIELDS
-def test_the_default_is_off(build, name):
-    """Without the key the field is 0, the uniform grid at that end."""
-    assert getattr(build(), name) == 0.0
 
 
 @BUILDERS

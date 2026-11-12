@@ -366,6 +366,7 @@ def test_constant_property_lid_hands_over_at_once_under_a_thick_closure_lid():
 
     p = _params(outer_bc=5)
     p.mesh.inner_radius = 6071000.0  # a shell 300 km thick, as the tutorial
+    p.mesh.cmb_cell_thickness = p.mesh.surface_cell_thickness = 0.0  # the uniform mesh
     p.phase_solid.viscosity = 1.0e21
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()

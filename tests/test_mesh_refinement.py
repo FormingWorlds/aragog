@@ -94,10 +94,10 @@ def test_unit_grid_hits_both_end_cells_over_a_wide_range():
     np.testing.assert_array_equal(stretched_unit_grid(50), np.linspace(0.0, 1.0, 50))
 
 
-def test_unit_grid_rejects_cells_at_or_above_the_uniform_cell():
-    """A cell fraction below 0, at or above the uniform cell 1 / (n - 1), or NaN is refused at
-    either end."""
-    for bad in (-1e-3, 1.0 / 99, 0.5, np.nan):
+def test_unit_grid_rejects_cells_above_the_uniform_cell():
+    """A cell fraction below 0, above the uniform cell 1 / (n - 1), or NaN is refused at either
+    end; the uniform cell itself is accepted (test_mesh_uniform_top_cell.py)."""
+    for bad in (-1e-3, np.nextafter(1.0 / 99, 1.0), 0.5, np.nan):
         with pytest.raises(ValueError, match='cell fraction'):
             stretched_unit_grid(100, bad, 0.0)
         with pytest.raises(ValueError, match='cell fraction'):
@@ -418,7 +418,7 @@ def _external_mesh(tmp_path, mass_coordinates, top=1e3):
     _write_synthetic_external_mesh(ef, n=30)
     p = _build_parameters_eos_method_2(ef, n_nodes=40)
     p.mesh.mass_coordinates = mass_coordinates
-    p.mesh.surface_cell_thickness = top
+    p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = top, 0.0
     return Mesh(p), ef
 
 

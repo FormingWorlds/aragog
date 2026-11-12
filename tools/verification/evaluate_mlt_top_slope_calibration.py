@@ -345,6 +345,8 @@ def build_korenaga_params(
         surface_density=rho,
         gravitational_acceleration=g,
         mass_coordinates=False,
+        cmb_cell_thickness=0.0,
+        surface_cell_thickness=0.0,
     )
     common = dict(
         density=rho, heat_capacity=cp, thermal_conductivity=k_cond, thermal_expansivity=alpha
@@ -562,6 +564,8 @@ def run_deschamps_vilella_row(
             surface_density=rho,
             gravitational_acceleration=g,
             mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
         )
         common = dict(
             density=rho,

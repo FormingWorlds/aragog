@@ -260,7 +260,9 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
     r_in, r_out = float(radii[0]), float(radii[-1])
     ml_col = np.minimum(radii - r_in, r_out - radii)
     np.testing.assert_allclose(
-        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np),
+        viscous_mixing_length_factor(
+            radii, r_in, r_out, ml_col, bottom_slope=1.0, theta=15.0, xp=np
+        ),
         saved['vml_theta'],
         rtol=1.0e-12,
         atol=0.0,

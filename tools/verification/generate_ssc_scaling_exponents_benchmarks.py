@@ -285,6 +285,8 @@ def build_scaling_case_params(spec: dict[str, Any]) -> Parameters:
             surface_density=rho,
             gravitational_acceleration=grav,
             mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
         ),
         phase_solid=_PhaseParameters(
             melt_fraction=0.0, viscosity=eta_i, rheology=rheo, **common

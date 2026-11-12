@@ -37,7 +37,11 @@ import numpy as np
 
 STEM = 'za'
 RHEOLOGY = dict(
-    enabled=True, stress_closure_mode='lid', yield_stress_c=1.0e7, yield_stress_mu=0.1
+    enabled=True,
+    stress_closure_mode='lid',
+    yield_stress_c=1.0e7,
+    yield_stress_mu=0.1,
+    mlt_bottom_slope=1.0,  # the slope of the stored study runs
 )
 RUN = dict(
     kappah_floor=10.0, viscosity=1.0e21, emissivity=1.0, max_steps=800_000, yield_max=1.0e8
