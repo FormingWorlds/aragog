@@ -224,7 +224,7 @@ class BoundaryConfig:
     equilibrium_temperature : float
         Equilibrium temperature for grey-body BC [K].
     core_heat_capacity : float
-        Core heat capacity [J/(kg K)]. Not read with ``core_bc = 'core_module'``.
+        Core heat capacity [J/(kg K)]. Not used with ``core_bc = 'core_module'``.
     tfac_core_avg : float
         Core adiabat correction factor (Bower+2018).
     param_utbl : bool
