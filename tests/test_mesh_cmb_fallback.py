@@ -118,6 +118,15 @@ def test_a_refining_cmb_cell_needs_4_nodes(mass_coordinates):
 
 
 @MODES
+def test_a_cmb_cell_on_a_single_node_is_refused_by_name(mass_coordinates):
+    """A 1-node mesh has no uniform bottom cell: a CMB cell is refused with the 4-node error,
+    not an IndexError (the mass-mode density of the empty shell divides 0 by 0 on the way)."""
+    with np.errstate(all='ignore'):
+        with pytest.raises(ValueError, match='mesh.cmb_cell_thickness.*number_of_nodes >= 4'):
+            _mesh(3000.0, mass_coordinates, n=1)
+
+
+@MODES
 @pytest.mark.parametrize('value', [math.nan, math.inf, -1.0, 1.0])
 def test_a_cmb_cell_that_is_not_finite_or_below_2_m_is_still_refused(mass_coordinates, value):
     """The fallback does not cover NaN, inf, a negative value or a value in (0, 2 m)."""
