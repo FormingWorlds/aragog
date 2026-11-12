@@ -39,5 +39,6 @@ def test_debug_file_log_has_no_record_per_rhs_call(tmp_path):
     assert records > 0, 'no record matches the log line pattern'
     assert rhs > 300, f'{rhs} RHS calls: the run is too short to show a per-call line'
     assert records < rhs / 10, f'{records} log records for {rhs} RHS calls'
+    assert len(log) < 200_000, f'{len(log)} characters in the log'
     assert 'rate cap segment' in log
     assert 'quantity_at_basic_nodes' not in log

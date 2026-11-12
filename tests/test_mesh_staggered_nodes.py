@@ -10,6 +10,7 @@ that starts below the core-mantle boundary.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -30,7 +31,7 @@ def _rho(r):
     return RHO_S * np.exp(BETA * (R_SURF - r))
 
 
-def _mesh(case, mass_coordinates=True, n_nodes=60):
+def _mesh(case, mass_coordinates=True, n_nodes=60, **settings_kw):
     """An Earth-like mantle mesh; ``case`` is 'aw', 'user' or 'user_below_cmb'."""
     settings = _MeshParameters(
         outer_radius=R_SURF,
@@ -42,6 +43,7 @@ def _mesh(case, mass_coordinates=True, n_nodes=60):
         gravitational_acceleration=9.81,
         adiabatic_bulk_modulus=260e9,
         mass_coordinates=mass_coordinates,
+        **settings_kw,
     )
     if case != 'aw':
         r_start = R_CORE - (0.02 * (R_SURF - R_CORE) if case == 'user_below_cmb' else 0.0)
@@ -128,17 +130,16 @@ def test_uniform_radius_mesh_keeps_midpoints_and_neighbour_density(case):
         )
 
 
-def test_the_transforms_keep_a_linear_field_and_log_nothing(debug_records):
-    """Each transform is exact for a linear field on a radius mesh and writes no DEBUG record.
+@pytest.mark.parametrize('surface_cell', [0.0, 2e4])
+def test_the_transforms_keep_a_linear_field_and_log_nothing(caplog, surface_cell):
+    """Each transform is exact for a linear field on a uniform and a surface-refined radius mesh.
 
-    They run several times per RHS call, and ``aragog run`` writes its file log at DEBUG; the
-    first calls build and log the transform matrices once per mesh.
+    They run several times per RHS call, and ``aragog run`` writes its file log at DEBUG, so they
+    write no record; the constructor logs the transform matrices once per mesh.
     """
-    m = _mesh('aw', mass_coordinates=False, n_nodes=12)
+    m = _mesh('aw', mass_coordinates=False, n_nodes=12, surface_cell_thickness=surface_cell)
     rb, rs = m.basic.radii, m.staggered.radii
-    m.quantity_at_basic_nodes(rs), m.d_dr_at_basic_nodes(rs)
-    assert len(debug_records) == 2
-    debug_records.clear()
+    caplog.set_level(logging.DEBUG, logger='fwl.aragog')
     np.testing.assert_allclose(
         m.quantity_at_basic_nodes(3.0 * rs + 7.0), 3.0 * rb + 7.0, rtol=1e-14
     )
@@ -146,4 +147,4 @@ def test_the_transforms_keep_a_linear_field_and_log_nothing(debug_records):
     np.testing.assert_allclose(
         m.quantity_at_staggered_nodes(3.0 * rb + 7.0), 3.0 * rs + 7.0, rtol=1e-14
     )
-    assert debug_records == []
+    assert caplog.records == []

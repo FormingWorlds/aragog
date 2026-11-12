@@ -245,17 +245,6 @@ def _isolated_package_logger():
         yield
 
 
-@pytest.fixture
-def debug_records():
-    """The records the ``fwl.aragog`` logger emits at DEBUG during the test."""
-    records = []
-    handler = logging.Handler(logging.DEBUG)
-    handler.emit = records.append
-    logging.getLogger('fwl.aragog').addHandler(handler)
-    logging.getLogger('fwl.aragog').setLevel(logging.DEBUG)
-    return records
-
-
 class Helper:
     """Helper class for tests
 

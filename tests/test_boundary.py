@@ -13,6 +13,7 @@ and ``top_temperature``.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -502,7 +503,7 @@ def test_apply_temperature_bc_melt_outer_5_recomputes_dphidr():
     assert dphidr[-1, 0] == pytest.approx(expected, rel=1e-12)
 
 
-def test_apply_flux_boundary_conditions_calls_both_dispatchers(debug_records):
+def test_apply_flux_boundary_conditions_calls_both_dispatchers(caplog):
     """``apply_flux_boundary_conditions`` is the orchestrator that
     invokes inner + outer in order. Verify both happen by setting
     IBC=2 (writes to flux[0]) and OBC=4 (writes to flux[-1]) and
@@ -517,10 +518,11 @@ def test_apply_flux_boundary_conditions_calls_both_dispatchers(debug_records):
     )
     bc = BoundaryConditions(p, _build_mock_mesh())
     state = _build_mock_state()
+    caplog.set_level(logging.DEBUG, logger='fwl.aragog')
     bc.apply_flux_boundary_conditions(state)
     assert float(state.heat_flux[0, 0]) == pytest.approx(4.5e3, rel=1e-12)
     assert float(state.heat_flux[-1, 0]) == pytest.approx(2.5e5, rel=1e-12)
-    assert debug_records == []
+    assert caplog.records == []
 
 
 def test_grey_body_with_utbl_correction_yields_lower_flux():
