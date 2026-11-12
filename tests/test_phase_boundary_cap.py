@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from scipy.optimize import OptimizeResult
 
@@ -20,7 +22,7 @@ from aragog.solver.entropy_solver import (
     _PhaseBoundarySegmentRoot,
     _rate_phase_boundary_max_step,
 )
-from tests.conftest import entropy_eos_copy
+from tests.conftest import assert_legend_clear, entropy_eos_copy, opaque_legend
 
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S, needs_eos
 
@@ -29,6 +31,10 @@ needs_cvode = pytest.mark.skipif(
 )
 S_SOL, S_LIQ, DELTA = 1000.0, 1300.0, 10.0
 WIDE = (0.0, 1e9)
+# Step ends of the long-steps case, written by run_subsolidus_heating_cases.py --step-ends
+LONG_STEPS_DATA = (
+    Path(__file__).parent / 'validation' / 'data' / 'rate_cap_subsolidus_long_steps.json'
+)
 # Long enough for the mushy fixture to reach a progress root after the start segment.
 _SEGMENT_SPAN_YR = 400.0
 
@@ -115,19 +121,29 @@ _cells = st.lists(
 @pytest.mark.unit
 @settings(max_examples=300, deadline=None)
 @given(cells=_cells)
+@example(cells=[(995.0, 1e-3, 1.0), (950.0, -1e-3, 1.0)])
 def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
-    """max_step lies in [1, 100] yr with a cell above the solidus and in [1, inf] without.
+    """max_step lies in [1, 100] yr with a cell above the solidus.
 
-    With every cell cooling (dS/dt < 0) below S_sol - delta no boundary lies ahead, so the step
-    is inf.
+    With every cell at or below S_sol the step is 0.1 min t_c, clipped below at 1 yr only.
+    Here t_c is max(S_sol - S, delta / 2) / max(|dS/dt|, floor) inside delta of the solidus,
+    (S_sol - S) / max(|dS/dt|, floor) for a cell outside it that does not cool, and none for one
+    that cools; the floor is the mass-weighted mean |dS/dt|.
     """
     S, dSdt, mass = (np.array(c, dtype=float) for c in zip(*cells))
     h = _cap(S, dSdt, mass, rate_floor=True, bounds=(1.0, 100.0))
     assert h >= 1.0
     if np.any(S > S_SOL):
         assert h <= 100.0
-    if np.all(S < S_SOL - DELTA) and np.all(dSdt < 0.0):
-        assert np.isinf(h)
+    if np.all(S <= S_SOL):
+        dist = S_SOL - S
+        speed = np.maximum(np.abs(dSdt), np.sum(mass * np.abs(dSdt)) / np.sum(mass))
+        with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+            t_in = np.maximum(dist, 0.5 * DELTA) / speed
+            t_out = np.where(dSdt < 0.0, np.nan, dist / speed)
+        t_c = np.where(dist < DELTA, t_in, t_out)
+        t_c = t_c[np.isfinite(t_c)]
+        assert h == pytest.approx(max(0.1 * t_c.min(), 1.0) if t_c.size else np.inf, rel=1e-12)
 
 
 @pytest.mark.unit
@@ -169,16 +185,35 @@ def test_rate_cap_relaxes_upper_bound_when_all_cells_are_subsolidus():
 
 
 @pytest.mark.unit
-def test_rate_cap_keeps_upper_bound_for_a_heating_cell_in_the_stiff_zone():
-    """A sub-solidus cell heating within delta of the solidus keeps the 100 yr ceiling."""
+def test_rate_cap_relaxes_upper_bound_for_a_heating_subsolidus_cell_in_the_stiff_zone():
+    """A sub-solidus cell heating within delta of the solidus sets fraction * t_c, no 100 yr
+    ceiling."""
+    # Without the rate floor (the _cap default), which isolates the clip; the 250 yr line uses
+    # the floor, as the solver does.
     kw = dict(fraction=0.1, bounds=(1.0, 100.0))
-    assert _cap([S_SOL - 1e-10, 950.0], [1e-4, -1e-2], **kw) == 100.0
+    assert _cap([S_SOL - 1e-10, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
     assert _cap([950.0, 900.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e4)
     assert _cap([S_SOL - 1e-10, 950.0], [-1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
-    assert _cap([S_SOL - 0.7 * DELTA, 950.0], [1e-4, -1e-2], **kw) == 100.0
-    # dS/dt = 0 is not heating; a cell at exactly delta is outside the stiff zone.
+    assert _cap([S_SOL - 0.7 * DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(7.0e3)
+    # A cell at the solidus counts as sub-solidus; the rate floor 2e-3 sets 250 yr (500 yr
+    # without it).
+    assert _cap([S_SOL, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(5.0e3)
+    assert _cap(
+        [S_SOL - 2.0, 950.0], [1e-3, -3e-3], mass=[1.0, 1.0], rate_floor=True, **kw
+    ) == pytest.approx(250.0)
+    # dS/dt = 0 sets no time; a cell at exactly delta uses the distance ahead.
     assert _cap([S_SOL - 1.0, 950.0], [0.0, -1e-2], **kw) == np.inf
     assert _cap([S_SOL - DELTA, 950.0], [1e-4, -1e-2], **kw) == pytest.approx(1.0e4)
+
+
+@pytest.mark.unit
+def test_rate_cap_keeps_upper_bound_while_a_cell_is_mushy():
+    """A mushy cell keeps the 100 yr ceiling, also a slow cell heating within delta of the
+    liquidus."""
+    kw = dict(fraction=0.1, bounds=(1.0, 100.0))
+    assert _cap([1100.0, 950.0], [1e-6, -1e-2], **kw) == 100.0
+    assert _cap([1295.0, 950.0], [1e-6, -1e-2], **kw) == 100.0
+    assert _cap([S_SOL + 1e-10, 950.0], [1e-4, -1e-2], **kw) == 100.0
 
 
 def _roots(S0, inside, cap=None):
@@ -220,6 +255,24 @@ def test_segment_root_stiff_zone_entry_and_exit_with_hysteresis():
     assert ins.fired(0.0, [1305.0, 1400.0]) == 'progress'
     assert ins.components(0.0, [1305.0, 1310.0])[1] == pytest.approx(0.0)
     assert ins.fired(0.0, [1305.0, 1310.0]) == 'entry'
+
+
+@pytest.mark.unit
+def test_segment_root_solidus_component_arms_only_for_a_subsolidus_start():
+    """A start with every entry at or below S_sol arms 'solidus' = min(S_sol + 1e-6 delta - S);
+    it fires just past S_sol."""
+    eps = 1e-6 * DELTA
+    sub = _roots([999.0, 900.0], inside=True)
+    assert sub.names == ['stiff', 'entry', 'progress', 'solidus']
+    assert sub.components(0.0, [999.0, 900.0])[3] == pytest.approx(1.0 + eps, rel=1e-12)
+    assert sub.components(0.0, [999.0, 999.5])[3] == pytest.approx(0.5 + eps, rel=1e-12)
+    assert sub.components(0.0, [1000.0, 900.0])[3] == pytest.approx(eps, rel=1e-9)
+    assert sub.components(0.0, [1000.0 + eps, 900.0])[3] == pytest.approx(0.0, abs=1e-12)
+    assert sub.components(0.0, [1000.0 + eps, 900.0])[2] == pytest.approx(4.0 - eps)
+    assert sub.fired(0.0, [1000.0 + eps, 900.0]) == 'solidus'
+    assert 'solidus' in _roots([S_SOL, 900.0], inside=None).names
+    assert 'solidus' not in _roots([1000.5, 900.0], inside=None).names
+    assert 'solidus' not in _roots([1200.0, 1500.0], inside=False).names
 
 
 class _FakeCap:
@@ -430,6 +483,164 @@ def test_rate_mode_at_the_default_width_matches_a_tight_fixed_run(shared_eos, mo
     margin = s.parameters.energy.phase_boundary_entropy_margin
     assert deltas and min(deltas) > margin
     assert np.abs(T - T_ref).max() <= 0.01 and len(s._solution.segments) >= 1
+
+
+def _heated_subsolidus(eos, mode, tol, isothermal=False, gap=2.0, flux=400.0, eps=0.0):
+    """A 12-node column whose top cell starts ``gap`` J/kg/K below its solidus.
+
+    Default: the other cells 300 J/kg/K below theirs, ``flux`` W/m2 into the top, 10 kyr.
+    ``isothermal``: every cell at the top cell's start temperature, 1e-8 W/kg internal heating
+    and an insulated top, 15 kyr. Returns the solver, output times, entropy, solidus and
+    temperature. ``eps`` scales the start entropy by 1 + eps (a round-off start).
+    """
+    energy = dict(tidal=True, tidal_array=np.array([1e-8])) if isothermal else {}
+    s = _solver(
+        eos,
+        mode,
+        n_nodes=12,
+        end_time=1.5e4 if isothermal else 1.0e4,
+        tol=tol,
+        outer_bc=4,
+        outer_value=0.0 if isothermal else -flux,
+        max_steps=10_000_000,
+        convective_threshold=0.0,
+        **energy,
+    )
+    P = np.ravel(s._P_stag_flat)
+    S_sol = np.asarray(eos.solidus_entropy(P)).ravel()
+    if isothermal:
+        T0 = float(np.ravel(eos.temperature(P[-1:], S_sol[-1:] - gap))[0])
+        S0 = np.array([float(np.ravel(eos.entropy_at_temperature(p, T0))[0]) for p in P])
+    else:
+        S0 = S_sol - 300.0
+    S0[-1] = S_sol[-1] - gap
+    s.set_initial_entropy(S0 * (1.0 + eps))
+    if mode == 'fixed':
+        s._atol_sf = tol / 1.0e-7  # physical atol = tol, not the floor 1e-8 times 10
+    s.solve()
+    S = np.asarray(s._solution.y)[: s._n_stag]
+    T = np.asarray(eos.temperature(P[:, None] * np.ones_like(S), S))
+    return s, np.asarray(s._solution.t), S, S_sol, T
+
+
+def _max_dT_at_shared_outputs(ref, run):
+    """Largest |T - T_ref| [K] over the output times of ``run`` that ``ref`` also has."""
+    (t_ref, T_ref), (t, T) = ref, run
+    pairs = [(i, int(np.argmin(np.abs(t_ref - x)))) for i, x in enumerate(t)]
+    pairs = [(i, j) for i, j in pairs if abs(t_ref[j] - t[i]) <= 1e-9 * max(1.0, t[i])]
+    assert len(pairs) >= 10
+    return max(float(np.abs(T[:, i] - T_ref[:, j]).max()) for i, j in pairs)
+
+
+def _step_ends(s):
+    """Ends [yr] of the accepted CVODE steps: the energy trace with the output times taken out."""
+    t_ref = s._build_nondim_scales().t_ref
+    grid = np.asarray(s._output_grid(0.0, s._solution.t[-1] / t_ref)) * t_ref
+    nodes = np.asarray(s._solution.energy_trace[0])
+    return nodes[~np.isclose(nodes[:, None], grid[None, :], rtol=1e-12, atol=1e-9).any(axis=1)]
+
+
+def _largest_step_before(s, t_lim):
+    """Largest accepted CVODE step [yr] that ends at or before ``t_lim``."""
+    ends = _step_ends(s)
+    steps = np.diff(ends)
+    return float(steps[ends[1:] <= t_lim + 1e-9].max())
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+@pytest.mark.reference_pinned
+@pytest.mark.timeout(240, method='signal')
+def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos, validation_plot):
+    """A segment that starts sub-solidus has a step ceiling above 100 yr and ends where the
+    heated top cell passes its solidus; the next segment starts mushy at 100 yr or less. Over
+    the shared output times the run stays within 1.3e-4 K (the V3-R4 tolerance) of 'fixed' at
+    1 yr, rtol = atol = 1e-10."""
+    ref, t_ref, S_ref, _, T_ref = _heated_subsolidus(shared_eos, 'fixed', 1e-10)
+    s, t, S, S_sol, T = _heated_subsolidus(shared_eos, 'rate', 1e-8)
+    segs = s._solution.segments
+    assert segs[0][2] > 100.0
+    assert [g[1] for g in segs[1:2]] == ['solidus'] and segs[1][2] <= 100.0
+    top = S[-1, int(np.argmin(np.abs(t - segs[1][0])))] - S_sol[-1]
+    assert 0.0 <= top <= 1e-3
+    assert _max_dT_at_shared_outputs((t_ref, T_ref), (t, T)) <= 1.3e-4
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.4, 3.9))
+        ax.plot(t_ref, S_ref[-1] - S_sol[-1], '-', color='C0', lw=2.5, label="'fixed', 1 yr")
+        ax.plot(t, S[-1] - S_sol[-1], '--', color='C1', label="'rate'")
+        ax.plot(
+            [g[0] for g in segs],
+            [S[-1, int(np.argmin(np.abs(t - g[0])))] - S_sol[-1] for g in segs],
+            'o',
+            color='C3',
+            label='segment start',
+        )
+        ax.axhline(0.0, color=plt.rcParams['text.color'], lw=0.8)
+        ax.set_xscale('symlog', linthresh=100.0)
+        ax.set_xlabel('time [yr]')
+        ax.set_xlim(0.0, t[-1])
+        ax.set_ylabel(r'top cell $S - S_\mathrm{sol}$ [J/kg/K]')
+        opaque_legend(ax)
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'rate_cap_subsolidus_solidus_root')
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+@pytest.mark.reference_pinned
+@pytest.mark.timeout(240, method='signal')
+def test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus(
+    shared_eos, validation_plot
+):
+    """With the whole column heated slowly from inside, CVODE takes steps above 1000 yr before
+    the top cell reaches its solidus (the 100 yr ceiling of a heating cell would forbid them);
+    the segment ends at the solidus root and the next one starts at 100 yr or less. Over the
+    shared output times the run stays within 1.3e-4 K of 'fixed' at 1 yr, rtol = atol =
+    1e-10."""
+    ref, t_ref, S_ref, _, T_ref = _heated_subsolidus(
+        shared_eos, 'fixed', 1e-10, isothermal=True
+    )
+    s, t, S, S_sol, T = _heated_subsolidus(shared_eos, 'rate', 1e-8, isothermal=True)
+    segs = s._solution.segments
+    assert segs[0][2] > 1000.0
+    assert [g[1] for g in segs[1:2]] == ['solidus'] and segs[1][2] <= 100.0
+    assert _largest_step_before(s, segs[1][0]) >= 1000.0
+    assert _max_dT_at_shared_outputs((t_ref, T_ref), (t, T)) <= 1.3e-4
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        steps = json.loads(LONG_STEPS_DATA.read_text())
+        fig, ax = plt.subplots(figsize=(5.4, 3.9))
+        ax.plot(t_ref, S_ref[-1] - S_sol[-1], '-', color='C0', lw=2.5, label="'fixed', 1 yr")
+        ax.plot(t, S[-1] - S_sol[-1], '--', color='C1', label="'rate'")
+        ax.plot(
+            steps['step_end_yr'],
+            steps['top_above_solidus'],
+            '|',
+            color='C3',
+            ms=12,
+            mew=1.6,
+            label=f'CVODE step end, {steps["platform"]}',
+        )
+        ax.axhline(0.0, color=plt.rcParams['text.color'], lw=0.8)
+        ax.set_xlabel('time [yr]')
+        ax.set_xlim(0.0, t[-1])
+        ax.set_ylabel(r'top cell $S - S_\mathrm{sol}$ [J/kg/K]')
+        opaque_legend(ax)
+        fig.tight_layout()
+        assert_legend_clear(fig)
+        return fig
+
+    validation_plot(figure, 'rate_cap_subsolidus_long_steps')
 
 
 @needs_eos
