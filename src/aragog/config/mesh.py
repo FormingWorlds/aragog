@@ -63,7 +63,7 @@ class MeshConfig:
         when ``mixing_length_profile = 'constant'``. Default 0.25.
         Ignored for 'nearest_boundary'.
     core_density : float
-        Core density [kg/m^3].
+        Core density [kg/m^3]. Not used with ``boundary_conditions.core_bc = 'core_module'``.
     eos_method : int
         1: Adams-Williamson, 2: User-defined.
     surface_density : float

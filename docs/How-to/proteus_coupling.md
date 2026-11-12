@@ -77,7 +77,7 @@ Aragog supports five core-mantle boundary modes:
 | `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
-| `"core_module"` | Core evolution with inner-core growth. | The core evolution budget of `aragog.core` with a boundary-layer CMB flux; see [Core BC modes](../Explanations/core_bc.md). |
+| `"core_module"` | Core evolution with inner-core growth. | The core evolution budget of `aragog.core` with a boundary-layer CMB flux; it does not use `core_density` and `core_heat_capacity`. See [Core BC modes](../Explanations/core_bc.md). |
 
 ```toml
 [interior_energetics.aragog]
