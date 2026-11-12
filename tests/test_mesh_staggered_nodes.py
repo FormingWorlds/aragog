@@ -126,3 +126,24 @@ def test_uniform_radius_mesh_keeps_midpoints_and_neighbour_density(case):
             0.5 * (rho_b[:-1] + rho_b[1:]),
             rtol=1e-14,
         )
+
+
+def test_the_transforms_keep_a_linear_field_and_log_nothing(debug_records):
+    """Each transform is exact for a linear field on a radius mesh and writes no DEBUG record.
+
+    They run several times per RHS call, and ``aragog run`` writes its file log at DEBUG; the
+    first calls build and log the transform matrices once per mesh.
+    """
+    m = _mesh('aw', mass_coordinates=False, n_nodes=12)
+    rb, rs = m.basic.radii, m.staggered.radii
+    m.quantity_at_basic_nodes(rs), m.d_dr_at_basic_nodes(rs)
+    assert len(debug_records) == 2
+    debug_records.clear()
+    np.testing.assert_allclose(
+        m.quantity_at_basic_nodes(3.0 * rs + 7.0), 3.0 * rb + 7.0, rtol=1e-14
+    )
+    np.testing.assert_allclose(m.d_dr_at_basic_nodes(3.0 * rs + 7.0), 3.0, rtol=1e-9)
+    np.testing.assert_allclose(
+        m.quantity_at_staggered_nodes(3.0 * rb + 7.0), 3.0 * rs + 7.0, rtol=1e-14
+    )
+    assert debug_records == []

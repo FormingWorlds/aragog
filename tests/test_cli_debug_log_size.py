@@ -34,8 +34,9 @@ def test_debug_file_log_has_no_record_per_rhs_call(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     log = (tmp_path / 'aragog.log').read_text(encoding='utf-8')
-    rhs = int(re.search(r'(\d+) RHS evals', log).group(1))
+    rhs = sum(int(n) for n in re.findall(r'(\d+) RHS evals', log))
     records = len(_RECORD.findall(log))
+    assert records > 0, 'no record matches the log line pattern'
     assert rhs > 300, f'{rhs} RHS calls: the run is too short to show a per-call line'
     assert records < rhs / 10, f'{records} log records for {rhs} RHS calls'
     assert 'rate cap segment' in log

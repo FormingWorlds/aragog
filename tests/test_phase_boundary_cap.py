@@ -150,7 +150,10 @@ def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
 @pytest.mark.unit
 @pytest.mark.parametrize('rate', [5e-324, 1e-310, 0.0])
 def test_rate_times_of_a_vanishing_rate_are_inf_without_a_warning(rate):
-    """A subnormal or zero rate under a finite distance gives an infinite time and no warning."""
+    """A subnormal or zero rate under a finite distance gives an infinite time and no warning.
+
+    The subnormal rates overflow the division; the zero rate is the control that divides by 0.
+    """
     S, S_sol, S_liq, mass = [950.0, 990.0], [1000.0] * 2, [1300.0] * 2, [1.0, 1.0]
     with warnings.catch_warnings():
         warnings.simplefilter('error')

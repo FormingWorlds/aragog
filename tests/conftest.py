@@ -239,10 +239,21 @@ def _isolated_package_logger():
     """Restore the package logger after each test, see ``package_logger_isolation``.
 
     ``aragog run`` sets the logger to DEBUG with a console and a file handler for the rest of the
-    process; under DEBUG the mesh formats whole arrays in its debug lines on every state update.
+    process.
     """
     with package_logger_isolation():
         yield
+
+
+@pytest.fixture
+def debug_records():
+    """The records the ``fwl.aragog`` logger emits at DEBUG during the test."""
+    records = []
+    handler = logging.Handler(logging.DEBUG)
+    handler.emit = records.append
+    logging.getLogger('fwl.aragog').addHandler(handler)
+    logging.getLogger('fwl.aragog').setLevel(logging.DEBUG)
+    return records
 
 
 class Helper:
