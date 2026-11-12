@@ -427,7 +427,7 @@ def _rate_phase_boundary_times(
     ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
     d_near = np.maximum(dist, _PhaseBoundarySegmentRoot.alpha * delta)
     d = np.where((dist < delta) | ((rate < floor) & (S > S_sol)), d_near, ahead)
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
         return d / np.maximum(rate, floor)
 
 
