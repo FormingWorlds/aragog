@@ -3,7 +3,7 @@
 Module under test: ``aragog.config.mesh.check_cell_thickness``, the default mesh fields of
 ``aragog.parser._MeshParameters`` and ``aragog.config.MeshConfig``,
 ``aragog.mesh.stretching.stretched_unit_grid`` and ``aragog.mesh.Mesh``.
-Invariants: the default mesh has a 1000 m CMB cell and an outer cell equal to the top cell
+Invariants: the default mesh has a 3000 m CMB cell and an outer cell equal to the top cell
 of the uniform mesh of the same coordinate mode; "uniform" with a CMB cell of 0 is the
 uniform mesh, bit for bit; "uniform" is the only string accepted, and only at the surface.
 """
@@ -67,10 +67,10 @@ def _radii(m):
 
 
 @BUILDERS
-def test_the_default_mesh_fields_are_a_1000_m_cmb_cell_and_the_uniform_top_cell(build):
-    """Without the keys the CMB cell is 1000 m and the surface cell is "uniform"."""
+def test_the_default_mesh_fields_are_a_3000_m_cmb_cell_and_the_uniform_top_cell(build):
+    """Without the keys the CMB cell is 3000 m and the surface cell is "uniform"."""
     m = build()
-    assert (m.cmb_cell_thickness, m.surface_cell_thickness) == (1000.0, UNIFORM_CELL)
+    assert (m.cmb_cell_thickness, m.surface_cell_thickness) == (3000.0, UNIFORM_CELL)
     assert UNIFORM_CELL == 'uniform'
 
 
@@ -83,7 +83,7 @@ def test_the_loader_reads_the_default_and_a_uniform_string(tmp_path):
     """abe_solid.toml has no cell keys: the parsed mesh holds the defaults; a TOML string
     "uniform" for the surface cell is kept."""
     p = Parameters.from_file(CFG)
-    assert (p.mesh.cmb_cell_thickness, p.mesh.surface_cell_thickness) == (1000.0, 'uniform')
+    assert (p.mesh.cmb_cell_thickness, p.mesh.surface_cell_thickness) == (3000.0, 'uniform')
     text = CFG.read_text()
     assert text.count('[mesh]\n') == 1
     path = tmp_path / 'abe_solid.toml'
@@ -111,13 +111,13 @@ def test_uniform_is_refused_for_the_cmb_cell(build):
 
 @BUILDERS
 @pytest.mark.parametrize('n', [1, 2, 3])
-def test_uniform_without_a_cmb_cell_needs_no_4_nodes(build, n):
-    """With the CMB cell at 0 the "uniform" top cell is the uniform mesh, which any node count
-    holds; with a CMB cell it needs 4 nodes like any refined mesh."""
-    kept = build(number_of_nodes=n, cmb_cell_thickness=0.0)
-    assert kept.surface_cell_thickness == 'uniform'
-    with pytest.raises(ValueError, match='number_of_nodes >= 4'):
-        build(number_of_nodes=n)
+def test_uniform_with_any_cmb_cell_is_kept_at_any_node_count(build, n):
+    """The config keeps the "uniform" top cell with or without a CMB cell at any node count:
+    whether the CMB cell refines the mesh, and so needs 4 nodes, is known only when the mesh
+    is built (test_mesh_cmb_fallback.py)."""
+    for cmb in (0.0, 3000.0):
+        kept = build(number_of_nodes=n, cmb_cell_thickness=cmb)
+        assert (kept.surface_cell_thickness, kept.cmb_cell_thickness) == ('uniform', cmb)
 
 
 @pytest.mark.parametrize('n', [4, 24, 80, 160, 1000])
@@ -247,9 +247,10 @@ def test_a_cmb_cell_with_the_uniform_top_builds_or_names_the_field(
     n, cmb, r_in, mass_coordinates
 ):
     """Any CMB cell, node count and inner radius with the "uniform" top cell: either the mesh
-    builds with strictly increasing radii, the CMB cell at its target and the top cell of the
-    uniform mesh (to 1e-6 relative or the 2 m to which mass mode places the uniform radii), or
-    a ValueError names mesh.cmb_cell_thickness."""
+    builds with strictly increasing radii, the bottom cell at the CMB cell when that is below
+    the bottom cell of the uniform mesh and at the uniform bottom cell otherwise, and the top
+    cell of the uniform mesh (to 1e-6 relative or the 2 m to which mass mode places the
+    uniform radii), or a ValueError names mesh.cmb_cell_thickness."""
     try:
         m = _mesh('uniform', cmb, mass_coordinates, n, r_in)
     except ValueError as exc:
@@ -259,16 +260,20 @@ def test_a_cmb_cell_with_the_uniform_top_builds_or_names_the_field(
     event('built')
     d = np.diff(_radii(m))
     assert np.all(d > 0.0)
-    if cmb:
-        assert d[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
     uni = np.diff(_radii(_mesh(0.0, 0.0, mass_coordinates, n, r_in)))
+    if cmb and cmb < uni[0]:
+        event('refined')
+        assert d[0] == pytest.approx(cmb, rel=1e-6, abs=2e-3)
+    else:
+        event('uniform bottom')
+        assert d[0] == uni[0]
     assert d[-1] == pytest.approx(uni[-1], rel=1e-6, abs=_uniform_tol(mass_coordinates))
 
 
 @pytest.mark.parametrize(
     ('lines', 'want'),
     [
-        ('', ('uniform', 1000.0)),
+        ('', ('uniform', 3000.0)),
         ('surface_cell_thickness = 200\ncmb_cell_thickness = 500\n', (200.0, 500.0)),
         ('surface_cell_thickness = uniform\ncmb_cell_thickness = 0\n', ('uniform', 0.0)),
     ],

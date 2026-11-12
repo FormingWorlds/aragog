@@ -2,10 +2,13 @@
 
 Module under test: the mesh config classes ``aragog.parser._MeshParameters`` (the path of
 the TOML loader and of PROTEUS) and ``aragog.config.MeshConfig``. Invariants: 0 is off; a
-real number in [2, (outer_radius - inner_radius) / (number_of_nodes - 1)) m is kept as
-given; every other value, a bool and a string other than the surface rule "uniform"
-included, is refused with a ValueError that names the field. The defaults and the "uniform"
-rule are tested in test_mesh_uniform_top_cell.py.
+surface cell is kept as given when it is a real number in
+[2, (outer_radius - inner_radius) / (number_of_nodes - 1)) m; a CMB cell is kept as given
+when it is a finite real number of at least 2 m (a value at or above the uniform bottom cell
+gives no CMB refinement when the mesh is built, test_mesh_cmb_fallback.py); every other
+value, a bool and a string other than the surface rule "uniform" included, is refused with a
+ValueError that names the field. The defaults and the "uniform" rule are tested in
+test_mesh_uniform_top_cell.py.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ _REQUIRED = dict(
     mixing_length_profile='nearest_boundary', core_density=10738.0,
 )  # fmt: skip
 FIELDS = pytest.mark.parametrize('name', ['surface_cell_thickness', 'cmb_cell_thickness'])
+SURFACE = 'surface_cell_thickness'
+CMB = 'cmb_cell_thickness'
 BUILDERS = pytest.mark.parametrize(
     'build',
     [
@@ -75,10 +80,14 @@ def test_zero_and_a_value_below_the_uniform_cell_are_kept(build, name, value):
     | st.floats(min_value=UNIFORM)
     | st.sampled_from([math.nan, math.inf, -math.inf, -1e-300, UNIFORM, 10**400])
 )
-def test_a_value_outside_the_open_interval_is_refused(build, name, value):
-    """A negative value, a value in (0, 2 m), NaN, inf and a value at or above the uniform
-    cell are refused."""
-    assert f'mesh.{name}' in _refused(build, name, value)
+def test_a_value_outside_the_interval_is_refused(build, name, value):
+    """A negative value, a value in (0, 2 m), NaN and inf are refused for both cells; a value at
+    or above the uniform cell is refused for the surface cell and kept for the CMB cell."""
+    huge = value == 10**400  # an int no float holds: refused as not finite
+    if name == CMB and not huge and math.isfinite(value) and value >= UNIFORM:
+        assert getattr(build(**{name: value}), name) == value
+    else:
+        assert f'mesh.{name}' in _refused(build, name, value)
 
 
 @BUILDERS
@@ -112,13 +121,20 @@ def test_the_loader_keeps_a_value_below_the_uniform_cell(tmp_path, name):
 
 
 @BUILDERS
-@FIELDS
 @pytest.mark.parametrize('n', [1, 2, 3])
-def test_a_cell_thickness_with_fewer_than_4_nodes_is_refused(build, name, n):
-    """A refined mesh needs 4 nodes; 1 to 3 nodes with a cell thickness give a ValueError
-    that names the field, not a ZeroDivisionError or an IndexError."""
-    with pytest.raises(ValueError, match=f'mesh.{name}'):
-        build(**{'number_of_nodes': n, name: 200.0})
+def test_a_surface_cell_with_fewer_than_4_nodes_is_refused(build, n):
+    """A refined mesh needs 4 nodes; 1 to 3 nodes with a surface cell give a ValueError that
+    names the field, not a ZeroDivisionError or an IndexError. The CMB cell is checked against
+    the node count when the mesh is built (test_mesh_cmb_fallback.py)."""
+    with pytest.raises(ValueError, match=f'mesh.{SURFACE}'):
+        build(**{'number_of_nodes': n, SURFACE: 200.0})
+
+
+@BUILDERS
+@pytest.mark.parametrize('n', [1, 2, 3])
+def test_a_cmb_cell_with_fewer_than_4_nodes_is_kept_by_the_config(build, n):
+    """The config keeps a CMB cell at any node count; the mesh decides whether it refines."""
+    assert build(number_of_nodes=n, **{CMB: 200.0}).cmb_cell_thickness == 200.0
 
 
 @BUILDERS
