@@ -112,8 +112,9 @@ class MeshConfig:
         form). In mass-coordinate mode the stretching acts on the mass coordinate and the end
         cells still have the given radial thickness; there a surface value at or above the
         uniform end cell of that mode is refused when the mesh is built. A CMB value at or
-        above the bottom cell of the uniform mesh of the same mode gives no CMB refinement
-        (that uniform bottom cell), with an INFO log line. ``surface_cell_thickness =
+        above the bottom cell of the uniform mesh of the same mode, or less than 1e-5 of it
+        below, gives no CMB refinement, with an INFO log line: that uniform bottom cell with
+        the 'uniform' or 0 surface cell, the bottom cell of the surface-refined grid else. ``surface_cell_thickness =
         'uniform'`` (default) sets the outer cell to the top cell of the uniform mesh of the
         same mode: (outer_radius - inner_radius) / (number_of_nodes - 1) in radius mode, the
         top cell of the uniform mass-coordinate mesh in mass-coordinate mode. Default CMB
