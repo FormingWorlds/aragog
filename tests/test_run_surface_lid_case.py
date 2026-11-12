@@ -271,3 +271,42 @@ def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
     assert d.main(['--collect', str(tmp_path / 'o.npz'), f'a={tmp_path}']) == 0
     out = np.load(tmp_path / 'o.npz')
     assert out['a_delta'].tolist() == [row['delta']] and out['a_T_i'].tolist() == [row['T_i']]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('surface_cell', [None, 5000.0])
+def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
+    """The tools rebuild the mesh and the rheology of the stored runs whatever the defaults
+    are: no CMB refinement, a uniform top cell or the given one, MLT bottom slope 1.0."""
+    from aragog.config import Config
+    from aragog.mesh import Mesh
+
+    d = _driver()
+    cfg = Path(d.__file__).resolve().parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml'
+    c = Config.from_file(str(cfg))
+    d.stored_column(c, surface_cell)
+    assert c.phase_solid.rheology.mlt_bottom_slope == 1.0
+    assert c.phase_solid.rheology.stress_closure_mode == 'lid'
+    old = Config.from_file(str(cfg))  # the mesh of the defaults before the 3000 m CMB cell
+    old.mesh.cmb_cell_thickness = 0.0
+    old.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
+    assert np.array_equal(np.ravel(Mesh(c).basic.radii), np.ravel(Mesh(old).basic.radii))
+
+
+@pytest.mark.unit
+def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path):
+    """check_stored_mesh passes the rebuilt mesh and stops on a part file with other radii."""
+    from aragog.config import Config
+    from aragog.mesh import Mesh
+
+    d = _driver()
+    cfg = Path(d.__file__).resolve().parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml'
+    c = Config.from_file(str(cfg))
+    d.stored_column(c, None)
+    mesh = Mesh(c)
+    r = np.ravel(mesh.basic.radii)
+    np.savez(tmp_path / 'same.npz', r_basic=r)
+    np.savez(tmp_path / 'other.npz', r_basic=r * (1 + 1e-12))
+    d.check_stored_mesh(np.load(tmp_path / 'same.npz'), mesh, 'same')
+    with pytest.raises(SystemExit, match='other: the stored mesh differs'):
+        d.check_stored_mesh(np.load(tmp_path / 'other.npz'), mesh, 'other')
