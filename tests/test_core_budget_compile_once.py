@@ -1,8 +1,9 @@
 """The inner-core boundary solve of ``aragog.core.budget.CoreEnergyBudget`` compiles once.
 
-Module under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``. Invariant: after the
-first calls, an eager call at a new CMB temperature reuses the compiled bisection loop, so a
-long core_module run does not add an XLA program at every step. Compiles are counted with the
+Modules under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``, and
+``aragog.core.regime.refuse_unmodelled_regime``. Invariant: after the first calls, an eager call
+at a new CMB temperature or a new number of states reuses the compiled programs, so a long
+core_module run does not add an XLA program at every step. Compiles are counted with the
 backend-compile events of ``jax.monitoring``.
 """
 
@@ -11,6 +12,7 @@ from __future__ import annotations
 import jax
 import jax.monitoring
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from aragog.core.budget import CoreEnergyBudget
@@ -73,3 +75,17 @@ def test_eager_boundary_solves_at_new_temperatures_reuse_the_compiled_loop(budge
     temperatures = (4000.0, 3990.0, 3980.0, 3970.0, 3960.0)
     assert _compiles(lambda: [budget.r_icb(jnp.float64(t)) for t in temperatures]) == 0
     assert _compiles(lambda: [budget.r_icb(t) for t in temperatures]) == 0
+
+
+def test_the_regime_check_compiles_once_per_length_bucket(budget):
+    """After calls of 101 and 159 states, calls of 120, 150 and 200 states (inside the same
+    power-of-two buckets) compile nothing."""
+    from aragog.core.regime import refuse_unmodelled_regime
+
+    t = np.linspace(4150.0, 4400.0, 200)  # fully liquid: above the onset near 4147 K
+    for n in (101, 159):
+        refuse_unmodelled_regime(budget, t[:n])
+    assert (
+        _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (120, 150, 200)])
+        == 0
+    )
