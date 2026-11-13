@@ -1647,17 +1647,17 @@ class TestMassCoordinates:
         toward ρ_top, and the mass-coord mesh approaches the uniform-r
         mesh.
 
-        Discriminating: a buggy transform that did not respect the
-        density-weighting would give the SAME mesh at all K values, or
-        would diverge with large K. We verify that the L_inf node
-        offset DECREASES as K increases (proper trend) and that at
-        K = 1e15 Pa (effectively incompressible for a 3000 km mantle)
-        the offset is < 0.1% of the mantle thickness.
+        Discriminating: a transform that ignored the density would give the
+        same mesh at all K. The L_inf node offset decreases with K, and in
+        the weakly compressible limit it falls as 1/K: K times the offset
+        agrees to 2 % at 1e12 and 1e13 Pa (measured 0.2 %). K stays at or
+        below 1e13 Pa: above about 1e14 Pa the closed-form AW mass integral
+        cancels to round-off and the mesh refuses the solved radii.
         """
         from aragog.mesh import Mesh
 
         offsets = []
-        K_values = [260e9, 1e12, 1e15]
+        K_values = [260e9, 1e12, 1e13]
         for K in K_values:
             params_uni = self._build_parameters(mass_coordinates=False, K_S=K, N=20)
             params_xi = self._build_parameters(mass_coordinates=True, K_S=K, N=20)
@@ -1673,14 +1673,26 @@ class TestMassCoordinates:
             f'Mass-coord mesh did not approach uniform-r mesh as K→∞: '
             f'offsets {offsets} should be monotonically decreasing.'
         )
-        # At K = 1e15 Pa, AW density variation across the mantle is
-        # < exp(P_cmb / K) ≈ exp(1e11 / 1e15) ≈ 1.0001, i.e. < 0.01%.
-        # The mass-coord and uniform-r meshes must coincide to that
-        # accuracy (with some Newton-xtol slop).
-        assert offsets[-1] < 1e-3, (
-            f'At K = 1e15 Pa the mass-coord mesh should match uniform-r '
-            f'to < 0.1% of mantle thickness; got {offsets[-1]:.2e}.'
-        )
+        linear = offsets[2] * K_values[2] / (offsets[1] * K_values[1])
+        assert abs(linear - 1.0) < 0.02, f'offset does not fall as 1/K: {offsets}'
+
+    def test_the_default_mesh_refuses_the_incompressible_limit_and_names_the_cause(self):
+        """At K_S = 1e15 Pa the closed-form AW mass integral cancels to round-off near the core,
+        so the 3000 m CMB cell of the default mesh is not met and the mesh refuses, naming the
+        bulk modulus; at 1e13 Pa the same mesh builds its 3000 m cell."""
+        from aragog.mesh import Mesh
+
+        def default_mesh(K):
+            p = self._build_parameters(mass_coordinates=True, K_S=K, N=20)
+            p.mesh.cmb_cell_thickness, p.mesh.surface_cell_thickness = 3000.0, 'uniform'
+            return p
+
+        with pytest.raises(
+            ValueError, match=r'likely cause: adiabatic_bulk_modulus = 1e\+15 Pa'
+        ):
+            Mesh(default_mesh(1e15))
+        r = np.asarray(Mesh(default_mesh(1e13)).basic.radii).ravel()
+        assert abs(r[1] - r[0] - 3000.0) <= 2e-3
 
     def test_xi_grid_concentrates_at_cmb(self):
         """Adams-Williamson with realistic K_S (260 GPa): ρ*(P) increases
