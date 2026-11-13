@@ -104,3 +104,25 @@ def test_the_shell_base_check_compiles_once_per_length_bucket(budget):
         _compiles(lambda: [check(solver, budget, t[:n], base[:n]) for n in (102, 110, 128)])
         == 0
     )
+
+
+def test_the_stratified_core_heat_compiles_once_per_length_bucket():
+    """The stratified core heat of the solver finds the layer base of every state of a call;
+    after a call of 33 states, calls of 34 to 64 states (one bucket) compile nothing."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_core_stratified_budget import _budget, _layered_shell
+
+    budget = _budget(stratification=True)
+    cells = budget.shell.n_cells
+    solver = SimpleNamespace(_n_stag=1, _check_shell_base=lambda *a: None)
+
+    def call(n):
+        y = np.zeros((3 + cells, n))
+        y[2] = np.linspace(4100.0, 4200.0, n)
+        y[3:] = np.asarray(_layered_shell(budget))[:, None]
+        EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))
+
+    call(33)
+    assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0
