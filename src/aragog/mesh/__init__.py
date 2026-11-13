@@ -95,6 +95,8 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
 # refined mesh, whose end cells must hold their set thickness.
 RADIUS_XTOL = 1.0
 REFINED_XTOL = 1e-3
+# Bulk modulus [Pa] above which the closed-form Adams-Williamson mass integral cancels to round-off.
+AW_CANCELLATION_K_S = 1e14
 # The stretched-grid solves do not converge for an end cell up to about 2.2e-6 relative below
 # the uniform cell (measured); a CMB cell that close to it falls back.
 CMB_FALLBACK_RTOL = 1.0e-5
@@ -552,6 +554,13 @@ class Mesh:
                 label = f'{UNIFORM_CELL} ({target} m)'
             if target and not abs(cell - target) <= max(atol, 1e-6 * target):
                 bad.append(f'mesh.{name} = {label} gives an end cell of {cell} m')
+        k_s, st = self.settings.adiabatic_bulk_modulus, self.settings
+        if bad and st.mass_coordinates and st.eos_method == 1 and k_s >= AW_CANCELLATION_K_S:
+            bad.append(
+                f'likely cause: adiabatic_bulk_modulus = {k_s:.3g} Pa is at or above '
+                f'{AW_CANCELLATION_K_S:.0e} Pa, where the Adams-Williamson mass integral '
+                'cancels to round-off and moves the solved nodes'
+            )
         if bad:
             raise ValueError('refined mesh: ' + '; '.join(bad))
 
