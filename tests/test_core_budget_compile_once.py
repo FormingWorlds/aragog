@@ -108,7 +108,8 @@ def test_the_shell_base_check_compiles_once_per_length_bucket(budget):
 
 def test_the_stratified_core_heat_compiles_once_per_length_bucket():
     """The stratified core heat of the solver finds the layer base of every state of a call;
-    after a call of 33 states, calls of 34 to 64 states (one bucket) compile nothing."""
+    after a call of 33 states, calls of 34 to 64 states (one bucket) compile nothing, and the
+    effective capacity of each state follows its own layer base."""
     from types import SimpleNamespace
 
     from aragog.solver.entropy_solver import EntropySolver
@@ -121,8 +122,15 @@ def test_the_stratified_core_heat_compiles_once_per_length_bucket():
     def call(n):
         y = np.zeros((3 + cells, n))
         y[2] = np.linspace(4100.0, 4200.0, n)
-        y[3:] = np.asarray(_layered_shell(budget))[:, None]
-        EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))
+        y[3:] = np.asarray(_layered_shell(budget))[:, None] + np.linspace(0.0, 5.0, n)
+        return y, EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))[1]
 
     call(33)
     assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0
+    # The capacity follows the layer base of each state, found by the eager vmap of main.
+    y, c_eff = call(40)
+    base = jax.vmap(budget.shell.layer_base)(y[3:].T, y[2])
+    want = [
+        float(budget.effective_capacity(t, gravitational_upper=u)) for t, u in zip(y[2], base)
+    ]
+    np.testing.assert_allclose(c_eff, want, rtol=1e-12)
