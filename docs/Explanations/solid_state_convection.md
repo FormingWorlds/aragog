@@ -402,7 +402,7 @@ The decay rate is $c_\theta = 0.15$ (`c_theta`), and the stagnant-lid slope is $
 
 **How the slope acts on the flux.** The viscous eddy diffusivity scales as $l^4$ and the viscous velocity scales as $l^3$. `viscous_mixing_length_factor` therefore returns $(l_v / l)^4$, with $l$ the mixing length defined in the word list. At interior nodes, the solver multiplies the viscous velocity by $(l_v / l)^3$ and the viscous eddy diffusivity by $(l_v / l)^4$.
 
-So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5 \times 10^{-3}$ at $\theta = 18$. It rises to $s_\text{bot}^4 = 1$ deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
+So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5.5 \times 10^{-3}$ at $\theta = 18$. It rises to $s_\text{bot}^4 = 1$ deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
 
 Pass 1 uses $s_{\text{top},\infty}$ in both closure modes. In `'lid'` mode the code finds the lid state from the pass-1 fluxes. Pass 2 uses $s_\text{top}(\theta)$ in `'lid'` mode. In `'local'` mode it uses $s_{\text{top},\infty}$ again, so `c_theta` has no effect there.
 
