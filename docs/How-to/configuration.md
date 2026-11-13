@@ -275,7 +275,7 @@ Solid-state mantle rheology, Arrhenius creep, Byerlee yielding, stagnant-lid bou
 | `lid_contrast_coeff` | `float` | -- | `2.2` | (0, inf) | Multiplier $c$ on rheological temperature contrast setting lid base isotherm $T_\text{lid,iso} = T_i - c \, \Delta T_\text{rh}$ |
 | `lid_mask_width_cells` | `float` | cells | `1.0` | (0, inf) | Smoothing transition width at stagnant-lid base in cell units |
 | `phi_visc_single` | `float` | -- | `0.5` | (0, 1) | Melt-fraction threshold for single-phase viscosity switching (`np.where(phi > phi_thresh)`) |
-| `mlt_bottom_slope` | `float` | -- | `0.82` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary) |
+| `mlt_bottom_slope` | `float` | -- | `1.0` | (0, 1] | Mixing-length boundary slope factor at core-mantle boundary (bottom boundary); read only with `enabled = true`, see [Solid-state convection](../Explanations/solid_state_convection.md#viscosity-contrast-dependent-mixing-length-slope) |
 | `s_top_inf` | `float` | -- | `0.22` | (0, 1] | Asymptotic top mixing-length slope at infinite viscosity contrast |
 | `c_theta` | `float` | -- | `0.15` | \[0, inf) | Sensitivity of top mixing-length slope to rheological temperature contrast scale theta; no effect when stress_closure_mode is "local" |
 | `activation_energy` | `float \| None` | J/mol | `null` | (0, inf) when enabled | Activation energy Ea in saturating integral enthalpy law; homologous scaling when unset |

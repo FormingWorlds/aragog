@@ -386,7 +386,9 @@ $$
 l_v(r) = \min\big( s_\text{bot} (r - r_\text{in}), \; s_\text{top}(\theta) (r_\text{out} - r) \big)
 $$
 
-Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $0.82$, read only with the solid rheology on; Tachinami et al. (2011)[^cite-tachinami2011] set the mixing length to 0.82 times the distance from the boundary so that the heat flux at the base of the mantle of the mixing-length model matches parameterised convection and boundary-layer theory, for a radially constant viscosity without internal heating, their Appendix A). `compute_mlt_top_slope` calculates the upper boundary slope:
+Here $s_\text{bot}$ is the lower boundary slope, `mlt_bottom_slope`, with the default 1.0, the slope with which $s_{\text{top},\infty}$ was calibrated. The solver reads it only with the solid rheology on.
+
+`compute_mlt_top_slope` calculates the upper boundary slope:
 
 $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
@@ -400,9 +402,13 @@ The decay rate is $c_\theta = 0.15$ (`c_theta`), and the stagnant-lid slope is $
 
 **How the slope acts on the flux.** The viscous eddy diffusivity scales as $l^4$ and the viscous velocity scales as $l^3$. `viscous_mixing_length_factor` therefore returns $(l_v / l)^4$, with $l$ the mixing length defined in the word list. At interior nodes, the solver multiplies the viscous velocity by $(l_v / l)^3$ and the viscous eddy diffusivity by $(l_v / l)^4$.
 
-So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5 \times 10^{-3}$ at $\theta = 18$. It rises to 1 deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
+So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5 \times 10^{-3}$ at $\theta = 18$. It rises to $s_\text{bot}^4 = 1$ deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
 
 Pass 1 uses $s_{\text{top},\infty}$ in both closure modes. In `'lid'` mode the code finds the lid state from the pass-1 fluxes. Pass 2 uses $s_\text{top}(\theta)$ in `'lid'` mode. In `'local'` mode it uses $s_{\text{top},\infty}$ again, so `c_theta` has no effect there.
+
+### The Bottom Slope and Tachinami et al. (2011)
+
+Tachinami et al. (2011)[^cite-tachinami2011] write the viscous convective flux with $\ell^4$ and no numerical factor (their Eq. 13 and 14, p. 5). They set $\ell$ to 0.82 times the distance from the nearest boundary, fitted for a radially constant viscosity without internal heating (their Appendix A, p. 15). The viscous velocity of Aragog carries a factor 1/18, so at the same mixing length its convective flux is 1/18 of theirs. In their terms, $s_\text{bot} = 1$ is a mixing length of 0.49 times the distance from the CMB. Their 0.82 would need $s_\text{bot} = 1.69$, outside the accepted range (0, 1].
 
 **Known limit.** At the default pair $(0.22, 0.15)$, the slope fits neither the planar nor the spherical benchmark set. Of the 2 stored pairs, only $(0.25, 0.25)$ meets the planar tolerance, and a single upper slope without a spherical-curvature geometry factor does not match the spherical set as well. [Top slope against published grids](../Validation/solid_state_convection.md#the-top-slope-against-published-convection-grids) gives the conditions and the numbers.
 
@@ -506,7 +512,7 @@ In this mode, yielding is not a stress cap. The two-pass update works in these s
 | `lid_contrast_coeff` | - | `2.2` |
 | `lid_mask_width_cells` | - | `1.0` |
 | `phi_visc_single` | - | `0.5` |
-| `mlt_bottom_slope` | - | `0.82` |
+| `mlt_bottom_slope` | - | `1.0` |
 | `s_top_inf` | - | `0.22` |
 | `c_theta` | - | `0.15` |
 | `activation_energy` | J/mol | `None` |
