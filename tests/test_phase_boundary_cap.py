@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -144,6 +145,26 @@ def test_rate_cap_property_bounds_and_subsolidus_relaxation(cells):
         t_c = np.where(dist < DELTA, t_in, t_out)
         t_c = t_c[np.isfinite(t_c)]
         assert h == pytest.approx(max(0.1 * t_c.min(), 1.0) if t_c.size else np.inf, rel=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('rate', [5e-324, 1e-310, 0.0])
+def test_rate_times_of_a_vanishing_rate_are_inf_without_a_warning(rate):
+    """A subnormal or zero rate under a finite distance gives an infinite time and no warning.
+
+    The subnormal rates overflow the division; the zero rate is the control that divides by 0.
+    """
+    S, S_sol, S_liq, mass = [950.0, 990.0], [1000.0] * 2, [1300.0] * 2, [1.0, 1.0]
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        t = es._rate_phase_boundary_times(
+            *(np.array(a) for a in (S, [rate, rate], S_liq, S_sol, mass)), DELTA
+        )
+    assert np.all(np.isposinf(t))
+    finite = es._rate_phase_boundary_times(
+        *(np.array(a) for a in (S, [1.0, 1.0], S_liq, S_sol, mass)), DELTA
+    )
+    np.testing.assert_allclose(finite, [50.0, 10.0], rtol=1e-12)
 
 
 @pytest.mark.unit

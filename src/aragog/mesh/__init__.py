@@ -630,10 +630,7 @@ class Mesh:
         Returns:
             d/dr at the basic nodes
         """
-        d_dr_at_basic_nodes: npt.NDArray = self._d_dr_transform.dot(staggered_quantity)
-        logger.debug('d_dr_at_basic_nodes = %s', d_dr_at_basic_nodes)
-
-        return d_dr_at_basic_nodes
+        return self._d_dr_transform.dot(staggered_quantity)
 
     def _get_quantity_transform_matrix(self) -> npt.NDArray:
         """A transform matrix for mapping quantities on the staggered mesh to the basic mesh.
@@ -681,10 +678,7 @@ class Mesh:
         Returns:
             The quantity at the basic nodes
         """
-        quantity_at_basic_nodes: npt.NDArray = self._quantity_transform.dot(staggered_quantity)
-        logger.debug('quantity_at_basic_nodes = %s', quantity_at_basic_nodes)
-
-        return quantity_at_basic_nodes
+        return self._quantity_transform.dot(staggered_quantity)
 
     @property
     def top_ratio(self) -> float:
@@ -734,12 +728,7 @@ class Mesh:
         Returns:
             The quantity at the staggered nodes
         """
-        quantity_at_staggered_nodes: npt.NDArray = 0.5 * (
-            basic_quantity[:-1, ...] + basic_quantity[1:, ...]
-        )
-        logger.debug('quantity_at_staggered_nodes = %s', quantity_at_staggered_nodes)
-
-        return quantity_at_staggered_nodes
+        return 0.5 * (basic_quantity[:-1, ...] + basic_quantity[1:, ...])
 
     def volume_average(self, staggered_quantity: npt.NDArray) -> float:
         return np.dot(staggered_quantity.T, self.basic.volume).item() / self.basic.total_volume
