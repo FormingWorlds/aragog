@@ -1,9 +1,10 @@
 """The inner-core boundary solve of ``aragog.core.budget.CoreEnergyBudget`` compiles once.
 
-Modules under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``, and
-``aragog.core.regime.refuse_unmodelled_regime``. Invariant: after the first calls, an eager call
-at a new CMB temperature or a new number of states reuses the compiled programs, so a long
-core_module run does not add an XLA program at every step. Compiles are counted with the
+Modules under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``,
+``aragog.core.regime.refuse_unmodelled_regime`` and ``aragog.solver.entropy_solver._padded_call``.
+Invariants: after the first calls, an eager call at a new CMB temperature or a new number of
+states reuses the compiled programs, so a long core_module run does not add an XLA program at
+every step; the padding to a length bucket changes no value. Compiles are counted with the
 backend-compile events of ``jax.monitoring``.
 """
 
@@ -22,12 +23,12 @@ from aragog.core.profiles import GaussianCoreProfiles
 pytestmark = pytest.mark.unit
 
 _COMPILE = '/jax/core/compile/backend_compile_duration'
-_COUNT = {'on': False, 'n': 0}
+_SEEN = []
 
 
 def _listen(name, _duration, **_kw):
-    if _COUNT['on'] and name == _COMPILE:
-        _COUNT['n'] += 1
+    if name == _COMPILE:
+        _SEEN.append(name)
 
 
 jax.monitoring.register_event_duration_secs_listener(_listen)
@@ -35,12 +36,9 @@ jax.monitoring.register_event_duration_secs_listener(_listen)
 
 def _compiles(calls):
     """Number of backend compiles while ``calls()`` runs."""
-    _COUNT.update(on=True, n=0)
-    try:
-        calls()
-    finally:
-        _COUNT['on'] = False
-    return _COUNT['n']
+    _SEEN.clear()
+    calls()
+    return len(_SEEN)
 
 
 @pytest.fixture
@@ -134,3 +132,35 @@ def test_the_stratified_core_heat_compiles_once_per_length_bucket():
         float(budget.effective_capacity(t, gravitational_upper=u)) for t, u in zip(y[2], base)
     ]
     np.testing.assert_allclose(c_eff, want, rtol=1e-12)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('n', [1, 5, 8, 9, 33, 100])
+def test_padding_changes_no_value(budget, n):
+    """For states across T_freeze and T_onset, the padded boundary solve, regime codes and layer
+    base equal the unpadded calls bit for bit."""
+    import contextlib
+
+    from aragog.core.regime import refuse_unmodelled_regime
+    from aragog.solver.entropy_solver import _padded_call
+    from tests.test_core_stratified_budget import _budget, _layered_shell
+
+    def across(b):
+        return np.linspace(b.t_freeze - 30.0, b.t_onset + 30.0, max(n, 2))[-n:]
+
+    t = across(budget)
+    assert np.array_equal(_padded_call(budget.r_icb_batch, t), budget.r_icb_batch(t))
+
+    real, seen = budget.regime_batch, []
+    budget.regime_batch = lambda x: seen.append(np.asarray(real(x))) or seen[-1]
+    with contextlib.suppress(ValueError):  # states between the two may be refused
+        refuse_unmodelled_regime(budget, t)
+    assert np.array_equal(seen[0][:n], real(t))
+
+    strat = _budget(stratification=True)
+    t_core = across(strat)
+    t_shell = np.asarray(_layered_shell(strat))[None, :] + np.linspace(0.0, 5.0, n)[:, None]
+    layer_base = jax.vmap(strat.shell.layer_base)
+    assert np.array_equal(
+        _padded_call(layer_base, t_shell, t_core), layer_base(t_shell, t_core)
+    )
