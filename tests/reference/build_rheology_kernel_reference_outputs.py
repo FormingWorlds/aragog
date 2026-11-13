@@ -128,10 +128,12 @@ def _evaluate_grid_with_modules(mod_r, mod_l) -> dict[str, np.ndarray]:
     r_out = float(radii[-1])
     ml_col = np.minimum(radii - r_in, r_out - radii)
     out['vml_none'] = np.asarray(
-        mod_r.viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np)
+        mod_r.viscous_mixing_length_factor(radii, r_in, r_out, ml_col, bottom_slope=1.0, xp=np)
     )
     out['vml_theta'] = np.asarray(
-        mod_r.viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np)
+        mod_r.viscous_mixing_length_factor(
+            radii, r_in, r_out, ml_col, bottom_slope=1.0, theta=15.0, xp=np
+        )
     )
 
     # 7. compute_stagnant_lid_state
@@ -259,14 +261,16 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
     radii = np.linspace(3.48e6, 6.371e6, 30)
     r_in, r_out = float(radii[0]), float(radii[-1])
     ml_col = np.minimum(radii - r_in, r_out - radii)
-    np.testing.assert_allclose(
-        viscous_mixing_length_factor(
-            radii, r_in, r_out, ml_col, bottom_slope=1.0, theta=15.0, xp=np
-        ),
-        saved['vml_theta'],
-        rtol=1.0e-12,
-        atol=0.0,
-    )
+    for key, theta in (('vml_none', None), ('vml_theta', 15.0)):
+        np.testing.assert_allclose(
+            viscous_mixing_length_factor(
+                radii, r_in, r_out, ml_col, bottom_slope=1.0, theta=theta, xp=np
+            ),
+            saved[key],
+            rtol=1.0e-12,
+            atol=0.0,
+            err_msg=key,
+        )
     lid_st = compute_stagnant_lid_state(
         radii=radii,
         temperature=np.linspace(3000.0, 1500.0, 30),
@@ -359,8 +363,10 @@ def main(argv: list[str] | None = None) -> int:
             f'(pinned to main commit {MAIN_BASE_COMMIT}).'
         )
     outputs = compute_main_reference_grid_outputs(MAIN_BASE_COMMIT)
-    np.savez(args.output, **outputs)
-    verify_fixture(args.output)
+    candidate = args.output.with_name(args.output.stem + '.candidate.npz')
+    np.savez(candidate, **outputs)
+    verify_fixture(candidate)  # the fixture is replaced only by a verified file
+    candidate.replace(args.output)
     print(f'Wrote and verified {args.output} ({len(outputs)} keys).')
     return 0
 
