@@ -78,14 +78,18 @@ def test_eager_boundary_solves_at_new_temperatures_reuse_the_compiled_loop(budge
 
 
 def test_the_regime_check_compiles_once_per_length_bucket(budget):
-    """After calls of 101 and 159 states, calls of 120, 150 and 200 states (inside the same
-    power-of-two buckets) compile nothing."""
+    """After calls of 2, 101 and 159 states, calls of 120, 150 and 200 states (inside the same
+    power-of-two buckets) and of 1, 3, 5 and 7 states (the smallest bucket) compile nothing."""
     from aragog.core.regime import refuse_unmodelled_regime
 
     t = np.linspace(4150.0, 4400.0, 200)  # fully liquid: above the onset near 4147 K
-    for n in (101, 159):
+    for n in (2, 101, 159):
         refuse_unmodelled_regime(budget, t[:n])
     assert (
         _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (120, 150, 200)])
         == 0
+    )
+    # Below 8 states every call shares the smallest bucket.
+    assert (
+        _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (1, 3, 5, 7)]) == 0
     )
