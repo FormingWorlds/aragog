@@ -73,6 +73,7 @@ def _build(
     cvode_output_points: int | None = None,
     core_heat_capacity: float = 880.0,
     core_density: float = 10500.0,
+    cells: tuple = (0.0, 0.0),
 ):
     from aragog.parser import (
         Parameters,
@@ -119,8 +120,9 @@ def _build(
         mixing_length_profile='nearest_boundary',
         core_density=core_density,
         eos_method=1,
-        cmb_cell_thickness=0.0,  # uniform mesh: the reference numbers of its tests
-        surface_cell_thickness=0.0,
+        # the uniform mesh by default: the reference numbers of the tests
+        cmb_cell_thickness=cells[0],
+        surface_cell_thickness=cells[1],
     )
     pl = _PhaseParameters(
         density=4000.0,
@@ -700,7 +702,9 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
     of its CMB heat (6.2e17 J, measured 1.7e-10): the core and shell heat changes are booked from
     the integrated temperature changes, not from absolute temperatures, whose float spacing
     (9e-13 K) times C_eff is 2.3e-4 of that heat; the same booking from the stored states misses
-    the bound."""
+    the bound. The case needs the uniform mesh: on a 3000 m CMB cell the call carries 4.5e20 J,
+    the float spacing is 720 times smaller against it, and the stored-state booking closes to
+    8.2e-8, closer than the integrated one (1.3e-7)."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -717,6 +721,31 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
     y = np.asarray(solver._solution.y)[:, [0, -1]]
     old = solver._core_heat_change(solver._core_module_budget, y, y - y[:, :1])[0]
     assert abs(old + out.step_dE_F_cmb_J) > 1e-8 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_stratified_call_on_a_3000_m_cmb_cell_closes_its_core_ledger():
+    """On a 3000 m CMB cell at tolerances 1e-3 of the default, the 5 yr stratified call closes its
+    core ledger to 5e-7 of its CMB heat (4.5e20 J). The closure is the integration error of the
+    call: 1.33e-7 to 1.35e-7 over 3 round-off starts, 1.74e-7 with 10000 output points, and it
+    falls as the tolerance tightens (8.9e-9 at 1e-5)."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+        cells=(3000.0, 'uniform'),
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    r = np.asarray(solver._r_basic_flat)
+    assert r[1] - r[0] == pytest.approx(3000.0, abs=1e-3)
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 5e-7 * abs(out.step_dE_F_cmb_J)
 
 
 @needs_cvode
@@ -750,7 +779,9 @@ def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
 def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     """A core 300 K below the mantle gains heat through the CMB: the top shell cell warms toward
     the mantle while the convecting core below barely changes, and the heat the core gains is
-    the heat booked out of the mantle to 1e-7 (measured 2.0e-8)."""
+    the heat booked out of the mantle to 1e-7 (measured 2.0e-8). On the uniform mesh of the
+    builder: on a 3000 m CMB cell the call at the default tolerance closes only to 6.1e-7, its
+    integration error, in 10 min, so the variant below runs that mesh at tolerances 1e-3."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -771,6 +802,35 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
     assert out.core_T_top == y[-1, -1]
     assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-7 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_core_heated_from_above_on_a_3000_m_cmb_cell_closes_its_heat():
+    """The core 300 K below the mantle on a 3000 m CMB cell, at tolerances 1e-3 of the default:
+    the heat the core gains is the heat booked out of the mantle to 1e-8 (measured 3.2e-9; 1.6e-8
+    at 1e-2 and 6.1e-7 at the default tolerance, the integration error of the call)."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+        cells=(3000.0, 'uniform'),
+    )
+    S = _driven_s_profile(solver._n_stag)
+    p_cmb = solver._P_basic_flat[:1]
+    t_m = float(np.asarray(solver.entropy_eos.temperature(p_cmb, S[:1])).item())
+    solver.set_initial_core_temperature(t_m - 300.0)
+    solver.set_initial_entropy(S)
+    solver._atol_sf = 1e-3
+    solver.parameters.solver.rtol *= 1e-3
+    solver.solve()
+    out = solver.get_state()
+    r = np.asarray(solver._r_basic_flat)
+    assert r[1] - r[0] == pytest.approx(3000.0, abs=1e-3)
+    assert out.step_dE_F_cmb_J < 0.0
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])
