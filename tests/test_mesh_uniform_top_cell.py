@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import HealthCheck, event, given, settings
+from hypothesis import HealthCheck, event, example, given, settings
 from hypothesis import strategies as st
 
 import aragog
@@ -148,6 +148,7 @@ def test_the_unit_grid_still_refuses_an_end_cell_above_the_uniform_cell(n):
 @pytest.mark.physics_invariant
 @settings(max_examples=200, deadline=None)
 @given(n=st.integers(min_value=4, max_value=1000), u=st.floats(min_value=0.0, max_value=1.0))
+@example(n=364, u=1.0)
 def test_the_two_sided_grid_with_a_uniform_last_cell_holds_both_targets(n, u):
     """For a first cell from 1e-7 to just below 1 / (n - 1) (log-uniform) and a last cell of
     exactly 1 / (n - 1): the grid runs from 0 to 1, increases strictly and holds both
@@ -166,6 +167,42 @@ def test_the_two_sided_grid_with_a_uniform_last_cell_holds_both_targets(n, u):
     assert np.all(d > 0.0)
     assert d[0] == pytest.approx(first, rel=1e-6)
     assert d[-1] == pytest.approx(h, rel=1e-6)
+
+
+def test_a_first_cell_1_ulp_below_the_uniform_cell_keeps_the_grid_when_sinh_rounds_up(
+    monkeypatch,
+):
+    """At 364 nodes a first cell 1 ulp below 1 / (n - 1) and a uniform last cell give
+    h / sqrt(first last) = 1 exactly, so the start value of the two-sided solve has its root at
+    the lower end of the bracket. A sinh that returns 1 ulp above d there, as some vectorised
+    builds do, must still give the uniform grid."""
+    import aragog.mesh.stretching as stretching
+
+    sinh = np.sinh
+
+    def sinh_up(d):
+        return np.nextafter(sinh(d), np.inf)
+
+    monkeypatch.setattr(stretching.np, 'sinh', sinh_up)
+    n = 364
+    h = 1.0 / (n - 1)
+    first = np.nextafter(h, 0.0)
+    assert h / np.sqrt(first * h) == 1.0
+    s = stretched_unit_grid(n, first, h)
+    d = np.diff(s)
+    assert (s[0], s[-1]) == (0.0, 1.0) and np.all(d > 0.0)
+    np.testing.assert_allclose(s, np.linspace(0.0, 1.0, n), rtol=0.0, atol=1e-9)
+
+
+def test_the_two_sided_solve_refuses_a_cell_pair_above_the_uniform_cell():
+    """Two end cells 1 % above 1 / (n - 1) give h / sqrt(first last) = 1 / 1.01: no stretch
+    reaches them, and the solve says so with both cells."""
+    from aragog.mesh.stretching import _two_sided
+
+    n = 80
+    h = 1.0 / (n - 1)
+    with pytest.raises(ValueError, match='cannot reach the first cell'):
+        _two_sided(np.linspace(0.0, 1.0, n), 1.01 * h, 1.01 * h)
 
 
 @MODES
