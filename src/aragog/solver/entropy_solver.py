@@ -6796,7 +6796,7 @@ class EntropySolver:
         """Refuse an inner core that reaches the shell base, and warn once when the layer base
         comes within three cells of it, where the shell no longer holds the layer."""
         shell = budget.shell
-        r_icb = float(np.max(np.asarray(budget.r_icb_batch(t_core))))
+        r_icb = float(np.max(_padded_call(budget.r_icb_batch, t_core)))
         if r_icb >= shell.r_base:
             raise ValueError(
                 f'core_module: the inner core ({r_icb / 1e3:.0f} km) reaches the base of the '
