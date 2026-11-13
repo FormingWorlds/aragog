@@ -992,13 +992,16 @@ _STATUS_DESCRIPTION = (
 
 
 def _padded_call(fn, *arrays):
-    """``fn(*arrays)`` on arrays padded to a power-of-2 length with their last value, so a jitted
-    ``fn`` compiles once per size class; the result is cut back to the input length."""
+    """``fn(*arrays)`` on arrays padded along their first axis to a power-of-2 length with their
+    last entry, so ``fn`` compiles once per size class; the result is cut back to the input
+    length."""
     n = len(arrays[0])
     if n == 0:
         return np.zeros(0)
     m = 1 << (n - 1).bit_length()
-    return np.asarray(fn(*(np.pad(np.asarray(a), (0, m - n), 'edge') for a in arrays)))[:n]
+    pad = [(0, m - n)]
+    padded = (np.pad(a, pad + [(0, 0)] * (a.ndim - 1), 'edge') for a in map(np.asarray, arrays))
+    return np.asarray(fn(*padded))[:n]
 
 
 _ZERO_ENERGY_INTEGRALS = {
@@ -6606,7 +6609,7 @@ class EntropySolver:
         if budget.stratification:
             shell = budget.shell
             t_shell = np.asarray(y_arr[n + 2 : n + 2 + shell.n_cells], dtype=float).T
-            base = np.asarray(jax.vmap(shell.layer_base)(t_shell, t_core))
+            base = _padded_call(jax.vmap(shell.layer_base), t_shell, t_core)
 
             def c_eff(t, upper):
                 return budget.effective_capacity(t, gravitational_upper=upper)
