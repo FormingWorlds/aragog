@@ -13,6 +13,8 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from aragog.config import Config
+from aragog.mesh import Mesh
 from tests.conftest import entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
@@ -22,6 +24,7 @@ pytestmark = [pytest.mark.timeout(600)]
 
 DRIVER = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_surface_lid_case.py'
 SERIES = DRIVER.with_name('run_surface_lid_series.py')
+CFG = str(DRIVER.parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml')
 
 
 @functools.cache
@@ -278,16 +281,12 @@ def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
 def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
     """The tools rebuild the mesh and the rheology of the stored runs whatever the defaults
     are: no CMB refinement, a uniform top cell or the given one, MLT bottom slope 1.0."""
-    from aragog.config import Config
-    from aragog.mesh import Mesh
-
     d = _driver()
-    cfg = Path(d.__file__).resolve().parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml'
-    c = Config.from_file(str(cfg))
+    c = Config.from_file(CFG)
     d.stored_column(c, surface_cell)
     assert c.phase_solid.rheology.mlt_bottom_slope == 1.0
     assert c.phase_solid.rheology.stress_closure_mode == 'lid'
-    ref = Config.from_file(str(cfg))  # the mesh of the stored runs, set field by field
+    ref = Config.from_file(CFG)  # the mesh of the stored runs, set field by field
     ref.mesh.cmb_cell_thickness = 0.0
     ref.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
     assert np.array_equal(np.ravel(Mesh(c).basic.radii), np.ravel(Mesh(ref).basic.radii))
@@ -297,12 +296,8 @@ def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
 def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path, capsys):
     """check_stored_mesh passes the rebuilt mesh and its round-off, stops on a part file whose
     radii moved by km, and warns on a part file without radii."""
-    from aragog.config import Config
-    from aragog.mesh import Mesh
-
     d = _driver()
-    cfg = Path(d.__file__).resolve().parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml'
-    c = Config.from_file(str(cfg))
+    c = Config.from_file(CFG)
     d.stored_column(c, None)
     mesh = Mesh(c)
     r = np.ravel(mesh.basic.radii)
