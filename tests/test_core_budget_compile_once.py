@@ -105,3 +105,21 @@ def test_the_regime_check_compiles_once_per_power_of_two_bucket(budget):
     assert (
         _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in range(2, 513)]) == 6
     )
+
+
+def test_the_shell_base_check_compiles_once_per_length_bucket(budget):
+    """The shell-base check of the solver runs the batched boundary solve on all states of a
+    call; after calls of 101 states, calls of 102 to 128 states compile nothing."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    budget.shell = SimpleNamespace(r_base=3.0e6, r_faces=np.linspace(3.0e6, 3.48e6, 10))
+    solver = SimpleNamespace()
+    t, base = np.linspace(4150.0, 4400.0, 128), np.full(128, 3.4e6)
+    EntropySolver._check_shell_base(solver, budget, t[:101], base[:101])
+    check = EntropySolver._check_shell_base
+    assert (
+        _compiles(lambda: [check(solver, budget, t[:n], base[:n]) for n in (102, 110, 128)])
+        == 0
+    )
