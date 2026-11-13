@@ -287,6 +287,8 @@ def run_v4(eos_dir, name, end_time=None):
     p0 = Parameters.from_file(ROOT / 'src/aragog/cfg/abe_solid.toml')
     p = dataclasses.replace(
         p0,
+        # the uniform mesh and slope 1 of the V4 rows in numerics.md
+        mesh=dataclasses.replace(p0.mesh, cmb_cell_thickness=0.0, surface_cell_thickness=0.0),
         energy=dataclasses.replace(
             p0.energy,
             use_jax_jacobian=True,
@@ -308,7 +310,11 @@ def run_v4(eos_dir, name, end_time=None):
         from aragog.parser import SolidRheologyParams  # with the solid rheology solver wiring
 
         rheo = SolidRheologyParams(
-            enabled=True, s_top_inf=0.25, c_theta=0.25, stress_closure_mode='lid'
+            enabled=True,
+            s_top_inf=0.25,
+            c_theta=0.25,
+            stress_closure_mode='lid',
+            mlt_bottom_slope=1.0,
         )
         p = dataclasses.replace(
             p, phase_solid=dataclasses.replace(p.phase_solid, rheology=rheo)
