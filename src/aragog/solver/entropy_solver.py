@@ -2490,6 +2490,13 @@ class EntropySolver:
                     float(budget.profiles.length_scale) / 1e3,
                 )
             self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
+            self._warn_once(
+                'core_fields_unused',
+                f"core_bc = 'core_module' does not use core_heat_capacity = {self._core_cp:g} "
+                f'J/(kg K) or core_density = {self._core_density:g} kg/m^3; the core module '
+                'takes the core density and heat capacity from core_module_params',
+                level=logging.INFO,
+            )
             if self._core_module_budget.stratification:
                 self._warn_once(
                     'core_stratification',
