@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -19,8 +18,6 @@ from aragog.parser import Parameters, _BoundaryConditionsParameters
 # via _PhiCapRootFunction and the dSdt closures).
 if TYPE_CHECKING:
     State = Any
-
-logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @dataclass
@@ -103,8 +100,6 @@ class BoundaryConditions:
         """
         self.apply_flux_inner_boundary_condition(state)
         self.apply_flux_outer_boundary_condition(state)
-        logger.debug('temperature = %s', state.temperature_basic)
-        logger.debug('heat_flux = %s', state.heat_flux)
 
     def apply_flux_outer_boundary_condition(self, state: State) -> None:
         """Applies the flux boundary condition to the state at the outer boundary.
