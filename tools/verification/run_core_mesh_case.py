@@ -31,6 +31,7 @@ import argparse
 import csv
 import json
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -87,11 +88,9 @@ def case_config(text: str, a: argparse.Namespace) -> str:
         if opt == 'surface_cell' and value != 'uniform':
             value = float(value)
         value = '"uniform"' if value == 'uniform' else repr(value)
-        lines = text.splitlines()
-        hits = [i for i, line in enumerate(lines) if line.split('=')[0].strip() == key]
-        assert len(hits) == 1, f'{key}: {len(hits)} lines in the config'
-        lines[hits[0]] = f'{key} = {value}'
-        text = '\n'.join(lines) + '\n'
+        pattern = rf'(?m)^[ \t]*{re.escape(key)}[ \t]*=.*$'  # an indented key too
+        text, n = re.subn(pattern, lambda _: f'{key} = {value}', text)
+        assert n == 1, f'{key}: {n} lines in the config'
     return text
 
 
@@ -116,13 +115,9 @@ class _Recorder:
         self.w.writerow(CMB_COLS)
         self.nodes = open(out + '.nodes.bin', 'wb')
         self.out, self.node_dt_yr = out, node_dt_yr
-        self.scales, self.last_t, self.n_y, self.n_written, self.calls = (
-            None,
-            -np.inf,
-            None,
-            0,
-            0,
-        )
+        self.scales = self.n_y = None
+        self.last_t = -np.inf
+        self.n_written = self.calls = 0
         self.law = aragog_core.cmb_boundary_layer_flux
 
     def install(self):
@@ -186,18 +181,8 @@ class _Recorder:
                 self.last_t = t_last * sc.t_ref
                 self.n_written += 1
         n_nodes = len(nodes) if nodes is not None else -1
-        row = (
-            src,
-            t_yr,
-            n_nodes,
-            float(t_hot),
-            float(t_m),
-            float(viscosity),
-            q_cond,
-            q_conv,
-            q,
-        )
-        self.w.writerow(row)
+        row = (src, t_yr, n_nodes, float(t_hot), float(t_m), float(viscosity))
+        self.w.writerow((*row, q_cond, q_conv, q))
         self.calls += 1
         return q
 
