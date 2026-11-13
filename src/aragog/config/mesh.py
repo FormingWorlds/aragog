@@ -105,21 +105,14 @@ class MeshConfig:
     eos_file : str
         Path to user-defined EOS file.
     surface_cell_thickness, cmb_cell_thickness : float or str
-        Radial thickness [m] of the outermost and innermost basic cell. 0 leaves that end
-        unset; with only the other end set, its cells grow. A set surface value lies in
-        [2 m, uniform radial cell); a set CMB value is finite and at least 2 m. A set value
-        refines towards that boundary with a tanh stretching (both ends: the two-sided Vinokur
-        form). In mass-coordinate mode the stretching acts on the mass coordinate and the end
-        cells still have the given radial thickness; there a surface value at or above the
-        uniform end cell of that mode is refused when the mesh is built. A CMB value at or
-        above the bottom cell of the uniform mesh of the same mode, or less than 1e-5 of it
-        below, gives no CMB refinement, with an INFO log line: that uniform bottom cell with
-        the 'uniform' or 0 surface cell, the bottom cell of the surface-refined grid else. ``surface_cell_thickness =
-        'uniform'`` (default) sets the outer cell to the top cell of the uniform mesh of the
-        same mode: (outer_radius - inner_radius) / (number_of_nodes - 1) in radius mode, the
-        top cell of the uniform mass-coordinate mesh in mass-coordinate mode. Default CMB
-        cell: 3000 m. With ``cmb_cell_thickness = 0`` and ``'uniform'`` the mesh is the
-        uniform mesh.
+        Radial thickness [m] of the outermost and innermost basic cell; the mesh refines
+        towards each set end with the same number of nodes. 0 leaves that end unset.
+        ``surface_cell_thickness = 'uniform'`` (default) sets the top cell of the uniform mesh
+        of the same coordinate mode. The CMB cell defaults to 3000 m; a CMB value at or above
+        the bottom cell it would replace, or less than 1e-5 of it below, gives no CMB
+        refinement, with an INFO log line.
+        With ``cmb_cell_thickness = 0`` and ``'uniform'`` the mesh is the uniform mesh.
+        ``check_cell_thickness`` gives the accepted values.
     """
 
     outer_radius: float
