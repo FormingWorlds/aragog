@@ -243,7 +243,7 @@ def test_solid_rheology_params_top_slope_defaults_and_bounds():
     """Verify SolidRheologyParams defaults and bounds validation for s_top_inf and c_theta."""
     params = SolidRheologyParams()
     assert not hasattr(params, 'mlt_top_slope')
-    assert params.mlt_bottom_slope == pytest.approx(0.82, rel=1e-15)  # Tachinami et al. 2011
+    assert params.mlt_bottom_slope == 1.0  # the slope s_top_inf was calibrated with
     assert params.s_top_inf == pytest.approx(0.22, rel=1e-15)
     assert params.c_theta == pytest.approx(0.15, rel=1e-15)
 
