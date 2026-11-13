@@ -132,3 +132,27 @@ def test_recorded_factory_refuses_a_numpy_solve(outcomes: tuple[str, ...]) -> No
     assert (factory.built, factory.failed) == (outcomes.count('build'), outcomes.count('fail'))
     with pytest.raises(RuntimeError, match='did not run on the JAX RHS'):
         factory.require_option_z()
+
+
+def test_the_reference_meshes_are_uniform_with_or_without_the_cell_fields():
+    """The tool builds the uniform mesh that the reference test checks: both end cells 0 where
+    the tree has the cell fields, and only the node count on a tree without them."""
+    import importlib.resources
+    from dataclasses import dataclass
+
+    from aragog.parser import Parameters
+
+    cfg = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    with importlib.resources.as_file(cfg) as path:
+        mesh = gen._uniform_mesh(Parameters.from_file(path).mesh, number_of_nodes=20)
+    assert (mesh.number_of_nodes, mesh.cmb_cell_thickness, mesh.surface_cell_thickness) == (
+        20,
+        0.0,
+        0.0,
+    )
+
+    @dataclass
+    class OldMesh:
+        number_of_nodes: int = 100
+
+    assert gen._uniform_mesh(OldMesh(), number_of_nodes=20) == OldMesh(number_of_nodes=20)

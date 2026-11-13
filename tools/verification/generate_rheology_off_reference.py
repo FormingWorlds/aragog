@@ -219,6 +219,16 @@ def _solve_factory(solver, eos_jax) -> _RecordedFactory:
     return _RecordedFactory(build)
 
 
+_CELL_FIELDS = ('cmb_cell_thickness', 'surface_cell_thickness')
+
+
+def _uniform_mesh(mesh, **changes):
+    """``mesh`` with ``changes`` and both end cells 0 (the uniform mesh the reference test
+    builds), where the tree has the cell fields."""
+    cells = {f: 0.0 for f in _CELL_FIELDS if hasattr(mesh, f)}
+    return replace(mesh, **changes, **cells)
+
+
 def generate_reference(
     main_tree: Path,
     eos_dir: Path,
@@ -295,7 +305,7 @@ def generate_reference(
     for cfg_name, en in configs.items():
         params = replace(
             raw_params,
-            mesh=replace(raw_params.mesh, number_of_nodes=20),
+            mesh=_uniform_mesh(raw_params.mesh, number_of_nodes=20),
             boundary_conditions=replace(
                 raw_params.boundary_conditions,
                 core_bc='quasi_steady',
@@ -337,7 +347,7 @@ def generate_reference(
     # 2. 6 energy balance RHS arrays
     params_eb = replace(
         raw_params,
-        mesh=replace(raw_params.mesh, number_of_nodes=20),
+        mesh=_uniform_mesh(raw_params.mesh, number_of_nodes=20),
         boundary_conditions=replace(
             raw_params.boundary_conditions,
             core_bc='energy_balance',
@@ -385,6 +395,9 @@ def generate_reference(
     ) as p:
         c_solve = Config.from_file(str(p))
     c_solve.mesh.number_of_nodes = 20
+    for field in _CELL_FIELDS:
+        if hasattr(c_solve.mesh, field):
+            setattr(c_solve.mesh, field, 0.0)
     c_solve.solver.end_time = 100.0
     c_solve.solver.cvode_max_steps = 100
     eos_inst = EntropyEOS(str(eos_dir))
