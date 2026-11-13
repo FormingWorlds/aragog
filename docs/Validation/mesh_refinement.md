@@ -132,8 +132,8 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **Not checked.**
 
-- A CMB cell thinner than the uniform cell: no run has one.
-- Whether the CMB results converge as the CMB cell gets thinner: a series of three or more CMB cells was not run.
+- A CMB cell thinner than the uniform cell: no run of this case has one; [the next case](#the-default-cmb-cell-against-finer-uniform-meshes) has.
+- Whether the CMB results of this case converge as the CMB cell gets thinner: a series of three or more CMB cells was not run.
 - The CMB results after $10^5$ years.
 
 ??? info "Test details"
@@ -142,6 +142,45 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
     - Tolerance: each quoted number to the digits it is quoted with.
     - Test id: `tests/test_mesh_refinement_study.py::test_a_coarsened_cmb_cell_changes_the_core_results`
     - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`
+
+## The default CMB cell against finer uniform meshes
+
+**Why this check exists.** By default the mesh has a 3000 m cell at the CMB, and the CMB heat flux of the core module is taken across half of that cell. If the default mesh were too coarse, the core would cool at the wrong rate in every run that keeps the default.
+
+**What it tests.** A solid mantle over a cooling core, from 0 to 100 Myr, on five meshes. The mantle is an Earth mantle in radius mode, from 3480 to 6371 km. It starts on one isentrope at 2045.05 J/kg/K with no melt in any cell, with the stagnant-lid rheology on, `mlt_bottom_slope = 0.82` and radiogenic heating. The core module starts at 2500 K. The tables are the PALEOS MgSiO$_3$ tables with the low-temperature extension, built to 350 GPa. The meshes are the uniform mesh at 160, 320 and 640 nodes, with CMB cells of 18.18, 9.06 and 4.52 km (U160, U320, U640), and the default mesh at 80 and 160 nodes (D80, D160). In the default mesh the largest cell is 1.865 times the mean cell at 80 nodes and 1.621 times at 160 nodes. The compared results are the CMB heat flux $q_\mathrm{cmb}$, the core temperature and the mantle temperature at mid radius, at 3, 50 and 100 Myr.
+
+**How we know the right answer.** There is no exact solution, so the reference is the finest mesh, U640. The test computes each difference from U640. The stored runs use the conductive CMB flux alone. Aragog's law takes the larger of the conductive and the convective flux, and in every call of the five runs the conductive flux is the larger one, so both laws give the same flux. A rerun of D80 with Aragog's law gives the stored output bit for bit. The run at 80 nodes on the uniform mesh is left out: there the convective flux is the larger one in 48 % of the calls, so its stored run does not follow Aragog's law.
+
+**Why it matters.** The default mesh sets the core cooling of every run that does not set the mesh.
+
+![CMB heat flux of 4 meshes relative to the uniform 640-node mesh against time](../assets/validation/mesh_refinement_core_mesh_flux_over_time.svg#only-light){ width="48%" }
+![CMB heat flux of 4 meshes relative to the uniform 640-node mesh against time](../assets/validation/mesh_refinement_core_mesh_flux_over_time_dark.svg#only-dark){ width="48%" }
+![CMB heat flux relative to the uniform 640-node mesh at 3, 50 and 100 Myr against the CMB cell](../assets/validation/mesh_refinement_core_mesh_flux_at_times.svg#only-light){ width="48%" }
+![CMB heat flux relative to the uniform 640-node mesh at 3, 50 and 100 Myr against the CMB cell](../assets/validation/mesh_refinement_core_mesh_flux_at_times_dark.svg#only-dark){ width="48%" }
+
+**How to read the plots.** The left plot shows $q_\mathrm{cmb}$ of U160, U320, D80 and D160 relative to that of U640, in percent, against time on a log axis. The right plot shows the same relative flux at 3, 50 and 100 Myr against the CMB cell of D160, U320 and U160 (3, 9.06 and 18.18 km). A value at 0 matches U640.
+
+**What the study finds.**
+
+- After the start, the default mesh is within 0.26 % of U640: D80 is 0.26 % and 0.23 % below it at 50 and 100 Myr, D160 0.07 % and 0.05 %.
+- The core temperature and the mantle temperature at mid radius of D80 and D160 differ from those of U640 by less than 0.04 K at 3, 50 and 100 Myr.
+- The uniform mesh converges slowly and not in one direction. At 3 Myr U160 is 3.72 % below U640 and U320 9.02 % above it; at 100 Myr U160 is 1.05 % and U320 1.42 % above it.
+- The meshes differ most in the start transient (values on the stored time grid of 40 points per decade). At 0.01 Myr D80 is 44 % above U640 and D160 42 % above it. D80 reaches its lowest value, 8.2 % below U640, at 0.53 Myr, and from 6.3 Myr on it differs from U640 by less than 0.5 % (D160: from 5.3 Myr). At 3 Myr D80 is 1.39 % and D160 1.25 % below U640.
+
+**Known limit.** U640 is not a converged reference at 3 Myr. Its CMB cell, 4.52 km, is thicker than the 3 km cell of the default mesh, and the uniform series does not settle at 3 Myr. The differences of 1.25 to 1.39 % at 3 Myr therefore do not show which mesh is closer to the right answer.
+
+**Not checked.**
+
+- The noise floor of these runs: no run was repeated from a perturbed start.
+- A molten mantle, a mantle in mass-coordinate mode, and other table sets.
+- The results after 100 Myr.
+
+??? info "Test details"
+    - Reference: the stored values of the 5 runs in `tests/validation/data/core_mesh_study.json`, written by `tools/verification/run_core_mesh_study.py`; the test computes every number above from them.
+    - Runs: `python tools/verification/run_core_mesh_case.py tools/verification/data/core_mesh_study.toml <out> --eos-dir <tables> --solid-s0 2045.05 --t-core 2500 --nodes <n> --cmb-cell <m> --surface-cell <m or uniform>`, with a first segment of 2000 yr and then 2000 segments of 50 000 yr. The aragog source of the stored runs and of the rerun of D80 is in the header of the JSON file, with the md5 of the outputs of both. The tables are built by Zalmoxis (`generate_spider_eos_tables`) from the PALEOS MgSiO$_3$ solid, liquid and low-temperature solid tables, at 350 GPa with 1350 by 280 points; the md5 of the source tables and of every built table file are in the same header.
+    - Tolerance: each quoted number to the digits it is quoted with.
+    - Test ids: `tests/test_core_mesh_study.py::test_the_stored_runs_and_their_mesh` and `tests/test_core_mesh_study.py::test_the_default_cmb_cell_against_finer_uniform_meshes`
+    - Command: `pytest tests/test_core_mesh_study.py -m reference_pinned --validation-plots`
 
 ## Without refinement the results are unchanged
 

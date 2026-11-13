@@ -1,0 +1,123 @@
+# Base config of the CMB mesh study (tools/verification/run_core_mesh_case.py): a solid
+# mantle with the stagnant-lid rheology over a core_module core. The run tool sets
+# number_of_nodes, cmb_cell_thickness and surface_cell_thickness per run.
+
+[boundary_conditions]
+outer_boundary_condition = 5
+outer_boundary_value = 273.0
+inner_boundary_condition = 1
+inner_boundary_value = 0.0
+emissivity = 1.0
+equilibrium_temperature = 273.0
+core_heat_capacity = 880.0
+core_bc = "core_module"
+
+[energy]
+conduction = true
+convection = true
+gravitational_separation = false
+mixing = false
+radionuclides = true
+tidal = false
+solver_method = "cvode"
+use_jax_jacobian = false
+kappah_floor = 0.0
+
+[initial_condition]
+initial_condition = 1
+surface_temperature = 2000.0
+basal_temperature = 2000.0
+
+[mesh]
+outer_radius = 6371000.0
+inner_radius = 3480000.0
+number_of_nodes = 80
+mixing_length_profile = "nearest_boundary"
+core_density = 11924.4
+eos_method = 1
+surface_density = 4027.8
+gravitational_acceleration = 9.81
+adiabatic_bulk_modulus = 260000000000.0
+adams_williamson_beta = 0.0
+surface_pressure = 0.0
+mass_coordinates = false
+cmb_cell_thickness = 3000.0
+surface_cell_thickness = "uniform"
+
+[phase_liquid]
+density = 4000.0
+viscosity = 100.0
+heat_capacity = 1000.0
+melt_fraction = 1.0
+thermal_conductivity = 4.0
+thermal_expansivity = 3e-05
+
+[phase_solid]
+density = 4000.0
+viscosity = 1.8000000000000003e+20
+heat_capacity = 1000.0
+melt_fraction = 0.0
+thermal_conductivity = 4.0
+thermal_expansivity = 3e-05
+
+[phase_solid.rheology]
+enabled = true
+s_top_inf = 0.25
+c_theta = 0.25
+mlt_bottom_slope = 0.82
+activation_energy = 226518.5378
+activation_volume = 0.0
+arrhenius_t_ref = 1773.0
+viscosity_max_log10 = 40.0
+
+[phase_mixed]
+latent_heat_of_fusion = 400000.0
+rheological_transition_melt_fraction = 0.4
+rheological_transition_width = 0.15
+solidus = "solidus.dat"
+liquidus = "liquidus.dat"
+phase = "mixed"
+phase_transition_width = 0.01
+grain_size = 0.001
+matprop_smooth_width = 0.01
+const_properties = false
+
+[solver]
+start_time = 0.0
+end_time = 10000000000.0
+atol = 1.0e-6
+rtol = 1.0e-6
+tsurf_poststep_change = 30.0
+cvode_output_points = 65
+
+[radionuclide_K40]
+name = "K40"
+t0_years = 4.55e9
+abundance = 1.1668e-4
+concentration = 310
+heat_production = 2.8761e-5
+half_life_years = 1.248e9
+
+[radionuclide_Th232]
+name = "Th232"
+t0_years = 4.55e9
+abundance = 1.0
+concentration = 0.124
+heat_production = 2.6368e-5
+half_life_years = 1.4e10
+
+[radionuclide_U235]
+name = "U235"
+t0_years = 4.55e9
+abundance = 0.0072045
+concentration = 0.031
+heat_production = 5.68402e-4
+half_life_years = 7.04e8
+
+[radionuclide_U238]
+name = "U238"
+t0_years = 4.55e9
+abundance = 0.9927955
+concentration = 0.031
+heat_production = 9.4946e-5
+half_life_years = 4.468e9
