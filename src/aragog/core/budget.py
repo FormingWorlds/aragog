@@ -231,12 +231,9 @@ class CoreEnergyBudget:
         """Primal bisection for the boundary radius; see :meth:`r_icb`."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
-        lo, hi, _ = jax.lax.fori_loop(
-            0,
-            _BISECT_ITERS,
-            self._bisect_body,
-            (jnp.zeros_like(t_cmb * 1.0), jnp.full_like(t_cmb * 1.0, p.r_cmb), t_cmb * 1.0),
-        )
+        t = t_cmb * 1.0
+        init = (jnp.zeros_like(t), jnp.full_like(t, p.r_cmb), t)
+        lo, hi, _ = jax.lax.fori_loop(0, _BISECT_ITERS, self._bisect_body, init)
         root = (lo + hi) / 2.0
         # All-liquid guard: with positive centre superheat there is no root.
         return jnp.where(self.superheat(0.0, t_cmb) > 0.0, 0.0, root)

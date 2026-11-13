@@ -998,10 +998,8 @@ def _padded_call(fn, *arrays):
     n = len(arrays[0])
     if n == 0:
         return np.zeros(0)
-    m = 1 << (n - 1).bit_length()
-    pad = [(0, m - n)]
-    padded = (np.pad(a, pad + [(0, 0)] * (a.ndim - 1), 'edge') for a in map(np.asarray, arrays))
-    return np.asarray(fn(*padded))[:n]
+    idx = np.minimum(np.arange(1 << (n - 1).bit_length()), n - 1)  # repeats the last entry
+    return np.asarray(fn(*(np.asarray(a)[idx] for a in arrays)))[:n]
 
 
 _ZERO_ENERGY_INTEGRALS = {
