@@ -67,32 +67,13 @@ def test_the_counter_sees_a_new_compile():
 
 
 def test_eager_boundary_solves_at_new_temperatures_reuse_the_compiled_loop(budget):
-    """After 2 warm-up calls, 5 calls at new CMB temperatures (array and float inputs) compile
+    """After the warm-up calls, 5 calls at new CMB temperatures (array and float inputs) compile
     nothing."""
-    for t in (4100.0, 4050.0):
-        budget.r_icb(jnp.float64(t))
-        budget.r_icb(t)
+    budget.r_icb(jnp.float64(4100.0))
+    budget.r_icb(4100.0)
     temperatures = (4000.0, 3990.0, 3980.0, 3970.0, 3960.0)
     assert _compiles(lambda: [budget.r_icb(jnp.float64(t)) for t in temperatures]) == 0
     assert _compiles(lambda: [budget.r_icb(t) for t in temperatures]) == 0
-
-
-def test_the_regime_check_compiles_once_per_length_bucket(budget):
-    """After calls of 2, 101 and 159 states, calls of 120, 150 and 200 states (inside the same
-    power-of-two buckets) and of 1, 3, 5 and 7 states (the smallest bucket) compile nothing."""
-    from aragog.core.regime import refuse_unmodelled_regime
-
-    t = np.linspace(4150.0, 4400.0, 200)  # fully liquid: above the onset near 4147 K
-    for n in (2, 101, 159):
-        refuse_unmodelled_regime(budget, t[:n])
-    assert (
-        _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (120, 150, 200)])
-        == 0
-    )
-    # Below 8 states every call shares the smallest bucket.
-    assert (
-        _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (1, 3, 5, 7)]) == 0
-    )
 
 
 def test_the_regime_check_compiles_once_per_power_of_two_bucket(budget):
