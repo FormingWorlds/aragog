@@ -137,8 +137,12 @@ def test_the_stratified_core_heat_compiles_once_per_length_bucket():
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('n', [1, 5, 8, 9, 33, 100])
 def test_padding_changes_no_value(budget, n):
-    """For states across T_freeze and T_onset, the padded boundary solve, regime codes and layer
-    base equal the unpadded calls bit for bit."""
+    """For states across T_freeze and T_onset, the padding to a length bucket changes no value:
+    the regime codes equal the unpadded codes, and at the bucket length the boundary radius,
+    regime codes and layer base of the real states do not depend on the padding values. The
+    radius and layer base equal the unpadded calls to rtol 1e-13: from jax 0.12 XLA rounds a
+    batched program by its length (main itself varies by 1.5e-14 between lengths); with jax 0.9.2
+    they are equal bit for bit."""
     import contextlib
 
     from aragog.core.regime import refuse_unmodelled_regime
@@ -148,19 +152,28 @@ def test_padding_changes_no_value(budget, n):
     def across(b):
         return np.linspace(b.t_freeze - 30.0, b.t_onset + 30.0, max(n, 2))[-n:]
 
-    t = across(budget)
-    assert np.array_equal(_padded_call(budget.r_icb_batch, t), budget.r_icb_batch(t))
+    def refill(a, m, row):
+        """``a`` padded to length ``m`` with its row ``row`` in place of its last row."""
+        return np.concatenate([a, np.repeat(a[[row]], m - len(a), axis=0)])
+
+    t, m = across(budget), 1 << (n - 1).bit_length()
+    radius = _padded_call(budget.r_icb_batch, t)
+    for row in (0, n // 2):
+        assert np.array_equal(radius, np.asarray(budget.r_icb_batch(refill(t, m, row)))[:n])
+    np.testing.assert_allclose(radius, budget.r_icb_batch(t), rtol=1e-13, atol=0)
 
     real, seen = budget.regime_batch, []
     budget.regime_batch = lambda x: seen.append(np.asarray(real(x))) or seen[-1]
     with contextlib.suppress(ValueError):  # states between the two may be refused
         refuse_unmodelled_regime(budget, t)
     assert np.array_equal(seen[0][:n], real(t))
+    assert np.array_equal(seen[0][:n], np.asarray(real(refill(t, max(8, m), 0)))[:n])
 
     strat = _budget(stratification=True)
     t_core = across(strat)
     t_shell = np.asarray(_layered_shell(strat))[None, :] + np.linspace(0.0, 5.0, n)[:, None]
     layer_base = jax.vmap(strat.shell.layer_base)
-    assert np.array_equal(
-        _padded_call(layer_base, t_shell, t_core), layer_base(t_shell, t_core)
-    )
+    base = _padded_call(layer_base, t_shell, t_core)
+    other = layer_base(refill(t_shell, m, 0), refill(t_core, m, 0))
+    assert np.array_equal(base, np.asarray(other)[:n])
+    np.testing.assert_allclose(base, layer_base(t_shell, t_core), rtol=1e-13, atol=0)
