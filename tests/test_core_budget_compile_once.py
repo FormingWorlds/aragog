@@ -93,3 +93,15 @@ def test_the_regime_check_compiles_once_per_length_bucket(budget):
     assert (
         _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in (1, 3, 5, 7)]) == 0
     )
+
+
+def test_the_regime_check_compiles_once_per_power_of_two_bucket(budget):
+    """After a first call, the batch lengths 2 to 512 compile exactly once per new bucket: the 6
+    buckets 16, 32, 64, 128, 256 and 512 (lengths 2 to 8 share the bucket of the first call)."""
+    from aragog.core.regime import refuse_unmodelled_regime
+
+    t = np.linspace(4150.0, 4400.0, 512)  # fully liquid: above the onset near 4147 K
+    refuse_unmodelled_regime(budget, t[:1])
+    assert (
+        _compiles(lambda: [refuse_unmodelled_regime(budget, t[:n]) for n in range(2, 513)]) == 6
+    )
