@@ -126,6 +126,7 @@ The start profile follows the node index: `xi = np.linspace(0.0, 1.0, n_stag)` s
 | even in radius | uniform mesh, 100 nodes | 219.47 |
 | even in radius | this mesh, 400 nodes | 147.69 |
 
+In the rows even in radius, $r$ is the radius of each staggered node, and $r_0$ and $r_{N-1}$ are the radii of the first and the last staggered node.
 The peak is not converged at 100 nodes; the run of this page compares `enabled = False` with `enabled = True` on one mesh.
 
 ## 3. Read the stagnant-lid diagnostics

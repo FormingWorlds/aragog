@@ -57,7 +57,9 @@ When solid-state mantle rheology is enabled, the mixing-length profile boundary 
 
 Which mixing length does Aragog use near the boundaries, and why does PROTEUS run the `constant` profile?
 
-Aragog has no default profile: each configuration sets `mixing_length_profile`.
+Aragog offers 2 profiles: `nearest_boundary`, which goes to 0 at both boundaries, and `constant`.
+With `nearest_boundary` the flux out of the core can stop for tens of thousands of years, so PROTEUS runs `constant` by default.
+Aragog itself has no default profile: each configuration sets `mixing_length_profile`.
 The `nearest_boundary` profile is
 
 $$
@@ -71,7 +73,8 @@ The `constant` profile is a uniform fraction of the mantle thickness, `mixing_le
 The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
 With `nearest_boundary` the length at that node is the thickness of the bottom cell.
 If that node turns stable, its diffusivity is 0, and the flux out of the core falls to about 0.
-In PROTEUS runs of 1 Earth mass this lasts about 30 kyr on 2 of 3 meshes, and the thickness of the bottom cell alone does not decide on which.
+In PROTEUS runs of 1 Earth mass this lasts about 30 kyr on the uniform mesh of 80 nodes and on 80 nodes with a 3000 m CMB cell, but not on the uniform mesh of 160 nodes.
+The thickness of the bottom cell alone does not explain which meshes lose the flux.
 PROTEUS therefore runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 
 **Where this is checked.** The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
@@ -179,7 +182,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
 - **Phase-modulated diffusivity floor.**
   `kappah_floor` lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.
   SPIDER carries no eddy-diffusivity floor, so $\kappa_h = 0$ in stratified layers is the SPIDER-consistent limit.
-  Gating the floor by $\partial S/\partial r < D$ keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
+  Applying the floor only where $\partial S/\partial r < D$ keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
 
 - **Per-component flux diagnostics.**
   Aragog reports $F_\mathrm{conv}$ separately from the conduction, gravitational-separation, and chemical-mixing fluxes, with reconstruction of the total to floating-point round-off (Figure 2 of [Heat transport](heat_transport.md)).
