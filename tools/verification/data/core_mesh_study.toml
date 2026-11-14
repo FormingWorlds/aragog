@@ -64,7 +64,6 @@ thermal_expansivity = 3e-05
 enabled = true
 s_top_inf = 0.25
 c_theta = 0.25
-mlt_bottom_slope = 0.82
 activation_energy = 226518.5378
 activation_volume = 0.0
 arrhenius_t_ref = 1773.0
