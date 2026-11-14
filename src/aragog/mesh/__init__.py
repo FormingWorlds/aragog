@@ -562,7 +562,12 @@ class Mesh:
                 'cancels to round-off and moves the solved nodes'
             )
         if bad:
-            raise ValueError('refined mesh: ' + '; '.join(bad))
+            raise ValueError(
+                'refined mesh: '
+                + '; '.join(bad)
+                + '; mesh.cmb_cell_thickness = 0 and mesh.surface_cell_thickness = 0 give the '
+                'uniform mesh of the mode'
+            )
 
     def _refined_unit_grid(self, first: float, last: float) -> npt.NDArray:
         """Stretched unit grid for ``mesh.cmb_cell_thickness`` and
