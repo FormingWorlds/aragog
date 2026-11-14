@@ -157,9 +157,11 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   The narrow width keeps the inviscid contribution confined to the convecting regime without leaking into solid layers; widening it has been shown to induce $T_\mathrm{core}$ bistability in test runs.
 
 - **Bounded-eddy mixing length.**
-  The default profile $l(r) = \min(r_\mathrm{top}-r,\ r-r_\mathrm{cmb})$ vanishes at both boundaries.
+  The `nearest_boundary` profile $l(r) = \min(r_\mathrm{top}-r,\ r-r_\mathrm{cmb})$ vanishes at both boundaries.
   Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux best fits experimental measurements (Fig. 3 in Abe 1995; Stothers & Chin 1997).
-  A `constant` profile is also available for analytical-mode tests.
+  The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
+  With `nearest_boundary` the length at that node is the thickness of the bottom cell, so its convective flux is weak and the node can turn stable; its diffusivity is then 0, and the flux out of the core falls to about 0.
+  PROTEUS therefore runs Aragog with the `constant` profile, 0.25 of the mantle depth; the [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
 
 - **Convective threshold.**
   The mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$ but uses at least a small gradient $D$ (`energy.convective_threshold`, default 0) on unstable nodes, and the floor acts up to $\partial S/\partial r = D$.
