@@ -47,14 +47,16 @@ and a smooth blend $w(\mathrm{Re}) = \tfrac{1}{2}\big[1 + \tanh\!\big((\mathrm{R
 The viscous limit recovers the laminar Stokes-like scaling $\kappa_h \propto l^4/\nu$ at low Re, the inviscid limit recovers the free-fall scaling $\kappa_h \propto l^2 (\alpha g T \,|\partial S/\partial r|/c_p)^{1/2}$ at high Re.
 This is the Abe (1993) two-regime form; SPIDER implements it as a hard `if/else` on Re, Aragog as a tanh blend so the JAX Jacobian stays smooth.
 
-The mixing length defaults to `nearest_boundary`,
+Aragog has no default profile: each configuration sets `mixing_length_profile`.
+The `nearest_boundary` profile is
 
 $$
 l(r) = \min(r_\mathrm{top}-r,\ r - r_\mathrm{cmb}),
 $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
-A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
+The `constant` profile is a uniform fraction of the mantle thickness, `mixing_length_constant_fraction` (0.25 unless set, the value SPIDER uses); see [Heat transport](heat_transport.md#mixing-length-profile).
+PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. These solid values hold with the rheology off. With `rheology.enabled = true` the floor in a fully solid cell ($\phi = 0$) is exactly 0 ([Solid-state convection, Section 7](solid_state_convection.md#7-interaction-with-the-eddy-diffusivity-floor)). SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
