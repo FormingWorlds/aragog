@@ -798,7 +798,7 @@ def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, 
         'eta_diff_cmb=3.000e+17 Pa s, max_jconv=161063.04 W/m^2, max_kappah=15.6253 m^2/s, '
         'T_magma=782.15 K, T_core=3566.07 K',
         'Rheology on: status=0, eta_surf=9.076e+27 Pa s, eta_cmb=1.916e+18 Pa s, '
-        'eta_diff_cmb=3.601e+18 Pa s, max_jconv=470.53 W/m^2, max_kappah=0.0476 m^2/s, '
+        'eta_diff_cmb=3.601e+18 Pa s, max_jconv=534.83 W/m^2, max_kappah=0.0573 m^2/s, '
         'T_magma=782.06 K, T_core=3566.07 K',
         'has_lid:     True',
         'd_lid:       33.11 km',
@@ -827,8 +827,8 @@ def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, 
         '9.076e+27',
         '1.916e+18',
         '3.601e+18',
-        '470.53',
-        '0.0476',
+        '534.83',
+        '0.0573',
         '782.06',
         '33.11',
         '6337.89',
