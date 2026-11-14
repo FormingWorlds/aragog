@@ -1689,8 +1689,9 @@ class TestMassCoordinates:
 
         with pytest.raises(
             ValueError, match=r'likely cause: adiabatic_bulk_modulus = 1e\+15 Pa'
-        ):
+        ) as err:
             Mesh(default_mesh(1e15))
+        assert 'cmb_cell_thickness = 0 and mesh.surface_cell_thickness = 0' in str(err.value)
         r = np.asarray(Mesh(default_mesh(1e13)).basic.radii).ravel()
         assert abs(r[1] - r[0] - 3000.0) <= 2e-3
 
