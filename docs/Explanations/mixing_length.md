@@ -18,7 +18,7 @@ For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 
 ## Mixing-length theory inside Aragog
 
-MLT was developed for stellar interiors by Vitense (1953)[^cite-vitense1953] and adapted to terrestrial magma oceans by Abe (1993); the critical Reynolds number $\mathrm{Re}_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995) and is documented in Bower et al. (2018) §2.1.
+MLT was developed for stellar interiors by Vitense (1953)[^cite-vitense1953] and adapted to terrestrial magma oceans by Abe (1993); the critical Reynolds number $\mathrm{Re}_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995)[^cite-abe1995] and is documented in Bower et al. (2018) §2.1.
 The convective heat flux at a basic node is parameterised as eddy diffusion of entropy:
 
 $$
@@ -158,7 +158,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
 
 - **Bounded-eddy mixing length.**
   The `nearest_boundary` profile $l(r) = \min(r_\mathrm{top}-r,\ r-r_\mathrm{cmb})$ vanishes at both boundaries.
-  Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux best fits experimental measurements (Fig. 3 in Abe 1995; Stothers & Chin 1997).
+  Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux fits experimental measurements (Fig. 3 in Abe (1995); Stothers & Chin (1997)[^cite-stothers1997]).
   The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
   With `nearest_boundary` the length at that node is the thickness of the bottom cell, so its convective flux is weak and the node can turn stable; its diffusivity is then 0, and the flux out of the core falls to about 0.
   PROTEUS therefore runs Aragog with the `constant` profile, 0.25 of the mantle depth; the [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
@@ -177,10 +177,12 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   This component-wise decomposition is not natural in a BLT formulation, where the single closed-form $F_\mathrm{surf}$ is the only flux available for diagnostics.
 
 [^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41–54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
+[^cite-abe1995]: Y. Abe, *Basic equations for evolution of partially molten mantle and core*, in T. Yukutake (ed.), The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., Tokyo, 215-230, 1995.
 [^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
 [^cite-elkinstanton2008]: L. T. Elkins-Tanton, *[Linked magma ocean solidification and atmospheric growth for Earth and Mars](https://doi.org/10.1016/j.epsl.2008.03.062)*, Earth and Planetary Science Letters, 271, 181–191, 2008. [SciX](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract).
 [^cite-hamano2013]: K. Hamano, Y. Abe, H. Genda, *[Emergence of two types of terrestrial planet on solidification of magma ocean](https://doi.org/10.1038/nature12163)*, Nature, 497, 607–610, 2013. [SciX](https://scixplorer.org/abs/2013Natur.497..607H/abstract).
 [^cite-schaefer2016]: L. Schaefer, et al., *[Predictions of the atmospheric composition of GJ 1132b](https://doi.org/10.3847/0004-637X/829/1/63)*, The Astrophysical Journal, 829, 63, 2016. [SciX](https://scixplorer.org/abs/2016ApJ...829...63S/abstract).
 [^cite-solomatov2007]: V. S. Solomatov, *Magma oceans and primordial mantle differentiation*, in Treatise on Geophysics, vol. 9 (Evolution of the Earth), 91–119, 2007. [SciX](https://scixplorer.org/abs/2007evea.book...91S/abstract).
 [^cite-solomatovstevenson1993]: V. S. Solomatov; D. J. Stevenson, *[Suspension in convective layers and style of differentiation of a terrestrial magma ocean](https://doi.org/10.1029/92JE02948)*, Journal of Geophysical Research, 98, 5375–5390, 1993. [SciX](https://scixplorer.org/abs/1993JGR....98.5375S/abstract).
+[^cite-stothers1997]: R. B. Stothers, C. Chin, *[The mixing length in convective stellar envelopes is proportional to distance from the convective boundary](https://doi.org/10.1086/310552)*, The Astrophysical Journal Letters, 478, L103-L106, 1997. [SciX](https://scixplorer.org/abs/1997ApJ...478L.103S/abstract).
 [^cite-vitense1953]: E. Vitense, *Die Wasserstoffkonvektionszone der Sonne*, Zeitschrift für Astrophysik, 32, 135–164, 1953. [SciX](https://scixplorer.org/abs/1953ZA.....32..135V/abstract).
