@@ -2,7 +2,7 @@
 
 How can Aragog use thin cells at the surface and at the core-mantle boundary (CMB) without more nodes?
 
-Aragog keeps the number of nodes and moves them: the cells grow smoothly from a thin end cell towards the middle of the mantle, so a thin end cell costs no extra memory. By default the CMB cell is 3000 m thick and the top cell is as thick as on the uniform mesh ([The default mesh](#the-default-mesh)); the core module takes the heat flow out of the core across the CMB cell. You can set the thickness of the outermost cell, the innermost cell, or both, in metres. With `cmb_cell_thickness = 0` and the top cell `"uniform"` (or 0), the mesh is the uniform mesh.
+Aragog keeps the number of nodes and moves them: the cells grow smoothly from a thin end cell towards the middle of the mantle, so a thin end cell costs no extra memory. By default the CMB cell is 3000 m thick and the top cell is as thick as on the uniform mesh ([The default mesh](#the-default-mesh)); with the core module (`core_bc = "core_module"`), the heat flow out of the core is taken across the CMB cell. You can set the thickness of the outermost cell, the innermost cell, or both, in metres. With `cmb_cell_thickness = 0` and the top cell `"uniform"` (or 0), the mesh is the uniform mesh.
 
 ## Why the end cells matter
 
@@ -47,7 +47,7 @@ Without the two fields the CMB cell is 3000 m and the top cell is `"uniform"`: t
 
 ## The CMB cell and the CMB heat flux
 
-In the core module the CMB heat flux is the larger of two values when the core is hotter than the mantle: conduction across the lower half of the first cell, and a boundary-layer law. When the core is not hotter, it is conduction alone ([Core boundary conditions](core_bc.md)). Against uniform meshes of up to 640 nodes, the default mesh with 80 nodes gives a CMB flux within 0.45 % of the finest at 50 and 100 Myr ([the default CMB cell against finer uniform meshes](../Validation/mesh_refinement.md#the-default-cmb-cell-against-finer-uniform-meshes)). This holds for the core module with the `nearest_boundary` mixing length; the study does not run the `constant` length that PROTEUS uses by default. This is not an error bound: the uniform flux at 320 nodes still lies 3.0 % above that at 640 nodes at 50 Myr, and 2.7 % at 100 Myr. The case runs with the solid rheology on at its default parameters. A thinner cell costs much more on a molten shell without heat flow through the CMB (see [Limits](#limits)).
+In the core module the CMB heat flux is the larger of two values when the core is hotter than the mantle: conduction across the lower half of the first cell, and a boundary-layer law. When the core is not hotter, it is conduction alone ([Core boundary conditions](core_bc.md)). Against uniform meshes of up to 640 nodes, the default mesh with 80 nodes gives a CMB flux within 0.45 % of the finest at 50 and 100 Myr ([the default CMB cell against finer uniform meshes](../Validation/mesh_refinement.md#the-default-cmb-cell-against-finer-uniform-meshes)). This holds for the core module with the `nearest_boundary` mixing length; the study does not run the `constant` length that PROTEUS uses by default. This is not an error bound: the uniform flux at 320 nodes still lies 3.0 % above that at 640 nodes at 50 Myr, and 2.7 % at 100 Myr. The case runs with the solid rheology on at its default parameters. A thinner cell needs more solver steps on a molten shell without heat flow through the CMB (see [Limits](#limits)); this page gives no measured cost.
 
 ## Accepted values
 
@@ -61,7 +61,7 @@ In the core module the CMB heat flux is the larger of two values when the core i
 
 ## Limits
 
-- **A thin CMB cell on a molten shell without CMB heat flow**: with a CMB flux of 0 the bottom cells of a molten mantle sit near a zero entropy gradient, where mixing-length convection switches on and off, and a CMB cell much thinner than the uniform cell forces many small solver steps.
+- **A thin CMB cell on a molten shell without CMB heat flow**: with a CMB flux of 0 the bottom cells of a molten mantle sit near a zero entropy gradient, where mixing-length convection switches on and off, and a CMB cell much thinner than the uniform cell forces many small solver steps. The cost is not measured here.
 - **Below $10^{-7}$ of the mantle thickness**: refused by the grid when the mesh is built. With the 2 m floor this applies only to a mantle thicker than 20,000 km in radius mode, and about the same in mass-coordinate mode, where the fraction of a 2 m cell depends on the density profile.
 - **Mass-coordinate mode near the uniform cell**: the uniform end cells in mass coordinates differ from the radial uniform cell. For `abe_solid.toml` the uniform CMB cell is 9.33 km, below the radial 10.1 km, so a CMB cell between the two refines the mesh in radius mode and gives the uniform bottom cell in mass-coordinate mode.
 - **Cell density with an external profile** (`eos_method = 2`): on a refined mesh each cell's density is its mass over its volume, in both mesh modes, as on every mass-coordinate mesh. A uniform radius-mode mesh with an external profile takes the mean of the two face densities instead; on the test profile the two differ by up to $10^{-4}$ relative.

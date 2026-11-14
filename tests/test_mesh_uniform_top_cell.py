@@ -77,7 +77,7 @@ def test_the_default_mesh_fields_are_a_3000_m_cmb_cell_and_the_uniform_top_cell(
 def test_the_default_mlt_bottom_slope_is_1():
     """The viscous-branch mixing length grows as r - r_in above the CMB by default, the slope
     with which s_top_inf was calibrated."""
-    assert SolidRheologyParams().mlt_bottom_slope == 1.0
+    assert SolidRheologyParams().mlt_bottom_slope == pytest.approx(1.0)
 
 
 def test_the_loader_reads_the_default_and_a_uniform_string(tmp_path):
