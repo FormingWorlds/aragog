@@ -48,10 +48,11 @@ def test_the_stored_runs_and_their_mesh():
     """The 5 runs, the left-out run, the commits, the start and the cells quoted on the page."""
     study = _study()
     head, runs = study['header'], study['runs']
-    assert set(runs) == {'U160', 'U320', 'U640', 'D80', 'D160'}
+    assert set(runs) == {'U80', 'U160', 'U320', 'U640', 'D80', 'D160'}
     assert list(head['left_out']) == ['U80']
-    # In every call of Aragog's CMB law the conductive flux is the larger one.
-    assert all(v['max_q_conv_minus_q_cond'] < 0.0 for v in runs.values())
+    # In every call of Aragog's CMB law the conductive flux is the larger one, except on U80.
+    assert all(v['max_q_conv_minus_q_cond'] < 0.0 for k, v in runs.items() if k != 'U80')
+    assert runs['U80']['max_q_conv_minus_q_cond'] > 0.0
     assert f'{head["left_out"]["U80"]["share_conv_above_cond"]:.0%}' == '59%'
     assert head['runs_commit'] == RUNS_COMMIT
     check = head['check']
@@ -69,11 +70,12 @@ def test_the_stored_runs_and_their_mesh():
     build = head['eos_build']
     assert (build['P_max_Pa'], build['nP'], build['nS']) == (350e9, 1350, 280)
     assert build['mushy_zone_factor'] == 0.8
-    assert [runs[k]['n'] for k in ('U160', 'U320', 'U640', 'D80', 'D160')] == [
-        160, 320, 640, 80, 160
+    assert [runs[k]['n'] for k in ('U80', 'U160', 'U320', 'U640', 'D80', 'D160')] == [
+        80, 160, 320, 640, 80, 160
     ]  # fmt: skip
     cmb = {k: f'{v["cmb_cell_m"] / 1e3:.2f}' for k, v in runs.items()}
     assert cmb == {
+        'U80': '36.59',
         'U160': '18.18',
         'U320': '9.06',
         'U640': '4.52',
@@ -81,9 +83,30 @@ def test_the_stored_runs_and_their_mesh():
         'D160': '3.00',
     }
     assert [f'{runs[k]["max_cell_ratio"]:.3f}' for k in ('D80', 'D160')] == ['1.865', '1.621']
-    for k in ('U160', 'U320', 'U640'):
+    for k in ('U80', 'U160', 'U320', 'U640'):
         assert runs[k]['cmb_cell_m'] == pytest.approx(runs[k]['top_cell_m'], rel=1e-9)
     assert runs['D80']['top_cell_m'] == pytest.approx(36594.9, abs=0.1)
+
+
+def test_the_study_runs_the_default_rheology_and_names_its_profile():
+    """The config of the study sets no parameter of the solid rheology, so the runs use the
+    defaults the page names (slope 1.0, s_top_inf 0.22, c_theta 0.15), with the profile
+    nearest_boundary and the core module, as the page says."""
+    import tomllib
+
+    from aragog.rheology import SolidRheologyParams
+
+    path = (
+        Path(__file__).parents[1] / 'tools' / 'verification' / 'data' / 'core_mesh_study.toml'
+    )
+    cfg = tomllib.loads(path.read_text())
+    rheology = cfg['phase_solid']['rheology']
+    assert rheology['enabled'] is True
+    assert not {'mlt_bottom_slope', 's_top_inf', 'c_theta'} & set(rheology)
+    d = SolidRheologyParams()
+    assert (d.mlt_bottom_slope, d.s_top_inf, d.c_theta) == (1.0, 0.22, 0.15)
+    assert cfg['mesh']['mixing_length_profile'] == 'nearest_boundary'
+    assert cfg['boundary_conditions']['core_bc'] == 'core_module'
 
 
 def test_the_default_cmb_cell_against_finer_uniform_meshes(validation_plot):
@@ -105,7 +128,12 @@ def test_the_default_cmb_cell_against_finer_uniform_meshes(validation_plot):
     for name in ('D80', 'D160'):
         at = _at(runs[name])
         dT[name] = max(abs(at[t][k] - ref[t][k]) for t in TIMES for k in ('T_core', 'T_mid'))
-    assert {k: f'{v:.2f}' for k, v in dT.items()} == {'D80': '0.10', 'D160': '0.04'}
+    assert {k: f'{v:.3f}' for k, v in dT.items()} == {'D80': '0.103', 'D160': '0.044'}
+    # U80, left out of the comparison: its flux against U640 and its core at 100 Myr.
+    at80, ref_q = _at(runs['U80']), {t: ref[t]['q_cmb'] for t in TIMES}
+    u80 = [f'{100 * (at80[t]["q_cmb"] / ref_q[t] - 1):+.2f}' for t in TIMES]
+    assert u80 == ['-44.09', '-33.12', '-30.54']
+    assert f'{at80[100.0]["T_core"] - ref[100.0]["T_core"]:.2f}' == '10.18'
 
     g = np.array(study['header']['grid_myr'])
     transient = {}

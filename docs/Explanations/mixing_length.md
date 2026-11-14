@@ -47,6 +47,16 @@ and a smooth blend $w(\mathrm{Re}) = \tfrac{1}{2}\big[1 + \tanh\!\big((\mathrm{R
 The viscous limit recovers the laminar Stokes-like scaling $\kappa_h \propto l^4/\nu$ at low Re, the inviscid limit recovers the free-fall scaling $\kappa_h \propto l^2 (\alpha g T \,|\partial S/\partial r|/c_p)^{1/2}$ at high Re.
 This is the Abe (1993) two-regime form; SPIDER implements it as a hard `if/else` on Re, Aragog as a tanh blend so the JAX Jacobian stays smooth.
 
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. These solid values hold with the rheology off. With `rheology.enabled = true` the floor in a fully solid cell ($\phi = 0$) is exactly 0 ([Solid-state convection, Section 7](solid_state_convection.md#7-interaction-with-the-eddy-diffusivity-floor)). SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
+
+The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+
+When solid-state mantle rheology is enabled, the mixing-length profile boundary slopes depend on the viscosity contrast in the boundary layer. See [Solid-state convection](solid_state_convection.md) for the slope scaling and parameterization.
+
+## The mixing-length profile and the core-mantle boundary
+
+Which mixing length does Aragog use near the boundaries, and why does PROTEUS run the `constant` profile?
+
 Aragog has no default profile: each configuration sets `mixing_length_profile`.
 The `nearest_boundary` profile is
 
@@ -55,13 +65,16 @@ l(r) = \min(r_\mathrm{top}-r,\ r - r_\mathrm{cmb}),
 $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
+Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux fits experimental measurements (Fig. 3 in Abe (1995); Stothers & Chin (1997)[^cite-stothers1997]).
 The `constant` profile is a uniform fraction of the mantle thickness, `mixing_length_constant_fraction` (0.25 unless set, the value SPIDER uses); see [Heat transport](heat_transport.md#mixing-length-profile).
-PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
-A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. These solid values hold with the rheology off. With `rheology.enabled = true` the floor in a fully solid cell ($\phi = 0$) is exactly 0 ([Solid-state convection, Section 7](solid_state_convection.md#7-interaction-with-the-eddy-diffusivity-floor)). SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
-The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
+With `nearest_boundary` the length at that node is the thickness of the bottom cell.
+If that node turns stable, its diffusivity is 0, and the flux out of the core falls to about 0.
+In PROTEUS runs of 1 Earth mass this lasts about 30 kyr on 2 of 3 meshes, and the thickness of the bottom cell alone does not decide on which.
+PROTEUS therefore runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 
-When solid-state mantle rheology is enabled, the mixing-length profile boundary slopes depend on the viscosity contrast in the boundary layer. See [Solid-state convection](solid_state_convection.md) for the slope scaling and parameterization.
+**Where this is checked.** The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
 
 ## Boundary-layer theory in companion codes
 
@@ -70,7 +83,7 @@ PROTEUS ships a Nu-Ra BLT closure as a standalone interior-energetics module, `b
 It evolves a coupled ODE in $(T_\mathrm{p}, T_\mathrm{surf})$ on a 0-D mantle plus an atmospheric column, with the convective heat flux closed as $q_\mathrm{m} = \mathrm{Nu}\,k\,(T_\mathrm{p} - T_\mathrm{surf})/d_\mathrm{mantle}$ and the thermal boundary-layer thickness $\delta_\mathrm{TBL} = d_\mathrm{mantle}/\mathrm{Nu}$ with $\mathrm{Nu} = (\mathrm{Ra}/\mathrm{Ra}_\mathrm{crit})^{\beta}$.
 Three viscosity options are available: constant, an aggregate solid-melt logarithmic blend, and an Arrhenius solid mantle paired with a Vogel-Fulcher-Tammann magma-ocean branch.
 The other two options for `interior_energetics.module` are `spider` and `dummy`, where `dummy` is a 0-D lumped $T_\mathrm{magma}(t)$ cooling model (no Nu-Ra scaling, no surface-flux closure).
-The `param_utbl` knob in PROTEUS toggles an *ultra-thin thermal boundary-layer correction* on the surface temperature (Bower et al. (2018) Eq. 18) inside the MLT solver itself; it is a thin-BL correction *inside* MLT, not a separate BLT closure, and is independent of the `boundary` module.
+The `param_utbl` setting in PROTEUS turns on an *ultra-thin thermal boundary-layer correction* on the surface temperature (Bower et al. (2018) Eq. 18) inside the MLT solver itself; it is a thin-BL correction *inside* MLT, not a separate BLT closure, and is independent of the `boundary` module.
 The classical magma-ocean closure (Solomatov (2007), reviewing Solomatov & Stevenson (1993)[^cite-solomatovstevenson1993] and earlier scalings) writes the surface flux as
 
 $$
@@ -99,7 +112,7 @@ Both treat the magma ocean's interior as one cell.
 The conceptual difference is not "MLT vs BLT" as alternative formulas for the same quantity.
 The two closures resolve different physical states.
 
-| | MLT (Aragog, SPIDER) | BLT / parameterised (Elkins-Tanton 2008, Schaefer 2016) |
+| | MLT (Aragog, SPIDER) | BLT / parameterised (Elkins-Tanton (2008), Schaefer et al. (2016)) |
 |---|---|---|
 | State variable | $S(r,t)$ on a radial mesh | Bulk $T_\mathrm{pot}(t)$ (sometimes plus a solidification front) |
 | Where convection is closed | Per cell, locally | Across the upper TBL, globally |
@@ -149,19 +162,15 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
 - **Entropy form, not temperature form.**
   The buoyancy driver is the entropy gradient, $\max(|\partial S/\partial r|, D)$ on unstable nodes, not the superadiabatic temperature gradient.
   The two are equivalent through the thermodynamic identity $\partial T/\partial r|_S = (T/c_p)\,\partial S/\partial r$, but the entropy form keeps the EOS-tabulated $(P,S)$ lookup as the only thermodynamic call inside the RHS.
-  An earlier plan to rewrite the prognostic equation in a temperature-only formalism has been deprioritised: the entropy form's tighter coupling to the SPIDER-format P-S property tables and its correct lever-rule blending across the mushy zone outweigh the marginal interpretability gain of a $T(r,t)$ state vector.
+  Aragog does not use a temperature-only prognostic equation: the entropy form couples directly to the SPIDER-format P-S property tables and blends correctly across the mushy zone by the lever rule, which outweighs the small gain in readability of a $T(r,t)$ state vector.
   A T-only path remains available through the `const_properties` mode (matching SPIDER's `-use_const_properties` flag) for analytic-mode benchmarks, but it is not the production solver path.
 
 - **Smooth viscous-to-inviscid blend.**
   SPIDER implements the Abe (1993) two-regime form as a hard `if/else` on Re, while Aragog blends the regimes through a $\tanh$ on Re with a narrow width ($\Delta = 0.01\,\mathrm{Re}_\mathrm{crit}$).
-  The narrow width keeps the inviscid contribution confined to the convecting regime without leaking into solid layers; widening it has been shown to induce $T_\mathrm{core}$ bistability in test runs.
+  The narrow width keeps the inviscid contribution confined to the convecting regime without leaking into solid layers; a wider blend gave $T_\mathrm{core}$ bistability in test runs.
 
-- **Bounded-eddy mixing length.**
-  The `nearest_boundary` profile $l(r) = \min(r_\mathrm{top}-r,\ r-r_\mathrm{cmb})$ vanishes at both boundaries.
-  Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux fits experimental measurements (Fig. 3 in Abe (1995); Stothers & Chin (1997)[^cite-stothers1997]).
-  The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
-  With `nearest_boundary` the length at that node is the thickness of the bottom cell, so its convective flux is weak and the node can turn stable; its diffusivity is then 0, and the flux out of the core falls to about 0.
-  PROTEUS therefore runs Aragog with the `constant` profile, 0.25 of the mantle depth; the [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
+- **Mixing-length profile.**
+  Aragog offers the bounded-eddy profile `nearest_boundary` and the `constant` profile; [The mixing-length profile and the core-mantle boundary](#the-mixing-length-profile-and-the-core-mantle-boundary) explains both and why PROTEUS runs `constant`.
 
 - **Convective threshold.**
   The mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$ but uses at least a small gradient $D$ (`energy.convective_threshold`, default 0) on unstable nodes, and the floor acts up to $\partial S/\partial r = D$.
