@@ -18,8 +18,8 @@ from tests.test_mesh_refinement_study import FIGSIZE, _check_figure, _check_layo
 pytestmark = [pytest.mark.unit, pytest.mark.reference_pinned, pytest.mark.timeout(60)]
 
 DATA = Path(__file__).parent / 'validation' / 'data' / 'core_mesh_study.json'
-RUNS_COMMIT = 'd2baf002a791ecfd08a6021573623398ec99c8a1'
-CHECK_COMMIT = '92cd362d3f7bc69ce696501fb18d5eecc03a96f6'
+RUNS_COMMIT = 'f9b87e9a70ccc4d45aad4eaa73418ce210f7dda5'
+CHECK_COMMIT = RUNS_COMMIT
 COMPARED = ('U160', 'U320', 'D80', 'D160')
 TIMES = (3.0, 50.0, 100.0)
 
@@ -50,13 +50,13 @@ def test_the_stored_runs_and_their_mesh():
     head, runs = study['header'], study['runs']
     assert set(runs) == {'U160', 'U320', 'U640', 'D80', 'D160'}
     assert list(head['left_out']) == ['U80']
-    # The stored runs use the conductive flux alone; Aragog's law takes the larger flux.
+    # In every call of Aragog's CMB law the conductive flux is the larger one.
     assert all(v['max_q_conv_minus_q_cond'] < 0.0 for v in runs.values())
-    assert f'{head["left_out"]["U80"]["share_conv_above_cond"]:.0%}' == '48%'
+    assert f'{head["left_out"]["U80"]["share_conv_above_cond"]:.0%}' == '59%'
     assert head['runs_commit'] == RUNS_COMMIT
     check = head['check']
     assert (check['run'], check['commit']) == ('D80', CHECK_COMMIT)
-    # The rerun of D80 with Aragog's law reproduces the stored outputs bit for bit.
+    # The rerun of D80 reproduces the stored outputs bit for bit.
     md5 = runs['D80']['md5']
     assert check['md5'] == {k: md5[k] for k in ('segments', '.cmb.csv', '.nodes.bin', '.S.npy')}
     assert head['times_yr'] == [3e6, 5e7, 1e8]
@@ -95,20 +95,17 @@ def test_the_default_cmb_cell_against_finer_uniform_meshes(validation_plot):
     rel, grid = _relative(study)
     got = {k: [f'{x:+.2f}' for x in v] for k, v in rel.items()}
     assert got == {
-        'U160': ['-3.72', '+0.29', '+1.05'],
-        'U320': ['+9.02', '+1.81', '+1.42'],
-        'D80': ['-1.39', '-0.26', '-0.23'],
-        'D160': ['-1.25', '-0.07', '-0.05'],
+        'U160': ['-10.08', '-5.99', '-4.35'],
+        'U320': ['+6.68', '+3.00', '+2.69'],
+        'D80': ['-1.60', '-0.45', '-0.35'],
+        'D160': ['-1.42', '-0.23', '-0.15'],
     }
     ref = _at(runs['U640'])
+    dT = {}
     for name in ('D80', 'D160'):
         at = _at(runs[name])
-        dT = [abs(at[t][k] - ref[t][k]) for t in TIMES for k in ('T_core', 'T_mid')]
-        assert max(dT) < 0.04, name
-    assert (
-        f'{max(abs(_at(runs["D80"])[t]["T_core"] - ref[t]["T_core"]) for t in TIMES):.3f}'
-        == '0.036'
-    )
+        dT[name] = max(abs(at[t][k] - ref[t][k]) for t in TIMES for k in ('T_core', 'T_mid'))
+    assert {k: f'{v:.2f}' for k, v in dT.items()} == {'D80': '0.10', 'D160': '0.04'}
 
     g = np.array(study['header']['grid_myr'])
     transient = {}
@@ -118,8 +115,8 @@ def test_the_default_cmb_cell_against_finer_uniform_meshes(validation_plot):
         settled = int(np.where(np.abs(r) > 0.5)[0].max()) + 1
         transient[name] = (f'{r[0]:+.0f}', f'{r[i]:.1f}', f'{g[i]:.2f}', f'{g[settled]:.1f}')
     assert transient == {
-        'D80': ('+44', '-8.2', '0.53', '6.3'),
-        'D160': ('+42', '-8.1', '0.71', '5.3'),
+        'D80': ('+44', '-7.9', '0.53', '28.2'),
+        'D160': ('+42', '-7.7', '0.71', '7.5'),
     }
     assert g[0] == 0.01
 
@@ -149,6 +146,8 @@ def test_the_default_cmb_cell_against_finer_uniform_meshes(validation_plot):
         ax.axhline(0.0, color='0.5', lw=0.6)
         ax.set(xscale='log', xlabel='CMB cell [km]', ylabel='$q_\\mathrm{cmb}$ vs U640 [%]')
         ax.set_xticks([3, 10, 20], ['3', '10', '20'])
+        ax.set_yticks([-10, -5, 0, 5])
+        ax.set_ylim(-12, 9)
         ax.minorticks_off()
         fig.legend(loc='outside lower center', ncols=3, handlelength=1.6)
         return fig
