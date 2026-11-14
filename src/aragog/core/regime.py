@@ -101,7 +101,9 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
     if budget.capacity_mode == 'legacy':  # no inner core, latent or gravitational heat
         return
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
-    codes = np.asarray(budget.regime_batch(t_cmb))
+    # Pad to a power of two (at least 8) so the batch compiles once per length bucket.
+    size = max(8, 1 << (t_cmb.size - 1).bit_length())
+    codes = np.asarray(budget.regime_batch(np.resize(t_cmb, size)))[: t_cmb.size]
     frozen_ok = budget.t_freeze <= budget.t_onset
     bad = (codes > REGIME_BOTTOM_UP) & ((codes != REGIME_FULLY_FROZEN) | (not frozen_ok))
     if bad.any():
