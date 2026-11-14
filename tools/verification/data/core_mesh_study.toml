@@ -62,8 +62,6 @@ thermal_expansivity = 3e-05
 
 [phase_solid.rheology]
 enabled = true
-s_top_inf = 0.25
-c_theta = 0.25
 activation_energy = 226518.5378
 activation_volume = 0.0
 arrhenius_t_ref = 1773.0
