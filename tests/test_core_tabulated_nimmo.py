@@ -10,6 +10,8 @@ and how fast the inner core grows, so Table 4 is no reference for them.
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pytest
 from scipy.optimize import brentq
@@ -147,3 +149,38 @@ def test_the_heat_change_of_a_growing_inner_core_is_the_integral_of_its_capacity
     ):
         ref = reference_heat_change(paleos, t0, dt)
         assert paleos.heat_change(t0, dt) == pytest.approx(ref, rel=2e-7), (t0, dt)
+
+
+def _r_icb_root(budget, t_cmb):
+    """Inner-core radius [m] from the table entropy alone: the radius where the isentrope
+    through the CMB entropy meets the melting curve."""
+    p, tab = budget.profiles, budget.profiles.table
+    s_c, t_lo, t_hi = (
+        float(tab.value('s', p.p_cmb, t_cmb)),
+        tab.temperature[0],
+        tab.temperature[-1],
+    )
+
+    def superheat(r):
+        pressure = float(p.pressure(r))
+        t_a = brentq(lambda x: float(tab.value('s', pressure, x)) - s_c, t_lo, t_hi, xtol=1e-11)
+        return t_a - float(budget.melting_curve.t_melt(pressure))
+
+    return brentq(superheat, 1.0, p.r_cmb - 1.0, xtol=1e-6)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('t_cmb', [3835.0, 3850.0, 3865.0])
+def test_the_boundary_sensitivity_is_the_slope_of_the_table_root(budgets, t_cmb):
+    """|dr_icb/dT_cmb| on the PALEOS isentrope equals a centred difference (0.01 K) of the
+    root of the table entropy to 1e-5 (measured at most 6.2e-7); an isentrope slope 1 %
+    off in radius moves it by 4.3e-3 to 1.9e-2, so a wrong slope fails."""
+    paleos = budgets[1]
+    h = 0.01
+    ref = (_r_icb_root(paleos, t_cmb - h) - _r_icb_root(paleos, t_cmb + h)) / (2.0 * h)
+    assert float(paleos._boundary_sensitivity(t_cmb)) == pytest.approx(ref, rel=1e-5)
+    wrong = copy.copy(paleos)
+    wrong.profiles = copy.copy(paleos.profiles)
+    f, f_r, f_t, f_rt = paleos.profiles._f
+    wrong.profiles._f = (f, 1.01 * f_r, f_t, 1.01 * f_rt)
+    assert abs(float(wrong._boundary_sensitivity(t_cmb)) / ref - 1.0) > 100 * 1e-5

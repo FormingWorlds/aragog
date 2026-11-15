@@ -29,14 +29,16 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 ## The Earth budget of Nimmo (2015) on the PALEOS isentrope
 
-**Why this check exists.** A latent or gravitational term that does not follow the inner-core boundary on the new isentrope would change $Q_L/Q_g$, and a latent heat per unit mass other than the 750 kJ kg$^{-1}$ of the input would change $Q_L$. The case also shows how much each term moves from the published Earth budget.
+**Why this check exists.** A speed of the inner-core boundary taken from a wrong isentrope slope would change $Q_L$, $Q_g$ and the growth rate, and a latent heat per unit mass other than the 750 kJ kg$^{-1}$ of the input would change $Q_L$. The case also shows how much each term moves from the published Earth budget.
 
 **What it tests.** The core has the structure, melting curve, latent heat (750 kJ kg$^{-1}$) and density jump of Nimmo (2015)[^cite-nimmo2015a] (ch. 8.02, Table 2), as in the [Gaussian case](core.md#5-nimmo-2015-earth-core-budget). Only the temperature profile changes, to the PALEOS liquid isentrope with $c_p$ = 840 J kg$^{-1}$ K$^{-1}$, on 801 nodes of the same structure. At a CMB heat flow of 15.2 TW the test computes the secular, latent and gravitational heat flows $Q_s$, $Q_L$ and $Q_g$, the cooling rate of the CMB and the growth rate of the inner core.
 
-**How we know the right answer.** Table 4 of the same chapter gives the terms on the Gaussian adiabat; the Gaussian path of Aragog meets them to 2 %. On the PALEOS isentrope the terms have no published value, because the isentrope moves the inner core. The test holds 2 parts exactly, because they do not depend on where the inner core is:
+**How we know the right answer.** Table 4 of the same chapter gives the terms on the Gaussian adiabat; the Gaussian path of Aragog meets them to 2 %. On the PALEOS isentrope the terms have no published value, because the isentrope moves the inner core. The test holds 2 parts to a tight tolerance, because they do not depend on where the inner core is:
 
-- $Q_L/Q_g$ must equal its Gaussian value: both terms scale with the speed of the inner-core boundary on one structure.
-- The latent heat per unit mass must stay 750 kJ kg$^{-1}$.
+- $Q_L/Q_g$ must equal its Gaussian value to $10^{-6}$: both terms scale with the speed of the inner-core boundary on one structure.
+- The latent heat per unit mass must stay 750 kJ kg$^{-1}$, to $10^{-12}$.
+
+$Q_L/Q_g$ cannot see a wrong speed of the boundary, since both terms take it from the same function. A second test pins that speed, $|dr_\text{icb}/dT_\text{cmb}|$, to a centred difference (0.01 K) of the boundary found from the table entropy alone: to $10^{-5}$ at 3835, 3850 and 3865 K, measured at most 6.2e-7. An isentrope slope 1 % off in radius moves the speed by 4.3e-3 to 1.9e-2 and fails it.
 
 For the other PALEOS terms the test holds only the direction of the change from Table 4, with wide bounds.
 
@@ -58,8 +60,8 @@ For the other PALEOS terms the test holds only the direction of the change from 
 
 ??? info "Test details"
     - Reference: Nimmo (2015)[^cite-nimmo2015a], ch. 8.02, Table 2 (inputs) and Table 4 (terms at 15.2 TW).
-    - Tolerance: $Q_L/Q_g$ against the Gaussian value, relative $10^{-6}$ (measured 1.6722 on both paths); latent heat 750 kJ kg$^{-1}$, relative $10^{-12}$; Gaussian path 2 % on $Q_s$, $Q_L$, $Q_g$ and the cooling rate. PALEOS path: no inner core at 4180 K, the PALEOS onset below 4180 K and the Gaussian onset above it, $|dr_\text{icb}/dT_\text{cmb}|$ between 1.5 and 1.8 times the Gaussian value, $Q_L$, $Q_g$ and the growth rate above 1.1 and $Q_s$ and the cooling rate below 0.8 times Table 4.
-    - Test id: `tests/test_core_tabulated_nimmo.py::test_the_nimmo_earth_budget_on_the_paleos_isentrope` (unit tier)
+    - Tolerance: $Q_L/Q_g$ against the Gaussian value, relative $10^{-6}$ (measured 1.6722 on both paths); latent heat 750 kJ kg$^{-1}$, relative $10^{-12}$; Gaussian path 2 % on $Q_s$, $Q_L$, $Q_g$ and the cooling rate. PALEOS path: no inner core at 4180 K, the PALEOS onset below 4180 K and the Gaussian onset above it, $|dr_\text{icb}/dT_\text{cmb}|$ between 1.5 and 1.8 times the Gaussian value, $Q_L$, $Q_g$ and the growth rate above 1.1 and $Q_s$ and the cooling rate below 0.8 times Table 4. Boundary speed against the centred difference of the table root: relative $10^{-5}$ (measured at most 6.2e-7).
+    - Test id: `tests/test_core_tabulated_nimmo.py::test_the_nimmo_earth_budget_on_the_paleos_isentrope`, `::test_the_boundary_sensitivity_is_the_slope_of_the_table_root` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_nimmo.py`
 
 ## The isentrope equals the integral of the adiabatic gradient
