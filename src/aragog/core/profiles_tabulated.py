@@ -92,9 +92,12 @@ class TabulatedCoreProfiles:
     c_p : float or None
         Constant isobaric heat capacity [J kg-1 K-1] of the secular term, or ``None`` for the
         table value at the CMB.
-    t_cmb_range : tuple of float
+    t_cmb_range : tuple of float, optional
         Lowest and highest CMB temperature [K] of the tabulated isentropes; every node must
-        stay inside the table box over the range.
+        stay inside the table box over the range. By default the whole range the table
+        holds: from its lowest temperature (the CMB has the lowest entropy at that
+        temperature, so every node stays inside) to the CMB temperature whose isentrope
+        reaches the highest table temperature at the centre.
     t_cmb_step : float
         Spacing [K] of the CMB temperature grid.
     m_core : float, optional
@@ -117,8 +120,8 @@ class TabulatedCoreProfiles:
         table: LiquidIronTable,
         *,
         c_p: float | None = 840.0,
-        t_cmb_range: tuple[float, float] = (2000.0, 8000.0),
-        t_cmb_step: float = 20.0,
+        t_cmb_range: tuple[float, float] | None = None,
+        t_cmb_step: float = 10.0,
         m_core: float | None = None,
     ) -> None:
         missing = [k for k in REQUIRED_KEYS if k not in core]
@@ -150,7 +153,7 @@ class TabulatedCoreProfiles:
             )
         if c_p is not None and not _positive_number(c_p):
             raise ValueError(f'c_p must be a positive finite number or None, got {c_p!r}')
-        t_lo, t_hi = t_cmb_range
+        t_lo, t_hi = self._full_range(table, p) if t_cmb_range is None else t_cmb_range
         if not (_positive_number(t_lo) and _positive_number(t_hi) and t_lo < t_hi) or not (
             _positive_number(t_cmb_step)
         ):
@@ -159,6 +162,7 @@ class TabulatedCoreProfiles:
 
         self.table, self.c_p_override = table, None if c_p is None else float(c_p)
         self.r_cmb, self.p_cmb, self.m_core = float(r[-1]), float(p[-1]), float(m[-1])
+        self.n_nodes = n
         self._r, self._m, self._p = jnp.asarray(r), m, p
         dm = 4.0 * np.pi * r**2 * rho
         dg = np.where(r > 0.0, 4.0 * np.pi * G * rho - 2.0 * g / np.where(r > 0, r, 1.0), 0.0)
@@ -178,6 +182,16 @@ class TabulatedCoreProfiles:
         self._install_isentropes(r, p, rho, g, m, t_lo, t_hi, float(t_cmb_step))
 
     # -- install -------------------------------------------------------------
+
+    @staticmethod
+    def _full_range(table, p):
+        """CMB temperatures [K] whose isentropes stay in the table box at every node."""
+        t_min, t_max = float(table.temperature[0]), float(table.temperature[-1])
+        s_top = table.value('s', float(p[0]), t_max)
+        if table.value('s', float(p[-1]), t_max) < s_top:
+            return t_min, t_max
+        t_hi = brentq(lambda t: table.value('s', float(p[-1]), t) - s_top, t_min, t_max)
+        return t_min, float(t_hi) * (1.0 - 1e-9)
 
     def _install_isentropes(self, r, p, rho, g, m, t_lo, t_hi, step):
         """Invert the table entropy on every node and CMB temperature; tabulate C_s."""

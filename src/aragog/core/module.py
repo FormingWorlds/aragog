@@ -13,14 +13,23 @@ so they can be compared on identical physics.
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import math
+import numbers
+import pathlib
+
 import jax
 import jax.numpy as jnp
+import numpy as _np
 
 from aragog.core.boundary_layer import RA_CRIT_CMB_DEFAULT, check_ra_crit
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
+from aragog.core.iron_table import LiquidIronTable
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import crystallization_regime
 
 jax.config.update('jax_enable_x64', True)
@@ -69,6 +78,11 @@ _BUDGET_KEYS = frozenset(
         'k_core',
     }
 )
+# The tabulated core: the PALEOS liquid iron table and the Zalmoxis core arrays (.npz).
+PROFILE_SOURCES = ('gaussian', 'paleos')
+_TABULATED_FILES = ('core_liquid_table', 'core_profile_file')
+_TABULATED_KEYS = frozenset({'profile_source', 'core_cp_override', 'core_t_cmb_step'})
+CORE_CP_OVERRIDE_DEFAULT = 840.0  # J/kg/K: the PALEOS liquid has no electronic heat capacity
 # Shell settings of a stratified core: config key -> CoreShell keyword.
 _LAYER_KEYS = {
     'layer_base_fraction': 'base_fraction',
@@ -86,6 +100,8 @@ CORE_MODULE_KEYS = (
     | _BUDGET_KEYS
     | set(_LAYER_KEYS)
     | {'melting_curve'}
+    | _TABULATED_KEYS
+    | set(_TABULATED_FILES)
 )
 
 
@@ -103,7 +119,109 @@ def _check_budget_params(params: dict) -> str:
         raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
     if params.get('fit_profile') not in (None, True, False):
         raise ValueError(f'fit_profile must be true or false, got {params["fit_profile"]!r}')
+    _check_tabulated_params(params)
     return curve_kind
+
+
+def _positive(x) -> bool:
+    """True for a finite positive real number that is not a bool."""
+    return (
+        isinstance(x, numbers.Real) and not isinstance(x, bool) and math.isfinite(x) and x > 0
+    )
+
+
+def _check_tabulated_params(params: dict) -> None:
+    """Refuse an unknown ``profile_source``, table files without ``'paleos'``, a ``'paleos'``
+    source without its files or with a stratified core, and a bad c_p override or grid step."""
+    source = params.get('profile_source') or 'gaussian'
+    if source not in PROFILE_SOURCES:
+        raise ValueError(f'profile_source must be one of {PROFILE_SOURCES}, got {source!r}')
+    given = [k for k in _TABULATED_FILES if params.get(k) is not None]
+    if source == 'gaussian':
+        if given:
+            raise ValueError(f"{given} are read only with profile_source = 'paleos'")
+        return
+    missing = sorted(set(_TABULATED_FILES) - set(given))
+    if missing:
+        raise ValueError(f"profile_source = 'paleos' needs {missing}")
+    for k in _TABULATED_FILES:
+        if not isinstance(params[k], (str, pathlib.PurePath)) or not str(params[k]):
+            raise ValueError(f'{k} must be a file path, got {params[k]!r}')
+    if params.get('stratification'):
+        raise ValueError("profile_source = 'paleos' does not support stratification yet")
+    cp = params.get('core_cp_override')
+    if cp is not None and cp != 'table' and not _positive(cp):
+        raise ValueError(f"core_cp_override must be a positive number or 'table', got {cp!r}")
+    step = params.get('core_t_cmb_step')
+    if step is not None and not _positive(step):
+        raise ValueError(f'core_t_cmb_step must be a positive number, got {step!r}')
+
+
+def file_md5(path) -> str:
+    """md5 of the bytes of the file at ``path``."""
+    return hashlib.md5(pathlib.Path(path).read_bytes()).hexdigest()
+
+
+def core_module_cache_key(params: dict, r_cmb: float, p_cmb: float) -> tuple:
+    """Key under which a solver keeps a built budget: the parameters, the CMB geometry and
+    the content of the tabulated-core files, so that a structure update that rewrites a file
+    at the same path rebuilds the budget."""
+    files = tuple(file_md5(params[k]) for k in _TABULATED_FILES if params.get(k) is not None)
+    return (sorted(params.items()), float(r_cmb), params.get('p_cmb', p_cmb), files)
+
+
+@functools.lru_cache(maxsize=4)
+def _liquid_table(path: str, md5: str) -> LiquidIronTable:
+    """The table at ``path``, read once per content."""
+    return LiquidIronTable.from_file(path)
+
+
+def load_core_arrays(path) -> dict:
+    """Core arrays of a Zalmoxis structure from an ``.npz`` with the names of its
+    ``result['core']``; 0-d arrays (``M_ic``, ``R_icb``, ``P_icb``) come back as floats and a
+    string array (``w_layers``, JSON) as ``str``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``path`` does not exist.
+    ValueError
+        If ``path`` is not an ``.npz`` file.
+    """
+    path = pathlib.Path(path)
+    if path.suffix != '.npz':
+        raise ValueError(f'core_profile_file must be an .npz file, got {path.name}')
+    if not path.is_file():
+        raise FileNotFoundError(f'core_profile_file not found: {path}')
+    out = {}
+    with _np.load(path, allow_pickle=False) as data:
+        for key in data.files:
+            arr = data[key]
+            if arr.ndim == 0:
+                out[key] = str(arr) if arr.dtype.kind in 'US' else float(arr)
+            else:
+                out[key] = arr
+    return out
+
+
+def _tabulated_profiles(params: dict, r_cmb: float, m_core: float | None):
+    """The tabulated profile of a ``'paleos'`` source, checked against the solver CMB radius."""
+    table_path = str(params['core_liquid_table'])
+    table = _liquid_table(table_path, file_md5(table_path))
+    cp = params.get('core_cp_override')
+    profiles = TabulatedCoreProfiles(
+        load_core_arrays(params['core_profile_file']),
+        table,
+        c_p=None if cp == 'table' else (CORE_CP_OVERRIDE_DEFAULT if cp is None else cp),
+        t_cmb_step=params.get('core_t_cmb_step') or 10.0,
+        m_core=m_core,
+    )
+    if abs(profiles.r_cmb - r_cmb) > max(1.0, 1e-9 * r_cmb):
+        raise ValueError(
+            f'core_profile_file ends at r = {profiles.r_cmb:.6e} m, the mesh CMB at '
+            f'{r_cmb:.6e} m'
+        )
+    return profiles
 
 
 def split_core_module_params(params: dict | None) -> tuple[dict, float, float]:
@@ -145,6 +263,14 @@ def build_core_module_budget(
     mesh), never from the dict, and ``p_cmb`` falls back to the
     caller's value when absent.
 
+    ``profile_source = 'paleos'`` builds a :class:`TabulatedCoreProfiles` instead, from the
+    core arrays in ``core_profile_file`` (an ``.npz`` with the names of the Zalmoxis
+    ``result['core']``) on the PALEOS liquid iron table ``core_liquid_table``, with the
+    secular c_p ``core_cp_override`` (840 J/kg/K by default, ``'table'`` for the table value
+    at the CMB) and the CMB temperature grid step ``core_t_cmb_step`` [K] (10 by default).
+    The Gaussian profile keys are then unused; ``m_core`` must equal the mass of the arrays
+    to 1e-10 and their last radius the mesh CMB to ``max(1 m, 1e-9 r_cmb)``.
+
     When both ``m_core`` and ``p_cen`` are provided (and ``fit_profile`` is
     not ``False``), ``rho_cen`` and ``length_scale`` are fitted to the
     structure constraints via :meth:`GaussianCoreProfiles.from_structure`.
@@ -161,12 +287,16 @@ def build_core_module_budget(
     params = {**_FACTORY_DEFAULTS, **params}
     curve_kind = _check_budget_params(params)
     params.pop('melting_curve', None)
+
     cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
     m_core = cfg['m_core'] if m_core is None else m_core
     p_cen = cfg['p_cen'] if p_cen is None else p_cen
     fit_profile = cfg['fit_profile']
     given = (m_core is not None) + (p_cen is not None)
     fit = given == 2 if fit_profile is None else bool(fit_profile)
+    tabulated = (params.get('profile_source') or 'gaussian') == 'paleos'
+    if tabulated:
+        given, fit = 2, False  # the profile comes from the file; m_core only checks it
     if given == 1:
         raise ValueError('m_core and p_cen go together: give both or neither')
     if fit and given == 0:
@@ -176,7 +306,9 @@ def build_core_module_budget(
     profile_kwargs['r_cmb'] = r_cmb
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
 
-    if fit:
+    if tabulated:
+        profiles = _tabulated_profiles(params, r_cmb, m_core)
+    elif fit:
         profiles = GaussianCoreProfiles.from_structure(
             m_core=m_core,
             p_cen=p_cen,
