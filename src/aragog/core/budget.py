@@ -515,6 +515,8 @@ class CoreEnergyBudget:
         d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
         if min(0.0, dt) < d_freeze < max(0.0, dt):  # on the changes: the subcooling rounds
             pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
+        if self.tabulated:
+            pieces = [q for piece in pieces for q in self._split_at_kinks(*piece)]
         released = 0.0
         for t_a, d_a in pieces:
             s_a, s_b = max(self.t_onset - t_a, 0.0), max(self.t_onset - t_a - d_a, 0.0)
@@ -524,6 +526,31 @@ class CoreEnergyBudget:
                 above = t_a > self.t_freeze or (t_a == self.t_freeze and d_a > 0.0)
                 released += self._released_panel(u_a, width, above)
         return secular - released
+
+    @functools.cached_property
+    def _kinks(self):
+        """CMB temperatures [K] where the capacity of a tabulated profile has a kink: its grid
+        temperatures, and those where the inner-core boundary crosses a radial node (the
+        Hermite surfaces are C1, so the boundary sensitivity is continuous but not smooth)."""
+        p = self.profiles
+        grid = _np.asarray(p.t_grid)
+        nodes = p._r
+        lo, hi = jnp.full(nodes.shape, grid[0]), jnp.full(nodes.shape, grid[-1])
+        crosses = _np.asarray(
+            (self.superheat(nodes, lo) < 0.0) & (self.superheat(nodes, hi) > 0.0)
+        )
+        for _ in range(_BISECT_ITERS):
+            mid = 0.5 * (lo + hi)
+            frozen = self.superheat(nodes, mid) < 0.0
+            lo, hi = jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
+        return _np.unique(_np.concatenate([grid, _np.asarray(0.5 * (lo + hi))[crosses]]))
+
+    def _split_at_kinks(self, t_a, d_a):
+        """The change ``d_a`` [K] from ``t_a`` cut at the kinks of the capacity, in its order."""
+        k = self._kinks
+        cuts = k[(k > min(t_a, t_a + d_a)) & (k < max(t_a, t_a + d_a))]
+        edges = [t_a, *(cuts if d_a > 0 else cuts[::-1]).tolist(), t_a + d_a]
+        return [(a, b - a) for a, b in zip(edges[:-1], edges[1:])]
 
     @functools.cached_property
     def _boundary(self):
