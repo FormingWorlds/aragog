@@ -273,3 +273,53 @@ def test_the_isentrope_check_refuses_a_miss(table, monkeypatch):
     monkeypatch.setattr(pt, 'ISENTROPE_RTOL', 0.0)
     with pytest.raises(ValueError, match='isentrope misses s_c'):
         TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE)
+
+
+@pytest.mark.physics_invariant
+def test_derivatives_at_the_ends_of_the_tables_are_the_one_sided_slopes(paleos):
+    """At the CMB and at the edges of the temperature grid, autodiff gives the slope of the
+    interpolant there, not half of it (a clamp whose gradient splits at the bound would)."""
+    r_cmb, t0 = paleos.r_cmb, float(paleos.t_grid[0])
+    inside = float(paleos.adiabat_gradient(r_cmb - 1.0, 4000.0))
+    assert float(paleos.adiabat_gradient(r_cmb, 4000.0)) == pytest.approx(inside, rel=1e-4)
+    d_rho = jax.grad(paleos.density)
+    assert float(d_rho(r_cmb)) == pytest.approx(float(d_rho(r_cmb - 1.0)), rel=1e-4)
+    d_cs = jax.grad(paleos.secular_capacity)
+    for t in (t0, float(paleos.t_grid[-1])):
+        assert float(d_cs(t)) == pytest.approx(
+            float(paleos._c_s[1][0 if t == t0 else -1]), rel=1e-12
+        )
+
+
+def test_a_coarse_grid_that_misses_the_isentrope_between_grid_points_is_refused(table):
+    """The entropy check runs at the midpoints of the temperature grid too: a 1500 K step
+    misses the isentrope between grid points by more than 1e-6 and is refused, a 10 K step
+    passes; a grid of more than 20,000 temperatures is refused before it is built."""
+    arrays, _ = gaussian_core(41)
+    TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=10.0)
+    with pytest.raises(ValueError, match='between grid temperatures'):
+        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=1500.0)
+    with pytest.raises(ValueError, match='at most 20000'):
+        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=1e-2)
+
+
+def test_a_table_too_cold_for_any_isentrope_is_refused_with_its_range(table):
+    """A table that ends below 3000 K holds no isentrope from CMB to centre; the default range
+    says so and names the table temperatures."""
+    keep = table.temperature <= 3000.0
+    small = LiquidIronTable(
+        table.pressure,
+        table.temperature[keep],
+        {f: v[:, keep] for f, v in table.fields.items()},
+        header='# Kind: liquid',
+    )
+    with pytest.raises(ValueError, match='no CMB temperature keeps the isentrope inside'):
+        TabulatedCoreProfiles(gaussian_core(41)[0], small)
+
+
+def test_check_t_cmb_refuses_outside_the_grid_and_nan(paleos):
+    """``check_t_cmb`` passes the grid ends and refuses below, above, NaN and inf."""
+    paleos.check_t_cmb([float(paleos.t_grid[0]), float(paleos.t_grid[-1])])
+    for bad in (2400.0, 7100.0, math.nan, math.inf):
+        with pytest.raises(ValueError, match='outside the tabulated isentropes'):
+            paleos.check_t_cmb([4000.0, bad])

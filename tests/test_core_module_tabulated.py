@@ -217,3 +217,38 @@ def test_core_module_diagnostics_report_the_calibration_fraction(paleos_params):
         'fully_frozen',
         'regime',
     }
+
+
+@pytest.mark.parametrize('key', ['m_core', 'r_cmb'])
+def test_nan_mass_or_radius_is_refused(paleos_params, key):
+    """A NaN core mass or mesh CMB radius fails the checks against the arrays."""
+    kw = {'r_cmb': R_CMB, 'p_cmb_fallback': 136e9, key: math.nan}
+    with pytest.raises(ValueError, match='core arrays hold|the mesh CMB'):
+        build_core_module_budget(paleos_params, **kw)
+
+
+@pytest.mark.parametrize('bad', [False, 0, 1.0, ['paleos']])
+def test_a_profile_source_that_is_not_a_name_is_refused(bad):
+    """Only None and the names in PROFILE_SOURCES select a source; a bool or a number is
+    refused, not read as the Gaussian default."""
+    with pytest.raises(ValueError, match='profile_source must be one of'):
+        split_core_module_params({'profile_source': bad})
+
+
+def test_core_module_refuses_a_start_outside_the_grid(paleos_params):
+    """CoreModule refuses a CMB temperature outside the tabulated isentropes at the start."""
+    from aragog.core.module import CoreModule
+
+    b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
+    with pytest.raises(ValueError, match='outside the tabulated isentropes'):
+        CoreModule(b, t_cmb=1500.0)
+
+
+def test_a_mesh_pressure_far_from_the_arrays_is_logged(paleos_params, caplog):
+    """A CMB pressure of the arrays more than 1 % from the mesh value is logged once as a
+    warning naming both; within 1 % nothing is logged."""
+    with caplog.at_level('WARNING', logger='fwl.aragog.core.module'):
+        build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
+        assert not caplog.records
+        build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=100e9)
+    assert any('CMB pressure' in r.getMessage() for r in caplog.records)

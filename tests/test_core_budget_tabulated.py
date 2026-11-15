@@ -18,7 +18,7 @@ import pytest
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.iron_table import LiquidIronTable
-from aragog.core.melting import IronMeltingCurve
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import refuse_unmodelled_regime
@@ -283,3 +283,24 @@ def test_effective_tfac_of_a_tabulated_profile(paleos_budget):
     )
     with pytest.raises(ValueError, match='constant c_p of an override'):
         table_cp.effective_tfac(t_cmb=4000.0)
+
+
+@pytest.mark.parametrize(('t_m0', 'end'), [(1000.0, 0), (60000.0, -1)])
+def test_an_onset_outside_the_grid_is_the_grid_end(paleos_budget, t_m0, end):
+    """A melting curve below every tabulated centre (liquid on the whole grid) puts the onset
+    at the lowest grid temperature, one above every centre at the highest; the heat change and
+    the regime check then run, and the liquid core books only its secular heat."""
+    p = paleos_budget.profiles
+    b = CoreEnergyBudget(p, QuadraticMeltingCurve(t_m0=t_m0, t_m1=0.0, t_m2=0.0), **BUDGET)
+    assert b.t_onset == float(p.t_grid[end])
+    change = b.heat_change(5000.0, -50.0)
+    assert np.isfinite(change)
+    if end == 0:
+        assert change == pytest.approx(p.secular_heat_change(5000.0, -50.0), rel=1e-14)
+        refuse_unmodelled_regime(b, [4000.0, 5000.0])
+
+
+def test_nan_temperature_is_refused_by_the_regime_check(paleos_budget):
+    """A NaN core temperature is refused as outside the tabulated isentropes."""
+    with pytest.raises(ValueError, match='outside the tabulated isentropes'):
+        refuse_unmodelled_regime(paleos_budget, [4000.0, np.nan])

@@ -197,3 +197,42 @@ def test_a_text_table_that_is_not_a_full_rectangle_is_refused(tmp_path):
         LiquidIronTable.from_file(path)
     path.write_text('\n'.join(lines) + '\n')
     assert LiquidIronTable.from_file(path).fields['rho'].shape == data['rho'].shape
+
+
+def test_a_duplicated_row_in_place_of_a_missing_one_is_refused(tmp_path):
+    """A text table where one (P, T) row is missing and another appears twice has the right
+    row count; the reader must still refuse it, since its values would land at wrong nodes."""
+    data = np.load(CUT)
+    path = _write_dat(tmp_path / 't.dat', data)
+    lines = path.read_text().splitlines()
+    path.write_text('\n'.join([*lines[:-1], lines[-2]]) + '\n')
+    with pytest.raises(ValueError, match='not a full rectangle'):
+        LiquidIronTable.from_file(path)
+
+
+@pytest.mark.parametrize(
+    ('body', 'msg'),
+    [
+        ('', 'no data rows'),
+        ('1e9 1e3 1 2 3 4 5 6 liquid', 'needs 9 numbers'),
+        ('1e9 1e3 1 2 3 4 5 6 7 liquid\n1e9 2e3 1 2 3 liquid', 'needs 9 numbers'),
+    ],
+)
+def test_a_malformed_text_table_is_refused_with_its_name(tmp_path, body, msg):
+    """An empty table, a short row and a ragged table raise ValueError naming the file."""
+    path = tmp_path / 'bad.dat'
+    path.write_text('# Kind: liquid\n' + body + '\n')
+    with pytest.raises(ValueError, match=msg) as err:
+        LiquidIronTable.from_file(path)
+    assert 'bad.dat' in str(err.value)
+
+
+@pytest.mark.parametrize('drop', ['s', 'header', 'T_K'])
+def test_an_npz_without_a_key_is_refused_with_its_name(tmp_path, drop):
+    """An npz cut without a field, the axes or the header raises ValueError naming the key."""
+    data = dict(np.load(CUT))
+    del data[drop]
+    path = tmp_path / 'cut.npz'
+    np.savez(path, **data)
+    with pytest.raises(ValueError, match=f"missing.*'{drop}'"):
+        LiquidIronTable.from_file(path)
