@@ -16,6 +16,7 @@ installed; the solver reads only the tabulated results.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import re
 
@@ -25,6 +26,42 @@ from scipy.interpolate import RectBivariateSpline
 FIELDS = ('rho', 'u', 's', 'cp', 'cv', 'alpha', 'nabla_ad')
 _POSITIVE = ('rho', 'cp', 'cv')
 _KIND = re.compile(r'^#\s*Kind:\s*(\w+)', re.MULTILINE)
+logger = logging.getLogger(__name__)
+
+
+def _finite_pressure_rows(arrays, pressure):
+    """Slice of the pressure rows to keep: drop rows with a non-finite cell at the bottom or
+    top of the table (cells that did not converge), refuse one inside.
+
+    Raises
+    ------
+    ValueError
+        For a non-finite cell in a row between finite rows, or fewer than 4 finite rows.
+    """
+    bad = np.zeros(pressure.size, bool)
+    for arr in arrays.values():
+        bad |= ~np.all(np.isfinite(arr), axis=1)
+    good = np.flatnonzero(~bad)
+    if good.size < 4:
+        raise ValueError(
+            f'liquid iron table has fewer than 4 finite pressure rows ({good.size})'
+        )
+    lo, hi = int(good[0]), int(good[-1]) + 1
+    if bad[lo:hi].any():
+        i = lo + int(np.flatnonzero(bad[lo:hi])[0])
+        f = next(f for f, arr in arrays.items() if not np.all(np.isfinite(arr[i])))
+        raise ValueError(
+            f'non-finite cell in {f} inside the table, at P = {pressure[i]:.4e} Pa'
+        )
+    if bad.any():
+        logger.info(
+            'Liquid iron table drops %d pressure rows with non-finite cells at its edges; '
+            'pressure range now %.4e to %.4e Pa',
+            int(bad.sum()),
+            pressure[lo],
+            pressure[hi - 1],
+        )
+    return slice(lo, hi)
 
 
 class LiquidIronTable:
@@ -38,7 +75,9 @@ class LiquidIronTable:
         Temperature axis [K], positive and strictly increasing, at least 4 points.
     fields : dict
         One array of shape ``(len(pressure), len(temperature))`` per name in ``FIELDS``, in
-        the units of the module docstring.
+        the units of the module docstring. Pressure rows with a non-finite cell at the
+        bottom or top of the table (cells that did not converge) are dropped, and the
+        pressure range of the table shrinks to the finite rows.
     header : str
         Header lines of the source table; its ``# Kind:`` line must name ``liquid``.
 
@@ -46,7 +85,8 @@ class LiquidIronTable:
     ------
     ValueError
         On a header without a liquid ``Kind`` line, a bad axis, a missing field, a field of
-        the wrong shape, a non-finite cell, or a non-positive ``rho``, ``cp`` or ``cv``.
+        the wrong shape, a non-finite cell between finite pressure rows, fewer than 4 finite
+        pressure rows, or a non-positive ``rho``, ``cp`` or ``cv``.
     """
 
     def __init__(self, pressure, temperature, fields: dict, header: str) -> None:
@@ -72,17 +112,17 @@ class LiquidIronTable:
         if missing:
             raise ValueError(f'liquid iron table is missing fields {missing}')
         shape = (axes['pressure'].size, axes['temperature'].size)
-        self.fields = {}
-        for f in FIELDS:
-            arr = np.asarray(fields[f], float)
+        arrays = {f: np.asarray(fields[f], float) for f in FIELDS}
+        for f, arr in arrays.items():
             if arr.shape != shape:
                 raise ValueError(f'{f} has shape {arr.shape}, expected {shape}')
-            if not np.all(np.isfinite(arr)):
-                raise ValueError(f'non-finite cell in {f}')
-            if f in _POSITIVE and not np.all(arr > 0.0):
+        keep = _finite_pressure_rows(arrays, axes['pressure'])
+        self.fields = {}
+        for f, arr in arrays.items():
+            if f in _POSITIVE and not np.all(arr[keep] > 0.0):
                 raise ValueError(f'{f} must be positive in every cell')
-            self.fields[f] = arr
-        self.pressure, self.temperature = axes['pressure'], axes['temperature']
+            self.fields[f] = arr[keep]
+        self.pressure, self.temperature = axes['pressure'][keep], axes['temperature']
         self.header = header
         lp, lt = np.log10(self.pressure), np.log10(self.temperature)
         self._splines = {

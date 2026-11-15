@@ -177,12 +177,13 @@ def test_a_table_with_no_finite_row_is_refused():
 
 def test_the_default_grid_top_rows_load_without_their_non_finite_cells():
     """The top of the default Zalmoxis grid holds cells that did not converge (NaN, phase
-    'out-of-range') above 6e13 Pa; a cut of it loads up to the last finite row."""
+    'out-of-range') above 6e13 Pa; its cut at 4000 to 5000 K, with 5 such rows at the top,
+    loads up to the last finite row."""
     top = LiquidIronTable.from_file(CUT.with_name('paleos_iron_liquid_default_top.npz'))
     data = np.load(CUT.with_name('paleos_iron_liquid_default_top.npz'))
     finite = np.all([np.all(np.isfinite(data[f]), axis=1) for f in FIELDS], axis=0)
-    assert not finite.all() and top.pressure[-1] == data['P_Pa'][finite][-1]
-    assert top.pressure[-1] == pytest.approx(5.934e13, rel=1e-3)
+    assert top.pressure[-1] == data['P_Pa'][finite][-1] == pytest.approx(9.261e13, rel=1e-3)
+    assert top.pressure.size == data['P_Pa'].size - 5
 
 
 @settings(max_examples=40, deadline=None)
