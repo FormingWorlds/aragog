@@ -102,10 +102,10 @@ class TabulatedCoreProfiles:
     t_cmb_range : tuple of float, optional
         Lowest and highest CMB temperature [K] of the tabulated isentropes; every node must
         stay inside the table box over the range. By default the whole range the table
-        holds: from its lowest temperature (the CMB has the highest entropy at that
-        temperature, since ``(ds/dP)_T = -alpha/rho < 0``, so every deeper node is hotter) to
-        the CMB temperature whose isentrope reaches the highest table temperature at the
-        centre.
+        holds: from the CMB temperature whose isentrope reaches the lowest table temperature
+        at the node of highest entropy there (the CMB where ``(ds/dP)_T = -alpha/rho < 0``) to
+        the one whose isentrope reaches the highest table temperature at the node of lowest
+        entropy there (the centre where ``(ds/dP)_T < 0``).
     t_cmb_step : float
         Spacing [K] of the CMB temperature grid.
     m_core : float, optional
@@ -211,20 +211,34 @@ class TabulatedCoreProfiles:
 
     @staticmethod
     def _full_range(table, p):
-        """CMB temperatures [K] whose isentropes stay in the table box at every node."""
+        """CMB temperatures [K] whose isentropes stay in the table box at every node.
+
+        The hottest isentrope meets the highest table temperature at the node of lowest entropy
+        there, the coldest the lowest table temperature at the node of highest entropy; these
+        are the centre and the CMB only where ``(ds/dP)_T < 0`` along the whole core.
+        """
         t_min, t_max = float(table.temperature[0]), float(table.temperature[-1])
-        s_top = table.value('s', float(p[0]), t_max)
+        s_top = float(np.min(table.value('s', p, t_max)))
+        s_bot = float(np.max(table.value('s', p, t_min)))
 
-        def gap(t):
-            return table.value('s', float(p[-1]), t) - s_top
+        def gap(t, s):
+            return float(table.value('s', float(p[-1]), t)) - s
 
-        if not gap(t_min) < 0.0 < gap(t_max):
+        if not (gap(t_min, s_top) < 0.0 < gap(t_max, s_top) and gap(t_max, s_bot) > 0.0):
             raise ValueError(
                 'no CMB temperature keeps the isentrope inside the liquid iron table '
                 f'({t_min:.1f} to {t_max:.1f} K) from the CMB to the centre'
             )
-        t_hi = brentq(gap, t_min, t_max)
-        return t_min, float(t_hi) * (1.0 - 1e-9)
+        t_hi = brentq(gap, t_min, t_max, args=(s_top,)) * (1.0 - 1e-9)
+        t_lo = t_min
+        if gap(t_min, s_bot) < 0.0:
+            t_lo = brentq(gap, t_min, t_max, args=(s_bot,)) * (1.0 + 1e-9)
+        if not t_lo < t_hi:
+            raise ValueError(
+                'no CMB temperature keeps the isentrope inside the liquid iron table '
+                f'({t_min:.1f} to {t_max:.1f} K) at every node'
+            )
+        return float(t_lo), float(t_hi)
 
     def _install_isentropes(self, r, p, rho, g, m, t_grid):
         """Invert the table entropy on every node and CMB temperature of ``t_grid``; check the
