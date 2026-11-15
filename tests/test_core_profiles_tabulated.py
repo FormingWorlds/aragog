@@ -351,5 +351,6 @@ def test_the_out_of_grid_message_tells_the_value_from_the_bound(paleos):
     for bad in (float(paleos.t_grid[0]) - 0.004, float(paleos.t_grid[-1]) + 0.004):
         with pytest.raises(ValueError) as err:
             paleos.check_t_cmb([bad])
-        value, lo, hi = re.findall(r'([0-9.]+) K', str(err.value))[:3]
+        pattern = r'T_core = ([0-9.]+) K .*\(([0-9.]+) to ([0-9.]+) K\)'
+        value, lo, hi = re.search(pattern, str(err.value)).groups()
         assert value not in (lo, hi), str(err.value)
