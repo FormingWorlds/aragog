@@ -157,7 +157,14 @@ class LiquidIronTable:
 
     def ds_dT(self, pressure, temperature):
         """``(ds/dT)_P`` [J kg-1 K-2] of the interpolant at ``(pressure, temperature)``."""
+        return self._ds(pressure, temperature, 0, 1)
+
+    def ds_dP(self, pressure, temperature):
+        """``(ds/dP)_T`` [J kg-1 K-1 Pa-1] of the interpolant at ``(pressure, temperature)``."""
+        return self._ds(pressure, temperature, 1, 0)
+
+    def _ds(self, pressure, temperature, dx, dy):
         lp, lt, shape = self._logs(pressure, temperature)
-        t = 10.0**lt
-        out = (self._splines['s'].ev(lp, lt, dy=1) / (t * np.log(10.0))).reshape(shape)
+        scale = (10.0**lp) ** dx * (10.0**lt) ** dy * np.log(10.0)
+        out = (self._splines['s'].ev(lp, lt, dx=dx, dy=dy) / scale).reshape(shape)
         return float(out) if out.ndim == 0 else out
