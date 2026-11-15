@@ -9,8 +9,6 @@ liquid iron table.
 
 from __future__ import annotations
 
-import pathlib
-
 import jax
 import numpy as np
 import pytest
@@ -22,28 +20,17 @@ from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import refuse_unmodelled_regime
+from tests.conftest import PALEOS_CUT as CUT
+from tests.conftest import gaussian_core_arrays, legend_outside
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
-CUT = pathlib.Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
 EARTH = dict(
     rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
 )
 BUDGET = dict(ds_fusion=172.8, icn_width=10.0, alpha_c=0.8, c_light=0.05)
 T_RANGE = (2900.0, 6100.0)
 V1_RTOL = 1e-6
-
-
-def core_arrays(g, n):
-    """Core arrays of the profile ``g`` on ``n`` uniform nodes."""
-    r = np.linspace(0.0, g.r_cmb, n)
-    return {
-        'r': r,
-        'm': np.asarray(g.enclosed_mass(r)),
-        'P': np.asarray(g.pressure(r)),
-        'rho': np.asarray(g.density(r)),
-        'g': np.asarray(g.gravity(r)),
-    }
 
 
 def constant_property_table(g, n_p=400, n_t=60):
@@ -77,20 +64,15 @@ def constant_property_table(g, n_p=400, n_t=60):
     return LiquidIronTable(p, t, fields, header='# Kind: liquid')
 
 
-def _legend_outside(fig, ax):
-    """Put the legend right of the axes and check that it covers no data."""
-    legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
-    fig.tight_layout()
-    fig.canvas.draw()
-    assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
-
-
 @pytest.fixture(scope='module')
 def v1_budgets():
     """Gaussian and constant-property tabulated budgets of one Earth core with an alloy curve."""
     g = GaussianCoreProfiles(**EARTH)
     tab = TabulatedCoreProfiles(
-        core_arrays(g, 801), constant_property_table(g), t_cmb_range=T_RANGE, t_cmb_step=10.0
+        gaussian_core_arrays(g, 801),
+        constant_property_table(g),
+        t_cmb_range=T_RANGE,
+        t_cmb_step=10.0,
     )
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     return CoreEnergyBudget(g, curve, **BUDGET), CoreEnergyBudget(tab, curve, **BUDGET)
@@ -101,7 +83,9 @@ def paleos_budget():
     """Earth structure on the PALEOS liquid isentrope, pure-iron melting curve."""
     g = GaussianCoreProfiles(**EARTH)
     tab = TabulatedCoreProfiles(
-        core_arrays(g, 201), LiquidIronTable.from_file(CUT), t_cmb_range=(2500.0, 7000.0)
+        gaussian_core_arrays(g, 201),
+        LiquidIronTable.from_file(CUT),
+        t_cmb_range=(2500.0, 7000.0),
     )
     return CoreEnergyBudget(tab, IronMeltingCurve(), **BUDGET)
 
@@ -166,7 +150,7 @@ def test_a_constant_property_table_gives_the_gaussian_budget(v1_budgets, validat
         )
         ax.set_yticks([1e24, 1e26, 1e28])
         ax.minorticks_off()
-        _legend_outside(fig, ax)
+        legend_outside(fig, ax)
         return fig
 
     def difference():
@@ -178,7 +162,7 @@ def test_a_constant_property_table_gives_the_gaussian_budget(v1_budgets, validat
         ax.axhline(V1_RTOL, color=plt.rcParams['text.color'], ls='--', lw=1, label='tolerance')
         ax.set(xlabel='CMB temperature [K]', ylabel='|Relative difference|')
         ax.minorticks_off()
-        _legend_outside(fig, ax)
+        legend_outside(fig, ax)
         return fig
 
     validation_plot(terms, 'core_tabulated_constant_property_terms')
@@ -273,7 +257,7 @@ def test_effective_tfac_of_a_tabulated_profile(paleos_budget):
     assert float(b.effective_tfac(t_cmb=6000.0)) > tfac
     table_cp = CoreEnergyBudget(
         TabulatedCoreProfiles(
-            core_arrays(GaussianCoreProfiles(**EARTH), 41),
+            gaussian_core_arrays(GaussianCoreProfiles(**EARTH), 41),
             LiquidIronTable.from_file(CUT),
             c_p=None,
             t_cmb_range=(2500.0, 7000.0),

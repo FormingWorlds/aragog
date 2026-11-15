@@ -11,21 +11,13 @@ its residual is the solver's alone.
 from __future__ import annotations
 
 import itertools
-import pathlib
-import sys
 
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_copy, needs_eos
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_core_module_tabulated import CUT, write_core  # noqa: E402
-from test_entropy_solver_core_module_smoke import (  # noqa: E402
-    _assert_converges,
-    _build,
-    needs_cvode,
-)
+from tests.conftest import PALEOS_CUT as CUT
+from tests.conftest import entropy_eos_copy, legend_outside, needs_eos, write_core
+from tests.test_entropy_solver_core_module_smoke import _assert_converges, _build, needs_cvode
 
 pytestmark = [pytest.mark.smoke, needs_eos, needs_cvode, pytest.mark.timeout(900)]
 
@@ -103,10 +95,7 @@ def test_the_tabulated_core_ledger_converges_with_the_tolerance(
         ax.plot([3.8, 5.2], [2e-6, 2e-6], ls='--', color=ink, label='bound 2e-6')
         ax.set(xlabel='Call', ylabel='|Residual| / CMB heat', xticks=calls)
         ax.minorticks_off()
-        legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
-        fig.tight_layout()
-        fig.canvas.draw()
-        assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
+        legend_outside(fig, ax)
         return fig
 
     validation_plot(figure, 'core_tabulated_ledger_per_call')

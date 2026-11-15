@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import math
 import pathlib
-import sys
 
-import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -19,33 +17,12 @@ from aragog.core.module import (
 )
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
-from tests.conftest import entropy_eos_copy, needs_eos
+from tests.conftest import PALEOS_CUT as CUT
+from tests.conftest import entropy_eos_copy, needs_eos, write_core
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
-CUT = pathlib.Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
 R_CMB = 3.480e6  # the CMB of the smoke-test mesh
-
-
-def write_core(path, rho_cen=12500.0, n=101, **extra):
-    """Write the core arrays of an Earth Gaussian core (r_cmb 3480 km) as a Zalmoxis .npz."""
-    g = GaussianCoreProfiles(
-        rho_cen=rho_cen, length_scale=7272e3, r_cmb=R_CMB, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
-    )
-    r = np.linspace(0.0, R_CMB, n)
-    arrays = {
-        'r': r,
-        'm': np.asarray(g.enclosed_mass(r)),
-        'P': np.asarray(g.pressure(r)),
-        'rho': np.asarray(g.density(r)),
-        'g': np.asarray(g.gravity(r)),
-        'phase': np.zeros(n),
-        'M_ic': np.array(0.0),
-        'w_layers': np.array('{"outer": {"S": 0.0}}'),
-        **extra,
-    }
-    np.savez_compressed(path, **arrays)
-    return path, float(arrays['m'][-1])
 
 
 @pytest.fixture
@@ -174,8 +151,7 @@ def test_the_cache_key_follows_the_file_content(paleos_params, tmp_path):
 def test_a_solver_reset_rebuilds_the_budget_when_the_core_file_changes(paleos_params):
     """A solver reset keeps the budget while the core file holds the same bytes and rebuilds
     it when a structure update rewrites the file at the same path."""
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-    from test_entropy_solver_core_module_smoke import _build
+    from tests.test_entropy_solver_core_module_smoke import _build
 
     solver = _build('core_module', entropy_eos_copy(), dict(paleos_params), s_init='driven')
     budget = solver._core_module_budget

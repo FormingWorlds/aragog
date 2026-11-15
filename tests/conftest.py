@@ -68,6 +68,47 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     return _ssc_helpers.entropy_eos_jax(eos_dir)
 
 
+PALEOS_CUT = Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
+
+
+def gaussian_core_arrays(g, n: int) -> dict:
+    """Core arrays ``r, m, P, rho, g`` of the Gaussian profile ``g`` on ``n`` uniform nodes."""
+    r = np.linspace(0.0, g.r_cmb, n)
+    names = {'m': g.enclosed_mass, 'P': g.pressure, 'rho': g.density, 'g': g.gravity}
+    return {'r': r, **{k: np.asarray(f(r)) for k, f in names.items()}}
+
+
+def write_core(path, rho_cen: float = 12500.0, n: int = 101, **extra):
+    """Write the core arrays of an Earth Gaussian core (r_cmb 3480 km, P_cmb 136 GPa) as a
+    Zalmoxis-style ``.npz`` at ``path``; return the path and the core mass [kg]."""
+    from aragog.core.profiles import GaussianCoreProfiles
+
+    g = GaussianCoreProfiles(
+        rho_cen=rho_cen,
+        length_scale=7272e3,
+        r_cmb=3.48e6,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    arrays = gaussian_core_arrays(g, n)
+    arrays |= {
+        'phase': np.zeros(n),
+        'M_ic': np.array(0.0),
+        'w_layers': np.array('{"outer": {"S": 0.0}}'),
+    }
+    np.savez_compressed(path, **(arrays | extra))
+    return path, float(arrays['m'][-1])
+
+
+def legend_outside(fig, ax) -> None:
+    """Put the legend of ``ax`` right of the axes and assert that it covers no data."""
+    legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
+    fig.tight_layout()
+    fig.canvas.draw()
+    assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
+
+
 def opaque_legend(ax, **kwargs):
     """Draw a legend of ``ax`` in 8 pt whose frame, in the axes colour, hides the grid."""
     kwargs.setdefault('fontsize', 8)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import pathlib
 
 import jax
 import numpy as np
@@ -16,10 +15,11 @@ from scipy.optimize import brentq
 from aragog.core.iron_table import FIELDS, LiquidIronTable
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
+from tests.conftest import PALEOS_CUT as CUT
+from tests.conftest import gaussian_core_arrays
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
-CUT = pathlib.Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
 EARTH = dict(
     rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
 )
@@ -29,14 +29,7 @@ T_RANGE = (2500.0, 7000.0)
 def gaussian_core(n=201):
     """Core arrays of the Earth Gaussian profile on ``n`` uniform nodes, and the profile."""
     g = GaussianCoreProfiles(**EARTH)
-    r = np.linspace(0.0, g.r_cmb, n)
-    arrays = {
-        'r': r,
-        'm': np.asarray(g.enclosed_mass(r)),
-        'P': np.asarray(g.pressure(r)),
-        'rho': np.asarray(g.density(r)),
-        'g': np.asarray(g.gravity(r)),
-    }
+    arrays = gaussian_core_arrays(g, n)
     return arrays, g
 
 
@@ -75,7 +68,7 @@ def test_radial_fields_reproduce_the_structure_between_nodes(paleos):
 @pytest.mark.physics_invariant
 def test_the_isentrope_holds_the_cmb_entropy_between_grid_points(paleos, table):
     """Between the nodes and between the tabulated CMB temperatures, the interpolated
-    temperature keeps ``s(P, T_a) = s(P_cmb, T_cmb)`` to 1e-6 (invariant I5), equals T_cmb at
+    temperature keeps ``s(P, T_a) = s(P_cmb, T_cmb)`` to 1e-6, equals T_cmb at
     the CMB and rises monotonically inward."""
     rng = np.random.default_rng(3)
     r = rng.uniform(0.0, paleos.r_cmb, 64)
@@ -156,7 +149,7 @@ def test_heat_change_is_the_integral_of_the_capacity_it_reads(paleos):
 
 
 def test_capacity_is_positive_and_flat_outside_the_grid(paleos):
-    """C_s > 0 over the grid (invariant I4), and a temperature outside the grid reads the
+    """C_s > 0 over the grid, and a temperature outside the grid reads the
     edge value (the solver refuses those states before they are booked)."""
     t = np.linspace(*T_RANGE, 500)
     assert np.all(np.asarray(paleos.secular_capacity(t)) > 0.0)
