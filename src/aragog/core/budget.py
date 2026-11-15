@@ -178,13 +178,19 @@ class CoreEnergyBudget:
         ``f`` the adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M
         tfac_eff``. Legacy mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the
         reservoir constant. A tabulated profile depends on ``t_cmb`` [K], which it
-        then needs: :meth:`TabulatedCoreProfiles.secular_capacity`.
+        then needs, and refuses an ``upper`` other than the CMB radius:
+        :meth:`TabulatedCoreProfiles.secular_capacity`.
         """
         p = self.profiles
         if self.tabulated:
             if t_cmb is None:
                 raise ValueError(
                     'a tabulated core profile needs t_cmb for its secular capacity'
+                )
+            if upper is not None and not float(upper) == p.r_cmb:
+                raise ValueError(
+                    f'a tabulated core profile has the capacity of the whole core; upper radius '
+                    f'{upper!r} m is not the CMB radius {p.r_cmb!r} m'
                 )
             return p.secular_capacity(t_cmb)
         if self.capacity_mode == 'legacy':
