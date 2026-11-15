@@ -43,7 +43,8 @@ def _mesh(case, mass_coordinates=True, n_nodes=60, **settings_kw):
         gravitational_acceleration=9.81,
         adiabatic_bulk_modulus=260e9,
         mass_coordinates=mass_coordinates,
-        **settings_kw,
+        # The uniform xi grid these tests check, unless a test sets the end cells.
+        **{'cmb_cell_thickness': 0.0, 'surface_cell_thickness': 0.0, **settings_kw},
     )
     if case != 'aw':
         r_start = R_CORE - (0.02 * (R_SURF - R_CORE) if case == 'user_below_cmb' else 0.0)

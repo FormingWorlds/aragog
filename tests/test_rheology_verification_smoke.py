@@ -212,6 +212,7 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
         lid_base_mode='rheological',
         s_top_inf=0.25,
         c_theta=0.25,
+        mlt_bottom_slope=1.0,  # the stored 4.5 Gyr trajectory ran with slope 1.0
         yield_stress_c=500.0e6,
         yield_stress_mu=0.6,
         yield_stress_max=500.0e6,
@@ -235,7 +236,13 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
             rtol=1.0e-8,
             tsurf_poststep_change=100.0,
         ),
-        mesh=dataclasses.replace(base_params.mesh, number_of_nodes=100, mass_coordinates=False),
+        mesh=dataclasses.replace(  # the stored trajectory ran on the uniform mesh
+            base_params.mesh,
+            number_of_nodes=100,
+            mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
+        ),
         energy=dataclasses.replace(base_params.energy, kappah_floor=0.0),
         phase_solid=dataclasses.replace(
             base_params.phase_solid, viscosity=p0d.viscosity_solid, rheology=rheo_cal
@@ -396,6 +403,8 @@ def test_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
                 surface_density=rho_m,
                 gravitational_acceleration=g_m,
                 mass_coordinates=False,
+                cmb_cell_thickness=0.0,  # the stored state vectors are on the uniform mesh
+                surface_cell_thickness=0.0,
             ),
             phase_liquid=_PhaseParameters(
                 melt_fraction=1.0,
@@ -786,24 +795,24 @@ def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, 
     captured = capsys.readouterr().out
     expected_lines = [
         'Rheology off: status=0, eta_surf=3.000e+17 Pa s, eta_cmb=1.664e+17 Pa s, '
-        'eta_diff_cmb=3.000e+17 Pa s, max_jconv=166020.15 W/m^2, max_kappah=16.3075 m^2/s, '
-        'T_magma=781.64 K, T_core=3563.96 K',
-        'Rheology on: status=0, eta_surf=9.352e+27 Pa s, eta_cmb=1.916e+18 Pa s, '
-        'eta_diff_cmb=3.601e+18 Pa s, max_jconv=249.52 W/m^2, max_kappah=0.0422 m^2/s, '
-        'T_magma=781.55 K, T_core=3563.96 K',
+        'eta_diff_cmb=3.000e+17 Pa s, max_jconv=161063.04 W/m^2, max_kappah=15.6253 m^2/s, '
+        'T_magma=782.15 K, T_core=3566.07 K',
+        'Rheology on: status=0, eta_surf=9.076e+27 Pa s, eta_cmb=1.916e+18 Pa s, '
+        'eta_diff_cmb=3.601e+18 Pa s, max_jconv=534.83 W/m^2, max_kappah=0.0573 m^2/s, '
+        'T_magma=782.06 K, T_core=3566.07 K',
         'has_lid:     True',
-        'd_lid:       31.45 km',
-        'r_lid_base:  6339.55 km',
-        'T_i:         1962.65 K',
-        'T_lid:       1441.79 K',
-        'theta:       14.942',
-        'dT_rh:       79.05 K',
-        'eta_i:       4.521e+18 Pa s',
-        'tau_d_lid:   672.09 kPa',
+        'd_lid:       33.11 km',
+        'r_lid_base:  6337.89 km',
+        'T_i:         2012.48 K',
+        'T_lid:       1449.30 K',
+        'theta:       15.235',
+        'dT_rh:       80.76 K',
+        'eta_i:       5.161e+18 Pa s',
+        'tau_d_lid:   831.52 kPa',
         'tau_y_lid:   500.00 MPa',
-        'w_y:         2.117e-09',
-        'w_y = 1.0, yielding nodes = 10',
-        'Surface eta_diff = 9.189e+27 Pa s -> eta_eff = 1.010e+15 Pa s',
+        'w_y:         2.131e-09',
+        'w_y = 1.0, yielding nodes = 13',
+        'Surface eta_diff = 8.919e+27 Pa s -> eta_eff = 9.315e+14 Pa s',
     ]
     actual_lines = [ln.strip() for ln in captured.strip().splitlines() if ln.strip()]
     assert actual_lines == expected_lines
@@ -811,29 +820,29 @@ def test_solid_state_convection_tutorial_blocks_run_and_match_page(monkeypatch, 
     for token in (
         '3.000e+17',
         '1.664e+17',
-        '166020.15',
-        '16.3075',
-        '781.64',
-        '3563.96',
-        '9.352e+27',
+        '161063.04',
+        '15.6253',
+        '782.15',
+        '3566.07',
+        '9.076e+27',
         '1.916e+18',
         '3.601e+18',
-        '249.52',
-        '0.0422',
-        '781.55',
-        '31.45',
-        '6339.55',
-        '1962.65',
-        '1441.79',
-        '14.942',
-        '79.05',
-        '4.521e+18',
-        '672.09',
+        '534.83',
+        '0.0573',
+        '782.06',
+        '33.11',
+        '6337.89',
+        '2012.48',
+        '1449.30',
+        '15.235',
+        '80.76',
+        '5.161e+18',
+        '831.52',
         '500.00',
-        '2.117e-09',
-        '`10` basic nodes',
-        '9.189e+27',
-        '1.010e+15',
+        '2.131e-09',
+        '`13` basic nodes',
+        '8.919e+27',
+        '9.315e+14',
     ):
         assert token in tut_text
 

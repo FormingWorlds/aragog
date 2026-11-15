@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import numbers
 
 import attrs
@@ -14,31 +15,48 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 # 2 m the CMB half cell meets the 1 m floor of the bower2018 core flux.
 MIN_CELL_THICKNESS = 2.0
 
+# surface_cell_thickness value that sets the outer cell to the top cell of the uniform mesh
+# of the same coordinate mode.
+UNIFORM_CELL = 'uniform'
+
 
 def check_cell_thickness(mesh) -> None:
-    """Raise ``ValueError`` unless ``surface_cell_thickness`` and ``cmb_cell_thickness`` of
-    ``mesh`` are each 0 or a real number in [``MIN_CELL_THICKNESS``, uniform cell) m.
+    """Raise ``ValueError`` unless ``surface_cell_thickness`` of ``mesh`` is 0, a real number
+    in [``MIN_CELL_THICKNESS``, uniform cell) m or ``UNIFORM_CELL``, and ``cmb_cell_thickness``
+    is 0 or a finite real number of at least ``MIN_CELL_THICKNESS`` m.
 
-    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a set cell
-    needs at least 4 nodes, as the end rows of the d/dr transform do. A bool (a TOML ``true``)
-    is refused, not read as 1 m.
+    The uniform cell is ``(outer_radius - inner_radius) / (number_of_nodes - 1)``; a refined
+    surface cell needs at least 4 nodes, as the end rows of the d/dr transform do. A CMB cell
+    at or above the uniform bottom cell gives no CMB refinement; ``Mesh`` decides that, and the
+    4 nodes of a refining CMB cell, in its own coordinate mode. A bool (a TOML ``true``) is
+    refused, not read as 1 m.
     """
+    cmb = mesh.cmb_cell_thickness
+    real = isinstance(cmb, numbers.Real) and not isinstance(cmb, bool)
+    try:
+        finite = real and math.isfinite(cmb)
+    except OverflowError:  # an int beyond any float
+        finite = False
+    if not (real and cmb == 0) and not (finite and cmb >= MIN_CELL_THICKNESS):
+        raise ValueError(
+            f'mesh.cmb_cell_thickness must be 0 (off) or a finite value of at least '
+            f'{MIN_CELL_THICKNESS:g} m; got {cmb!r}'
+        )
+    name, value = 'surface_cell_thickness', mesh.surface_cell_thickness
+    real = isinstance(value, numbers.Real) and not isinstance(value, bool)
+    if (real and value == 0) or (isinstance(value, str) and value == UNIFORM_CELL):
+        return
     need = 4
-    for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
-        value = getattr(mesh, name)
-        real = isinstance(value, numbers.Real) and not isinstance(value, bool)
-        if real and value == 0:
-            continue
-        if mesh.number_of_nodes < need:
-            raise ValueError(
-                f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
-            )
-        uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
-        if not (real and MIN_CELL_THICKNESS <= value < uniform):
-            raise ValueError(
-                f'mesh.{name} must be 0 (off) or in [{MIN_CELL_THICKNESS:g}, {uniform:.6g}) m, '
-                f'the uniform radial cell; got {value!r}'
-            )
+    if mesh.number_of_nodes < need:
+        raise ValueError(
+            f'mesh.{name} needs number_of_nodes >= {need}, got {mesh.number_of_nodes}'
+        )
+    uniform = (mesh.outer_radius - mesh.inner_radius) / (mesh.number_of_nodes - 1)
+    if not (real and MIN_CELL_THICKNESS <= value < uniform):
+        raise ValueError(
+            f'mesh.{name} must be 0 (off) or {UNIFORM_CELL!r} or in [{MIN_CELL_THICKNESS:g}, '
+            f'{uniform:.6g}) m, the uniform radial cell; got {value!r}'
+        )
 
 
 @attrs.define
@@ -86,13 +104,15 @@ class MeshConfig:
         SPIDER's mesh. Default True matches the PROTEUS production path.
     eos_file : str
         Path to user-defined EOS file.
-    surface_cell_thickness, cmb_cell_thickness : float
-        Radial thickness [m] of the outermost and innermost basic cell. 0 (default) leaves
-        that end unset; with only the other end set, its cells grow. A set value lies in
-        [2 m, uniform radial cell) and refines towards that boundary with a tanh stretching
-        (both ends: the two-sided Vinokur form). In mass-coordinate mode the stretching acts
-        on the mass coordinate and the end cells still have the given radial thickness; there a
-        value at or above the uniform end cell of that mode is refused when the mesh is built.
+    surface_cell_thickness, cmb_cell_thickness : float or str
+        Radial thickness [m] of the outermost and innermost basic cell; the mesh refines
+        towards each set end with the same number of nodes. 0 leaves that end unset.
+        ``surface_cell_thickness = 'uniform'`` (default) sets the top cell of the uniform mesh
+        of the same coordinate mode. The CMB cell defaults to 3000 m; a CMB value at or above
+        the bottom cell it would replace, or less than 1e-5 of it below, gives no CMB
+        refinement, with an INFO log line.
+        With ``cmb_cell_thickness = 0`` and ``'uniform'`` the mesh is the uniform mesh.
+        ``check_cell_thickness`` gives the accepted values.
     """
 
     outer_radius: float
@@ -109,8 +129,8 @@ class MeshConfig:
     mass_coordinates: bool = True
     eos_file: str = ''
     mixing_length_constant_fraction: float = 0.25
-    surface_cell_thickness: float = 0.0
-    cmb_cell_thickness: float = 0.0
+    surface_cell_thickness: float | str = UNIFORM_CELL
+    cmb_cell_thickness: float = 3000.0
 
     def __attrs_post_init__(self):
         check_cell_thickness(self)

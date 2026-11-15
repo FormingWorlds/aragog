@@ -118,6 +118,11 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
         importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
     ) as p:
         raw_params = Parameters.from_file(p)
+    # uniform mesh: the committed reference arrays were made on it
+    raw_params = replace(
+        raw_params,
+        mesh=replace(raw_params.mesh, cmb_cell_thickness=0.0, surface_cell_thickness=0.0),
+    )
 
     eos_dir = EOS_DIR
 
@@ -306,6 +311,8 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     ) as p:
         c_solve = Config.from_file(str(p))
     c_solve.mesh.number_of_nodes = 20
+    c_solve.mesh.cmb_cell_thickness = 0.0  # uniform mesh, as for the reference arrays
+    c_solve.mesh.surface_cell_thickness = 0.0
     c_solve.solver.end_time = 100.0
     c_solve.solver.cvode_max_steps = 100
     eos_inst = EntropyEOS(str(eos_dir))
@@ -709,6 +716,10 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
         importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
     ) as p:
         base_abe = Parameters.from_file(p)
+    base_abe = replace(  # uniform mesh, as for the reference arrays
+        base_abe,
+        mesh=replace(base_abe.mesh, cmb_cell_thickness=0.0, surface_cell_thickness=0.0),
+    )
     rheo_cool = SolidRheologyParams(enabled=True, s_top_inf=0.25, c_theta=0.25)
     params_cool = replace(
         base_abe,

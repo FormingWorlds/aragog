@@ -279,7 +279,13 @@ def build_const_prop_1d_solver(
             rtol=1.0e-8,
             tsurf_poststep_change=100.0,
         ),
-        mesh=replace(base_params.mesh, number_of_nodes=100, mass_coordinates=False),
+        mesh=replace(
+            base_params.mesh,
+            number_of_nodes=100,
+            mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
+        ),
         energy=replace(base_params.energy, kappah_floor=0.0),
         phase_solid=replace(
             base_params.phase_solid, viscosity=p0d.viscosity_solid, rheology=rheo
@@ -573,6 +579,8 @@ def _build_e300_steady_params(tau_y_pa: float, h_scale: float) -> Parameters:
             surface_density=rho,
             gravitational_acceleration=grav,
             mass_coordinates=False,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
         ),
         phase_solid=_PhaseParameters(
             melt_fraction=0.0, viscosity=eta_i, rheology=rheo, **common
@@ -1022,6 +1030,7 @@ def verify_benchmarks(
                 yield_stress_c=500.0e6,
                 yield_stress_mu=0.6,
                 yield_stress_max=500.0e6,
+                mlt_bottom_slope=1.0,
             )
             solver_ep = build_const_prop_1d_solver(
                 base_params, rheo_blk, p0d, t_end_yr=float(t_arr[-1]), n_output_points=2
@@ -1048,6 +1057,7 @@ def verify_benchmarks(
             yield_stress_c=500.0e6,
             yield_stress_mu=0.6,
             yield_stress_max=500.0e6,
+            mlt_bottom_slope=1.0,
         )
         solver_25 = build_const_prop_1d_solver(
             base_params, rheo_cal, p0d, t_end_yr=2.5e7, n_output_points=17
@@ -1439,6 +1449,7 @@ def _recompute_trajectory_block(
         yield_stress_c=500.0e6,
         yield_stress_mu=0.6,
         yield_stress_max=500.0e6,
+        mlt_bottom_slope=1.0,
     )
     with unbounded_cvode_step():
         solver = build_const_prop_1d_solver(

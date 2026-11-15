@@ -123,6 +123,24 @@ EXPECTED_COST_KEYS = ('modes', 'ratios', 'six_row_call_count_table')
 EXPECTED_STARTS_KEYS = ('epsilons', 'abe_solid_default', 'abe_solid_kappah_floor_0')
 
 
+def _benchmark_rheology(**changes) -> Any:
+    """Solid rheology with ``changes`` and the bottom mixing-length slope 1, on which the
+    committed benchmarks were made."""
+    from aragog.rheology import SolidRheologyParams
+
+    return SolidRheologyParams(**{'mlt_bottom_slope': 1.0, **changes})
+
+
+def _uniform_mesh_config(cfg_path: Path) -> Any:
+    """The bundled config on the uniform mesh, on which the committed benchmarks were made."""
+    from aragog.config import Config
+
+    cfg = Config.from_file(str(cfg_path))
+    cfg.mesh.cmb_cell_thickness = 0.0
+    cfg.mesh.surface_cell_thickness = 0.0
+    return cfg
+
+
 def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
     """Compute MD5 hashes of canonical equation of state table files."""
     hashes = {}
@@ -202,11 +220,10 @@ def measure_per_rhs_call_counts(
     import aragog.rheology as rheo_mod
     import aragog.rheology_lid as rheo_lid_mod
     import aragog.solver.entropy_state as entropy_state_mod
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.solver.entropy_solver import EntropySolver
 
-    cfg = Config.from_file(str(cfg_path))
+    cfg = _uniform_mesh_config(cfg_path)
     cfg.boundary_conditions.inner_boundary_condition = 1
     cfg.boundary_conditions.core_bc = 'quasi_steady'
     cfg.energy.kappah_floor = 0.0
@@ -393,24 +410,22 @@ def run_rhs_cost_benchmarks(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     jax.config.update('jax_enable_x64', True)
     n_warmup, n_eval, n_repeats = 20, 1000, 7
     modes = [
-        ('off', SolidRheologyParams(enabled=False)),
-        ('on_lid', SolidRheologyParams(enabled=True, stress_closure_mode='lid')),
-        ('on_local', SolidRheologyParams(enabled=True, stress_closure_mode='local')),
+        ('off', _benchmark_rheology(enabled=False)),
+        ('on_lid', _benchmark_rheology(enabled=True, stress_closure_mode='lid')),
+        ('on_local', _benchmark_rheology(enabled=True, stress_closure_mode='local')),
     ]
     results: dict[str, dict] = {}
     call_counts: dict[str, dict] = {}
 
     for label, rheo in modes:
         call_counts[label] = measure_per_rhs_call_counts(cfg_path, eos_np, eos_jax, rheo)
-        cfg = Config.from_file(str(cfg_path))
+        cfg = _uniform_mesh_config(cfg_path)
         cfg.boundary_conditions.inner_boundary_condition = 1
         cfg.boundary_conditions.core_bc = 'quasi_steady'
         cfg.energy.kappah_floor = 0.0
@@ -504,14 +519,12 @@ def _evaluate_100_trajectory_states_parity(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.phase import compute_fluxes
     from aragog.jax.solver import dSdt
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     jax.config.update('jax_enable_x64', True)
-    rheo_on = SolidRheologyParams(
+    rheo_on = _benchmark_rheology(
         enabled=True,
         stress_closure_mode='lid',
         yield_stress_c=yield_stress_c,
@@ -519,9 +532,9 @@ def _evaluate_100_trajectory_states_parity(
         yield_stress_max=yield_stress_max,
     )
     rheo_yield_off = replace(rheo_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
-    rheo_off = SolidRheologyParams(enabled=False)
+    rheo_off = _benchmark_rheology(enabled=False)
 
-    cfg_traj = Config.from_file(str(cfg_path))
+    cfg_traj = _uniform_mesh_config(cfg_path)
     cfg_traj.solver.end_time = end_time
     cfg_traj.energy.kappah_floor = kappah_floor
     cfg_traj.phase_solid.viscosity = viscosity_solid
@@ -537,7 +550,7 @@ def _evaluate_100_trajectory_states_parity(
     n_traj = len(sol_t)
 
     def _make_eval_solver(rheo_param: Any, eos_inst: Any) -> EntropySolver:
-        cfg_inst = Config.from_file(str(cfg_path))
+        cfg_inst = _uniform_mesh_config(cfg_path)
         cfg_inst.boundary_conditions.inner_boundary_condition = 1
         cfg_inst.boundary_conditions.core_bc = 'quasi_steady'
         cfg_inst.energy.kappah_floor = kappah_floor
@@ -791,20 +804,18 @@ def _diagnose_flux_vs_rhs(
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.phase import compute_fluxes, entropy_at_basic_nodes, evaluate_phase
     from aragog.jax.solver import _dSdt_parts, dSdt
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
-    rheo_on = SolidRheologyParams(
+    rheo_on = _benchmark_rheology(
         enabled=True,
         stress_closure_mode='lid',
         yield_stress_c=1.0e7,
         yield_stress_mu=0.1,
         yield_stress_max=1.0e8,
     )
-    cfg_on = Config.from_file(str(cfg_path))
+    cfg_on = _uniform_mesh_config(cfg_path)
     cfg_on.boundary_conditions.inner_boundary_condition = 1
     cfg_on.boundary_conditions.core_bc = 'quasi_steady'
     cfg_on.energy.kappah_floor = 0.0
@@ -1077,8 +1088,6 @@ def _run_perturbed_suite(
     table_hashes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run 1% cost probe and 5 round-off perturbed starts for off and on."""
-    from aragog.config import Config
-    from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
 
     suite_out: dict[str, Any] = {}
@@ -1088,7 +1097,7 @@ def _run_perturbed_suite(
 
     for enabled in (False, True):
         key = 'on' if enabled else 'off'
-        rheo = SolidRheologyParams(
+        rheo = _benchmark_rheology(
             enabled=enabled,
             stress_closure_mode='lid',
             yield_stress_c=1.0e7,
@@ -1096,7 +1105,7 @@ def _run_perturbed_suite(
             yield_stress_max=1.0e8,
         )
 
-        cfg_probe = Config.from_file(str(cfg_path))
+        cfg_probe = _uniform_mesh_config(cfg_path)
         cfg_probe.solver.end_time = max(0.01 * end_time, 1.0)
         cfg_probe.energy.kappah_floor = kappah_floor
         cfg_probe.phase_solid.viscosity = viscosity_solid
@@ -1118,7 +1127,7 @@ def _run_perturbed_suite(
         s_final_arrays = []
 
         for idx, eps in enumerate(epsilons):
-            cfg = Config.from_file(str(cfg_path))
+            cfg = _uniform_mesh_config(cfg_path)
             cfg.solver.end_time = end_time
             cfg.energy.kappah_floor = kappah_floor
             cfg.phase_solid.viscosity = viscosity_solid
@@ -1322,7 +1331,6 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     import jax
     import jax.numpy as jnp
 
-    from aragog.config import Config
     from aragog.jax.solver import dSdt
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
@@ -1334,9 +1342,9 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     eos_jax = entropy_eos_jax(eos_dir)
 
     modes = [
-        ('off', SolidRheologyParams(enabled=False)),
-        ('on_lid', SolidRheologyParams(enabled=True, stress_closure_mode='lid')),
-        ('on_local', SolidRheologyParams(enabled=True, stress_closure_mode='local')),
+        ('off', _benchmark_rheology(enabled=False)),
+        ('on_lid', _benchmark_rheology(enabled=True, stress_closure_mode='lid')),
+        ('on_local', _benchmark_rheology(enabled=True, stress_closure_mode='local')),
     ]
     call_counts = {
         label: measure_per_rhs_call_counts(cfg_path, eos_np, eos_jax, rheo)
@@ -1355,7 +1363,7 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     def _make_solver(
         kappah_floor: float, viscosity: float, rheo: SolidRheologyParams
     ) -> EntropySolver:
-        cfg = Config.from_file(str(cfg_path))
+        cfg = _uniform_mesh_config(cfg_path)
         cfg.boundary_conditions.inner_boundary_condition = 1
         cfg.boundary_conditions.core_bc = 'quasi_steady'
         cfg.energy.kappah_floor = kappah_floor
@@ -1368,7 +1376,7 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
     solver_on = _make_solver(
         0.0,
         1.0e18,
-        SolidRheologyParams(
+        _benchmark_rheology(
             enabled=True,
             stress_closure_mode='lid',
             yield_stress_c=1.0e7,
@@ -1421,7 +1429,7 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
 
     # Also evaluate state 0 of abe_solid_yield_active and abe_solid_default so a merge
     # carrying another branch's JSON fails even when git history is unavailable.
-    rheo_y_on = SolidRheologyParams(
+    rheo_y_on = _benchmark_rheology(
         enabled=True,
         stress_closure_mode='lid',
         yield_stress_c=150.0,
@@ -1454,14 +1462,14 @@ def _verify_live_fast_subset(data: dict[str, Any], eos_dir: Path) -> list[str]:
         450.0,
         10.0,
         1.0e21,
-        SolidRheologyParams(
+        _benchmark_rheology(
             enabled=True,
             stress_closure_mode='lid',
             yield_stress_c=1.0e7,
             yield_stress_mu=0.1,
             yield_stress_max=1.0e8,
         ),
-        SolidRheologyParams(enabled=False),
+        _benchmark_rheology(enabled=False),
     )
     stored_d_on_off_0 = float(
         data['rhs_parity_and_activity']['abe_solid_default']['rel_rhs_on_vs_off_per_state'][0]
