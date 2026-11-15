@@ -37,8 +37,9 @@ jax.config.update('jax_enable_x64', True)
 
 G = sp_constants.G
 REQUIRED_KEYS = ('r', 'm', 'P', 'rho', 'g')
-ISENTROPE_RTOL = 1e-6  # invariant I5
-MASS_RTOL = 1e-10  # invariant I2
+ISENTROPE_RTOL = 1e-6  # relative entropy miss of the isentrope, at nodes and midpoints
+MASS_RTOL = 1e-10  # arrays against the structure mass
+MAX_GRID = 20000  # CMB temperatures of the isentrope grid
 # Calibration window of the Luo et al. (2024) liquid (Attia et al. 2026, p. 5).
 LUO_P_PA = (50e9, 1300e9)
 LUO_T_K = (8000.0, 14000.0)
@@ -50,6 +51,11 @@ def _positive_number(x) -> bool:
     return (
         isinstance(x, numbers.Real) and not isinstance(x, bool) and math.isfinite(x) and x > 0
     )
+
+
+def _clamp(x, lo, hi):
+    """``x`` limited to ``[lo, hi]``, with gradient 1 at the bounds (``jnp.clip`` gives 0.5)."""
+    return jnp.where(x < lo, lo, jnp.where(x > hi, hi, x))
 
 
 def _cell(x, nodes):
@@ -147,7 +153,7 @@ class TabulatedCoreProfiles:
             raise ValueError('core pressure P must be strictly decreasing outward')
         if not (np.all(rho > 0.0) and np.all(g >= 0.0)):
             raise ValueError('core density must be positive and gravity non-negative')
-        if m_core is not None and abs(m[-1] / float(m_core) - 1.0) > MASS_RTOL:
+        if m_core is not None and not abs(m[-1] / float(m_core) - 1.0) <= MASS_RTOL:
             raise ValueError(
                 f'core arrays hold {m[-1]:.10e} kg, the structure {m_core:.10e} kg'
             )
@@ -159,6 +165,12 @@ class TabulatedCoreProfiles:
         ):
             raise ValueError(f'bad CMB temperature grid {t_cmb_range}, step {t_cmb_step}')
         t_lo, t_hi = float(t_lo), float(t_hi)
+        n_grid = int(np.ceil((t_hi - t_lo) / t_cmb_step)) + 1
+        if n_grid > MAX_GRID:
+            raise ValueError(
+                f'the CMB temperature grid needs {n_grid} temperatures, at most {MAX_GRID}; '
+                'raise core_t_cmb_step'
+            )
 
         self.table, self.c_p_override = table, None if c_p is None else float(c_p)
         self.r_cmb, self.p_cmb, self.m_core = float(r[-1]), float(p[-1]), float(m[-1])
@@ -188,7 +200,16 @@ class TabulatedCoreProfiles:
         """CMB temperatures [K] whose isentropes stay in the table box at every node."""
         t_min, t_max = float(table.temperature[0]), float(table.temperature[-1])
         s_top = table.value('s', float(p[0]), t_max)
-        t_hi = brentq(lambda t: table.value('s', float(p[-1]), t) - s_top, t_min, t_max)
+
+        def gap(t):
+            return table.value('s', float(p[-1]), t) - s_top
+
+        if not gap(t_min) < 0.0 < gap(t_max):
+            raise ValueError(
+                'no CMB temperature keeps the isentrope inside the liquid iron table '
+                f'({t_min:.1f} to {t_max:.1f} K) from the CMB to the centre'
+            )
+        t_hi = brentq(gap, t_min, t_max)
         return t_min, float(t_hi) * (1.0 - 1e-9)
 
     def _install_isentropes(self, r, p, rho, g, m, t_lo, t_hi, step):
@@ -214,6 +235,15 @@ class TabulatedCoreProfiles:
         f_rt = CubicSpline(t_grid, f_r, axis=1)(t_grid, 1)
         self.t_grid = jnp.asarray(t_grid)
         self._f = tuple(jnp.asarray(x) for x in (f, f_r, f_t, f_rt))
+        t_mid = 0.5 * (t_grid[1:] + t_grid[:-1])
+        s_mid = tab.value('s', self.p_cmb, t_mid)
+        t_a_mid = np.asarray(self.adiabat(np.asarray(r)[:, None], t_mid[None, :]))
+        miss = np.abs(tab.value('s', p[:, None], t_a_mid) / s_mid - 1.0)
+        if not np.max(miss) <= ISENTROPE_RTOL:
+            raise ValueError(
+                f'isentrope misses s_c by {np.max(miss):.2e} relative between grid '
+                'temperatures; lower core_t_cmb_step'
+            )
 
         m_int = PchipInterpolator(m, t_a, axis=0)
         mass_t = m_int.integrate(0.0, m[-1])  # int T_a dm per CMB temperature
@@ -276,7 +306,7 @@ class TabulatedCoreProfiles:
 
     def _radial(self, name, r):
         values, slopes = self._fields[name]
-        return _hermite(jnp.clip(jnp.asarray(r), 0.0, self.r_cmb), self._r, values, slopes)
+        return _hermite(_clamp(jnp.asarray(r), 0.0, self.r_cmb), self._r, values, slopes)
 
     def density(self, r):
         """Density [kg m-3] at radius ``r`` [m]."""
@@ -302,10 +332,8 @@ class TabulatedCoreProfiles:
 
     def _log_ratio(self, r, t_cmb):
         """``ln(T_a / T_cmb)`` on the bicubic Hermite patches in ``(r, T_cmb)``."""
-        r, t = jnp.broadcast_arrays(
-            jnp.clip(jnp.asarray(r), 0.0, self.r_cmb), jnp.asarray(t_cmb)
-        )
-        t = jnp.clip(t, self.t_grid[0], self.t_grid[-1])
+        r, t = jnp.broadcast_arrays(_clamp(jnp.asarray(r), 0.0, self.r_cmb), jnp.asarray(t_cmb))
+        t = _clamp(t, self.t_grid[0], self.t_grid[-1])
         i, hr, u = _cell(r, self._r)
         j, ht, v = _cell(t, self.t_grid)
         bu, bv = _basis(u), _basis(v)
@@ -354,7 +382,7 @@ class TabulatedCoreProfiles:
 
     def secular_capacity(self, t_cmb):
         """Secular heat capacity ``(c_p / T_cmb) int T_a dm`` [J/K] at ``t_cmb`` [K]."""
-        t = jnp.clip(jnp.asarray(t_cmb), self.t_grid[0], self.t_grid[-1])
+        t = _clamp(jnp.asarray(t_cmb), self.t_grid[0], self.t_grid[-1])
         return _hermite(t, self.t_grid, *self._c_s)
 
     def secular_heat_change(self, t_cmb: float, d_t: float) -> float:
@@ -374,6 +402,23 @@ class TabulatedCoreProfiles:
             nodes = x0 + half * (_GL3_X + 1.0)
             total += half * float(np.sum(_GL3_W * np.asarray(self.secular_capacity(nodes))))
         return total if b >= a else -total
+
+    def check_t_cmb(self, t_cmb) -> None:
+        """Refuse CMB temperatures [K] outside the tabulated isentropes (NaN included).
+
+        Raises
+        ------
+        ValueError
+            At the first temperature outside ``[t_grid[0], t_grid[-1]]``, naming it.
+        """
+        t = np.atleast_1d(np.asarray(t_cmb, dtype=float))
+        lo, hi = float(self.t_grid[0]), float(self.t_grid[-1])
+        off = ~((t >= lo) & (t <= hi))
+        if off.any():
+            raise ValueError(
+                f'T_core = {t[np.argmax(off)]:.1f} K lies outside the tabulated isentropes '
+                f'({lo:.1f} to {hi:.1f} K)'
+            )
 
     def outside_calibration_fraction(self, t_cmb) -> float:
         """Mass fraction of the core outside the Luo et al. (2024) window at ``t_cmb`` [K]."""

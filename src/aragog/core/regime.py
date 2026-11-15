@@ -103,13 +103,7 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
         return
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
     if budget.tabulated:
-        grid = budget.profiles.t_grid
-        off = (t_cmb < float(grid[0])) | (t_cmb > float(grid[-1]))
-        if off.any():
-            raise ValueError(
-                f'core_module: T_core = {t_cmb[np.argmax(off)]:.1f} K lies outside the '
-                f'tabulated isentropes ({float(grid[0]):.1f} to {float(grid[-1]):.1f} K)'
-            )
+        budget.profiles.check_t_cmb(t_cmb)
     # Pad to a power of two (at least 8) so the batch compiles once per length bucket.
     size = max(8, 1 << (t_cmb.size - 1).bit_length())
     codes = np.asarray(budget.regime_batch(np.resize(t_cmb, size)))[: t_cmb.size]

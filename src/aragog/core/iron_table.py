@@ -98,27 +98,40 @@ class LiquidIronTable:
         FileNotFoundError
             If ``path`` does not exist.
         ValueError
-            On another suffix, a text table that is not a full rectangle, or any refusal of
-            the constructor.
+            On another suffix, an ``.npz`` without one of its keys, a text table without data
+            rows, with a row of fewer than 9 numbers or that is not a full rectangle in P and
+            T, or any refusal of the constructor.
         """
         path = pathlib.Path(path)
         if not path.is_file():
             raise FileNotFoundError(f'liquid iron table not found: {path}')
         if path.suffix == '.npz':
             with np.load(path) as d:
+                missing = sorted({'P_Pa', 'T_K', 'header', *FIELDS} - set(d.files))
+                if missing:
+                    raise ValueError(f'{path.name} is missing {missing}')
                 return cls(d['P_Pa'], d['T_K'], {f: d[f] for f in FIELDS}, str(d['header']))
         if path.suffix != '.dat':
             raise ValueError(f'liquid iron table must be .dat or .npz, got {path.name}')
         lines = path.read_text(encoding='utf-8').splitlines()
         header = '\n'.join(ln for ln in lines if ln.startswith('#'))
-        rows = np.array(
-            [ln.split()[:9] for ln in lines if ln.strip() and not ln.startswith('#')],
-            dtype=float,
-        )
+        rows = [ln.split()[:9] for ln in lines if ln.strip() and not ln.startswith('#')]
+        if not rows:
+            raise ValueError(f'{path.name} has no data rows')
+        try:
+            rows = np.array(rows, dtype=float)
+        except ValueError:
+            raise ValueError(
+                f'{path.name}: every row needs 9 numbers (P, T, 7 fields)'
+            ) from None
         p_ax, t_ax = np.unique(rows[:, 0]), np.unique(rows[:, 1])
-        if p_ax.size * t_ax.size != rows.shape[0]:
+        grid = rows[np.lexsort((rows[:, 1], rows[:, 0]))]
+        full = p_ax.size * t_ax.size == rows.shape[0]
+        grid = grid.reshape(p_ax.size, t_ax.size, 9) if full else grid
+        if not full or not (
+            np.all(grid[:, :, 0] == p_ax[:, None]) and np.all(grid[:, :, 1] == t_ax[None, :])
+        ):
             raise ValueError(f'{path.name} is not a full rectangle in P and T')
-        grid = rows[np.lexsort((rows[:, 1], rows[:, 0]))].reshape(p_ax.size, t_ax.size, 9)
         return cls(p_ax, t_ax, {f: grid[:, :, k + 2] for k, f in enumerate(FIELDS)}, header)
 
     def contains(self, pressure, temperature):

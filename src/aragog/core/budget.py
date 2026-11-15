@@ -228,9 +228,17 @@ class CoreEnergyBudget:
     @functools.cached_property
     def _t_onset_tabulated(self) -> float:
         """Onset CMB temperature [K] of a tabulated profile: the isentrope that meets the
-        melting curve at the centre, a root solve done once."""
-        p_cen = float(self.profiles.pressure(0.0))
-        return self.profiles.t_cmb_at_centre(float(self.melting_curve.t_melt(p_cen)))
+        melting curve at the centre, a root solve done once. A centre melting point below every
+        tabulated centre (no inner core on the grid) gives the lowest grid temperature, one
+        above every centre (frozen centre on the whole grid) the highest."""
+        p = self.profiles
+        t_m = float(self.melting_curve.t_melt(float(p.pressure(0.0))))
+        lo, hi = float(p.t_grid[0]), float(p.t_grid[-1])
+        if float(p.t_cen(lo)) >= t_m:
+            return lo
+        if float(p.t_cen(hi)) <= t_m:
+            return hi
+        return p.t_cmb_at_centre(t_m)
 
     @property
     def t_freeze(self) -> float:

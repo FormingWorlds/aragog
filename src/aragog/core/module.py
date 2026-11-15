@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 import math
 import numbers
 import pathlib
@@ -31,6 +32,8 @@ from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import crystallization_regime
+
+logger = logging.getLogger('fwl.' + __name__)
 
 jax.config.update('jax_enable_x64', True)
 
@@ -133,8 +136,9 @@ def _positive(x) -> bool:
 def _check_tabulated_params(params: dict) -> None:
     """Refuse an unknown ``profile_source``, table files without ``'paleos'``, a ``'paleos'``
     source without its files or with a stratified core, and a bad c_p override or grid step."""
-    source = params.get('profile_source') or 'gaussian'
-    if source not in PROFILE_SOURCES:
+    source = params.get('profile_source', None)
+    source = 'gaussian' if source is None else source
+    if not isinstance(source, str) or source not in PROFILE_SOURCES:
         raise ValueError(f'profile_source must be one of {PROFILE_SOURCES}, got {source!r}')
     given = [k for k in _TABULATED_FILES if params.get(k) is not None]
     if source == 'gaussian':
@@ -204,8 +208,9 @@ def load_core_arrays(path) -> dict:
     return out
 
 
-def _tabulated_profiles(params: dict, r_cmb: float, m_core: float | None):
-    """The tabulated profile of a ``'paleos'`` source, checked against the solver CMB radius."""
+def _tabulated_profiles(params: dict, r_cmb: float, p_cmb: float, m_core: float | None):
+    """The tabulated profile of a ``'paleos'`` source, checked against the solver CMB radius;
+    a CMB pressure more than 1 % from the solver value is logged."""
     table_path = str(params['core_liquid_table'])
     table = _liquid_table(table_path, file_md5(table_path))
     cp = params.get('core_cp_override')
@@ -216,10 +221,16 @@ def _tabulated_profiles(params: dict, r_cmb: float, m_core: float | None):
         t_cmb_step=params.get('core_t_cmb_step') or 10.0,
         m_core=m_core,
     )
-    if abs(profiles.r_cmb - r_cmb) > max(1.0, 1e-9 * r_cmb):
+    if not abs(profiles.r_cmb - r_cmb) <= max(1.0, 1e-9 * r_cmb):
         raise ValueError(
             f'core_profile_file ends at r = {profiles.r_cmb:.6e} m, the mesh CMB at '
             f'{r_cmb:.6e} m'
+        )
+    if not abs(profiles.p_cmb / p_cmb - 1.0) <= 0.01:
+        logger.warning(
+            'core_profile_file has a CMB pressure of %.4e Pa, the mesh %.4e Pa',
+            profiles.p_cmb,
+            p_cmb,
         )
     return profiles
 
@@ -294,7 +305,7 @@ def build_core_module_budget(
     fit_profile = cfg['fit_profile']
     given = (m_core is not None) + (p_cen is not None)
     fit = given == 2 if fit_profile is None else bool(fit_profile)
-    tabulated = (params.get('profile_source') or 'gaussian') == 'paleos'
+    tabulated = params.get('profile_source') == 'paleos'
     if tabulated:
         given, fit = 2, False  # the profile comes from the file; m_core only checks it
     if given == 1:
@@ -307,7 +318,7 @@ def build_core_module_budget(
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
 
     if tabulated:
-        profiles = _tabulated_profiles(params, r_cmb, m_core)
+        profiles = _tabulated_profiles(params, r_cmb, profile_kwargs['p_cmb'], m_core)
     elif fit:
         profiles = GaussianCoreProfiles.from_structure(
             m_core=m_core,
@@ -367,6 +378,8 @@ class CoreModule:
             raise ValueError(
                 'CoreModule holds one core temperature; a stratified core needs the solver'
             )
+        if budget.tabulated:
+            budget.profiles.check_t_cmb(t_cmb)
         self.budget = budget
         self.entropy = entropy
         self.t_cmb = float(t_cmb)
@@ -421,6 +434,8 @@ class CoreModule:
             t += h
             times.append(t)
             temps.append(float(temp))
+        if self.budget.tabulated:
+            self.budget.profiles.check_t_cmb(temps)
         self.last_times = jnp.asarray(times)
         self.last_t_cmb = jnp.asarray(temps)
         self.last_q_cmb = jnp.asarray([q_at(x) for x in times])
