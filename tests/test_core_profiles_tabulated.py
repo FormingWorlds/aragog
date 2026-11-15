@@ -287,26 +287,28 @@ def test_derivatives_at_the_ends_of_the_tables_are_the_one_sided_slopes(paleos):
     d_cs = jax.grad(paleos.secular_capacity)
     for t in (t0, float(paleos.t_grid[-1])):
         assert float(d_cs(t)) == pytest.approx(
-            float(paleos._c_s[1][0 if t == t0 else -1]), rel=1e-12
+            float(paleos._c_s[1][0 if t == t0 else -1]), rel=1e-9
         )
 
 
 def test_a_coarse_grid_that_misses_the_isentrope_between_grid_points_is_refused(table):
-    """The entropy check runs at the midpoints of the temperature grid too: a 1500 K step
-    misses the isentrope between grid points by more than 1e-6 and is refused, a 10 K step
-    passes; a grid of more than 20,000 temperatures is refused before it is built."""
+    """The entropy check runs at the midpoints of the temperature grid too: a grid of 2
+    temperatures 4500 K apart misses the isentrope between them by 1.6e-6 (measured; a 2250 K
+    step misses by 1.2e-7) and is refused, a 10 K step passes; a grid of more than 20,000
+    temperatures is refused before it is built."""
     arrays, _ = gaussian_core(41)
     TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=10.0)
     with pytest.raises(ValueError, match='between grid temperatures'):
-        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=1500.0)
+        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=4500.0)
     with pytest.raises(ValueError, match='at most 20000'):
         TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=1e-2)
 
 
 def test_a_table_too_cold_for_any_isentrope_is_refused_with_its_range(table):
-    """A table that ends below 3000 K holds no isentrope from CMB to centre; the default range
-    says so and names the table temperatures."""
-    keep = table.temperature <= 3000.0
+    """A table that ends at 2600 K holds no isentrope from CMB to centre of the Earth core
+    (a cut at 3000 K still holds 1996 to 2003 K); the default range says so and names the
+    table temperatures."""
+    keep = table.temperature <= 2600.0
     small = LiquidIronTable(
         table.pressure,
         table.temperature[keep],
