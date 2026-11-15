@@ -22,6 +22,25 @@ def table():
     return LiquidIronTable.from_file(CUT)
 
 
+class _log_capture:
+    """Collect the log records of ``aragog.core.iron_table`` as text."""
+
+    def __enter__(self):
+        import logging
+
+        self.text, self._log = '', logging.getLogger('aragog.core.iron_table')
+        self._handler = logging.Handler()
+        self._handler.emit = lambda rec: setattr(self, 'text', self.text + rec.getMessage())
+        self._level = self._log.level
+        self._log.addHandler(self._handler)
+        self._log.setLevel(logging.INFO)
+        return self
+
+    def __exit__(self, *exc):
+        self._log.removeHandler(self._handler)
+        self._log.setLevel(self._level)
+
+
 def _write_dat(path, data, kind='liquid'):
     """Write ``data`` (the npz arrays) as a Zalmoxis-format text table."""
     header = str(data['header']).replace('# Kind: liquid', f'# Kind: {kind}')
@@ -113,15 +132,57 @@ def _arrays():
 @given(
     field=st.sampled_from(FIELDS),
     bad=st.sampled_from([np.nan, np.inf, -np.inf]),
-    i=st.integers(0, 5),
+    i=st.integers(1, 4),
     j=st.integers(0, 5),
 )
-def test_a_non_finite_cell_is_refused(field, bad, i, j):
-    """Any NaN or infinite cell in any field is refused, wherever it lies."""
+def test_a_non_finite_cell_inside_is_refused(field, bad, i, j):
+    """A NaN or infinite cell in a pressure row between finite edge rows is refused."""
     p, t, fields = _arrays()
     fields[field][i, j] = bad
-    with pytest.raises(ValueError, match=f'non-finite cell in {field}'):
+    with pytest.raises(ValueError, match=f'non-finite cell in {field} inside the table'):
         LiquidIronTable(p, t, fields, header='# Kind: liquid')
+
+
+@settings(max_examples=40, deadline=None)
+@given(
+    field=st.sampled_from(FIELDS),
+    bad=st.sampled_from([np.nan, np.inf, -np.inf]),
+    low=st.integers(0, 2),
+    high=st.integers(0, 2),
+    j=st.integers(0, 5),
+)
+def test_non_finite_rows_at_a_pressure_edge_are_dropped(field, bad, low, high, j):
+    """Pressure rows with a non-finite cell at the bottom or top of the table are dropped and
+    the new range is logged; the finite rows between keep their values."""
+    data = np.load(CUT)
+    p, t = data['P_Pa'][:9].copy(), data['T_K'][:6].copy()
+    fields = {f: data[f][:9, :6].copy() for f in FIELDS}
+    for i in [*range(low), *range(9 - high, 9)]:
+        fields[field][i, j] = bad
+    with _log_capture() as log:
+        tab = LiquidIronTable(p, t, fields, header='# Kind: liquid')
+    np.testing.assert_array_equal(tab.pressure, p[low : 9 - high])
+    assert tab.value('s', p[low + 1], t[2]) == pytest.approx(data['s'][low + 1, 2], rel=1e-12)
+    dropped = low + high
+    assert (f'drops {dropped} pressure rows' in log.text) == (dropped > 0), log.text
+
+
+def test_a_table_with_no_finite_row_is_refused():
+    """Edge rows that leave fewer than 4 finite pressure rows are refused."""
+    p, t, fields = _arrays()
+    fields['rho'][[0, 1, 4, 5], 0] = np.nan
+    with pytest.raises(ValueError, match='fewer than 4 finite pressure rows'):
+        LiquidIronTable(p, t, fields, header='# Kind: liquid')
+
+
+def test_the_default_grid_top_rows_load_without_their_non_finite_cells():
+    """The top of the default Zalmoxis grid holds cells that did not converge (NaN, phase
+    'out-of-range') above 6e13 Pa; a cut of it loads up to the last finite row."""
+    top = LiquidIronTable.from_file(CUT.with_name('paleos_iron_liquid_default_top.npz'))
+    data = np.load(CUT.with_name('paleos_iron_liquid_default_top.npz'))
+    finite = np.all([np.all(np.isfinite(data[f]), axis=1) for f in FIELDS], axis=0)
+    assert not finite.all() and top.pressure[-1] == data['P_Pa'][finite][-1]
+    assert top.pressure[-1] == pytest.approx(5.934e13, rel=1e-3)
 
 
 @settings(max_examples=40, deadline=None)
