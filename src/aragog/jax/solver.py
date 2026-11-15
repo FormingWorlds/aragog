@@ -970,7 +970,8 @@ def dSdt_core_module(
         core_budget, q_radio_core, ra_crit)``: the ``dSdt`` six
         plus the ``aragog.core.CoreEnergyBudget`` whose rates close the
         boundary, the constant core internal source power [W] and the critical
-        Rayleigh number of the CMB boundary layer. A stratified budget's CMB flux
+        Rayleigh number of the CMB boundary layer (NaN selects Thiriet et al. 2019 eq. 16,
+        with the mantle thickness and the core-to-top-cell contrast). A stratified budget's CMB flux
         sees the top shell cell, and the CMB basic node rides on it.
 
     Returns
@@ -1042,6 +1043,8 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             gravity=mesh.gravity[0],
             dr_half=r_stag_0 - r_basic[0],
             ra_crit=ra_crit,
+            shell_thickness=r_basic[-1] - r_basic[0],
+            shell_contrast=t_hot - eos.temperature(mesh.P_stag[-1], S[-1]),
         )
     )
 

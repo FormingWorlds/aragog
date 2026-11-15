@@ -4236,7 +4236,9 @@ class EntropySolver:
                 pass
             elif core_mod:
                 t_top = t_core if t_shell is None else float(t_shell[-1])  # the top shell cell
-                self.state._heat_flux[0] = self._core_module_cmb_flux(t_top, entropy[0])
+                self.state._heat_flux[0] = self._core_module_cmb_flux(
+                    t_top, entropy[0], entropy[-1]
+                )
             elif bower:
                 # bower2018: F_cmb from molecular conduction across the bottom half cell,
                 # orders of magnitude below convective transport; parity testing only.
@@ -4387,14 +4389,16 @@ class EntropySolver:
 
         return np.concatenate([dSdt, [dT_core_dt]])
 
-    def _core_module_cmb_flux(self, t_core: float, s_bottom: float) -> float:
+    def _core_module_cmb_flux(self, t_core: float, s_bottom: float, s_top: float) -> float:
         """CMB heat flux [W/m^2] of the core_module boundary layer.
 
         ``aragog.core.cmb_boundary_layer_flux`` of the core temperature (floored at 1 K)
         against the bottom cell's entropy ``s_bottom`` at the CMB pressure, with the layer's
         properties at the CMB pressure and the mean of the two temperatures (Thiriet et al.
         2019; the heat capacity and the expansivity of the phases, without the phase-change
-        terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``.
+        terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``. The internal
+        Rayleigh number of eq. 16 takes the mantle thickness of the mesh and the contrast
+        from the core to the top cell (entropy ``s_top`` at its pressure).
         """
         from aragog.core import cmb_boundary_layer_flux
 
@@ -4410,6 +4414,7 @@ class EntropySolver:
         eos, p_cmb = self.entropy_eos, float(self._P_basic_flat[0])
         t_hot = max(float(t_core), 1.0)
         t_m = first(eos.temperature(p_cmb, s_bottom))
+        t_top_cell = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
         s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
         bl = self._bl_phase
         bl.set_entropy(np.array([s_bl]))
@@ -4426,6 +4431,8 @@ class EntropySolver:
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,
                 ra_crit=self._core_module_ra_crit_cmb,
+                shell_thickness=float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
+                shell_contrast=t_hot - t_top_cell,
             )
         )
 

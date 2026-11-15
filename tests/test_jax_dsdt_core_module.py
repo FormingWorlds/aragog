@@ -105,9 +105,10 @@ def test_factory_shape_contract_core_module():
     rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
     assert callable(rhs_fn) and callable(jac_fn)
     assert info['rhs_calls'] == 0
-    # The critical Rayleigh number must come from the caller (the solver's value), and be
-    # positive and finite.
-    for bad in (None, 0.0, -450.0, float('nan'), float('inf')):
+    # The critical Rayleigh number comes from the caller (the solver's value): None selects
+    # Thiriet eq. 16; a number must be positive and finite.
+    build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=None)
+    for bad in (0.0, -450.0, float('nan'), float('inf')):
         with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
             build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=bad)
     # A stratified budget builds: its shell temperatures are state after T_core.
@@ -196,7 +197,9 @@ def _build_jax_pieces(solver):
         else _no_radio,
         solver._core_module_budget,
         float(solver._core_module_q_radio),
-        float(solver._core_module_ra_crit_cmb),
+        float('nan')
+        if solver._core_module_ra_crit_cmb is None
+        else float(solver._core_module_ra_crit_cmb),
     )
     return args
 
@@ -531,7 +534,8 @@ def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax(
 def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boundaries():
     """Where the layer's mean temperature crosses the solidus or the liquidus by 1e-7 K (5e-7
     J/kg/K in the mush; the tables' pure-phase T(S) is flat next to both edges), the NumPy and
-    the JAX CMB fluxes step only by the cube root of the step of the mantle-model viscosity."""
+    the JAX CMB fluxes step only with the mantle-model viscosity: with Thiriet eq. 16,
+    Ra_crit ~ eta^(-0.21), so delta ~ eta^((1 - 0.21)/3) and q ~ eta^(-0.79/3)."""
     solver = _build_numpy_solver(entropy_eos_copy())
     eos, bl, n = solver.entropy_eos, solver._bl_phase, solver._n_stag
     P = float(solver._P_basic_flat[0])
@@ -542,7 +546,7 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
         t_edge, flux, eta = eos.temperature_scalar(P, s_edge), [], []
         for t_mean in (t_edge - 1e-7, t_edge + 1e-7):
             y[n + 1] = 2.0 * t_mean - t_m
-            f_np = solver._core_module_cmb_flux(y[n + 1], y[0])
+            f_np = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
             f_jax = float(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).heat_flux[0])
             assert f_jax == pytest.approx(f_np, rel=1e-5)
             bl.set_entropy(np.array([eos.entropy_at_temperature(P, t_mean)]))
@@ -550,7 +554,7 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
             flux.append(np.array([f_np, f_jax]))
             eta.append(float(np.asarray(bl.viscosity()).flat[0]))
         np.testing.assert_allclose(
-            flux[1] / flux[0] * (eta[1] / eta[0]) ** (1 / 3), 1.0, atol=1e-6
+            flux[1] / flux[0] * (eta[1] / eta[0]) ** ((1 - 0.21) / 3), 1.0, atol=1e-6
         )
 
 
@@ -569,13 +573,13 @@ def test_an_unconverged_inversion_gives_nan_and_stops_the_layer_flux(monkeypatch
     t_m = eos.temperature_scalar(P, 1100.0)
     t_mean = t_m + 300.0
     assert np.isfinite(eos.entropy_at_temperature(P, t_mean))
-    assert solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0) > 0.0
+    assert solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0, 1100.0) > 0.0
     monkeypatch.setattr(
         entropy_module, 'brentq', lambda *a, **k: brentq(*a, **(k | {'maxiter': 2}))
     )
     assert np.isnan(eos.entropy_at_temperature(P, t_mean))
     with pytest.raises(RuntimeError, match='EOS table domain'):
-        solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0)
+        solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0, 1100.0)
 
 
 @pytest.mark.slow

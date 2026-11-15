@@ -89,19 +89,25 @@ def test_the_cmb_flux_refuses_a_solver_without_entropy_tables(solver, monkeypatc
     entropy EOS tables; a solver without them (const_properties) is refused with the reason,
     while the same call with the tables returns a finite flux."""
     solver.dSdt(0.0, solver._S0)  # the flux reads the bottom cell's state
-    assert np.isfinite(solver._core_module_cmb_flux(5000.0, float(solver._S0[0])))
+    assert np.isfinite(
+        solver._core_module_cmb_flux(5000.0, float(solver._S0[0]), float(solver._S0[-1]))
+    )
     monkeypatch.setattr(solver, 'entropy_eos', None)
     with pytest.raises(ValueError, match='needs the entropy EOS tables'):
-        solver._core_module_cmb_flux(5000.0, float(solver._S0[0]))
+        solver._core_module_cmb_flux(5000.0, float(solver._S0[0]), float(solver._S0[-1]))
 
 
 def test_the_cmb_flux_needs_no_evaluated_state():
     """The flux evaluates its own boundary-layer state, so it is the same before and after a
     right-hand side evaluation."""
     fresh = _build('core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven')
-    before = fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]))
+    before = fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]), float(fresh._S0[-1]))
     fresh.dSdt(0.0, fresh._S0)
-    assert fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0])) == before > 0.0
+    assert (
+        fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]), float(fresh._S0[-1]))
+        == before
+        > 0.0
+    )
 
 
 def test_a_reset_keeps_the_budget_until_its_inputs_change():

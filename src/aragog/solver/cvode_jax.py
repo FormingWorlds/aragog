@@ -265,11 +265,11 @@ def build_jax_rhs_and_jacobian(
     core_module_q_radio : float, default 0.0
         Constant core internal source power [W] for the core_module
         closure.
-    core_module_ra_crit_cmb : float
+    core_module_ra_crit_cmb : float or None
         Critical Rayleigh number of the CMB boundary layer for the
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
-        the solver's ``_core_module_ra_crit_cmb``; required for
-        core_module and checked with ``aragog.core.check_ra_crit``.
+        the solver's ``_core_module_ra_crit_cmb``; None selects Thiriet
+        et al. (2019) eq. 16; checked with ``aragog.core.check_ra_crit``.
     lid_params : aragog.jax.surface_lid.LidParams, optional
         The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
         ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
@@ -424,7 +424,11 @@ def build_jax_rhs_and_jacobian(
         from aragog.core import check_ra_crit
 
         q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
-        data = data + (jnp.float64(q_radio), jnp.float64(ra_crit))
+        # NaN carries 'eq. 16' (ra_crit None) through the traced arguments.
+        data = data + (
+            jnp.float64(q_radio),
+            jnp.float64(jnp.nan if ra_crit is None else ra_crit),
+        )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
     entry, is_cache_hit = _get_or_create_jitted(
