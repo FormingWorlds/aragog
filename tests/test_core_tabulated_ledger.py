@@ -62,6 +62,7 @@ def _call(shared_eos, params, start, end, state, sf, t_core=None):
 
 
 @pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
 def test_the_tabulated_core_ledger_converges_with_the_tolerance(
     shared_eos, params, validation_plot
 ):
