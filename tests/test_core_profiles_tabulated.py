@@ -237,6 +237,24 @@ def test_an_isentrope_that_leaves_the_table_names_the_core_arrays(table):
         TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=3.0, m=3.0), table)
 
 
+def test_a_pure_iron_10_earth_mass_core_builds_on_the_default_grid():
+    """A dry pure-Fe Zalmoxis core of 10 M_E (centre 4.7 TPa) builds on a cut of the default
+    Zalmoxis grid. Along this core the entropy at the hottest table temperature is lowest at an
+    inner node, not at the centre, so the hottest CMB temperature comes from the lowest entropy
+    over the nodes: more than 1000 K below the one the centre alone gives."""
+    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    tab = LiquidIronTable.from_file(data / 'paleos_iron_liquid_default_cut_6tpa.npz')
+    core = load_core_arrays(data / 'zalmoxis_core_arrays_fe_10me_2510K.npz')
+    prof = TabulatedCoreProfiles(core, tab)
+    p, t_min, t_max = core['P'], float(tab.temperature[0]), float(tab.temperature[-1])
+    s_top = tab.value('s', p, t_max)
+    assert 0 < int(np.argmin(s_top)) < p.size - 1
+    centre_top = brentq(lambda t: float(tab.value('s', p[-1], t) - s_top[0]), t_min, t_max)
+    assert float(prof.t_grid[-1]) < centre_top - 1000.0
+    t_a = np.asarray(prof.adiabat(prof.r_nodes[:, None], prof.t_grid))
+    assert t_min <= t_a.min() and t_a.max() <= t_max
+
+
 def test_the_core_mass_check(table):
     """``m_core`` must equal the last node mass to 1e-10."""
     arrays, _ = gaussian_core()
