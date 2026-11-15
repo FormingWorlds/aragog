@@ -332,8 +332,9 @@ def test_extra_z2_keys_are_accepted(table):
 
 
 def test_the_isentrope_check_refuses_a_miss(table, monkeypatch):
-    """Invariant I5 is asserted at install: with its bound set to 0 the round-off of the
-    Newton inversion (about 1e-14) is refused, so the check runs on every node."""
+    """The install checks that each isentrope holds the CMB entropy: with the bound set to 0
+    the round-off of the Newton inversion (about 1e-14) is refused, so the check runs on every
+    node."""
     import aragog.core.profiles_tabulated as pt
 
     arrays, _ = gaussian_core(41)

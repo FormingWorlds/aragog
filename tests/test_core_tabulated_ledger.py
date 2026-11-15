@@ -68,9 +68,10 @@ def test_the_tabulated_core_ledger_converges_with_the_tolerance(
 ):
     """A zero-flux start in 5 calls (0-1, 1-2, 2-12, 12-22, 22-122 yr). Call 1 closes to 3e-4
     at the default tolerances (measured -1.3e-4) and below 3e-6 at 1000 times tighter ones
-    (-1.2e-6); calls 1 to 3 fall at least 20 times to below 1e-5 (measured 108, 120 and 138
-    times); calls 4 and 5 close to 2e-6 (-1.4e-7, 1.3e-6) and fall at least 20 times. The
-    residuals depend on the CPU, so the plot shows the bound of each call, not the residual."""
+    (-1.2e-6); calls 1 to 3 fall at least 20 times to below 1e-5 (measured more than 100
+    times with SUNDIALS 7.2.1 and 7.7.0); calls 4 and 5 close to 2e-6 (-1.4e-7, 1.3e-6) and
+    fall at least 20 times. The residuals depend on the CPU and the SUNDIALS build, so the
+    plot shows the bound of each call, not the residual."""
     res, scale = {}, {}
     for sf in (1.0, 1.0e-3):
         state, res[sf], scale[sf] = None, [], []
