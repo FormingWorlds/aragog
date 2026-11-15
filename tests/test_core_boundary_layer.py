@@ -220,3 +220,17 @@ def test_check_ra_crit_refuses_anything_but_a_positive_finite_number(bad):
     assert check_ra_crit(None) is None  # None selects Thiriet eq. 16
     with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
         check_ra_crit(bad)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('shell', [0.0, -100.0, 10.0])
+def test_eq16_shell_contrast_is_at_least_the_cmb_contrast(shell):
+    """The shell spans the CMB layer, so its contrast is held at the CMB contrast or more: a
+    shell contrast at or below the CMB contrast gives the flux of the CMB contrast, never the
+    unbounded flux of a vanishing Ra_i."""
+    t_core, t_m = 4902.8, 4313.9
+    state = dict(_STATE, shell_contrast=shell)
+    floor = dict(_STATE, shell_contrast=t_core - t_m)
+    q = float(cmb_boundary_layer_flux(t_core, t_m, ra_crit=None, **state))
+    assert q == float(cmb_boundary_layer_flux(t_core, t_m, ra_crit=None, **floor))
+    assert 0.0 < q < float(cmb_boundary_layer_flux(t_core, t_m, ra_crit=None, **_STATE)) * 2.0
