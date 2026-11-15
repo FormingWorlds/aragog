@@ -215,6 +215,7 @@ def test_a_duplicated_row_in_place_of_a_missing_one_is_refused(tmp_path):
     [
         ('', 'no data rows'),
         ('1e9 1e3 1 2 3 4 5 6 liquid', 'needs 9 numbers'),
+        ('1e9 1e3 1 2 3 4 5 6\n1e9 2e3 1 2 3 4 5 6', 'needs 9 numbers'),
         ('1e9 1e3 1 2 3 4 5 6 7 liquid\n1e9 2e3 1 2 3 liquid', 'needs 9 numbers'),
     ],
 )

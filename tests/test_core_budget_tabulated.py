@@ -278,10 +278,38 @@ def test_an_onset_outside_the_grid_is_the_grid_end(paleos_budget, t_m0, end):
     b = CoreEnergyBudget(p, QuadraticMeltingCurve(t_m0=t_m0, t_m1=0.0, t_m2=0.0), **BUDGET)
     assert b.t_onset == float(p.t_grid[end])
     change = b.heat_change(5000.0, -50.0)
-    assert np.isfinite(change)
+    assert change == pytest.approx(p.secular_heat_change(5000.0, -50.0), rel=1e-14)
     if end == 0:
-        assert change == pytest.approx(p.secular_heat_change(5000.0, -50.0), rel=1e-14)
         refuse_unmodelled_regime(b, [4000.0, 5000.0])
+    else:  # the whole core is frozen, CMB included: refused, nothing released
+        with pytest.raises(ValueError, match='fully_frozen'):
+            refuse_unmodelled_regime(b, [5000.0])
+
+
+@pytest.mark.physics_invariant
+def test_an_inner_core_on_the_whole_grid_books_the_integral_of_its_capacity(paleos_budget):
+    """With a melting curve 1 + 1.2e-19 P^2 K the centre is frozen at every tabulated
+    temperature while the CMB stays liquid, so the onset is the top of the grid and an inner
+    core grows on the whole grid; the heat change still equals a fine quadrature of the
+    effective capacity to 1e-7, and the regime check passes (no light elements, so the bound
+    on the outer-core mass of a fixed light-element fraction does not apply)."""
+    p = paleos_budget.profiles
+    curve = QuadraticMeltingCurve(t_m0=1.0, t_m1=0.0, t_m2=1.2e-19)
+    b = CoreEnergyBudget(p, curve, ds_fusion=172.8, icn_width=10.0)  # no light elements
+    assert b.t_onset == float(p.t_grid[-1])
+    assert float(b.r_icb(5000.0)) > 1e6
+    refuse_unmodelled_regime(b, [4000.0, 6000.0])
+    cap = jax.jit(jax.vmap(b.effective_capacity))
+    x, w = np.polynomial.legendre.leggauss(64)
+    for t0, dt in ((6000.0, -300.0), (4321.0, -12.5)):
+        edges = np.linspace(t0 + dt, t0, 257)
+        ref = sum(
+            0.5
+            * (e1 - e0)
+            * float(np.sum(w * np.asarray(cap(0.5 * (e0 + e1) + 0.5 * (e1 - e0) * x))))
+            for e0, e1 in zip(edges[:-1], edges[1:])
+        )
+        assert b.heat_change(t0, dt) == pytest.approx(-ref, rel=1e-7)
 
 
 def test_nan_temperature_is_refused_by_the_regime_check(paleos_budget):

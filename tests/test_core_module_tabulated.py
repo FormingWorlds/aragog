@@ -222,13 +222,25 @@ def test_core_module_refuses_a_start_outside_the_grid(paleos_params):
 
 
 def test_a_mesh_pressure_far_from_the_arrays_is_logged(paleos_params, caplog):
-    """A CMB pressure of the arrays more than 1 % from the mesh value is logged once as a
-    warning naming both; within 1 % nothing is logged."""
-    with caplog.at_level('WARNING', logger='fwl.aragog.core.module'):
-        build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
-        assert not caplog.records
-        build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=100e9)
-    assert any('CMB pressure' in r.getMessage() for r in caplog.records)
+    """The CMB pressure of the arrays (136 GPa) is compared with the mesh value, never with a
+    config p_cmb: a mesh 0.5 % off logs nothing, 2 % off logs one warning naming both, a mesh
+    of 0 Pa logs one too, and a config p_cmb far from the arrays changes nothing."""
+
+    def records(mesh, **extra):
+        caplog.clear()
+        with caplog.at_level('WARNING', logger='fwl.aragog.core.module'):
+            build_core_module_budget(
+                {**paleos_params, **extra}, r_cmb=R_CMB, p_cmb_fallback=mesh
+            )
+        return [r.getMessage() for r in caplog.records if 'CMB pressure' in r.getMessage()]
+
+    assert records(136e9) == []
+    assert records(136e9 * 1.005) == []
+    hit = records(136e9 * 1.02)
+    assert len(hit) == 1 and '1.3872e+11' in hit[0] and '1.3600e+11' in hit[0]
+    assert len(records(0.0)) == 1
+    assert records(136e9, p_cmb=100e9) == []
+    assert len(records(100e9, p_cmb=136e9)) == 1
 
 
 def test_a_rewritten_table_changes_the_key_and_the_capacity(paleos_params, tmp_path):
@@ -254,3 +266,18 @@ def test_a_rewritten_table_changes_the_key_and_the_capacity(paleos_params, tmp_p
     slope = float(jax.grad(cap)(4003.3))
     centred = (float(cap(4003.31)) - float(cap(4003.29))) / 0.02
     assert slope == pytest.approx(centred, rel=1e-5)
+
+
+def test_a_core_module_step_that_leaves_the_grid_is_refused(paleos_params):
+    """A step that cools the core below the lowest tabulated isentrope raises before it changes
+    the state: T_cmb and the stored trajectory keep their values."""
+    from aragog.core.module import CoreModule
+
+    b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
+    start = float(b.profiles.t_grid[0]) + 5.0
+    module = CoreModule(b, t_cmb=start)
+    module.step(1e13, 3.15e9)
+    kept = (module.t_cmb, module.last_t_cmb)
+    with pytest.raises(ValueError, match='outside the tabulated isentropes'):
+        module.step(1e17, 3.15e13)
+    assert module.t_cmb == kept[0] and module.last_t_cmb is kept[1]

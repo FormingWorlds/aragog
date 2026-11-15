@@ -318,3 +318,21 @@ def test_check_t_cmb_refuses_outside_the_grid_and_nan(paleos):
     for bad in (2400.0, 7100.0, math.nan, math.inf):
         with pytest.raises(ValueError, match='outside the tabulated isentropes'):
             paleos.check_t_cmb([4000.0, bad])
+
+
+def test_the_install_size_is_bounded_by_its_cells(table):
+    """The install refuses more than 2,000,000 node-temperature cells, whatever the split: 2001
+    nodes on a 2 K step (4.5 million cells) are refused, on the default 10 K step (0.9 million)
+    they are built."""
+    arrays, _ = gaussian_core(2001)
+    with pytest.raises(ValueError, match='at most 2000000 cells'):
+        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=2.0)
+    assert TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE).n_nodes == 2001
+
+
+def test_a_core_too_coarse_for_the_isentrope_between_its_nodes_is_refused(table):
+    """The entropy check also runs between the radial nodes: an Earth core on 7 nodes misses the
+    isentrope there by more than 1e-6 and is refused; on 41 nodes it is built."""
+    TabulatedCoreProfiles(gaussian_core(41)[0], table, t_cmb_range=T_RANGE)
+    with pytest.raises(ValueError, match='between radial nodes'):
+        TabulatedCoreProfiles(gaussian_core(7)[0], table, t_cmb_range=T_RANGE)
