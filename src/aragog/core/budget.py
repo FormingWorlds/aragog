@@ -123,6 +123,12 @@ class CoreEnergyBudget:
             raise ValueError(f'unknown capacity_mode {capacity_mode!r}')
         if capacity_mode == 'legacy' and (legacy_rho_core is None or legacy_tfac is None):
             raise ValueError('legacy mode needs legacy_rho_core and legacy_tfac')
+        self.tabulated = getattr(profiles, 'adiabat_mode', None) == 'tabulated'
+        if self.tabulated and (stratification or capacity_mode == 'legacy'):
+            raise ValueError(
+                'a tabulated core profile needs the profile capacity mode without '
+                'stratification: its heat content is a function of T_cmb alone'
+            )
         if stratification:
             if capacity_mode == 'legacy':
                 raise ValueError(
@@ -164,16 +170,23 @@ class CoreEnergyBudget:
             raise ValueError('conducted_adiabatic_flow needs k_core (a stratified budget)')
         return _q_ad(self.profiles, self.k_core, r, t_cmb)
 
-    def secular_capacity(self, upper=None):
+    def secular_capacity(self, upper=None, t_cmb=None):
         """Secular heat capacity dQ_s / d(dT_cmb/dt) [J/K].
 
         Profile mode: ``c_p int rho(r) f(r) 4 pi r^2 dr`` over the
         convecting volume (``upper`` defaults to the CMB radius), with
         ``f`` the adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M
         tfac_eff``. Legacy mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the
-        reservoir constant.
+        reservoir constant. A tabulated profile depends on ``t_cmb`` [K], which it
+        then needs: :meth:`TabulatedCoreProfiles.secular_capacity`.
         """
         p = self.profiles
+        if self.tabulated:
+            if t_cmb is None:
+                raise ValueError(
+                    'a tabulated core profile needs t_cmb for its secular capacity'
+                )
+            return p.secular_capacity(t_cmb)
         if self.capacity_mode == 'legacy':
             volume = 4.0 / 3.0 * jnp.pi * p.r_cmb**3
             return volume * self.legacy_rho_core * p.c_p * self.legacy_tfac
@@ -185,9 +198,14 @@ class CoreEnergyBudget:
         top = p.r_cmb if upper is None else upper
         return p.c_p * self._quad_0_upper(top, integrand)
 
-    def effective_tfac(self):
-        """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode)."""
+    def effective_tfac(self, t_cmb=None):
+        """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode); ``t_cmb`` [K] for
+        a tabulated profile, whose mean is ``C_s / (c_p M)`` with its override ``c_p``."""
         p = self.profiles
+        if self.tabulated:
+            if p.c_p_override is None:
+                raise ValueError('effective_tfac needs the constant c_p of an override')
+            return self.secular_capacity(t_cmb=t_cmb) / (p.c_p_override * p.m_core)
 
         def mass_integrand(r):
             return p.density(r) * 4.0 * jnp.pi * r**2
@@ -200,10 +218,19 @@ class CoreEnergyBudget:
     @property
     def t_onset(self) -> float:
         """CMB temperature [K] for inner-core nucleation onset at the centre."""
+        if self.tabulated:
+            return self._t_onset_tabulated
         p = self.profiles
         p_cen = float(p.pressure(0.0))
         adiabat_factor = float(p.adiabat(0.0, 1.0))
         return float(self.melting_curve.t_melt(p_cen)) / adiabat_factor
+
+    @functools.cached_property
+    def _t_onset_tabulated(self) -> float:
+        """Onset CMB temperature [K] of a tabulated profile: the isentrope that meets the
+        melting curve at the centre, a root solve done once."""
+        p_cen = float(self.profiles.pressure(0.0))
+        return self.profiles.t_cmb_at_centre(float(self.melting_curve.t_melt(p_cen)))
 
     @property
     def t_freeze(self) -> float:
@@ -392,7 +419,7 @@ class CoreEnergyBudget:
         upper = self.r_convecting
         top = upper if gravitational_upper is None else gravitational_upper
         return (
-            self.secular_capacity(upper=upper)
+            self.secular_capacity(upper=upper, t_cmb=t_cmb)
             + self.latent_capacity(t_cmb)
             + self.gravitational_capacity(t_cmb, upper=top)
         )
@@ -420,9 +447,17 @@ class CoreEnergyBudget:
                 'only its convecting volume'
             )
         if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
-            return float(t_cmb) * float(self.secular_capacity())
-        on_set = self.t_onset * float(self.secular_capacity())
+            return self._secular_content(float(t_cmb))
+        on_set = self._secular_content(self.t_onset)
         return on_set + self.heat_change(self.t_onset, float(t_cmb) - self.t_onset)
+
+    def _secular_content(self, t_cmb: float) -> float:
+        """Secular heat content [J]: ``t_cmb C_s``, or for a tabulated profile the integral of
+        its capacity from the lowest tabulated temperature."""
+        if self.tabulated:
+            t_ref = float(self.profiles.t_grid[0])
+            return self.profiles.secular_heat_change(t_ref, t_cmb - t_ref)
+        return t_cmb * float(self.secular_capacity())
 
     def heat_change(self, t_cmb, d_t) -> float:
         """Core heat change [J] from CMB temperature ``t_cmb`` to ``t_cmb + d_t``.
@@ -459,7 +494,10 @@ class CoreEnergyBudget:
         t0, dt = float(t_cmb), float(d_t)
         if not (_np.isfinite(t0) and _np.isfinite(dt)):
             return float('nan')
-        secular = dt * float(self.secular_capacity())
+        if self.tabulated:
+            secular = self.profiles.secular_heat_change(t0, dt)
+        else:
+            secular = dt * float(self.secular_capacity())
         s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
         if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular

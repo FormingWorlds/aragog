@@ -77,6 +77,11 @@ class CoreEntropyBudget:
             raise ValueError(f'f_ohm must be in (0, 1], got {f_ohm}')
         if flux_geometry not in _CHR09_F_GEOMETRY:
             raise ValueError(f'unknown flux_geometry {flux_geometry!r}')
+        if getattr(budget, 'tabulated', False):
+            raise ValueError(
+                'the core entropy budget takes a constant alpha and c_p; a tabulated core '
+                'profile has neither'
+            )
         if (
             getattr(budget, 'stratification', False)
             and budget.k_core is not None
