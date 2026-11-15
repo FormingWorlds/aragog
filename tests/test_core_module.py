@@ -218,6 +218,11 @@ FULL_PARAMS = dict(
     layer_top_cell=3.0e3,
     layer_k_mix=1.0e6,
     layer_g_mix=2.0e-3,
+    profile_source='gaussian',
+    core_liquid_table=None,
+    core_profile_file=None,
+    core_cp_override=840.0,
+    core_t_cmb_step=10.0,
 )
 
 

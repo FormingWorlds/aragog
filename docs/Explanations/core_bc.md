@@ -285,7 +285,7 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built.
 
-The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. The core takes its heat capacity from `c_p` and its density from the keys below: the Gaussian profile, or `legacy_rho_core` with `capacity_mode = "legacy"`. Each solver logs one INFO message that names the 2 configured values.
+The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. The core takes its heat capacity from `c_p` and its density from the keys below: the Gaussian profile, `legacy_rho_core` with `capacity_mode = "legacy"`, or, with `profile_source = "paleos"`, `core_cp_override` and the core arrays of `core_profile_file`. Each solver logs one INFO message that names the 2 configured values.
 
 When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the configuration is read, so `aragog validate` reports it:
 
@@ -314,6 +314,11 @@ When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the 
 - `layer_top_cell`: Width of the shell cell at the CMB (m); the cells widen geometrically downward. Default $2000$.
 - `layer_k_mix`: Eddy diffusivity of convective mixing at the reference superadiabatic gradient (m$^2$ s$^{-1}$). Default $10^7$.
 - `layer_g_mix`: Reference superadiabatic gradient, as a fraction of the adiabatic gradient at the CMB. Default $10^{-3}$.
+- `profile_source`: `"gaussian"` (default) or `"paleos"`. `"paleos"` takes the core structure from `core_profile_file` and puts the convecting core on one isentrope of the PALEOS liquid iron table `core_liquid_table`; the Gaussian profile keys are then unused, and `stratification = true` is refused.
+- `core_liquid_table`: Path of the PALEOS liquid iron table that Zalmoxis writes (`2phase_iron_liquid_<sha>_<build>_<grid>.dat`) or of an `.npz` cut of it; its `# Kind:` line must name `liquid`. Read only with `profile_source = "paleos"`.
+- `core_profile_file`: Path of an `.npz` with the core arrays of a Zalmoxis structure, `r` (m), `m` (kg), `P` (Pa), `rho` (kg m$^{-3}$) and `g` (m s$^{-2}$) from the centre to the CMB; the other keys of the Zalmoxis core arrays are accepted and unused. Read only with `profile_source = "paleos"`. The solver builds the budget again when the content of either file changes.
+- `core_cp_override`: Heat capacity of the secular term on the PALEOS path (J kg$^{-1}$ K$^{-1}$), or `"table"` for the value of the table at the CMB. Default $840.0$, because the PALEOS liquid sets $C_V = 3nR$ with no electronic heat capacity.
+- `core_t_cmb_step`: Spacing of the CMB temperatures at which the PALEOS isentropes are tabulated (K). Default $10.0$.
 - `q_radio`: Core radiogenic power (W). Default $0.0$.
 - `ra_crit_cmb`: Critical Rayleigh number of the mantle-side CMB boundary layer (dimensionless). Default $450.0$; positive and finite.
 
