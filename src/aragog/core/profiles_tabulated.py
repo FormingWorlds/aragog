@@ -114,9 +114,10 @@ class TabulatedCoreProfiles:
     Raises
     ------
     ValueError
-        On a missing or malformed array, a node outside the table box on the range, an
-        isentrope that misses ``s_c`` by more than 1e-6 relative, a mass that differs from
-        ``m_core``, or a heat capacity that is not positive.
+        On a missing or malformed array, core pressures outside the pressure range of the
+        table, a node outside the table box on the range, an isentrope that misses ``s_c``
+        by more than 1e-6 relative, a mass that differs from ``m_core``, or a heat capacity
+        that is not positive.
     """
 
     adiabat_mode = 'tabulated'
@@ -154,6 +155,12 @@ class TabulatedCoreProfiles:
             raise ValueError('core pressure P must be strictly decreasing outward')
         if not (np.all(rho > 0.0) and np.all(g >= 0.0)):
             raise ValueError('core density must be positive and gravity non-negative')
+        if not (table.pressure[0] <= p[-1] and p[0] <= table.pressure[-1]):
+            raise ValueError(
+                f'core pressures {p[-1]:.4e} to {p[0]:.4e} Pa leave the pressure range of the '
+                f'liquid iron table ({table.pressure[0]:.4e} to {table.pressure[-1]:.4e} Pa); '
+                'give a table that covers the core'
+            )
         if m_core is not None and not abs(m[-1] / float(m_core) - 1.0) <= MASS_RTOL:
             raise ValueError(
                 f'core arrays hold {m[-1]:.10e} kg, the structure {m_core:.10e} kg'

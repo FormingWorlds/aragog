@@ -71,6 +71,7 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 
 ## What the path refuses
 
+- The core pressures must lie inside the pressure range of the table that `core_liquid_table` names. The range comes from the table itself; for the test cut in `tests/validation/data/` it is 45 GPa to 3 TPa. A core outside it stops the build with an error that names the pressures of the core and of the table; give a table that covers the core.
 - The CMB temperature must lie on the grid of isentropes. The grid runs from the lowest table temperature to the CMB temperature whose isentrope reaches the highest table temperature at the centre. Outside it, or at a NaN temperature, the solver and `CoreModule` stop with an error that names the temperature.
 - The grid holds at most 2,000,000 cells, nodes times temperatures. A larger grid stops with an error; make `core_t_cmb_step` larger.
 - An isentrope that misses $s_c$ by more than a relative $10^{-6}$ stops the build with an error that names where: between the grid temperatures (make `core_t_cmb_step` smaller), between the radial nodes (give the core arrays more nodes), or inside the grid cells (either). The cap asks for a larger step, the check between grid temperatures for a smaller one.
@@ -85,7 +86,7 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 - With the override, the isentrope shape comes from the PALEOS $c_p$ and the heat capacity from 840 J kg$^{-1}$ K$^{-1}$, so the two are not from one EOS.
 - The isentrope is that of pure liquid iron, also when the density of the arrays holds light elements.
 - The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ per atom at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer (2023), p. 9), so the constant is 1.45 times the value at 1000 GPa.
-- The interpolation of the table loses accuracy near its edges, with no warning. On the 3 TPa test table the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to $10^{-5}$ on the table nodes from 50 GPa to 2.1 TPa. It misses by up to $1.3\times10^{-5}$ between nodes below 2 TPa, by $3.6\times10^{-5}$ at the lowest pressure, 45 GPa, and by more than $10^{-4}$ above 2.38 TPa.
+- The interpolation of a table loses accuracy near its edges, with no warning, so a core whose pressures reach close to the top of its table is less accurate than one well inside the range. On the 3 TPa test table the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to $10^{-5}$ on the table nodes from 50 GPa to 2.1 TPa. It misses by up to $1.3\times10^{-5}$ between nodes below 2 TPa, by $3.6\times10^{-5}$ at the lowest pressure, 45 GPa, and by more than $10^{-4}$ above 2.38 TPa.
 
 **Where this is checked.** [Tabulated core](../Validation/core_tabulated.md) on the Validation tab.
 
