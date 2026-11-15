@@ -111,8 +111,7 @@ def test_a_pure_iron_core_freezes_from_the_centre(table, validation_plot):
     """The pure-iron melting curve (Anzellini et al. 2013, the PALEOS phase line) is steeper
     than the liquid isentrope at the melting point, ``dT_m/dP > nabla_ad T_m / P``, at every
     node of the 1, 3 and 5 M_E cores, so a pure-iron core freezes from the centre. The
-    smallest margin is 5.4 % (measured; the first liquid cells of the unified table above the
-    melting line give 0.4 to 6.5 %, which this liquid branch read at T_m does not reproduce).
+    smallest margin is 5.4 % (measured, liquid branch read at T_m).
     A melting slope 6 % smaller would freeze from the top on the 1 and 3 M_E cores."""
     curve = IronMeltingCurve()
     slope_m = jax.vmap(jax.grad(curve.t_melt))

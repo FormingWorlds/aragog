@@ -70,7 +70,9 @@ def _call(shared_eos, params, start, end, state, sf, t_core=None):
 
 
 @pytest.mark.physics_invariant
-def test_the_tabulated_core_ledger_converges_with_the_tolerance(shared_eos, params):
+def test_the_tabulated_core_ledger_converges_with_the_tolerance(
+    shared_eos, params, validation_plot
+):
     """A zero-flux start in 5 calls (0-1, 1-2, 2-12, 12-22, 22-122 yr). Call 1 closes to 3e-4
     at the default tolerances (measured -1.3e-4) and below 3e-6 at 1000 times tighter ones
     (-1.2e-6); calls 1 to 3 fall at least 20 times to below 1e-5 (measured 108, 120 and 138
@@ -88,6 +90,26 @@ def test_the_tabulated_core_ledger_converges_with_the_tolerance(shared_eos, para
         assert abs(loose) < 2e-6 and abs(loose) > 20.0 * abs(tight), res
     for values in zip(res[1.0][:3], res[1.0e-3][:3], scale[1.0][:3], scale[1.0e-3][:3]):
         _assert_converges(*values)
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(6.4, 4.0))
+        calls = np.arange(1, 6)
+        ax.semilogy(calls, np.abs(res[1.0]), 'o-', label='default')
+        ax.semilogy(calls, np.abs(res[1.0e-3]), 's-', label='1000x tighter')
+        ink = plt.rcParams['text.color']
+        ax.plot([0.8, 3.2], [1e-5, 1e-5], ls=':', color=ink, label='bound 1e-5')
+        ax.plot([3.8, 5.2], [2e-6, 2e-6], ls='--', color=ink, label='bound 2e-6')
+        ax.set(xlabel='Call', ylabel='|Residual| / CMB heat', xticks=calls)
+        ax.minorticks_off()
+        legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
+        fig.tight_layout()
+        fig.canvas.draw()
+        assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
+        return fig
+
+    validation_plot(figure, 'core_tabulated_ledger_per_call')
 
 
 @pytest.mark.physics_invariant

@@ -1,0 +1,122 @@
+# Tabulated core
+
+## What this page checks
+
+This page checks the core on the PALEOS liquid iron isentrope, `profile_source = "paleos"` ([explanation](../Explanations/core_tabulated.md)). Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answers are an analytical limit, an independent integral of the same table, a slope comparison and a published ab initio value. A wrong isentrope or a wrong heat capacity changes how fast the core cools, when its inner core starts to grow and how much heat crosses the core-mantle boundary (CMB) into the mantle. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details".
+
+The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M_E$), in `tests/validation/data/` with their provenance. The table is the PALEOS liquid iron table on 40 points per decade of pressure, cut to 45 GPa to 3 TPa and 2000 to 20,000 K.
+
+## A table of constant properties gives the Gaussian budget
+
+**Why this check exists.** A wrong factor in the secular heat capacity, a wrong slope of the isentrope or a wrong onset root would give a budget that differs from the Gaussian budget of the same core.
+
+**What it tests.** The test builds a table whose thermal expansivity $\alpha$ and heat capacity $c_p$ are constant (1.35e-5 K$^{-1}$, 840 J kg$^{-1}$ K$^{-1}$), from the Gaussian Earth structure. On 801 nodes it compares the secular, latent and gravitational capacities, the inner-core radius $r_\text{icb}$ and the onset temperature with the Gaussian budget, from 3000 to 6000 K.
+
+**How we know the right answer.** For constant $\alpha$ and $c_p$ the isentrope is $T_\text{cmb}\exp(-\alpha\psi/c_p)$, with $\psi$ the gravitational potential: the adiabat of the Gaussian profile (analytical).
+
+**Why it matters.** The PALEOS path then reduces to the path it replaces when the material is simple.
+
+![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms.svg#only-light){ width="70%" }
+![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms_dark.svg#only-dark){ width="70%" }
+
+![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference.svg#only-light){ width="70%" }
+![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The first plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The second plot shows the relative difference of each capacity. All lines lie below the dashed tolerance; that is a pass.
+
+??? info "Test details"
+    - Reference: the Gaussian adiabat $T_\text{cmb}\exp(-\alpha\psi/c_p)$ (analytical).
+    - Tolerance: relative $10^{-6}$ on every term, $r_\text{icb}$ and the onset temperature; measured at most 5.1e-7.
+    - Test id: `tests/test_core_budget_tabulated.py::test_a_constant_property_table_gives_the_gaussian_budget` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_budget_tabulated.py -k constant_property`
+
+## The isentrope equals the integral of the adiabatic gradient
+
+**Why this check exists.** An error in the inversion of the table entropy, or in the interpolation between CMB temperatures, would put the core at the wrong temperature.
+
+**What it tests.** On the 1, 3 and 5 $M_E$ cores the test integrates $d\ln T/d\ln P = \nabla_\text{ad}$ from the CMB inward with the adiabatic gradient $\nabla_\text{ad}$ of the same table. It starts 500 K and 2000 K above the pure-iron melting point at the CMB and compares the temperature with the isentrope that the budget reads.
+
+**How we know the right answer.** Along an isentrope, $d\ln T/d\ln P = \nabla_\text{ad}$ by definition; the table holds $s$ and $\nabla_\text{ad}$ as separate columns, so the 2 routes are independent.
+
+**Why it matters.** The temperature of the isentrope sets the heat capacity and where the inner core starts to grow.
+
+![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam.svg#only-light){ width="70%" }
+![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** Each line is one core, from its CMB pressure to its centre pressure. It shows the larger of the 2 starting temperatures at each pressure. The dotted line is the tolerance; lines below it pass.
+
+??? info "Test details"
+    - Reference: the integral of $\nabla_\text{ad}$ of the same table (independent column).
+    - Tolerance: relative $10^{-5}$ in $T$; measured at most 1.3e-7. A 1 % error in $\nabla_\text{ad}$ moves the centre by more than $10^{-3}$.
+    - Test id: `tests/test_core_tabulated_validation.py::test_the_isentrope_equals_the_integral_of_nabla_ad` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k nabla_ad`
+
+## A pure iron core freezes from the centre
+
+**Why this check exists.** If the melting curve were less steep than the isentrope, the core would freeze from the top, a case the budget does not model.
+
+**What it tests.** At every node of the 3 cores the test compares the slope of the pure-iron melting curve, $dT_m/dP$, with the slope of the liquid isentrope at the melting point, $\nabla_\text{ad}T_m/P$. The margin is their ratio minus 1.
+
+**How we know the right answer.** The melting curve is that of Anzellini et al. (2013)[^cite-anzellini2013], which PALEOS also uses. González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023] find from ab initio simulations that the melting line of iron is steeper than its adiabats, so cores freeze from the centre.
+
+**Why it matters.** The budget books latent and gravitational heat only for an inner core that grows from the centre.
+
+![Margin of the melting slope over the isentrope slope against pressure, with the pressure range of each core](../assets/validation/core_tabulated_pure_iron_direction.svg#only-light){ width="70%" }
+![Margin of the melting slope over the isentrope slope against pressure, with the pressure range of each core](../assets/validation/core_tabulated_pure_iron_direction_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The line is the margin against pressure; a positive margin means freezing from the centre. The bars below show the pressure range of each core. The margin stays above 0.05 everywhere.
+
+**Known limit.** The margin is read on the liquid table at the melting point, for pure iron only. A melting curve lowered by light elements has another slope, which this case does not check.
+
+??? info "Test details"
+    - Reference: Anzellini et al. (2013)[^cite-anzellini2013]; the slope comparison of González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], p. 9.
+    - Tolerance: margin above 0.05 at every node; measured smallest 5.4 %. A melting slope 6 % smaller fails on the 1 and 3 $M_E$ cores.
+    - Test id: `tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k freezes`
+
+## The core ledger of each solver call
+
+**Why this check exists.** A heat change booked from another function than the one the solver integrates would let the core gain or lose heat that no flux carries.
+
+**What it tests.** A PALEOS Earth core starts at the temperature of a molten mantle base and runs 5 calls, from 0 to 122 yr. Each call runs at the default tolerances and at tolerances 1000 times tighter. A second test runs a call across the onset of the inner core. The residual of a call is (core heat change plus CMB heat) over the CMB heat.
+
+**How we know the right answer.** Energy conservation: the heat the core loses equals the heat that crosses the CMB. A residual from the solver tolerance falls when the tolerance falls; a booking error does not. The rule is that of the [Gaussian path](core.md#core-ledger-closure).
+
+**Why it matters.** The core ledger is part of the energy check of every coupled run.
+
+![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call.svg#only-light){ width="70%" }
+![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** Circles are the default tolerances, squares the tight ones. The dotted bound applies to calls 1 to 3 at the tight tolerances, the dashed bound to calls 4 and 5 at the default ones. Each call falls by more than 20 times between the 2 lines.
+
+**Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates needs the coupling to PROTEUS.
+
+??? info "Test details"
+    - Reference: energy conservation; the rule of the Gaussian path.
+    - Tolerance: call 1 below 3e-4 at the default tolerances and 3e-6 at the tight ones; calls 1 to 3 and the onset call fall at least 20 times to below $10^{-5}$; calls 4 and 5 below 2e-6 at the default tolerances, falling at least 20 times. Measured: call 1 -1.3e-4 and -1.2e-6; calls 2 and 3 fall 120 and 138 times; calls 4 and 5 -1.4e-7 and 1.3e-6.
+    - Test id: `tests/test_core_tabulated_ledger.py::test_the_tabulated_core_ledger_converges_with_the_tolerance`, `::test_a_tabulated_call_across_the_onset_converges_with_the_tolerance` (smoke tier)
+    - Command: `pytest -o "addopts=" tests/test_core_tabulated_ledger.py`
+
+## The entropy of fusion
+
+**Why this check exists.** The latent heat of the inner core is the entropy of fusion times the temperature at its boundary. This case shows how the constant compares with an ab initio value.
+
+**What it tests.** The constant 172.8 J kg$^{-1}$ K$^{-1}$ of `ds_fusion` against 1.05 $k_B$ per atom at 300 GPa, with $k_B$ the Boltzmann constant, converted to 156.3 J kg$^{-1}$ K$^{-1}$ for iron.
+
+**How we know the right answer.** González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], p. 9, give 1.05 $k_B$ per atom at 300 GPa, falling to 0.8 $k_B$ per atom at 1000 GPa.
+
+**Why it matters.** The latent heat sets how fast the inner core grows for a given heat flow.
+
+![Entropy of fusion against pressure: the constant of the code and the 2 ab initio values](../assets/validation/core_entropy_of_fusion.svg#only-light){ width="70%" }
+![Entropy of fusion against pressure: the constant of the code and the 2 ab initio values](../assets/validation/core_entropy_of_fusion_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The line is the constant of the code; the 2 points are the ab initio values at 300 and 1000 GPa. The constant lies 10.5 % above the value at 300 GPa.
+
+??? info "Test details"
+    - Reference: González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], p. 9.
+    - Tolerance: none; the ratio 1.105 is reported and pinned to 5e-4.
+    - Test id: `tests/test_core_tabulated_validation.py::test_the_entropy_of_fusion_against_the_ab_initio_value` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k fusion`
+
+[^cite-anzellini2013]: S. Anzellini, A. Dewaele, M. Mezouar, P. Loubeyre, G. Morard, *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-gonzalezcataldo2023]: F. González-Cataldo, B. Militzer, *[Ab initio determination of iron melting at terapascal pressures and Super-Earths core crystallization](https://doi.org/10.1103/PhysRevResearch.5.033194)*, Physical Review Research, 5, 033194, 2023. [SciX](https://scixplorer.org/abs/2023PhRvR...5c3194G/abstract).

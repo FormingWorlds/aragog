@@ -39,6 +39,7 @@ nav:
       - Solid-state convection: Tutorials/solid_state_convection.md
       - A crust on the magma ocean: Tutorials/surface_lid.md
       - The melting point of a core alloy: Tutorials/core_alloy_liquidus.md
+      - A core on the PALEOS isentrope: Tutorials/core_tabulated.md
 
   - Explanations:
       - Overview:
@@ -57,6 +58,7 @@ nav:
           - Pressure EOS: Explanations/pressure_eos.md
           - Core BC modes: Explanations/core_bc.md
           - Core alloy liquidus: Explanations/core_alloy_liquidus.md
+          - Core on the PALEOS isentrope: Explanations/core_tabulated.md
           - Surface boundary conditions: Explanations/surface_bc.md
           - Surface lid: Explanations/surface_lid.md
       - Numerics:
@@ -72,6 +74,7 @@ nav:
       - Overview: Validation/index.md
       - Core: Validation/core.md
       - Core alloy liquidus: Validation/core_alloy_liquidus.md
+      - Tabulated core: Validation/core_tabulated.md
       - Surface boundary: Validation/surface.md
       - Surface lid: Validation/surface_lid.md
       - Phase transitions: Validation/phase_transitions.md

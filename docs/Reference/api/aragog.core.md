@@ -1,10 +1,12 @@
 # `aragog.core`
 
-The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. Radial structure uses the closed-form Gaussian profile family (Labrosse et al. 2001; Nimmo 2015), so every budget term is an analytic integral or a fixed-order quadrature and the module stays at ODE cost. All evaluation runs through `jax.numpy` at 64-bit precision and is jit- and grad-safe.
+The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. Radial structure uses the closed-form Gaussian profile family (Labrosse et al. 2001; Nimmo 2015), so every budget term is an analytic integral or a fixed-order quadrature and the module stays at ODE cost, or a Zalmoxis core on a PALEOS liquid-iron isentrope that is tabulated once per structure. All evaluation runs through `jax.numpy` at 64-bit precision and is jit- and grad-safe.
 
 | Name | Role |
 |------|------|
 | `GaussianCoreProfiles` | Density, enclosed mass, gravity (exact erf form), hydrostatic pressure (quadrature or the printed Labrosse closed form), gravitational potential, and the adiabat of the core. |
+| `LiquidIronTable` | The liquid side of the PALEOS iron EOS that Zalmoxis writes (a `.dat` table or its `.npz` cut), refused unless its `# Kind:` line names `liquid`; bicubic interpolation in $\log_{10} P$ and $\log_{10} T$ of $\rho$, $u$, $s$, $c_p$, $c_v$, $\alpha$ and $\nabla_\mathrm{ad}$ (SI units), with the entropy derivatives `ds_dT` and `ds_dP`. |
+| `TabulatedCoreProfiles`, `load_core_arrays` | A Zalmoxis core (`r` \[m\], `m` \[kg\], `P` \[Pa\], `rho` \[kg m$^{-3}$\], `g` \[m s$^{-2}$\] from an `.npz`) on one isentrope of the liquid table: the same interface as the Gaussian profile, plus a secular heat capacity and heat change that depend on $T_\mathrm{cmb}$ and the mass fraction outside the calibration window of the liquid ([explanation](../../Explanations/core_tabulated.md)). |
 | `IronMeltingCurve` | Pure-iron melting curve (Anzellini et al. 2013, the PALEOS prescription) with a multiplicative light-element depression. |
 | `AlloyLiquidus`, `eutectic` | Liquidus of iron with S, C and O (Si, H and N lower no melting point): ideal-solution binaries on Fe$_k$X$_m$ units through their eutectic points, joined by a harmonic mean of their $A$; `t_melt` \[K\] and `gradient` \[K/Pa\] of pressure \[Pa\], `status` flags for extrapolated pressures and compositions past the eutectic ([explanation](../../Explanations/core_alloy_liquidus.md)). |
 | `QuadraticMeltingCurve` | The quadratic-in-pressure parameterisation of Nimmo (2015, Eq. 6), interchangeable with the iron curve; the form benchmark models are defined in. |
