@@ -2,9 +2,9 @@
 
 ## What this page checks
 
-This page checks the core on the PALEOS liquid iron isentrope, `profile_source = "paleos"` ([explanation](../Explanations/core_tabulated.md)). Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answers are an analytical limit, an independent integral of the same table, a slope comparison and a published ab initio value. A wrong isentrope or a wrong heat capacity changes how fast the core cools, when its inner core starts to grow and how much heat crosses the core-mantle boundary (CMB) into the mantle. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details".
+This page checks the core on the PALEOS liquid iron isentrope, `profile_source = "paleos"` ([explanation](../Explanations/core_tabulated.md)). Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answers are an analytical limit, a published budget, an independent integral of the same table, a slope comparison, energy conservation and a published ab initio value. A wrong isentrope or a wrong heat capacity changes how fast the core cools, when its inner core starts to grow and how much heat crosses the core-mantle boundary (CMB) into the mantle. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details".
 
-The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M_E$), in `tests/validation/data/` with their provenance. The table is the PALEOS liquid iron table on 40 points per decade of pressure, cut to 45 GPa to 3 TPa and 2000 to 20,000 K.
+The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M_E$), in `tests/validation/data/` with their provenance. The 1 and 3 $M_E$ cores are liquid. The 5 $M_E$ structure has a solid core, since no liquid one was available; the cases take only its pressures. The table is the PALEOS liquid iron table on 40 points per decade of pressure, cut to 45 GPa to 3 TPa and 2000 to 20,000 K.
 
 ## A table of constant properties gives the Gaussian budget
 
@@ -29,6 +29,29 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
     - Tolerance: relative $10^{-6}$ on every term, $r_\text{icb}$ and the onset temperature; measured at most 5.1e-7.
     - Test id: `tests/test_core_budget_tabulated.py::test_a_constant_property_table_gives_the_gaussian_budget` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_budget_tabulated.py -k constant_property`
+
+## The Earth budget of Nimmo (2015) on the PALEOS isentrope
+
+**Why this check exists.** The PALEOS isentrope replaces the Gaussian adiabat of a published Earth budget. This case shows how much each budget term moves, and holds the parts that must not move.
+
+**What it tests.** The core has the structure, melting curve, latent heat (750 kJ kg$^{-1}$) and density jump of Nimmo (2015)[^cite-nimmo2015a] (ch. 8.02, Table 2), as in the [Gaussian case](core.md#5-nimmo-2015-earth-core-budget). Only the temperature profile changes, to the PALEOS liquid isentrope with $c_p$ = 840 J kg$^{-1}$ K$^{-1}$. At a CMB heat flow of 15.2 TW the test computes the secular, latent and gravitational heat flows $Q_s$, $Q_L$ and $Q_g$, the cooling rate of the CMB and the growth rate of the inner core.
+
+**How we know the right answer.** Table 4 of the same chapter gives the terms on the Gaussian adiabat; the Gaussian path of Aragog meets them to 2 %. On the PALEOS isentrope the terms are reported, not held: the isentrope moves the inner core. Held are the parts that do not depend on it: $Q_L/Q_g$ must equal its Gaussian value, because both terms scale with the speed of the inner-core boundary on one structure, and the latent heat per unit mass must stay 750 kJ kg$^{-1}$.
+
+**Why it matters.** The PALEOS isentrope is steeper than the Earth adiabat of the chapter. This changes when an inner core forms and how fast it grows, which sets the heat that drives a dynamo.
+
+![Ratio of each budget term to Nimmo (2015) Table 4, Gaussian adiabat and PALEOS isentrope](../assets/validation/core_tabulated_nimmo_budget.svg#only-light){ width="70%" }
+![Ratio of each budget term to Nimmo (2015) Table 4, Gaussian adiabat and PALEOS isentrope](../assets/validation/core_tabulated_nimmo_budget_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** Each mark is a term divided by its value in Table 4; the dotted line at 1 is the table. Circles are the Gaussian adiabat, squares the PALEOS isentrope, both at a 1220 km inner core. $|\dot T_c|$ is the cooling rate of the CMB and $\dot r_i$ the growth rate of the inner core.
+
+**Known limit.** At the 4180 K of Table 4 the PALEOS isentrope has no inner core: its centre is at 6278 K, above the melting point of 5808 K there. The inner core appears below 3874 K, against 4239 K on the Gaussian adiabat. So the terms are compared at the 1220 km inner core of Table 2, at 3835 K. There the speed of the boundary per kelvin of cooling, $|dr_\text{icb}/dT_\text{cmb}|$, is 1.67 times that on the Gaussian adiabat. The latent and gravitational heat per kelvin rise with it, and the CMB cools at 0.69 of the table rate. $Q_L$, $Q_g$ and the growth rate end at 1.18 times the table, $Q_s$ at 0.73.
+
+??? info "Test details"
+    - Reference: Nimmo (2015)[^cite-nimmo2015a], ch. 8.02, Table 2 (inputs) and Table 4 (terms at 15.2 TW).
+    - Tolerance: $Q_L/Q_g$ against the Gaussian value, relative $10^{-6}$ (measured 1.6722 on both paths); latent heat 750 kJ kg$^{-1}$, relative $10^{-12}$; Gaussian path 2 % on $Q_s$, $Q_L$, $Q_g$ and the cooling rate. The PALEOS terms are reported.
+    - Test id: `tests/test_core_tabulated_nimmo.py::test_the_nimmo_earth_budget_on_the_paleos_isentrope` (unit tier)
+    - Command: `pytest -o "addopts=" tests/test_core_tabulated_nimmo.py`
 
 ## The isentrope equals the integral of the adiabatic gradient
 
@@ -70,7 +93,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 ??? info "Test details"
     - Reference: Anzellini et al. (2013)[^cite-anzellini2013]; the slope comparison of González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], p. 9.
-    - Tolerance: margin above 0.05 at every node; measured smallest 5.4 %. A melting slope 6 % smaller fails on the 1 and 3 $M_E$ cores.
+    - Tolerance: margin above 0.05 at every node; measured smallest 0.054. A melting slope 6 % smaller fails on the 1 and 3 $M_E$ cores.
     - Test id: `tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k freezes`
 
@@ -78,9 +101,9 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 **Why this check exists.** A heat change booked from another function than the one the solver integrates would let the core gain or lose heat that no flux carries.
 
-**What it tests.** A PALEOS Earth core starts at the temperature of a molten mantle base and runs 5 calls, from 0 to 122 yr. Each call runs at the default tolerances and at tolerances 1000 times tighter. A second test runs a call across the onset of the inner core. The residual of a call is (core heat change plus CMB heat) over the CMB heat.
+**What it tests.** The core has the Gaussian Earth structure on 201 nodes and the PALEOS liquid isentrope. It starts at the temperature of a molten mantle base and runs 5 calls, from 0 to 122 yr. Each call runs at the default tolerances and at tolerances 1000 times tighter. A second test runs a call across the onset of the inner core. The residual of a call is (core heat change plus CMB heat) divided by the CMB heat.
 
-**How we know the right answer.** Energy conservation: the heat the core loses equals the heat that crosses the CMB. A residual from the solver tolerance falls when the tolerance falls; a booking error does not. The rule is that of the [Gaussian path](core.md#core-ledger-closure).
+**How we know the right answer.** Energy conservation: the heat the core loses equals the heat that crosses the CMB. A residual that comes from the solver tolerance falls when the tolerance falls. A residual that comes from booking the heat change from the wrong function does not. The rule is that of the [Gaussian path](core.md#core-ledger-closure).
 
 **Why it matters.** The core ledger is part of the energy check of every coupled run.
 
@@ -89,11 +112,15 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 **How to read the plot.** Circles are the default tolerances, squares the tight ones. The dotted bound applies to calls 1 to 3 at the tight tolerances, the dashed bound to calls 4 and 5 at the default ones. Each call falls by more than 20 times between the 2 lines.
 
-**Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates needs the coupling to PROTEUS.
+**Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates is not checked here; it needs the coupling to PROTEUS.
 
 ??? info "Test details"
     - Reference: energy conservation; the rule of the Gaussian path.
-    - Tolerance: call 1 below 3e-4 at the default tolerances and 3e-6 at the tight ones; calls 1 to 3 and the onset call fall at least 20 times to below $10^{-5}$; calls 4 and 5 below 2e-6 at the default tolerances, falling at least 20 times. Measured: call 1 -1.3e-4 and -1.2e-6; calls 2 and 3 fall 120 and 138 times; calls 4 and 5 -1.4e-7 and 1.3e-6.
+    - Tolerance:
+        - call 1: below 3e-4 at the default tolerances and below 3e-6 at the tight ones;
+        - calls 1 to 3 and the onset call: fall at least 20 times, to below $10^{-5}$;
+        - calls 4 and 5: below 2e-6 at the default tolerances, and fall at least 20 times.
+    - Measured: call 1 -1.3e-4 and -1.2e-6; calls 2 and 3 fall 120 and 138 times; calls 4 and 5 -1.4e-7 and 1.3e-6.
     - Test id: `tests/test_core_tabulated_ledger.py::test_the_tabulated_core_ledger_converges_with_the_tolerance`, `::test_a_tabulated_call_across_the_onset_converges_with_the_tolerance` (smoke tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_ledger.py`
 
@@ -112,6 +139,8 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 **How to read the plot.** The line is the constant of the code; the 2 points are the ab initio values at 300 and 1000 GPa. The constant lies 10.5 % above the value at 300 GPa.
 
+**Known limit.** The code uses one constant at all pressures. At 1000 GPa the ab initio value is 0.8 $k_B$ per atom, and the constant is 1.45 times that value.
+
 ??? info "Test details"
     - Reference: González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], p. 9.
     - Tolerance: none; the ratio 1.105 is reported and pinned to 5e-4.
@@ -120,3 +149,4 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 [^cite-anzellini2013]: S. Anzellini, A. Dewaele, M. Mezouar, P. Loubeyre, G. Morard, *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
 [^cite-gonzalezcataldo2023]: F. González-Cataldo, B. Militzer, *[Ab initio determination of iron melting at terapascal pressures and Super-Earths core crystallization](https://doi.org/10.1103/PhysRevResearch.5.033194)*, Physical Review Research, 5, 033194, 2023. [SciX](https://scixplorer.org/abs/2023PhRvR...5c3194G/abstract).
+[^cite-nimmo2015a]: F. Nimmo, *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.

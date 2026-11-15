@@ -6,7 +6,7 @@ This tutorial builds the core energy budget of a 1 Earth-mass planet from a Zalm
 
 ## 1. Build the budget
 
-The core arrays come from a Zalmoxis structure: radius, enclosed mass, pressure, density and gravity at each core node. The table is a cut of the PALEOS liquid iron table to 3 TPa. In a solver run the CMB radius comes from the mantle mesh; here it comes from the arrays.
+The core arrays come from a Zalmoxis structure: radius, enclosed mass, pressure, density and gravity at each core node. The table is a cut of the PALEOS liquid iron table to 45 GPa to 3 TPa and 2000 to 20,000 K. In a solver run the CMB radius comes from the mantle mesh; here it comes from the arrays.
 
 ```python
 from aragog.core import CoreModule, build_core_module_budget, load_core_arrays

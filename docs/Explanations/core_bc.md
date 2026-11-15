@@ -285,11 +285,11 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built.
 
-The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. The core takes its heat capacity from `c_p` and its density from the keys below: the Gaussian profile, `legacy_rho_core` with `capacity_mode = "legacy"`, or, with `profile_source = "paleos"`, `core_cp_override` and the core arrays of `core_profile_file`. Each solver logs one INFO message that names the 2 configured values.
+The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. With the Gaussian profile, the core takes its heat capacity from `c_p` and its density from the profile keys below, or from `legacy_rho_core` with `capacity_mode = "legacy"`. With `profile_source = "paleos"`, it takes its heat capacity from `core_cp_override` and its density from the core arrays of `core_profile_file`. Each solver logs one INFO message that names the 2 configured values.
 
 When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the configuration is read, so `aragog validate` reports it:
 
-- `fit_profile`, `m_core`, `p_cen`: the core mass (kg) and central pressure (Pa) the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve.
+- `fit_profile`, `m_core`, `p_cen`: the core mass (kg) and central pressure (Pa) the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve. With `profile_source = "paleos"` no profile is fitted: `m_core` alone is accepted and checks the mass of the core arrays, and `p_cen` and `fit_profile` are unused.
 - `rho_cen`: Core central density (kg m$^{-3}$), used when no fit is made. Default $12500.0$. The fit does not start from it.
 - `length_scale`: Core Gaussian density length scale (m), used when no fit is made. Default $7.272\times 10^6$. The fit searches it in $[r_\text{cmb}/3, 100\, r_\text{cmb}]$ and does not start from this value.
 - `p_cmb`: CMB pressure (Pa) for the profile. Default: the solver's CMB pressure.
@@ -314,7 +314,7 @@ When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the 
 - `layer_top_cell`: Width of the shell cell at the CMB (m); the cells widen geometrically downward. Default $2000$.
 - `layer_k_mix`: Eddy diffusivity of convective mixing at the reference superadiabatic gradient (m$^2$ s$^{-1}$). Default $10^7$.
 - `layer_g_mix`: Reference superadiabatic gradient, as a fraction of the adiabatic gradient at the CMB. Default $10^{-3}$.
-- `profile_source`: `"gaussian"` (default) or `"paleos"`. `"paleos"` takes the core structure from `core_profile_file` and puts the convecting core on one isentrope of the PALEOS liquid iron table `core_liquid_table` ([explanation](core_tabulated.md)); the Gaussian profile keys are then unused, and `stratification = true` is refused.
+- `profile_source`: `"gaussian"` (default) or `"paleos"`. `"paleos"` takes the core structure from `core_profile_file` and puts the convecting core on one isentrope of the PALEOS liquid iron table `core_liquid_table` ([explanation](core_tabulated.md)); the Gaussian profile keys (`alpha`, `c_p`, `adiabat_mode`, `pressure_mode`, `rho_cen`, `length_scale`) are then unused, and `stratification = true` and `capacity_mode = "legacy"` are refused.
 - `core_liquid_table`: Path of the PALEOS liquid iron table that Zalmoxis writes (`2phase_iron_liquid_<sha>_<build>_<grid>.dat`) or of an `.npz` cut of it; its `# Kind:` line must name `liquid`. Read only with `profile_source = "paleos"`.
 - `core_profile_file`: Path of an `.npz` with the core arrays of a Zalmoxis structure, `r` (m), `m` (kg), `P` (Pa), `rho` (kg m$^{-3}$) and `g` (m s$^{-2}$) from the centre to the CMB; the other keys of the Zalmoxis core arrays are accepted and unused. Read only with `profile_source = "paleos"`. The solver builds the budget again when the content of either file changes.
 - `core_cp_override`: Heat capacity of the secular term on the PALEOS path (J kg$^{-1}$ K$^{-1}$), or `"table"` for the value of the table at the CMB. Default $840.0$, because the PALEOS liquid sets $C_V = 3nR$ with no electronic heat capacity.
@@ -335,6 +335,8 @@ PROTEUS writes seven diagnostics of this budget to its output helpfile on every 
 - `core_regime`: the crystallisation regime code (0 fully liquid, 1 bottom-up, 4 fully frozen; the codes 2 top-down and 3 snow mark states the solver refuses, below);
 - `core_strat_depth`: the stable layer thickness below the CMB;
 - `core_T_top`: the temperature at the top of the core (the top shell cell with a shell, else $T_\text{cmb}$).
+
+With `profile_source = "paleos"`, `CoreModule.diagnostics()` also returns `core_eos_outside_calibration`, the core mass fraction outside the calibration window of the PALEOS liquid (8000 to 14,000 K, 50 to 1300 GPa), and Aragog does not compute the entropy budget behind `core_dynamo_margin` and `core_B_rms` ([limits](core_tabulated.md#what-the-path-refuses)).
 
 The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call, checked at every accepted step; the energetics of those regimes are not modelled. A call that fails is not checked: it stops early and books no energy.
 

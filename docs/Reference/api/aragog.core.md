@@ -1,6 +1,6 @@
 # `aragog.core`
 
-The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. Radial structure uses the closed-form Gaussian profile family (Labrosse et al. 2001; Nimmo 2015), so every budget term is an analytic integral or a fixed-order quadrature and the module stays at ODE cost, or a Zalmoxis core on a PALEOS liquid-iron isentrope that is tabulated once per structure. All evaluation runs through `jax.numpy` at 64-bit precision and is jit- and grad-safe.
+The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. The radial structure comes from 1 of 2 sources. The closed-form Gaussian profile family of Labrosse et al. (2001)[^cite-labrosse2001] and Nimmo (2015)[^cite-nimmo2015b] makes every budget term an analytic integral or a fixed-order quadrature, so the module stays at ODE cost. A Zalmoxis core on a PALEOS liquid iron isentrope is tabulated once per structure. All evaluation runs through `jax.numpy` at 64-bit precision and is jit- and grad-safe.
 
 | Name | Role |
 |------|------|
@@ -22,3 +22,6 @@ The `aragog.core` package carries the core evolution module: the core as a compo
 The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). The budget assumes bottom-up crystallization; parameter sets whose melting curve rises above the adiabat at the CMB (a top-down or snow topology) book no boundary terms, and the solver refuses a call that enters such a regime.
 
 ::: aragog.core
+
+[^cite-labrosse2001]: S. Labrosse, J.-P. Poirier, J.-L. Le Mouël, *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
+[^cite-nimmo2015b]: F. Nimmo, *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in G. Schubert (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
