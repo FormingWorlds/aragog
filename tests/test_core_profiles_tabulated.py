@@ -29,8 +29,7 @@ T_RANGE = (2500.0, 7000.0)
 def gaussian_core(n=201):
     """Core arrays of the Earth Gaussian profile on ``n`` uniform nodes, and the profile."""
     g = GaussianCoreProfiles(**EARTH)
-    arrays = gaussian_core_arrays(g, n)
-    return arrays, g
+    return gaussian_core_arrays(g, n), g
 
 
 @pytest.fixture(scope='module')
@@ -272,22 +271,21 @@ def test_the_isentrope_check_refuses_a_miss(table, monkeypatch):
 def test_derivatives_at_the_ends_of_the_tables_are_the_one_sided_slopes(paleos):
     """At the CMB and at the edges of the temperature grid, autodiff gives the slope of the
     interpolant there, not half of it (a clamp whose gradient splits at the bound would)."""
-    r_cmb, t0 = paleos.r_cmb, float(paleos.t_grid[0])
+    r_cmb = paleos.r_cmb
     inside = float(paleos.adiabat_gradient(r_cmb - 1.0, 4000.0))
     assert float(paleos.adiabat_gradient(r_cmb, 4000.0)) == pytest.approx(inside, rel=1e-4)
     d_rho = jax.grad(paleos.density)
     assert float(d_rho(r_cmb)) == pytest.approx(float(d_rho(r_cmb - 1.0)), rel=1e-4)
     d_cs = jax.grad(paleos.secular_capacity)
-    for t in (t0, float(paleos.t_grid[-1])):
-        assert float(d_cs(t)) == pytest.approx(
-            float(paleos._c_s[1][0 if t == t0 else -1]), rel=1e-9
-        )
+    for k in (0, -1):
+        slope = float(paleos._c_s[1][k])
+        assert float(d_cs(float(paleos.t_grid[k]))) == pytest.approx(slope, rel=1e-9)
 
 
 def test_a_coarse_grid_that_misses_the_isentrope_between_grid_points_is_refused(table):
     """The entropy check runs at the midpoints of the temperature grid too: a grid of 2
-    temperatures 4500 K apart misses the isentrope between them by 1.6e-6 (measured; a 2250 K
-    step misses by 1.2e-7) and is refused, a 10 K step passes; a grid of more than 20,000
+    temperatures 4500 K apart misses the isentrope at their midpoint by 1.6e-6 (measured; a
+    2250 K step misses by 1.2e-7 at the midpoints) and is refused, a 10 K step passes; a grid of more than 20,000
     temperatures is refused before it is built."""
     arrays, _ = gaussian_core(41)
     TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=10.0)
@@ -332,7 +330,8 @@ def test_the_install_size_is_bounded_by_its_cells(table):
 
 def test_a_core_too_coarse_for_the_isentrope_between_its_nodes_is_refused(table):
     """The entropy check also runs between the radial nodes: an Earth core on 7 nodes misses the
-    isentrope there by more than 1e-6 and is refused; on 41 nodes it is built."""
+    isentrope there by 1.3e-5 and is refused; on 41 nodes (1.3e-8) it is built (measured; the
+    Zalmoxis cores of the validation data miss by 4.2e-9 at most)."""
     TabulatedCoreProfiles(gaussian_core(41)[0], table, t_cmb_range=T_RANGE)
     with pytest.raises(ValueError, match='between radial nodes'):
         TabulatedCoreProfiles(gaussian_core(7)[0], table, t_cmb_range=T_RANGE)

@@ -3,8 +3,9 @@
 The structure, melting curve, latent heat and density jump are those of Nimmo's Table 2 (the
 inputs of ``docs/Validation/core.md``, section 5); only the temperature profile changes, from
 the small-radius Gaussian adiabat (alpha 1.25e-5, c_p 840) to the PALEOS liquid isentrope with
-c_p 840 in the secular term. The terms are reported against Table 4 at the inner-core radius
-of Table 2, not held to a bound: the isentrope changes where and how fast the inner core grows.
+c_p 840 in the secular term. The terms are compared with Table 4 at the inner-core radius of
+Table 2 and held only to wide bounds on the direction of the change: the isentrope changes where
+and how fast the inner core grows, so Table 4 is no reference for them.
 """
 
 from __future__ import annotations
@@ -69,7 +70,8 @@ def test_the_nimmo_earth_budget_on_the_paleos_isentrope(budgets, validation_plot
     temperature that gives Nimmo's 1220 km inner core, the terms are reported against Table 4:
     the PALEOS isentrope raises |dr_icb/dT_cmb| 1.67 times (measured), so the latent and
     gravitational capacities rise, the cooling rate falls to 0.69 of the table, and Q_L, Q_g
-    and the growth rate end near 1.18 times the table. Held: Q_L/Q_g equals the Gaussian value
+    and the growth rate end near 1.18 times the table; wide bounds hold these directions. Held
+    exactly: Q_L/Q_g equals the Gaussian value
     to 1e-6 (both scale with the boundary sensitivity, on one structure), the latent heat per
     unit mass is the 750 kJ/kg of Table 2, and the Gaussian path stays within 2 % of Table 4
     on Q_s, Q_L, Q_g and the cooling rate."""
@@ -100,7 +102,10 @@ def test_the_nimmo_earth_budget_on_the_paleos_isentrope(budgets, validation_plot
         gauss._boundary_sensitivity(t_g)
     )
     assert 1.5 < sensitivity < 1.8
-    assert got['Q_L'] / TABLE4['Q_L'] > 1.1 and got['Q_s'] / TABLE4['Q_s'] < 0.8
+    for key in ('Q_L', 'Q_g', 'growth'):
+        assert got[key] / TABLE4[key] > 1.1, key
+    for key in ('Q_s', 'cooling'):
+        assert got[key] / TABLE4[key] < 0.8, key
 
     def figure():
         import matplotlib.pyplot as plt

@@ -11,6 +11,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aragog.core.module import (
+    CoreModule,
     build_core_module_budget,
     core_module_cache_key,
     load_core_arrays,
@@ -172,8 +173,6 @@ def test_core_module_diagnostics_report_the_calibration_fraction(paleos_params):
     """A PALEOS core reports the mass fraction outside the Luo et al. (2024) window: an Earth
     core at 5000 K (liquid, centre near 7300 K) lies below its 8000 K floor everywhere
     (fraction 1); a Gaussian core keeps its diagnostic keys unchanged."""
-    from aragog.core.module import CoreModule
-
     b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
     diag = CoreModule(b, t_cmb=5000.0).diagnostics()
     assert diag['core_eos_outside_calibration'] == pytest.approx(1.0, abs=1e-15)
@@ -214,8 +213,6 @@ def test_a_profile_source_that_is_not_a_name_is_refused(bad):
 
 def test_core_module_refuses_a_start_outside_the_grid(paleos_params):
     """CoreModule refuses a CMB temperature outside the tabulated isentropes at the start."""
-    from aragog.core.module import CoreModule
-
     b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
     with pytest.raises(ValueError, match='outside the tabulated isentropes'):
         CoreModule(b, t_cmb=1500.0)
@@ -271,8 +268,6 @@ def test_a_rewritten_table_changes_the_key_and_the_capacity(paleos_params, tmp_p
 def test_a_core_module_step_that_leaves_the_grid_is_refused(paleos_params):
     """A step that cools the core below the lowest tabulated isentrope raises before it changes
     the state: T_cmb and the stored trajectory keep their values."""
-    from aragog.core.module import CoreModule
-
     b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
     start = float(b.profiles.t_grid[0]) + 5.0
     module = CoreModule(b, t_cmb=start)
