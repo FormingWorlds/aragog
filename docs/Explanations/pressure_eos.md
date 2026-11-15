@@ -144,4 +144,4 @@ The per-cell effective density is the cell mass over the cell volume between the
 
 For a fuller treatment of when PALEOS-driven structures matter and how the standalone vs PROTEUS-coupled paths share the same numerical core, see [Standalone usage](../How-to/usage-paths.md) and [Coupling Aragog to PROTEUS](../How-to/proteus_coupling.md).
 
-[^cite-attia2026]: M. Attia, et al., *[PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors](https://arxiv.org/abs/2605.03741)*, A&A (submitted), arXiv:2605.03741, 2026. [SciX](https://scixplorer.org/abs/2026arXiv260503741A/abstract).
+[^cite-attia2026]: M. Attia, T. Lichtenberg, E. Jungová, M. Sastre, *[PALEOS: Multiphase equations of state and mass-radius relations for exoplanet interiors](https://doi.org/10.1051/0004-6361/202660790)*, Astronomy & Astrophysics, 713, A225, 2026. [arXiv:2605.03741](https://arxiv.org/abs/2605.03741).

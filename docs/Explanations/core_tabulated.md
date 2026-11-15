@@ -95,5 +95,5 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 
 **Where this is checked.** [Tabulated core](../Validation/core_tabulated.md) on the Validation tab.
 
-[^cite-attia2026]: M. Attia, T. Lichtenberg, E. Jungová, M. Sastre, *[PALEOS: Multiphase equations of state and mass-radius relations for exoplanet interiors](https://doi.org/10.1051/0004-6361/202660790)*, Astronomy & Astrophysics, 713, A225, 2026.
+[^cite-attia2026]: M. Attia, T. Lichtenberg, E. Jungová, M. Sastre, *[PALEOS: Multiphase equations of state and mass-radius relations for exoplanet interiors](https://doi.org/10.1051/0004-6361/202660790)*, Astronomy & Astrophysics, 713, A225, 2026. [arXiv:2605.03741](https://arxiv.org/abs/2605.03741).
 [^cite-gonzalezcataldo2023]: F. González-Cataldo, B. Militzer, *[Ab initio determination of iron melting at terapascal pressures and Super-Earths core crystallization](https://doi.org/10.1103/PhysRevResearch.5.033194)*, Physical Review Research, 5, 033194, 2023. [SciX](https://scixplorer.org/abs/2023PhRvR...5c3194G/abstract).

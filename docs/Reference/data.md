@@ -114,5 +114,5 @@ The relevant configuration keys are summarised here for cross-reference; the ful
 | `eos_file` | `[mesh]` | Path to the four-column external mesh file |
 | `surface_density`, `adiabatic_bulk_modulus`, `adams_williamson_beta`, `gravitational_acceleration`, `surface_pressure` | `[mesh]` | Adams-Williamson parameters |
 
-[^cite-attia2026]: M. Attia, et al., *[PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors](https://arxiv.org/abs/2605.03741)*, A&A (submitted), arXiv:2605.03741, 2026. [SciX](https://scixplorer.org/abs/2026arXiv260503741A/abstract).
+[^cite-attia2026]: M. Attia, T. Lichtenberg, E. Jungová, M. Sastre, *[PALEOS: Multiphase equations of state and mass-radius relations for exoplanet interiors](https://doi.org/10.1051/0004-6361/202660790)*, Astronomy & Astrophysics, 713, A225, 2026. [arXiv:2605.03741](https://arxiv.org/abs/2605.03741).
 [^cite-wolfbower2018]: A. S. Wolf, D. J. Bower, *[An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt](https://doi.org/10.1016/j.pepi.2018.02.004)*, Physics of the Earth and Planetary Interiors, 278, 59–74, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..278...59W/abstract).
