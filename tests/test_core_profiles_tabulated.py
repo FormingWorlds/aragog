@@ -210,6 +210,33 @@ def test_a_core_outside_the_pressure_range_of_its_table_is_refused(table):
             TabulatedCoreProfiles(core[name], tab)
 
 
+def _fixture_core(name, rho=1.0, m=1.0):
+    """A Zalmoxis core of the validation data, density and node mass scaled."""
+    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    core = dict(load_core_arrays(data / f'zalmoxis_core_arrays_{name}.npz'))
+    core['rho'], core['m'] = core['rho'] * rho, core['m'] * m
+    return core
+
+
+def test_a_density_that_misses_the_node_mass_is_refused(table):
+    """A density 5 % too large integrates to 1.05 times the node mass and is refused, with a
+    message that names the 2 masses; the stored cores build (largest mismatch 1.8e-5)."""
+    with pytest.raises(
+        ValueError, match=r'core density integrates to .* kg, the node mass m is'
+    ):
+        TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=1.05), table)
+    TabulatedCoreProfiles(_fixture_core('1me_3000K'), table)
+
+
+def test_an_isentrope_that_leaves_the_table_names_the_core_arrays(table):
+    """A density 3 times too large with a node mass that matches it bends the pressure
+    between nodes, so the isentrope leaves the table there; the message names the arrays."""
+    with pytest.raises(
+        ValueError, match='leaves the liquid iron table .* check the core arrays'
+    ):
+        TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=3.0, m=3.0), table)
+
+
 def test_the_core_mass_check(table):
     """``m_core`` must equal the last node mass to 1e-10."""
     arrays, _ = gaussian_core()
