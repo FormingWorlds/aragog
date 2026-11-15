@@ -1,4 +1,4 @@
-"""The Python blocks of docs/Tutorials/core_tabulated.md run and print the output the page shows."""
+"""The Python blocks of docs/Tutorials/core_tabulated.md run and print what the page shows."""
 
 from __future__ import annotations
 

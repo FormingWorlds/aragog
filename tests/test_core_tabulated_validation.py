@@ -55,7 +55,8 @@ def test_the_isentrope_equals_the_integral_of_nabla_ad(cores, table, validation_
     """The isentrope the budget reads (the inverted table entropy on bicubic patches) equals
     the integral of ``d ln T / d ln P = nabla_ad`` of the same table from the CMB, to 1e-5 in
     T (measured at most 1.1e-7) on the 1, 3 and 5 M_E cores, 500 and 2000 K above the pure-iron
-    melting point at the CMB; the plot shows the larger of the 2 at each pressure. A 1 % error in nabla_ad moves the centre by more than 1e-3."""
+    melting point at the CMB; the plot shows the larger of the 2 differences at each pressure.
+    A 1 % error in nabla_ad moves the centre by more than 1e-3."""
     curve = IronMeltingCurve()
     rows = []
     for name, prof in cores.items():

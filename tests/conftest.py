@@ -101,6 +101,28 @@ def write_core(path, rho_cen: float = 12500.0, n: int = 101, **extra):
     return path, float(arrays['m'][-1])
 
 
+def reference_heat_change(b, t0, dt, n=256):
+    """Composite 64-point Gauss-Legendre integral of the effective capacity on ``n`` panels per
+    piece, in u = sqrt(T_onset - T) below the onset; split at the onset and freeze-out."""
+    import jax
+
+    x, w = np.polynomial.legendre.leggauss(64)
+    cap = jax.jit(jax.vmap(b.effective_capacity))
+    on, t1 = b.t_onset, t0 + dt
+    inner = [c for c in (on, b.t_freeze) if min(t0, t1) < c < max(t0, t1)]
+    cuts = sorted({t0, t1, *inner})
+    total = 0.0
+    for a, c in zip(cuts[:-1], cuts[1:]):
+        above = a >= on
+        lo, hi = (a, c) if above else (np.sqrt(on - c), np.sqrt(on - a))
+        edges = np.linspace(lo, hi, n + 1)
+        for e0, e1 in zip(edges[:-1], edges[1:]):
+            s = 0.5 * (e0 + e1) + 0.5 * (e1 - e0) * x
+            vals = np.asarray(cap(s)) if above else np.asarray(cap(on - s**2)) * 2.0 * s
+            total += 0.5 * (e1 - e0) * float(np.sum(w * vals))
+    return total if dt > 0 else -total
+
+
 def legend_outside(fig, ax) -> None:
     """Put the legend of ``ax`` right of the axes and assert that it covers no data."""
     legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')

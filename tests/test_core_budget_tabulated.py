@@ -21,7 +21,7 @@ from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import refuse_unmodelled_regime
 from tests.conftest import PALEOS_CUT as CUT
-from tests.conftest import gaussian_core_arrays, legend_outside
+from tests.conftest import gaussian_core_arrays, legend_outside, reference_heat_change
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
@@ -66,7 +66,7 @@ def constant_property_table(g, n_p=400, n_t=60):
 
 @pytest.fixture(scope='module')
 def v1_budgets():
-    """Gaussian and constant-property tabulated budgets of one Earth core with an alloy curve."""
+    """Gaussian and constant-property tabulated budgets of one Earth core, alloy curve."""
     g = GaussianCoreProfiles(**EARTH)
     tab = TabulatedCoreProfiles(
         gaussian_core_arrays(g, 801),
@@ -299,20 +299,25 @@ def test_an_inner_core_on_the_whole_grid_books_the_integral_of_its_capacity(pale
     assert b.t_onset == float(p.t_grid[-1])
     assert float(b.r_icb(5000.0)) > 1e6
     refuse_unmodelled_regime(b, [4000.0, 6000.0])
-    cap = jax.jit(jax.vmap(b.effective_capacity))
-    x, w = np.polynomial.legendre.leggauss(64)
     for t0, dt in ((6000.0, -300.0), (4321.0, -12.5)):
-        edges = np.linspace(t0 + dt, t0, 257)
-        ref = sum(
-            0.5
-            * (e1 - e0)
-            * float(np.sum(w * np.asarray(cap(0.5 * (e0 + e1) + 0.5 * (e1 - e0) * x))))
-            for e0, e1 in zip(edges[:-1], edges[1:])
+        assert b.heat_change(t0, dt) == pytest.approx(
+            reference_heat_change(b, t0, dt), rel=1e-7
         )
-        assert b.heat_change(t0, dt) == pytest.approx(-ref, rel=1e-7)
 
 
 def test_nan_temperature_is_refused_by_the_regime_check(paleos_budget):
     """A NaN core temperature is refused as outside the tabulated isentropes."""
     with pytest.raises(ValueError, match='outside the tabulated isentropes'):
         refuse_unmodelled_regime(paleos_budget, [4000.0, np.nan])
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('t0', [3000.0, 4250.0, 6000.0])
+def test_a_tiny_heat_change_keeps_its_precision(paleos_budget, t0):
+    """A change of 1e-9 K books d_t times the capacity to 1e-6, outside the inner-core window
+    (3000, 6000 K) and inside it (4250 K): the piece widths come from d_t itself, not from the
+    rounded end temperature (which would miss by up to 4e-4 at 6000 K)."""
+    b = paleos_budget
+    for dt in (-1e-9, 1e-9):
+        expected = dt * float(b.effective_capacity(t0 + 0.5 * dt))
+        assert b.heat_change(t0, dt) == pytest.approx(expected, rel=1e-6)

@@ -171,12 +171,12 @@ def test_a_solver_reset_rebuilds_the_budget_when_the_core_file_changes(paleos_pa
 @pytest.mark.physics_invariant
 def test_core_module_diagnostics_report_the_calibration_fraction(paleos_params):
     """A PALEOS core reports the mass fraction outside the Luo et al. (2024) window: an Earth
-    core at 5000 K (liquid, centre near 7300 K) lies below its 8000 K floor everywhere
+    core at 5000 K (liquid, centre near 7600 K) lies below its 8000 K floor everywhere
     (fraction 1); a Gaussian core keeps its diagnostic keys unchanged."""
     b = build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=136e9)
     diag = CoreModule(b, t_cmb=5000.0).diagnostics()
     assert diag['core_eos_outside_calibration'] == pytest.approx(1.0, abs=1e-15)
-    assert 7000.0 < diag['t_cen'] < 8000.0
+    assert 7500.0 < diag['t_cen'] < 7700.0
     assert not diag['inner_core_present']
     assert diag['effective_capacity'] == pytest.approx(
         float(b.secular_capacity(t_cmb=5000.0)), rel=1e-12

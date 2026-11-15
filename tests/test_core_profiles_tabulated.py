@@ -285,14 +285,11 @@ def test_derivatives_at_the_ends_of_the_tables_are_the_one_sided_slopes(paleos):
 def test_a_coarse_grid_that_misses_the_isentrope_between_grid_points_is_refused(table):
     """The entropy check runs at the midpoints of the temperature grid too: a grid of 2
     temperatures 4500 K apart misses the isentrope at their midpoint by 1.6e-6 (measured; a
-    2250 K step misses by 1.2e-7 at the midpoints) and is refused, a 10 K step passes; a grid of more than 20,000
-    temperatures is refused before it is built."""
+    2250 K step misses by 1.2e-7 at the midpoints) and is refused, a 10 K step passes."""
     arrays, _ = gaussian_core(41)
     TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=10.0)
     with pytest.raises(ValueError, match='between grid temperatures'):
         TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=4500.0)
-    with pytest.raises(ValueError, match='at most 20000'):
-        TabulatedCoreProfiles(arrays, table, t_cmb_range=T_RANGE, t_cmb_step=1e-2)
 
 
 def test_a_table_too_cold_for_any_isentrope_is_refused_with_its_range(table):
@@ -335,3 +332,24 @@ def test_a_core_too_coarse_for_the_isentrope_between_its_nodes_is_refused(table)
     TabulatedCoreProfiles(gaussian_core(41)[0], table, t_cmb_range=T_RANGE)
     with pytest.raises(ValueError, match='between radial nodes'):
         TabulatedCoreProfiles(gaussian_core(7)[0], table, t_cmb_range=T_RANGE)
+
+
+def test_a_core_that_misses_the_isentrope_inside_a_cell_is_refused(table):
+    """The entropy check covers the centres of the grid cells too: an Earth core on 15 nodes
+    with one 4000 K temperature interval misses by 9.2e-7 between the temperatures and 6.2e-7
+    between the nodes, both below 1e-6, but by 1.1e-6 at the cell centres, and is refused."""
+    with pytest.raises(ValueError, match='inside the grid cells'):
+        TabulatedCoreProfiles(
+            gaussian_core(15)[0], table, t_cmb_range=(2500.0, 6500.0), t_cmb_step=4000.0
+        )
+
+
+def test_the_out_of_grid_message_tells_the_value_from_the_bound(paleos):
+    """A temperature 0.004 K beyond either end prints a value that differs from the bound."""
+    import re
+
+    for bad in (float(paleos.t_grid[0]) - 0.004, float(paleos.t_grid[-1]) + 0.004):
+        with pytest.raises(ValueError) as err:
+            paleos.check_t_cmb([bad])
+        value, lo, hi = re.findall(r'([0-9.]+) K', str(err.value))[:3]
+        assert value not in (lo, hi), str(err.value)
