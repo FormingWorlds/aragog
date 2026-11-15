@@ -64,6 +64,10 @@ def constant_property_table(g, n_p=400, n_t=60):
     return LiquidIronTable(p, t, fields, header='# Kind: liquid')
 
 
+# Plotted differences below this are drawn at it; their round-off differs between CPUs.
+PLOT_FLOOR = 1e-8
+
+
 @pytest.fixture(scope='module')
 def v1_budgets():
     """Gaussian and constant-property tabulated budgets of one Earth core, alloy curve."""
@@ -158,8 +162,10 @@ def test_a_constant_property_table_gives_the_gaussian_budget(v1_budgets, validat
 
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
         for key in keys:
-            ax.semilogy(ts, rel[key], label=key)
-        ax.axhline(V1_RTOL, color=plt.rcParams['text.color'], ls='--', lw=1, label='tolerance')
+            ax.semilogy(ts, np.maximum(rel[key], PLOT_FLOOR), label=key)
+        ink = plt.rcParams['text.color']
+        ax.axhline(V1_RTOL, color=ink, ls='--', lw=1, label='tolerance')
+        ax.axhline(PLOT_FLOOR, color=ink, ls=':', lw=1, alpha=0.6, label='floor 1e-8')
         ax.set(xlabel='CMB temperature [K]', ylabel='|Relative difference|')
         ax.minorticks_off()
         legend_outside(fig, ax)

@@ -22,7 +22,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 ![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference.svg#only-light){ width="70%" }
 ![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The first plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The second plot shows the relative difference of each capacity. All lines lie below the dashed tolerance; that is a pass.
+**How to read the plot.** The first plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The second plot shows the relative difference of each capacity. A difference below $10^{-8}$ is drawn on the dotted floor at $10^{-8}$, because its last digits change from one CPU to another; the secular difference, 6.5e-10 at every temperature, lies on the floor. All lines lie below the dashed tolerance; that is a pass.
 
 ??? info "Test details"
     - Reference: the Gaussian adiabat $T_\text{cmb}\exp(-\alpha\psi/c_p)$ (analytical).
@@ -75,10 +75,10 @@ For the other PALEOS terms the test holds only the direction of the change from 
 
 **Why it matters.** The temperature of the isentrope sets the heat capacity and where the inner core starts to grow.
 
-![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam.svg#only-light){ width="70%" }
-![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam_dark.svg#only-dark){ width="70%" }
+![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores, with the difference for a 1 % error in the gradient](../assets/validation/core_tabulated_isentrope_seam.svg#only-light){ width="70%" }
+![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores, with the difference for a 1 % error in the gradient](../assets/validation/core_tabulated_isentrope_seam_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Each line is one core, from its CMB pressure to its centre pressure. The test runs 2 starting temperatures for each core; at each pressure the line shows the larger of their 2 differences. The dotted line is the tolerance, a relative $10^{-5}$; lines below it pass.
+**How to read the plot.** Each solid line with markers is one core, from its CMB pressure to its centre pressure. The test runs 2 starting temperatures for each core; at each pressure the line shows the larger of their 2 differences. A difference below 2e-7 is drawn on the dash-dotted floor at 2e-7, because its last digits change from one CPU to another; all 3 cores lie on the floor (largest difference 1.1e-7). The dashed lines are the same comparison with $\nabla_\text{ad}$ 1 % too large: they rise from round-off at the CMB to between 4.3e-3 and 5.3e-3 at the centre. The dotted line is the tolerance, a relative $10^{-5}$. The solid lines lie below it and the dashed lines above it, so the test separates the isentrope from one with a 1 % error.
 
 ??? info "Test details"
     - Reference: the integral of $\nabla_\text{ad}$ of the same table (independent column).
@@ -119,10 +119,20 @@ For the other PALEOS terms the test holds only the direction of the change from 
 
 **Why it matters.** The core ledger is part of the energy check of every coupled run.
 
-![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call.svg#only-light){ width="70%" }
-![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call_dark.svg#only-dark){ width="70%" }
+![Bound on the ledger residual of each of 5 calls at the default and at 1000 times tighter tolerances, marked where the test passes](../assets/validation/core_tabulated_ledger_per_call.svg#only-light){ width="70%" }
+![Bound on the ledger residual of each of 5 calls at the default and at 1000 times tighter tolerances, marked where the test passes](../assets/validation/core_tabulated_ledger_per_call_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The horizontal axis is the call number, 1 to 5; the vertical axis is the absolute residual divided by the CMB heat, on a log scale. Circles are the default tolerances, squares the 1000 times tighter ones. In each call the square lies more than 20 times below the circle. The dotted bound, $10^{-5}$, applies to the squares of calls 1 to 3; the dashed bound, 2e-6, to the circles of calls 4 and 5. The bounds of call 1 (3e-4 and 3e-6) are not drawn.
+**How to read the plot.** The horizontal axis is the call number, 1 to 5; the vertical axis is the bound on the absolute residual divided by the CMB heat, on a log scale. A circle is the bound at the default tolerances, a square the bound at the 1000 times tighter ones; each mark is drawn only when the test passes it. Calls 2 and 3 have no fixed bound at the default tolerances and calls 4 and 5 none at the tight ones. There the test asks that the residual falls at least 20 times; in calls 1 to 3 each residual also stays below twice the tolerance scale of the solver. The plot shows the bounds and not the residuals, because the residuals change with the CPU: the smallest residual at the default tolerances is 1.39e-7 on an Apple M1 Ultra and 1.03e-7 on the Linux x86 runner of the nightly tests.
+
+The residuals on an Apple M1 Ultra (macOS), at the default tolerances (rtol and atol $10^{-8}$) and at tolerances 1000 times tighter:
+
+| Call | Time [yr] | Default tolerances | 1000 times tighter | Ratio |
+|---|---|---|---|---|
+| 1 | 0 to 1 | -1.28e-4 | -1.18e-6 | 108 |
+| 2 | 1 to 2 | -3.09e-5 | -2.57e-7 | 120 |
+| 3 | 2 to 12 | -4.44e-6 | -3.21e-8 | 138 |
+| 4 | 12 to 22 | -1.39e-7 | -2.16e-9 | 64 |
+| 5 | 22 to 122 | 1.30e-6 | 1.09e-8 | 120 |
 
 **Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates is not checked here; it needs the coupling to PROTEUS.
 

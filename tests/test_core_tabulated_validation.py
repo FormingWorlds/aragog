@@ -33,6 +33,8 @@ CORES = {
     '5 M_E': 'zalmoxis_core_arrays_5me_2510K.npz',
 }
 SEAM_RTOL = 1e-5
+# Plotted differences below this are drawn at it; the round-off of the reference differs by CPU.
+SEAM_PLOT_FLOOR = 2e-7
 
 
 @pytest.fixture(scope='module')
@@ -55,10 +57,11 @@ def test_the_isentrope_equals_the_integral_of_nabla_ad(cores, table, validation_
     """The isentrope the budget reads (the inverted table entropy on bicubic patches) equals
     the integral of ``d ln T / d ln P = nabla_ad`` of the same table from the CMB, to 1e-5 in
     T (measured at most 1.1e-7) on the 1, 3 and 5 M_E cores, 500 and 2000 K above the pure-iron
-    melting point at the CMB; the plot shows the larger of the 2 differences at each pressure.
+    melting point at the CMB; the plot shows the larger of the 2 differences at each pressure,
+    drawn at 2e-7 where it is smaller, with the differences of the 1 % error in dashes.
     A 1 % error in nabla_ad moves the centre by more than 1e-3."""
     curve = IronMeltingCurve()
-    rows = []
+    rows, wrong = [], []
     for name, prof in cores.items():
         p_cen = float(prof.pressure(0.0))
         for above in (500.0, 2000.0):
@@ -83,17 +86,33 @@ def test_the_isentrope_equals_the_integral_of_nabla_ad(cores, table, validation_
                     rows.append((name, above, p, rel))
                 else:
                     assert rel[0] > 100 * SEAM_RTOL
+                    wrong.append((name, above, p, rel))
 
     def figure():
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
-        for name in cores:
+        for name, mark in zip(cores, 'os^'):
             p = next(r[2] for r in rows if r[0] == name)
             worst = np.max([r[3] for r in rows if r[0] == name], axis=0)
-            ax.semilogy(p[::6] / 1e9, np.maximum(worst, 1e-12)[::6], label=name)
-        ax.axhline(SEAM_RTOL, color=plt.rcParams['text.color'], lw=1, ls=':', label='tolerance')
+            sparse = np.r_[0 : p.size : 75, p.size - 1]
+            dense = np.r_[0 : p.size - 30 : 30, p.size - 30 : p.size : 6, p.size - 1]
+            y = np.maximum(worst, SEAM_PLOT_FLOOR)[sparse]
+            (line,) = ax.semilogy(p[sparse] / 1e9, y, marker=mark, ms=3, label=name)
+            off = np.max([r[3] for r in wrong if r[0] == name], axis=0)
+            ax.semilogy(
+                p[dense] / 1e9,
+                np.maximum(off, SEAM_PLOT_FLOOR)[dense],
+                '--',
+                lw=1,
+                color=line.get_color(),
+            )
+        ink = plt.rcParams['text.color']
+        ax.plot([], [], '--', lw=1, color=ink, label='1 % error')
+        ax.axhline(SEAM_RTOL, color=ink, lw=1, ls=':', label='tolerance')
+        ax.axhline(SEAM_PLOT_FLOOR, color=ink, lw=1, ls='-.', alpha=0.6, label='floor 2e-7')
         ax.set(xlabel='Pressure [GPa]', ylabel='|Relative difference in T|')
+        ax.set_yticks([1e-7, 1e-5, 1e-3])
         ax.minorticks_off()
         legend_outside(fig, ax)
         return fig
