@@ -435,8 +435,9 @@ class CoreEnergyBudget:
     def heat_content(self, t_cmb) -> float:
         """Core heat content [J] at CMB temperature ``t_cmb`` of the full, unstratified core.
 
-        ``t_cmb * C_secular`` minus the latent and gravitational energy released
-        between nucleation onset and ``t_cmb`` (zero above onset), so that
+        ``t_cmb * C_secular`` (for a tabulated profile, the integral of its secular capacity
+        from the lowest tabulated temperature) minus the latent and gravitational energy
+        released between nucleation onset and ``t_cmb`` (zero above onset), so that
         ``heat_content(T2) - heat_content(T1)`` is the integral of the effective
         capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
         turns the square-root cusp of the latent and gravitational terms at onset,
@@ -473,7 +474,8 @@ class CoreEnergyBudget:
         The integral of the effective capacity, equal to ``heat_content(t_cmb + d_t) -
         heat_content(t_cmb)`` but without that difference of 2 contents near 1e31 J, whose float
         spacing (near 1e15 J) can exceed the change of a short call: the secular term is
-        ``d_t C_secular`` and the released energy is integrated over ``u = sqrt(T_onset - T)``
+        ``d_t C_secular`` (for a tabulated profile, the exact integral of its secular capacity,
+        :meth:`TabulatedCoreProfiles.secular_heat_change`) and the released energy is integrated over ``u = sqrt(T_onset - T)``
         with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
         ``T_freeze - t_cmb``.
 

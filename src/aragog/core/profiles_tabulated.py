@@ -6,21 +6,21 @@ core is one isentrope of the PALEOS liquid iron table (:class:`aragog.core.iron_
 LiquidIronTable`): the well-mixed core has a uniform specific entropy ``s_c = s(P_cmb,
 T_cmb)``, and the temperature at each node solves ``s(P_k, T_a,k) = s_c``. The adiabat is
 tabulated once, at install, on the nodes and on a grid of CMB temperatures, as ``f = ln(T_a /
-T_cmb)`` with its exact slopes, ``df/dr = (dT/dP)_s (dP/dr) / T_a`` with ``(dT/dP)_s = -s_P /
-s_T`` and ``dT_a/dT_cmb = s_T(P_cmb, T_cmb) / s_T(P_k, T_a,k)``; the solver reads it through
-bicubic Hermite patches, jit- and grad-safe.
+T_cmb)`` with its slopes from the table derivatives, ``df/dr = (dT/dP)_s (dP/dr) / T_a`` with
+``(dT/dP)_s = -s_P / s_T`` and ``dT_a/dT_cmb = s_T(P_cmb, T_cmb) / s_T(P_k, T_a,k)`` (the cross
+slope from a spline in ``T_cmb``); the solver reads it through bicubic Hermite patches, jit- and
+grad-safe.
 
 The secular heat capacity is ``C_s(T_cmb) = (c_p / T_cmb) int T_a dm`` (from ``dh = T ds`` at
 fixed pressure and the uniform ``s_c``: ``dH/dT_cmb = (ds_c/dT_cmb) int T_a dm``), with ``c_p``
 the CMB value of the table or a constant override (840 J/kg/K by default, because the PALEOS
-liquid sets ``C_V = 3nR`` with no electronic term). It is tabulated with its exact derivative
-and read as a cubic Hermite in ``T_cmb``; the heat change of a call is the exact integral of
-that same cubic, so the energy the solver books and the energy it integrates are one function.
+liquid sets ``C_V = 3nR`` with no electronic term). It is tabulated with its derivative and
+read as a cubic Hermite in ``T_cmb``; the heat change of a call is the exact integral of that
+same cubic, so the energy the solver books and the energy it integrates are one function.
 """
 
 from __future__ import annotations
 
-import functools
 import math
 import numbers
 
@@ -46,7 +46,7 @@ LUO_T_K = (8000.0, 14000.0)
 _GL3_X, _GL3_W = np.polynomial.legendre.leggauss(3)  # exact for the cubic pieces
 
 
-def _positive_number(x) -> bool:
+def is_positive_number(x) -> bool:
     """True for a finite positive real number that is not a bool."""
     return (
         isinstance(x, numbers.Real) and not isinstance(x, bool) and math.isfinite(x) and x > 0
@@ -101,9 +101,10 @@ class TabulatedCoreProfiles:
     t_cmb_range : tuple of float, optional
         Lowest and highest CMB temperature [K] of the tabulated isentropes; every node must
         stay inside the table box over the range. By default the whole range the table
-        holds: from its lowest temperature (the CMB has the lowest entropy at that
-        temperature, so every node stays inside) to the CMB temperature whose isentrope
-        reaches the highest table temperature at the centre.
+        holds: from its lowest temperature (the CMB has the highest entropy at that
+        temperature, since ``(ds/dP)_T = -alpha/rho < 0``, so every deeper node is hotter) to
+        the CMB temperature whose isentrope reaches the highest table temperature at the
+        centre.
     t_cmb_step : float
         Spacing [K] of the CMB temperature grid.
     m_core : float, optional
@@ -157,11 +158,11 @@ class TabulatedCoreProfiles:
             raise ValueError(
                 f'core arrays hold {m[-1]:.10e} kg, the structure {m_core:.10e} kg'
             )
-        if c_p is not None and not _positive_number(c_p):
+        if c_p is not None and not is_positive_number(c_p):
             raise ValueError(f'c_p must be a positive finite number or None, got {c_p!r}')
         t_lo, t_hi = self._full_range(table, p) if t_cmb_range is None else t_cmb_range
-        if not (_positive_number(t_lo) and _positive_number(t_hi) and t_lo < t_hi) or not (
-            _positive_number(t_cmb_step)
+        if not (is_positive_number(t_lo) and is_positive_number(t_hi) and t_lo < t_hi) or not (
+            is_positive_number(t_cmb_step)
         ):
             raise ValueError(f'bad CMB temperature grid {t_cmb_range}, step {t_cmb_step}')
         t_lo, t_hi = float(t_lo), float(t_hi)
@@ -174,23 +175,21 @@ class TabulatedCoreProfiles:
 
         self.table, self.c_p_override = table, None if c_p is None else float(c_p)
         self.r_cmb, self.p_cmb, self.m_core = float(r[-1]), float(p[-1]), float(m[-1])
-        self.n_nodes = n
-        self._r, self._m, self._p = jnp.asarray(r), m, p
+        self.n_nodes, self.rho_cen = n, float(rho[0])
+        self._r = jnp.asarray(r)
         dm = 4.0 * np.pi * r**2 * rho
         dg = np.where(r > 0.0, 4.0 * np.pi * G * rho - 2.0 * g / np.where(r > 0, r, 1.0), 0.0)
         dg[0] = 4.0 * np.pi * G * rho[0] / 3.0
         psi = PchipInterpolator(r, g).antiderivative()(r)
         psi -= psi[-1]  # -int_r^r_cmb g ds, zero at the CMB
-        self._fields = {
+        fields = {
             'rho': (rho, PchipInterpolator(r, rho).derivative()(r)),
             'm': (m, dm),
             'P': (p, -rho * g),
             'g': (g, dg),
             'psi': (psi, g),
         }
-        self._fields = {
-            k: (jnp.asarray(a), jnp.asarray(b)) for k, (a, b) in self._fields.items()
-        }
+        self._fields = {k: (jnp.asarray(a), jnp.asarray(b)) for k, (a, b) in fields.items()}
         self._install_isentropes(r, p, rho, g, m, t_lo, t_hi, float(t_cmb_step))
 
     # -- install -------------------------------------------------------------
@@ -217,10 +216,8 @@ class TabulatedCoreProfiles:
         tab = self.table
         t_grid = np.linspace(t_lo, t_hi, int(np.ceil((t_hi - t_lo) / step)) + 1)
         p2 = np.broadcast_to(p[:, None], (p.size, t_grid.size))
-        s_c = tab.value('s', np.full(t_grid.size, self.p_cmb), t_grid)
-        t_a = self._invert_entropy(
-            p2, np.broadcast_to(s_c, p2.shape), np.broadcast_to(t_grid, p2.shape)
-        )
+        s_c = tab.value('s', self.p_cmb, t_grid)
+        t_a = self._invert_entropy(p2, s_c, np.broadcast_to(t_grid, p2.shape))
         miss = np.abs(tab.value('s', p2, t_a) / s_c - 1.0)
         if not np.max(miss) <= ISENTROPE_RTOL:
             raise ValueError(f'isentrope misses s_c by {np.max(miss):.2e} relative')
@@ -228,10 +225,7 @@ class TabulatedCoreProfiles:
         dtdp_s = -tab.ds_dP(p2, t_a) / s_t
         f = np.log(t_a / t_grid)
         f_r = dtdp_s * (-rho * g)[:, None] / t_a
-        f_t = (
-            tab.ds_dT(np.full(t_grid.size, self.p_cmb), t_grid)[None, :] / (s_t * t_a)
-            - 1.0 / t_grid
-        )
+        f_t = tab.ds_dT(self.p_cmb, t_grid)[None, :] / (s_t * t_a) - 1.0 / t_grid
         f_rt = CubicSpline(t_grid, f_r, axis=1)(t_grid, 1)
         self.t_grid = jnp.asarray(t_grid)
         self._f = tuple(jnp.asarray(x) for x in (f, f_r, f_t, f_rt))
@@ -245,12 +239,11 @@ class TabulatedCoreProfiles:
                 'temperatures; lower core_t_cmb_step'
             )
 
-        m_int = PchipInterpolator(m, t_a, axis=0)
-        mass_t = m_int.integrate(0.0, m[-1])  # int T_a dm per CMB temperature
+        mass_t = PchipInterpolator(m, t_a, axis=0).integrate(0.0, m[-1])  # int T_a dm
         dta_dt = t_a * (f_t + 1.0 / t_grid)
         mass_dt = PchipInterpolator(m, dta_dt, axis=0).integrate(0.0, m[-1])
         if self.c_p_override is None:
-            cp = tab.value('cp', np.full(t_grid.size, self.p_cmb), t_grid)
+            cp = tab.value('cp', self.p_cmb, t_grid)
             dcp = CubicSpline(t_grid, cp)(t_grid, 1)
         else:
             cp, dcp = np.full(t_grid.size, self.c_p_override), np.zeros(t_grid.size)
@@ -272,9 +265,7 @@ class TabulatedCoreProfiles:
         """
         tab = self.table
         t_min, t_max = float(tab.temperature[0]), float(tab.temperature[-1])
-        outside = (s_target > tab.value('s', p, np.full_like(p, t_max))) | (
-            s_target < tab.value('s', p, np.full_like(p, t_min))
-        )
+        outside = (s_target > tab.value('s', p, t_max)) | (s_target < tab.value('s', p, t_min))
         if np.any(outside):
             k = np.flatnonzero(outside.ravel())[0]
             raise ValueError(
@@ -354,7 +345,7 @@ class TabulatedCoreProfiles:
 
     def adiabat_gradient(self, r, t_cmb):
         """``dT/dr`` [K/m] of the isentrope through ``t_cmb``."""
-        grad = jnp.vectorize(jax.grad(lambda x, t: self.adiabat(x, t)))
+        grad = jnp.vectorize(jax.grad(self.adiabat))
         return grad(jnp.asarray(r, dtype=float), jnp.asarray(t_cmb, dtype=float))
 
     def t_cen(self, t_cmb):
@@ -372,7 +363,7 @@ class TabulatedCoreProfiles:
         lo, hi = float(self.t_grid[0]), float(self.t_grid[-1])
 
         def gap(t):
-            return float(self.t_cen(t)) - float(t_centre)  # noqa: E704
+            return float(self.t_cen(t)) - float(t_centre)
 
         if gap(lo) * gap(hi) > 0.0:
             raise ValueError(f'no tabulated isentrope has a centre at {t_centre:.1f} K')
@@ -396,11 +387,9 @@ class TabulatedCoreProfiles:
         lo, hi = min(a, b), max(a, b)
         grid = np.asarray(self.t_grid)
         cuts = np.concatenate(([lo], grid[(grid > lo) & (grid < hi)], [hi]))
-        total = 0.0
-        for x0, x1 in zip(cuts[:-1], cuts[1:]):
-            half = 0.5 * (x1 - x0)
-            nodes = x0 + half * (_GL3_X + 1.0)
-            total += half * float(np.sum(_GL3_W * np.asarray(self.secular_capacity(nodes))))
+        half = 0.5 * np.diff(cuts)
+        nodes = cuts[:-1, None] + half[:, None] * (_GL3_X + 1.0)
+        total = float(np.sum(half * (np.asarray(self.secular_capacity(nodes)) @ _GL3_W)))
         return total if b >= a else -total
 
     def check_t_cmb(self, t_cmb) -> None:
@@ -424,8 +413,3 @@ class TabulatedCoreProfiles:
         """Mass fraction of the core outside the Luo et al. (2024) window at ``t_cmb`` [K]."""
         frac = np.interp(float(t_cmb), np.asarray(self.t_grid), self._luo_mass) / self.m_core
         return float(frac)
-
-    @functools.cached_property
-    def rho_cen(self) -> float:
-        """Density [kg m-3] at the centre node."""
-        return float(self._fields['rho'][0][0])

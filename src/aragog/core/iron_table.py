@@ -164,20 +164,19 @@ class LiquidIronTable:
         ValueError
             For a point outside the table box.
         """
-        lp, lt, shape = self._logs(pressure, temperature)
-        out = self._splines[field].ev(lp, lt).reshape(shape)
-        return float(out) if out.ndim == 0 else out
+        return self._ev(field, pressure, temperature, 0, 0)
 
     def ds_dT(self, pressure, temperature):
         """``(ds/dT)_P`` [J kg-1 K-2] of the interpolant at ``(pressure, temperature)``."""
-        return self._ds(pressure, temperature, 0, 1)
+        return self._ev('s', pressure, temperature, 0, 1)
 
     def ds_dP(self, pressure, temperature):
         """``(ds/dP)_T`` [J kg-1 K-1 Pa-1] of the interpolant at ``(pressure, temperature)``."""
-        return self._ds(pressure, temperature, 1, 0)
+        return self._ev('s', pressure, temperature, 1, 0)
 
-    def _ds(self, pressure, temperature, dx, dy):
+    def _ev(self, field, pressure, temperature, dx, dy):
+        """``field`` or its first derivative in P (``dx``) or T (``dy``), in linear units."""
         lp, lt, shape = self._logs(pressure, temperature)
-        scale = (10.0**lp) ** dx * (10.0**lt) ** dy * np.log(10.0)
-        out = (self._splines['s'].ev(lp, lt, dx=dx, dy=dy) / scale).reshape(shape)
+        scale = (10.0**lp) ** dx * (10.0**lt) ** dy * np.log(10.0) ** (dx + dy)
+        out = (self._splines[field].ev(lp, lt, dx=dx, dy=dy) / scale).reshape(shape)
         return float(out) if out.ndim == 0 else out

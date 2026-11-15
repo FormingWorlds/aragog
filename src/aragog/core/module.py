@@ -16,8 +16,6 @@ from __future__ import annotations
 import functools
 import hashlib
 import logging
-import math
-import numbers
 import pathlib
 
 import jax
@@ -30,7 +28,7 @@ from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.iron_table import LiquidIronTable
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
-from aragog.core.profiles_tabulated import TabulatedCoreProfiles
+from aragog.core.profiles_tabulated import TabulatedCoreProfiles, is_positive_number
 from aragog.core.regime import crystallization_regime
 
 logger = logging.getLogger('fwl.' + __name__)
@@ -126,13 +124,6 @@ def _check_budget_params(params: dict) -> str:
     return curve_kind
 
 
-def _positive(x) -> bool:
-    """True for a finite positive real number that is not a bool."""
-    return (
-        isinstance(x, numbers.Real) and not isinstance(x, bool) and math.isfinite(x) and x > 0
-    )
-
-
 def _check_tabulated_params(params: dict) -> None:
     """Refuse an unknown ``profile_source``, table files without ``'paleos'``, a ``'paleos'``
     source without its files or with a stratified core, and a bad c_p override or grid step."""
@@ -154,10 +145,10 @@ def _check_tabulated_params(params: dict) -> None:
     if params.get('stratification'):
         raise ValueError("profile_source = 'paleos' does not support stratification yet")
     cp = params.get('core_cp_override')
-    if cp is not None and cp != 'table' and not _positive(cp):
+    if cp is not None and cp != 'table' and not is_positive_number(cp):
         raise ValueError(f"core_cp_override must be a positive number or 'table', got {cp!r}")
     step = params.get('core_t_cmb_step')
-    if step is not None and not _positive(step):
+    if step is not None and not is_positive_number(step):
         raise ValueError(f'core_t_cmb_step must be a positive number, got {step!r}')
 
 
@@ -298,7 +289,6 @@ def build_core_module_budget(
     params = {**_FACTORY_DEFAULTS, **params}
     curve_kind = _check_budget_params(params)
     params.pop('melting_curve', None)
-
     cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
     m_core = cfg['m_core'] if m_core is None else m_core
     p_cen = cfg['p_cen'] if p_cen is None else p_cen
