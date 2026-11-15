@@ -217,7 +217,9 @@ class CoreEnergyBudget:
 
     @property
     def t_onset(self) -> float:
-        """CMB temperature [K] for inner-core nucleation onset at the centre."""
+        """CMB temperature [K] for inner-core nucleation onset at the centre; for a tabulated
+        profile whose isentropes never meet the melting curve at the centre, the end of its
+        grid (see ``_t_onset_tabulated``), which is then no nucleation temperature."""
         if self.tabulated:
             return self._t_onset_tabulated
         p = self.profiles
@@ -475,9 +477,10 @@ class CoreEnergyBudget:
         heat_content(t_cmb)`` but without that difference of 2 contents near 1e31 J, whose float
         spacing (near 1e15 J) can exceed the change of a short call: the secular term is
         ``d_t C_secular`` (for a tabulated profile, the exact integral of its secular capacity,
-        :meth:`TabulatedCoreProfiles.secular_heat_change`) and the released energy is integrated over ``u = sqrt(T_onset - T)``
-        with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
-        ``T_freeze - t_cmb``.
+        :meth:`TabulatedCoreProfiles.secular_heat_change`) and the released energy is
+        integrated over ``u = sqrt(T_onset - T)`` with the panel width ``-d_t / (u_0 + u_1)``,
+        split at freeze-out by the exact change ``T_freeze - t_cmb`` (for a tabulated profile
+        also at the kinks of its capacity, ``_kinks``).
 
         Parameters
         ----------
@@ -546,7 +549,7 @@ class CoreEnergyBudget:
         return _np.unique(_np.concatenate([grid, _np.asarray(0.5 * (lo + hi))[crosses]]))
 
     def _split_at_kinks(self, t_a, d_a):
-        """The change ``d_a`` [K] from ``t_a`` cut at the kinks of the capacity, in its order."""
+        """The change ``d_a`` [K] from ``t_a``, cut at the kinks of the capacity, in order."""
         k = self._kinks
         cuts = k[(k > min(t_a, t_a + d_a)) & (k < max(t_a, t_a + d_a))]
         edges = [t_a, *(cuts if d_a > 0 else cuts[::-1]).tolist(), t_a + d_a]

@@ -39,7 +39,7 @@ G = sp_constants.G
 REQUIRED_KEYS = ('r', 'm', 'P', 'rho', 'g')
 ISENTROPE_RTOL = 1e-6  # relative entropy miss of the isentrope, at nodes and midpoints
 MASS_RTOL = 1e-10  # arrays against the structure mass
-MAX_GRID = 20000  # CMB temperatures of the isentrope grid
+MAX_CELLS = 2_000_000  # nodes x CMB temperatures of the isentrope grid
 # Calibration window of the Luo et al. (2024) liquid (Attia et al. 2026, p. 5).
 LUO_P_PA = (50e9, 1300e9)
 LUO_T_K = (8000.0, 14000.0)
@@ -167,10 +167,10 @@ class TabulatedCoreProfiles:
             raise ValueError(f'bad CMB temperature grid {t_cmb_range}, step {t_cmb_step}')
         t_lo, t_hi = float(t_lo), float(t_hi)
         n_grid = int(np.ceil((t_hi - t_lo) / t_cmb_step)) + 1
-        if n_grid > MAX_GRID:
+        if n * n_grid > MAX_CELLS:
             raise ValueError(
-                f'the CMB temperature grid needs {n_grid} temperatures, at most {MAX_GRID}; '
-                'raise core_t_cmb_step'
+                f'the isentropes need {n} nodes x {n_grid} temperatures, at most {MAX_CELLS} '
+                'cells; raise core_t_cmb_step'
             )
 
         self.table, self.c_p_override = table, None if c_p is None else float(c_p)
@@ -190,7 +190,7 @@ class TabulatedCoreProfiles:
             'psi': (psi, g),
         }
         self._fields = {k: (jnp.asarray(a), jnp.asarray(b)) for k, (a, b) in fields.items()}
-        self._install_isentropes(r, p, rho, g, m, t_lo, t_hi, float(t_cmb_step))
+        self._install_isentropes(r, p, rho, g, m, np.linspace(t_lo, t_hi, n_grid))
 
     # -- install -------------------------------------------------------------
 
@@ -211,10 +211,10 @@ class TabulatedCoreProfiles:
         t_hi = brentq(gap, t_min, t_max)
         return t_min, float(t_hi) * (1.0 - 1e-9)
 
-    def _install_isentropes(self, r, p, rho, g, m, t_lo, t_hi, step):
-        """Invert the table entropy on every node and CMB temperature; tabulate C_s."""
+    def _install_isentropes(self, r, p, rho, g, m, t_grid):
+        """Invert the table entropy on every node and CMB temperature of ``t_grid``; check the
+        interpolated isentrope between them; tabulate C_s."""
         tab = self.table
-        t_grid = np.linspace(t_lo, t_hi, int(np.ceil((t_hi - t_lo) / step)) + 1)
         p2 = np.broadcast_to(p[:, None], (p.size, t_grid.size))
         s_c = tab.value('s', self.p_cmb, t_grid)
         t_a = self._invert_entropy(p2, s_c, np.broadcast_to(t_grid, p2.shape))
@@ -231,12 +231,19 @@ class TabulatedCoreProfiles:
         self._f = tuple(jnp.asarray(x) for x in (f, f_r, f_t, f_rt))
         t_mid = 0.5 * (t_grid[1:] + t_grid[:-1])
         s_mid = tab.value('s', self.p_cmb, t_mid)
-        t_a_mid = np.asarray(self.adiabat(np.asarray(r)[:, None], t_mid[None, :]))
-        miss = np.abs(tab.value('s', p[:, None], t_a_mid) / s_mid - 1.0)
+        miss = np.abs(tab.value('s', p[:, None], self.adiabat(r[:, None], t_mid)) / s_mid - 1.0)
         if not np.max(miss) <= ISENTROPE_RTOL:
             raise ValueError(
                 f'isentrope misses s_c by {np.max(miss):.2e} relative between grid '
                 'temperatures; lower core_t_cmb_step'
+            )
+        r_mid = 0.5 * (r[1:] + r[:-1])
+        p_mid = np.asarray(self.pressure(r_mid))[:, None]
+        miss = np.abs(tab.value('s', p_mid, self.adiabat(r_mid[:, None], t_grid)) / s_c - 1.0)
+        if not np.max(miss) <= ISENTROPE_RTOL:
+            raise ValueError(
+                f'isentrope misses s_c by {np.max(miss):.2e} relative between radial nodes; '
+                'give the core arrays more nodes'
             )
 
         mass_t = PchipInterpolator(m, t_a, axis=0).integrate(0.0, m[-1])  # int T_a dm
@@ -405,8 +412,8 @@ class TabulatedCoreProfiles:
         off = ~((t >= lo) & (t <= hi))
         if off.any():
             raise ValueError(
-                f'T_core = {t[np.argmax(off)]:.1f} K lies outside the tabulated isentropes '
-                f'({lo:.1f} to {hi:.1f} K)'
+                f'T_core = {t[np.argmax(off)]:.6g} K lies outside the tabulated isentropes '
+                f'({lo:.6g} to {hi:.6g} K)'
             )
 
     def outside_calibration_fraction(self, t_cmb) -> float:

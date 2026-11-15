@@ -127,12 +127,11 @@ def _check_budget_params(params: dict) -> str:
 def _check_tabulated_params(params: dict) -> None:
     """Refuse an unknown ``profile_source``, table files without ``'paleos'``, a ``'paleos'``
     source without its files or with a stratified core, and a bad c_p override or grid step."""
-    source = params.get('profile_source', None)
-    source = 'gaussian' if source is None else source
-    if not isinstance(source, str) or source not in PROFILE_SOURCES:
+    source = params.get('profile_source')
+    if source is not None and source not in PROFILE_SOURCES:
         raise ValueError(f'profile_source must be one of {PROFILE_SOURCES}, got {source!r}')
     given = [k for k in _TABULATED_FILES if params.get(k) is not None]
-    if source == 'gaussian':
+    if source in (None, 'gaussian'):
         if given:
             raise ValueError(f"{given} are read only with profile_source = 'paleos'")
         return
@@ -201,7 +200,7 @@ def load_core_arrays(path) -> dict:
 
 def _tabulated_profiles(params: dict, r_cmb: float, p_cmb: float, m_core: float | None):
     """The tabulated profile of a ``'paleos'`` source, checked against the solver CMB radius;
-    a CMB pressure more than 1 % from the solver value is logged."""
+    a CMB pressure more than 1 % from the solver value ``p_cmb`` [Pa] is logged."""
     table_path = str(params['core_liquid_table'])
     table = _liquid_table(table_path, file_md5(table_path))
     cp = params.get('core_cp_override')
@@ -217,7 +216,7 @@ def _tabulated_profiles(params: dict, r_cmb: float, p_cmb: float, m_core: float 
             f'core_profile_file ends at r = {profiles.r_cmb:.6e} m, the mesh CMB at '
             f'{r_cmb:.6e} m'
         )
-    if not abs(profiles.p_cmb / p_cmb - 1.0) <= 0.01:
+    if not abs(profiles.p_cmb - p_cmb) <= 0.01 * abs(p_cmb):
         logger.warning(
             'core_profile_file has a CMB pressure of %.4e Pa, the mesh %.4e Pa',
             profiles.p_cmb,
@@ -308,7 +307,7 @@ def build_core_module_budget(
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
 
     if tabulated:
-        profiles = _tabulated_profiles(params, r_cmb, profile_kwargs['p_cmb'], m_core)
+        profiles = _tabulated_profiles(params, r_cmb, p_cmb_fallback, m_core)
     elif fit:
         profiles = GaussianCoreProfiles.from_structure(
             m_core=m_core,
@@ -398,7 +397,9 @@ class CoreModule:
         Raises
         ------
         ValueError
-            If ``dt`` is not positive.
+            If ``dt`` is not positive, or, for a tabulated profile, a sub-step ends outside its
+            isentropes (the state is then unchanged; a Runge-Kutta stage between two sub-step
+            ends is not checked and reads the edge of the table).
         """
         if not float(dt) > 0.0:
             raise ValueError(f'dt must be positive, got {dt}')

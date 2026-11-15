@@ -79,9 +79,9 @@ class CoreEntropyBudget:
             raise ValueError(f'unknown flux_geometry {flux_geometry!r}')
         if getattr(budget, 'tabulated', False):
             raise ValueError(
-                'the core entropy budget takes a constant alpha and c_p, which a tabulated core '
-                'profile does not have; its dynamo diagnostics (entropy margin, field strength) '
-                'are not computed'
+                'the core entropy budget takes a constant alpha and c_p, which a tabulated '
+                'core profile does not have; its dynamo diagnostics (entropy margin, field '
+                'strength) are not computed'
             )
         if (
             getattr(budget, 'stratification', False)
