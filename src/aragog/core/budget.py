@@ -480,7 +480,7 @@ class CoreEnergyBudget:
         :meth:`TabulatedCoreProfiles.secular_heat_change`) and the released energy is
         integrated over ``u = sqrt(T_onset - T)`` with the panel width ``-d_t / (u_0 + u_1)``,
         split at freeze-out by the exact change ``T_freeze - t_cmb`` (for a tabulated profile
-        also at the kinks of its capacity, ``_kinks``).
+        also where the boundary crosses a radial node, ``_kinks``).
 
         Parameters
         ----------
@@ -532,12 +532,12 @@ class CoreEnergyBudget:
 
     @functools.cached_property
     def _kinks(self):
-        """CMB temperatures [K] where the capacity of a tabulated profile has a kink: its grid
-        temperatures, and those where the inner-core boundary crosses a radial node (the
-        Hermite surfaces are C1, so the boundary sensitivity is continuous but not smooth)."""
+        """CMB temperatures [K] between freeze-out and onset where the inner-core boundary of a
+        tabulated profile crosses a radial node: the Hermite surfaces are C1 in radius, so the
+        boundary sensitivity, and with it the boundary capacity, has a kink there."""
         p = self.profiles
         grid = _np.asarray(p.t_grid)
-        nodes = p._r
+        nodes = p.r_nodes
         lo, hi = jnp.full(nodes.shape, grid[0]), jnp.full(nodes.shape, grid[-1])
         crosses = _np.asarray(
             (self.superheat(nodes, lo) < 0.0) & (self.superheat(nodes, hi) > 0.0)
@@ -546,14 +546,16 @@ class CoreEnergyBudget:
             mid = 0.5 * (lo + hi)
             frozen = self.superheat(nodes, mid) < 0.0
             lo, hi = jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
-        return _np.unique(_np.concatenate([grid, _np.asarray(0.5 * (lo + hi))[crosses]]))
+        t_k = _np.unique(_np.asarray(0.5 * (lo + hi))[crosses])
+        return t_k[(t_k > self.t_freeze) & (t_k < self.t_onset)]
 
     def _split_at_kinks(self, t_a, d_a):
         """The change ``d_a`` [K] from ``t_a``, cut at the kinks of the capacity, in order."""
         k = self._kinks
         cuts = k[(k > min(t_a, t_a + d_a)) & (k < max(t_a, t_a + d_a))]
-        edges = [t_a, *(cuts if d_a > 0 else cuts[::-1]).tolist(), t_a + d_a]
-        return [(a, b - a) for a, b in zip(edges[:-1], edges[1:])]
+        edges = [0.0, *_np.sort(_np.abs(cuts - t_a)).tolist(), abs(d_a)]  # exact widths
+        sign = 1.0 if d_a > 0 else -1.0
+        return [(t_a + sign * e0, sign * (e1 - e0)) for e0, e1 in zip(edges[:-1], edges[1:])]
 
     @functools.cached_property
     def _boundary(self):

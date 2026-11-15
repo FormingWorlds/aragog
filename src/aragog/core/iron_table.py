@@ -119,11 +119,11 @@ class LiquidIronTable:
         if not rows:
             raise ValueError(f'{path.name} has no data rows')
         try:
-            rows = np.array(rows, dtype=float)
+            rows = np.array(rows, dtype=float).reshape(len(rows), 9)
         except ValueError:
-            rows = None
-        if rows is None or rows.shape[1] != 9:
-            raise ValueError(f'{path.name}: every row needs 9 numbers (P, T, 7 fields)')
+            raise ValueError(
+                f'{path.name}: every row needs 9 numbers (P, T, 7 fields)'
+            ) from None
         p_ax, t_ax = np.unique(rows[:, 0]), np.unique(rows[:, 1])
         grid = rows[np.lexsort((rows[:, 1], rows[:, 0]))]
         full = p_ax.size * t_ax.size == rows.shape[0]

@@ -176,7 +176,7 @@ class TabulatedCoreProfiles:
         self.table, self.c_p_override = table, None if c_p is None else float(c_p)
         self.r_cmb, self.p_cmb, self.m_core = float(r[-1]), float(p[-1]), float(m[-1])
         self.n_nodes, self.rho_cen = n, float(rho[0])
-        self._r = jnp.asarray(r)
+        self._r = self.r_nodes = jnp.asarray(r)
         dm = 4.0 * np.pi * r**2 * rho
         dg = np.where(r > 0.0, 4.0 * np.pi * G * rho - 2.0 * g / np.where(r > 0, r, 1.0), 0.0)
         dg[0] = 4.0 * np.pi * G * rho[0] / 3.0
@@ -229,22 +229,20 @@ class TabulatedCoreProfiles:
         f_rt = CubicSpline(t_grid, f_r, axis=1)(t_grid, 1)
         self.t_grid = jnp.asarray(t_grid)
         self._f = tuple(jnp.asarray(x) for x in (f, f_r, f_t, f_rt))
-        t_mid = 0.5 * (t_grid[1:] + t_grid[:-1])
-        s_mid = tab.value('s', self.p_cmb, t_mid)
-        miss = np.abs(tab.value('s', p[:, None], self.adiabat(r[:, None], t_mid)) / s_mid - 1.0)
-        if not np.max(miss) <= ISENTROPE_RTOL:
-            raise ValueError(
-                f'isentrope misses s_c by {np.max(miss):.2e} relative between grid '
-                'temperatures; lower core_t_cmb_step'
+
+        def check(r_x, t_x, where):
+            p_x = np.asarray(self.pressure(r_x))[:, None]
+            t_a_x = self.adiabat(r_x[:, None], t_x)
+            miss = np.max(
+                np.abs(tab.value('s', p_x, t_a_x) / tab.value('s', self.p_cmb, t_x) - 1)
             )
-        r_mid = 0.5 * (r[1:] + r[:-1])
-        p_mid = np.asarray(self.pressure(r_mid))[:, None]
-        miss = np.abs(tab.value('s', p_mid, self.adiabat(r_mid[:, None], t_grid)) / s_c - 1.0)
-        if not np.max(miss) <= ISENTROPE_RTOL:
-            raise ValueError(
-                f'isentrope misses s_c by {np.max(miss):.2e} relative between radial nodes; '
-                'give the core arrays more nodes'
-            )
+            if not miss <= ISENTROPE_RTOL:
+                raise ValueError(f'isentrope misses s_c by {miss:.2e} relative {where}')
+
+        t_mid, r_mid = 0.5 * (t_grid[1:] + t_grid[:-1]), 0.5 * (r[1:] + r[:-1])
+        check(r, t_mid, 'between grid temperatures; lower core_t_cmb_step')
+        check(r_mid, t_grid, 'between radial nodes; give the core arrays more nodes')
+        check(r_mid, t_mid, 'inside the grid cells; lower core_t_cmb_step or add nodes')
 
         mass_t = PchipInterpolator(m, t_a, axis=0).integrate(0.0, m[-1])  # int T_a dm
         dta_dt = t_a * (f_t + 1.0 / t_grid)
@@ -390,14 +388,14 @@ class TabulatedCoreProfiles:
         Gauss-Legendre, exact for a cubic, so the result is the change of the antiderivative
         without the difference of 2 large contents.
         """
-        a, b = float(t_cmb), float(t_cmb) + float(d_t)
-        lo, hi = min(a, b), max(a, b)
+        a, d = float(t_cmb), float(d_t)
         grid = np.asarray(self.t_grid)
-        cuts = np.concatenate(([lo], grid[(grid > lo) & (grid < hi)], [hi]))
-        half = 0.5 * np.diff(cuts)
-        nodes = cuts[:-1, None] + half[:, None] * (_GL3_X + 1.0)
-        total = float(np.sum(half * (np.asarray(self.secular_capacity(nodes)) @ _GL3_W)))
-        return total if b >= a else -total
+        inner = grid[(grid > min(a, a + d)) & (grid < max(a, a + d))]
+        edges = np.concatenate(([0.0], np.sort(np.abs(inner - a)), [abs(d)]))  # exact widths
+        half = 0.5 * np.diff(edges)
+        sign = 1.0 if d >= 0.0 else -1.0
+        nodes = a + sign * (edges[:-1, None] + half[:, None] * (_GL3_X + 1.0))
+        return sign * float(np.sum(half * (np.asarray(self.secular_capacity(nodes)) @ _GL3_W)))
 
     def check_t_cmb(self, t_cmb) -> None:
         """Refuse CMB temperatures [K] outside the tabulated isentropes (NaN included).
@@ -412,8 +410,8 @@ class TabulatedCoreProfiles:
         off = ~((t >= lo) & (t <= hi))
         if off.any():
             raise ValueError(
-                f'T_core = {t[np.argmax(off)]:.6g} K lies outside the tabulated isentropes '
-                f'({lo:.6g} to {hi:.6g} K)'
+                f'T_core = {t[np.argmax(off)]:.10g} K lies outside the tabulated isentropes '
+                f'({lo:.10g} to {hi:.10g} K)'
             )
 
     def outside_calibration_fraction(self, t_cmb) -> float:
