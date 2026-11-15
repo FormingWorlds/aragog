@@ -231,6 +231,17 @@ def test_tabulated_budget_refusals(paleos_budget):
     refuse_unmodelled_regime(paleos_budget, [6900.0, 6950.0])
 
 
+@pytest.mark.parametrize('scale', [0.5, 1.0 + 1e-12, 0.0, float('nan')])
+def test_a_secular_capacity_below_the_cmb_is_refused(paleos_budget, scale):
+    """The tabulated capacity is that of the whole core, so an upper radius other than the
+    CMB radius is refused; the CMB radius gives the default."""
+    b, t = paleos_budget, 4000.0
+    with pytest.raises(ValueError, match='upper radius .* CMB radius'):
+        b.secular_capacity(upper=scale * b.profiles.r_cmb, t_cmb=t)
+    whole = float(b.secular_capacity(t_cmb=t))
+    assert float(b.secular_capacity(upper=b.profiles.r_cmb, t_cmb=t)) == whole
+
+
 def test_effective_tfac_of_a_tabulated_profile(paleos_budget):
     """The mean of T_a/T_cmb over the mass is C_s / (840 M) with the override, between 1 and
     T_cen/T_cmb, and rising with T_cmb on the PALEOS isentrope; without an override it is
