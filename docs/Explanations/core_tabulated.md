@@ -68,7 +68,7 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 
 - A CMB temperature outside the tabulated isentropes stops the solve with an error that names the temperature.
 - `stratification = true` is refused: the heat content of a stratified core depends on the CMB heat flow, not on $T_\text{cmb}$ alone.
-- The entropy budget of the dynamo (`CoreEntropyBudget`) is refused: it takes a constant $\alpha$ and $c_p$.
+- The dynamo diagnostics, the entropy margin and the field strength, are not computed on this path. Their entropy budget (`CoreEntropyBudget`) takes a constant $\alpha$ and $c_p$ and refuses a tabulated profile.
 - The grid runs from the lowest table temperature to the CMB temperature whose isentrope reaches the highest table temperature at the centre.
 - The liquid of the PALEOS table is calibrated between 8000 and 14,000 K and between 50 and 1300 GPa (Attia et al. 2026, p. 5). The core mass fraction outside this window is reported as `core_eos_outside_calibration` in the diagnostics of `CoreModule`; the run continues.
 - With the override, the isentrope shape comes from the PALEOS $c_p$ and the heat capacity from 840 J kg$^{-1}$ K$^{-1}$, so the two are not from one EOS.

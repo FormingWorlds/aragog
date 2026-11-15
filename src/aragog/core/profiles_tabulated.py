@@ -188,8 +188,6 @@ class TabulatedCoreProfiles:
         """CMB temperatures [K] whose isentropes stay in the table box at every node."""
         t_min, t_max = float(table.temperature[0]), float(table.temperature[-1])
         s_top = table.value('s', float(p[0]), t_max)
-        if table.value('s', float(p[-1]), t_max) < s_top:
-            return t_min, t_max
         t_hi = brentq(lambda t: table.value('s', float(p[-1]), t) - s_top, t_min, t_max)
         return t_min, float(t_hi) * (1.0 - 1e-9)
 
