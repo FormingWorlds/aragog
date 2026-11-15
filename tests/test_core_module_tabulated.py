@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import pathlib
 
+import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -228,3 +229,28 @@ def test_a_mesh_pressure_far_from_the_arrays_is_logged(paleos_params, caplog):
         assert not caplog.records
         build_core_module_budget(paleos_params, r_cmb=R_CMB, p_cmb_fallback=100e9)
     assert any('CMB pressure' in r.getMessage() for r in caplog.records)
+
+
+def test_a_rewritten_table_changes_the_key_and_the_capacity(paleos_params, tmp_path):
+    """Rewriting the liquid iron table at the same path with c_p 1.5 times larger changes the
+    cache key, and with core_cp_override = 'table' the rebuilt capacity is 1.5 times larger;
+    its temperature derivative agrees with a centred difference of the capacity."""
+    import jax
+
+    data = dict(np.load(CUT))
+    table = tmp_path / 'table.npz'
+    np.savez(table, **data)
+    params = {**paleos_params, 'core_liquid_table': str(table), 'core_cp_override': 'table'}
+    key = core_module_cache_key(params, R_CMB, 136e9)
+    before = build_core_module_budget(params, r_cmb=R_CMB, p_cmb_fallback=136e9)
+    np.savez(table, **(data | {'cp': 1.5 * data['cp']}))
+    assert core_module_cache_key(params, R_CMB, 136e9) != key
+    after = build_core_module_budget(params, r_cmb=R_CMB, p_cmb_fallback=136e9)
+    ratio = float(after.secular_capacity(t_cmb=4003.3)) / float(
+        before.secular_capacity(t_cmb=4003.3)
+    )
+    assert ratio == pytest.approx(1.5, rel=1e-6)
+    cap = after.profiles.secular_capacity
+    slope = float(jax.grad(cap)(4003.3))
+    centred = (float(cap(4003.31)) - float(cap(4003.29))) / 0.02
+    assert slope == pytest.approx(centred, rel=1e-5)

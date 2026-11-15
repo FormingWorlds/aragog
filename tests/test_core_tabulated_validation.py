@@ -170,3 +170,23 @@ def test_the_entropy_of_fusion_against_the_ab_initio_value(validation_plot):
         return fig
 
     validation_plot(figure, 'core_entropy_of_fusion')
+
+
+@pytest.mark.physics_invariant
+def test_the_calibration_fraction_counts_each_bound_of_the_window(cores):
+    """Both upper bounds of the Luo window count: at T_cmb 8100 K the 5 M_E isentrope lies
+    within 8000 to 14,000 K, so the outside mass is the mass above 1300 GPa (0.39 of the
+    core); at 9000 K the 3 M_E core lies below 1300 GPa and its centre above 14,000 K (0.08).
+    The references come from the arrays and a 20,001-point radius sampling; the tolerance is
+    the largest node mass, 0.034 of the core, since the code counts node midpoints."""
+    p5, p3 = cores['5 M_E'], cores['3 M_E']
+    r = np.linspace(0.0, p5.r_cmb, 20001)
+    pressure = np.asarray(p5.pressure(r))
+    above = np.interp(1300e9, pressure[::-1], np.asarray(p5.enclosed_mass(r))[::-1]) / p5.m_core
+    assert p5.outside_calibration_fraction(8100.0) == pytest.approx(above, abs=0.034)
+    r = np.linspace(0.0, p3.r_cmb, 20001)
+    hot = (np.asarray(p3.adiabat(r, 9000.0)) > 14000.0).astype(float)
+    mass = np.asarray(p3.enclosed_mass(r))
+    ref = np.sum(0.5 * (hot[1:] + hot[:-1]) * np.diff(mass)) / p3.m_core
+    assert p3.outside_calibration_fraction(9000.0) == pytest.approx(ref, abs=0.034)
+    assert 0.3 < above < 0.5 and 0.05 < ref < 0.15
