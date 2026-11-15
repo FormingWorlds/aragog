@@ -83,8 +83,17 @@ def _all_values() -> dict:
 
 
 def _assert_matches(key, got, ref):
-    """Assert `got` equals the stored `ref` of output `key` to 1e-12 relative."""
-    np.testing.assert_allclose(got, ref, rtol=1e-12, atol=0.0, err_msg=key)
+    """Assert `got` equals the stored `ref` of output `key` to 1e-12 relative.
+
+    The nucleation factor f = sigmoid(-x) takes 1e-12 * max(1, |ln f|), which is 1e-12 on x.
+    """
+    got, ref = np.asarray(got, dtype=float), np.asarray(ref, dtype=float)
+    rtol = np.full(ref.shape, 1e-12)
+    if key == 'nucleation_factor':
+        rtol *= np.maximum(1.0, np.abs(np.log(np.where(ref > 0.0, ref, 1.0))))
+    assert got.shape == ref.shape, key
+    bad = ~(np.abs(got - ref) <= rtol * np.abs(ref))
+    assert not bad.any(), (key, got[bad], ref[bad])
 
 
 def test_the_comparison_takes_the_round_off_of_another_cpu():
