@@ -117,3 +117,38 @@ def test_the_nimmo_earth_budget_on_the_paleos_isentrope(budgets, validation_plot
         return fig
 
     validation_plot(figure, 'core_tabulated_nimmo_budget')
+
+
+def _reference_heat_change(b, t0, dt, n=256):
+    """Composite 64-point Gauss-Legendre integral of the effective capacity on ``n`` panels per
+    piece, in u = sqrt(T_onset - T) below the onset; split at the onset and freeze-out."""
+    import jax
+
+    x, w = np.polynomial.legendre.leggauss(64)
+    cap = jax.jit(jax.vmap(b.effective_capacity))
+    on, t1 = b.t_onset, t0 + dt
+    inner = [c for c in (on, b.t_freeze) if min(t0, t1) < c < max(t0, t1)]
+    cuts = sorted({t0, t1, *inner})
+    total = 0.0
+    for a, c in zip(cuts[:-1], cuts[1:]):
+        above = a >= on
+        lo, hi = (a, c) if above else (np.sqrt(on - c), np.sqrt(on - a))
+        edges = np.linspace(lo, hi, n + 1)
+        for e0, e1 in zip(edges[:-1], edges[1:]):
+            s = 0.5 * (e0 + e1) + 0.5 * (e1 - e0) * x
+            vals = np.asarray(cap(s)) if above else np.asarray(cap(on - s**2)) * 2.0 * s
+            total += 0.5 * (e1 - e0) * float(np.sum(w * vals))
+    return total if dt > 0 else -total
+
+
+@pytest.mark.physics_invariant
+def test_the_heat_change_of_a_growing_inner_core_is_the_integral_of_its_capacity(budgets):
+    """While the inner core grows on the PALEOS isentrope, the booked heat change equals a
+    composite quadrature of the effective capacity to 2e-7 (the reference converges to 3e-8
+    between 64 and 256 panels). The latent and gravitational capacities have kinks where the
+    boundary crosses a radial node or the CMB temperature a grid temperature; one smooth panel
+    across them missed by up to 3.1e-6, panels cut at them miss by 1.8e-9 at most (measured)."""
+    _, paleos = budgets
+    for t0, dt in ((3870.0, -30.0), (3873.5, -40.0), (3900.0, -60.0), (3860.0, -2.0)):
+        ref = _reference_heat_change(paleos, t0, dt)
+        assert paleos.heat_change(t0, dt) == pytest.approx(ref, rel=2e-7), (t0, dt)
