@@ -18,7 +18,7 @@ State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ 
 | $q$, $k$, $\Delta r_{1/2}$ | CMB heat flux, conductivity of the boundary layer, half cell above the CMB | from the mantle phase model and the mesh |
 | $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | `ra_crit_cmb` (450) |
 | $T_a(r)$ | core adiabat | `alpha` ($1.35\times 10^{-5}$ K$^{-1}$), `c_p` (840 J kg$^{-1}$ K$^{-1}$), `adiabat_mode` (`"exact"`) |
-| core structure | Gaussian core density and its pressure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`) |
+| core structure | Gaussian core density and its pressure, or the core arrays of a Zalmoxis structure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`); `profile_source` (`"gaussian"`), `core_profile_file` |
 | melting curve | iron alloy or quadratic | `melting_curve` (`"iron"`), `light_element_fraction` (0), `depression` (0), or `t_m0`, `t_m1`, `t_m2` |
 | $Q_s$, $C_s$ | secular cooling | `capacity_mode` (`"profile"`) |
 | $Q_L$, $C_L$ | latent heat at the ICB | `ds_fusion` (172.8 J kg$^{-1}$ K$^{-1}$) or `latent_heat` |
@@ -36,7 +36,7 @@ $$
 Q_\text{cmb} = -\tilde{C}(T_\text{cmb})\, \frac{dT_\text{cmb}}{dt} + Q_R, \qquad \tilde{C} = C_s + C_L + C_g,
 $$
 
-where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, and the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
+where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, or, with `profile_source = "paleos"`, over the isentrope of the PALEOS liquid iron table on a Zalmoxis core ([a core on the PALEOS isentrope](core_tabulated.md)); the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
 
 All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Table 2; the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
 
