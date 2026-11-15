@@ -2,7 +2,15 @@
 
 ## What this page checks
 
-This page checks the mesh that Aragog refines towards the surface and the core-mantle boundary (CMB) when `mesh.surface_cell_thickness` or `mesh.cmb_cell_thickness` is set (see [Mesh refinement](../Explanations/mesh_refinement.md)). Validation here means that we build or run Aragog on a case where we know the right answer and check that Aragog gives it: the end cells must have the thickness that was set, the study measures how the results change as the top cell gets thinner, and a mesh without refinement must give the stored results of the code without the option, to the round-off of another platform. If this part were wrong, an Aragog run with a refined mesh would compute the surface and CMB heat flow over cells of the wrong size, and a run without refinement could change without notice. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot or says why it has none, and the test details.
+This page checks the mesh that Aragog refines towards the surface and the core-mantle boundary (CMB) with `mesh.surface_cell_thickness` and `mesh.cmb_cell_thickness` (see [Mesh refinement](../Explanations/mesh_refinement.md)). By default the mesh is refined: the CMB cell is 3000 m and the top cell is as thick as on the uniform mesh. Validation here means that we build or run Aragog on a case where we know the right answer, or on a much finer mesh, and check that Aragog gives it. The cases check:
+
+- that the end cells have the thickness that was set;
+- how the results change as the top cell gets thinner;
+- how a coarser CMB cell changes the core;
+- how the default CMB cell compares with finer uniform meshes;
+- that the uniform mesh (both fields 0) gives its stored results to the round-off of another platform.
+
+If this part were wrong, every run would compute the surface and CMB heat flow over cells of the wrong size. The runs of the second and third case set `mlt_bottom_slope = 1.0` and their CMB cell in each run; the default-mesh case runs the solid rheology at its default parameters, which also have `mlt_bottom_slope = 1.0`. Each case below says why the check exists, what it tests, how we know the right answer and why it matters, then shows a plot or says why it has none, and the test details.
 
 ## The end cells have the thickness that was set
 
@@ -110,7 +118,7 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **Why this check exists.** The core module computes the heat flow out of the core over half the CMB cell, so the CMB cell changes the cooling of the core.
 
-**What it tests.** Two runs with the core module, both at 100 nodes with a 50 m top cell, from the molten start of the convergence study up to $10^5$ years. In one run the CMB cell is set to 9327 m, the CMB cell of the uniform 100-node mesh (9327.4 m) rounded to the metre. In the other the CMB cell is not set. The refinement then coarsens it to 38456 m. That run is stretched from the top only, so its other cells differ too: its largest cell is 38.6 km, against 28.0 km in the run with the 9327 m CMB cell. The case therefore compares two meshes, not the CMB cell alone. The compared results are the temperature of the core at $10^2$, $10^3$, $10^4$ and $10^5$ years, which the core module uses as the CMB temperature, and the heat that crosses the CMB in each of the four intervals that end at these times. The temperature of the lowest mantle node differs from it by up to 39 K at these times.
+**What it tests.** Two runs with the core module, both at 100 nodes with a 50 m top cell, from the molten start of the convergence study up to $10^5$ years. In one run the CMB cell is set to 9327 m, the CMB cell of the uniform 100-node mesh (9327.4 m) rounded to the metre. In the other the CMB cell is 0, so only the top cell is set. The refinement then coarsens the CMB cell to 38456 m. That run is stretched from the top only, so its other cells differ too: its largest cell is 38.6 km, against 28.0 km in the run with the 9327 m CMB cell. The case therefore compares two meshes, not the CMB cell alone. The compared results are the temperature of the core at $10^2$, $10^3$, $10^4$ and $10^5$ years, which the core module uses as the CMB temperature, and the heat that crosses the CMB in each of the four intervals that end at these times. The temperature of the lowest mantle node differs from it by up to 39 K at these times.
 
 **How we know the right answer.** There is no exact solution, so the test asks whether the difference between the two runs is larger than the change from a $10^{-12}$ change of the start entropy. A third run repeats the run with the 9327 m CMB cell from a start entropy that differs by $10^{-12}$ relative; here the floor comes from this one run, not from a pair as in the convergence study. Its relative difference from that run is the noise floor $e$ of each result, and a difference counts only when it is above $3e$.
 
@@ -132,8 +140,8 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
 
 **Not checked.**
 
-- A CMB cell thinner than the uniform cell: no run has one.
-- Whether the CMB results converge as the CMB cell gets thinner: a series of three or more CMB cells was not run.
+- A CMB cell thinner than the uniform cell: no run of this case has one; [the next case](#the-default-cmb-cell-against-finer-uniform-meshes) has.
+- Whether the CMB results of this case converge as the CMB cell gets thinner: a series of three or more CMB cells was not run.
 - The CMB results after $10^5$ years.
 
 ??? info "Test details"
@@ -143,20 +151,62 @@ In a run, a cell counts when its solidus entropy lies above the lower of the las
     - Test id: `tests/test_mesh_refinement_study.py::test_a_coarsened_cmb_cell_changes_the_core_results`
     - Command: `pytest tests/test_mesh_refinement_study.py -m reference_pinned --validation-plots`
 
+## The default CMB cell against finer uniform meshes
+
+**Why this check exists.** By default the mesh has a 3000 m cell at the CMB, and the CMB heat flux of the core module is taken across half of that cell. If the default mesh were too coarse, the core would cool at the wrong rate in every run that keeps the default.
+
+**What it tests.** A solid mantle over a cooling core, from 0 to 100 Myr, on five meshes. The mantle is an Earth mantle in radius mode, from 3480 to 6371 km. It starts on one isentrope at 2045.05 J/kg/K with no melt in any cell, with the stagnant-lid rheology on at its default parameters (`mlt_bottom_slope = 1.0`, `s_top_inf = 0.22`, `c_theta = 0.15`), the mixing length `nearest_boundary` and radiogenic heating. The CMB boundary condition is the core module (`core_bc = "core_module"`). The core module starts at 2500 K. The tables are the PALEOS MgSiO$_3$ tables with the low-temperature extension, built to 350 GPa. The meshes are the uniform mesh at 160, 320 and 640 nodes, with CMB cells of 18.18, 9.06 and 4.52 km (U160, U320, U640), and the default mesh at 80 and 160 nodes (D80, D160). In the default mesh the largest cell is 1.865 times the mean cell at 80 nodes and 1.621 times at 160 nodes. The compared results are the CMB heat flux $q_\mathrm{cmb}$, the core temperature and the mantle temperature at mid radius, at 3, 50 and 100 Myr.
+
+**How we know the right answer.** There is no exact solution, so the reference is the finest mesh, U640. The test computes each difference from U640. The runs use Aragog's CMB law, which takes the larger of the conductive and the convective flux. In every call of the five runs the conductive flux is the larger one. A second run of D80 gives the stored outputs bit for bit. The run at 80 nodes on the uniform mesh (U80) is left out of the comparison: there the convective flux is the larger one in 59 % of the calls, by at most 0.0025 W/m$^2$, so its flux does not come from the conductive branch alone. The 0.0025 W/m$^2$ is the largest excess in one call, not an effect summed over the run, so the study does not split the 0.034 W/m$^2$ by which U80 lies below U640 at 50 Myr between the branch and its 36.6 km CMB cell.
+
+**Why it matters.** The default mesh sets the core cooling of every run that does not set the mesh. The case covers runs like it: the core module, the NumPy right-hand side, radius mode, a solid start and the `nearest_boundary` mixing length. It does not cover the `constant` length that PROTEUS uses by default.
+
+![CMB heat flux of 4 meshes relative to the uniform 640-node mesh against time](../assets/validation/mesh_refinement_core_mesh_flux_over_time.svg#only-light){ width="48%" }
+![CMB heat flux of 4 meshes relative to the uniform 640-node mesh against time](../assets/validation/mesh_refinement_core_mesh_flux_over_time_dark.svg#only-dark){ width="48%" }
+![CMB heat flux relative to the uniform 640-node mesh at 3, 50 and 100 Myr against the CMB cell](../assets/validation/mesh_refinement_core_mesh_flux_at_times.svg#only-light){ width="48%" }
+![CMB heat flux relative to the uniform 640-node mesh at 3, 50 and 100 Myr against the CMB cell](../assets/validation/mesh_refinement_core_mesh_flux_at_times_dark.svg#only-dark){ width="48%" }
+
+**How to read the plots.** The left plot shows $q_\mathrm{cmb}$ of U160, U320, D80 and D160 relative to that of U640, in percent, against time on a log axis. The right plot shows the same relative flux at 3, 50 and 100 Myr against the CMB cell of D160, U320 and U160 (3, 9.06 and 18.18 km). A value at 0 matches U640.
+
+**What the study finds.**
+
+- After the start, the default mesh is within 0.45 % of U640: D80 is 0.45 % and 0.35 % below it at 50 and 100 Myr, D160 0.23 % and 0.15 %.
+- At 3, 50 and 100 Myr the largest difference of the core temperature and of the mantle temperature at mid radius from those of U640 is 0.103 K for D80 and 0.044 K for D160.
+- U80, left out of the comparison, has a flux 33.12 % and 30.54 % below that of U640 at 50 and 100 Myr, and a core 10.18 K hotter at 100 Myr.
+- The uniform mesh converges slowly and not in one direction. At 3 Myr U160 is 10.08 % below U640 and U320 6.68 % above it; at 100 Myr U160 is 4.35 % below it and U320 2.69 % above it.
+- The meshes differ most in the start transient (values on the stored time grid of 40 points per decade). At 0.01 Myr D80 is 44 % above U640 and D160 42 % above it. D80 reaches its lowest value, 7.9 % below U640, at 0.53 Myr, and from 28.2 Myr on it differs from U640 by less than 0.5 % (D160: from 7.5 Myr). At 3 Myr D80 is 1.60 % and D160 1.42 % below U640.
+
+**Known limit.** U640 is not a converged reference. Its CMB cell, 4.52 km, is thicker than the 3 km cell of the default mesh. At 3 Myr the uniform series does not settle, so the differences of 1.42 to 1.60 % there do not show which mesh is closer to the right answer. At 50 and 100 Myr U320 still lies 3.00 % and 2.69 % above U640, more than D80 differs from U640, so the 0.45 % is the distance to U640, not an error bound.
+
+**Not checked.**
+
+- The noise floor of these runs: no run was repeated from a perturbed start.
+- A molten mantle, a mantle in mass-coordinate mode, and other table sets.
+- The other core boundary conditions (PROTEUS runs `energy_balance` by default) and the JAX right-hand side.
+- The CMB cell of other meshes: which branch of the CMB law gives the flux depends on the CMB cell (on the uniform 80-node mesh the convective flux is the larger one in 59 % of the calls).
+- The results after 100 Myr.
+
+??? info "Test details"
+    - Reference: the stored values of the 5 runs in `tests/validation/data/core_mesh_study.json`, written by `tools/verification/run_core_mesh_study.py`; the test computes every number above from them. The 5 runs and a second run of D80 use the tool of this repository; the second run of D80 gave the stored outputs bit for bit.
+    - Runs: `python tools/verification/run_core_mesh_case.py tools/verification/data/core_mesh_study.toml <out> --eos-dir <tables> --solid-s0 2045.05 --t-core 2500 --nodes <n> --cmb-cell <m> --surface-cell <m or uniform>`, with a first segment of 2000 yr and then 2000 segments of 50 000 yr. The aragog source of the stored runs and of the rerun of D80 is in the header of the JSON file, with the md5 of the outputs of both. The tables are built by Zalmoxis (`generate_spider_eos_tables`) from the PALEOS MgSiO$_3$ solid, liquid and low-temperature solid tables, at 350 GPa with 1350 by 280 points; the md5 of the source tables and of every built table file are in the same header.
+    - Tolerance: each quoted number to the digits it is quoted with.
+    - Test ids: `tests/test_core_mesh_study.py::test_the_stored_runs_and_their_mesh` and `tests/test_core_mesh_study.py::test_the_default_cmb_cell_against_finer_uniform_meshes`
+    - Command: `pytest tests/test_core_mesh_study.py -m reference_pinned --validation-plots`
+
 ## Without refinement the results are unchanged
 
-**Why this check exists.** The refinement code sits in the mesh constructor that every run uses. A change to the path without refinement, for example a refined branch that runs when both fields are 0, would change every run without notice.
+**Why this check exists.** The refinement code sits in the mesh constructor that every run uses. A change to the path without refinement, for example a refined branch that runs when both fields are 0, would change every run on the uniform mesh without notice.
 
 **What it tests.** With both fields at 0, the test builds the `abe_solid.toml` mesh in mass-coordinate and in radius mode, evaluates the right-hand side once and solves for 100 years with the NumPy right-hand side and with the JAX right-hand side. The mesh arrays and the right-hand side must equal those of the stored reference to $10^{-10}$ and the end states to $10^{-6}$, relative to each value or to the largest value of the array. The arrays are not compared exactly because the reference comes from macOS and the round-off of Linux differs. The mesh arrays and the right-hand side have the tight tolerance; the end-state comparison is a coarse check. In radius mode a refined branch run with both fields at 0 gives the uniform mesh to round-off, which no tolerance that covers the round-off of another platform can tell apart. So a unit test checks that the mesh with both fields at 0 does not call the refined grid, its radii check or, in radius mode, the cell-mass density, and that it solves every mass-coordinate radius to 1 m. The test also requires that the JAX solve called the JAX right-hand side, in the stored reference and in the test.
 
-**How we know the right answer.** The reference is the same set of arrays written by the code without the refinement option, with `tools/verification/generate_mesh_refinement_off_reference.py`.
+**How we know the right answer.** The reference is the same set of arrays on the uniform mesh, stored by `tools/verification/generate_mesh_refinement_off_reference.py` at the commit named in the file.
 
-**Why it matters.** Every run without refinement, the default, must give the same results as before.
+**Why it matters.** A run with both fields at 0 gets the uniform mesh and must give the stored results of the uniform mesh. The default mesh is refined (a 3000 m CMB cell, the top cell of the uniform mesh), so this case covers the runs that set the uniform mesh.
 
 This case has no plot: it checks that two sets of arrays are equal, which a plot cannot show.
 
 ??? info "Test details"
-    - Reference: `tests/reference/mesh_refinement_off_reference.npz`, written by the code without the refinement option, with its commit, its platform and the JAX call count.
+    - Reference: `tests/reference/mesh_refinement_off_reference.npz`, the arrays of the uniform mesh, with the commit, the platform and the JAX call count that wrote them.
     - Tolerance: mesh arrays and right-hand side $10^{-10}$; end states $10^{-6}$.
     - Test id: `tests/test_mesh_refinement_off_reference.py::test_the_refinement_off_path_equals_the_stored_reference`
     - Command: `pytest tests/test_mesh_refinement_off_reference.py`

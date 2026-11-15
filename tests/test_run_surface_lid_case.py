@@ -13,6 +13,8 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from aragog.config import Config
+from aragog.mesh import Mesh
 from tests.conftest import entropy_eos_copy
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build, needs_eos
 
@@ -22,6 +24,7 @@ pytestmark = [pytest.mark.timeout(600)]
 
 DRIVER = Path(__file__).parents[1] / 'tools' / 'verification' / 'run_surface_lid_case.py'
 SERIES = DRIVER.with_name('run_surface_lid_series.py')
+CFG = str(DRIVER.parents[2] / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml')
 
 
 @functools.cache
@@ -271,3 +274,40 @@ def test_driver_records_the_flux_of_the_lid(tmp_path, monkeypatch):
     assert d.main(['--collect', str(tmp_path / 'o.npz'), f'a={tmp_path}']) == 0
     out = np.load(tmp_path / 'o.npz')
     assert out['a_delta'].tolist() == [row['delta']] and out['a_T_i'].tolist() == [row['T_i']]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('surface_cell', [None, 5000.0])
+def test_the_stored_column_is_the_uniform_mesh_with_slope_1(surface_cell):
+    """The tools rebuild the mesh and the rheology of the stored runs whatever the defaults
+    are: no CMB refinement, a uniform top cell or the given one, MLT bottom slope 1.0."""
+    d = _driver()
+    c = Config.from_file(CFG)
+    d.stored_column(c, surface_cell)
+    assert c.phase_solid.rheology.mlt_bottom_slope == 1.0
+    assert c.phase_solid.rheology.stress_closure_mode == 'lid'
+    ref = Config.from_file(CFG)  # the mesh of the stored runs, set field by field
+    ref.mesh.cmb_cell_thickness = 0.0
+    ref.mesh.surface_cell_thickness = 0.0 if surface_cell is None else surface_cell
+    assert np.array_equal(np.ravel(Mesh(c).basic.radii), np.ravel(Mesh(ref).basic.radii))
+
+
+@pytest.mark.unit
+def test_a_part_file_on_another_mesh_stops_the_tools(tmp_path, capsys):
+    """check_stored_mesh passes the rebuilt mesh and its round-off, stops on a part file whose
+    radii moved by km, and warns on a part file without radii."""
+    d = _driver()
+    c = Config.from_file(CFG)
+    d.stored_column(c, None)
+    mesh = Mesh(c)
+    r = np.ravel(mesh.basic.radii)
+    moved = r.copy()
+    moved[1] = r[0] + 3000.0  # a 3000 m CMB cell
+    np.savez(tmp_path / 'same.npz', r_basic=r * (1 + 1e-12))
+    np.savez(tmp_path / 'other.npz', r_basic=moved)
+    np.savez(tmp_path / 'none.npz', t=np.zeros(1))
+    d.check_stored_mesh(np.load(tmp_path / 'same.npz'), mesh, 'same')
+    with pytest.raises(SystemExit, match='other: the stored mesh differs'):
+        d.check_stored_mesh(np.load(tmp_path / 'other.npz'), mesh, 'other')
+    d.check_stored_mesh(np.load(tmp_path / 'none.npz'), mesh, 'none')
+    assert 'none: no stored radii' in capsys.readouterr().err

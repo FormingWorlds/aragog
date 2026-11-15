@@ -114,7 +114,12 @@ def _make_abe_solid_params(
         params = Parameters.from_file(p)
     return replace(
         params,
-        mesh=replace(params.mesh, number_of_nodes=number_of_nodes),
+        mesh=replace(  # uniform mesh: the reference numbers of its tests
+            params.mesh,
+            number_of_nodes=number_of_nodes,
+            cmb_cell_thickness=0.0,
+            surface_cell_thickness=0.0,
+        ),
         boundary_conditions=replace(
             params.boundary_conditions,
             core_bc='quasi_steady',
@@ -2076,3 +2081,15 @@ def test_eta_diff_is_the_solid_viscosity_in_const_properties_mode_with_rheology_
     ev.update()
     np.testing.assert_array_equal(ev.eta_diff(), np.full(2, 3.0e20))
     np.testing.assert_array_equal(ev.viscosity(), np.full(2, 1.0e2))
+
+
+def test_the_benchmark_generator_builds_every_rheology_with_slope_1() -> None:
+    """The committed wiring benchmarks were made with the bottom mixing-length slope 1: the
+    generator builds each SolidRheologyParams through one helper that sets it."""
+    import inspect
+
+    from tools.verification import generate_ssc_solver_wiring_benchmarks as gen_mod
+
+    rheo = gen_mod._benchmark_rheology(enabled=True, stress_closure_mode='lid')
+    assert (rheo.mlt_bottom_slope, rheo.enabled, rheo.stress_closure_mode) == (1.0, True, 'lid')
+    assert inspect.getsource(gen_mod).count('SolidRheologyParams(') == 1

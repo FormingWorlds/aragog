@@ -663,6 +663,10 @@ def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
     ) as p:
         base_params = Parameters.from_file(p)
+        base_params = replace(  # uniform mesh, as for the reference numbers
+            base_params,
+            mesh=replace(base_params.mesh, cmb_cell_thickness=0.0, surface_cell_thickness=0.0),
+        )
 
     def _build_pair(
         kappah_floor: float,
@@ -864,6 +868,10 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
         importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
     ) as p:
         base_params = Parameters.from_file(p)
+        base_params = replace(  # uniform mesh, as for the reference numbers
+            base_params,
+            mesh=replace(base_params.mesh, cmb_cell_thickness=0.0, surface_cell_thickness=0.0),
+        )
 
     params_eb = replace(
         base_params,

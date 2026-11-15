@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import field
 from functools import cached_property
@@ -12,7 +13,7 @@ import numpy.typing as npt
 from scipy.optimize import brentq
 
 from aragog.config.boundary import check_top_node
-from aragog.config.mesh import check_cell_thickness
+from aragog.config.mesh import UNIFORM_CELL, check_cell_thickness
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
@@ -94,6 +95,11 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
 # refined mesh, whose end cells must hold their set thickness.
 RADIUS_XTOL = 1.0
 REFINED_XTOL = 1e-3
+# Bulk modulus [Pa] above which the closed-form Adams-Williamson mass integral cancels to round-off.
+AW_CANCELLATION_K_S = 1e14
+# The stretched-grid solves do not converge for an end cell up to about 2.2e-6 relative below
+# the uniform cell (measured); a CMB cell that close to it falls back.
+CMB_FALLBACK_RTOL = 1.0e-5
 
 
 def _radius_for_mass_coordinate(
@@ -248,6 +254,7 @@ class Mesh:
         # STEP 1: Set up the basic mesh
         self.settings: _MeshParameters = parameters.mesh
         check_cell_thickness(self.settings)
+        self._cmb_cell = float(self.settings.cmb_cell_thickness)
         # Start with uniform spatial spacing to initialize EOS/density
         initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
@@ -294,11 +301,28 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
+            def _uniform_node(i: int, node) -> float:
+                """Radius [m] of node ``i`` of the uniform mass-coordinate mesh."""
+                xi = float(basic_mass_coordinates[i, 0])
+                return _radius_for_mass_coordinate(
+                    _xi_of_r, xi, r_core + 1.0, r_surf - 1.0, node=node, xtol=REFINED_XTOL
+                )
+
+            span = r_surf - r_core
+            if c := self._cmb_cell:
+                self._cmb_fallback(
+                    (_xi_of_r(r_core + c) - r_core) / span if c < span else math.inf,
+                    lambda: _uniform_node(1, 1) - r_core,
+                )
             if self._refined:
-                span = r_surf - r_core
-                c, t = self.settings.cmb_cell_thickness, self.settings.surface_cell_thickness
+                c, t = self._cmb_cell, self.settings.surface_cell_thickness
                 first = (_xi_of_r(r_core + c) - r_core) / span if c else 0.0
-                last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
+                if self._uniform_top:
+                    last = 1.0 / (self.settings.number_of_nodes - 1)
+                    # Independent target for the radii check: node n-2 of the uniform mesh.
+                    self._top_cell_target = r_surf - _uniform_node(-2, 'uniform top')
+                else:
+                    last = (r_surf - _xi_of_r(r_surf - t)) / span if t else 0.0
                 grid = self._refined_unit_grid(first, last)
                 basic_mass_coordinates = (r_core + span * grid).reshape(-1, 1)
 
@@ -331,11 +355,21 @@ class Mesh:
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
         else:
+            r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+            if self._cmb_cell:
+                self._cmb_fallback(
+                    self._cmb_cell / (r_out - r_in),
+                    lambda: float(initial_spatial[1, 0] - initial_spatial[0, 0]),
+                )
             if self._refined:
-                r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+                n = self.settings.number_of_nodes
+                if self._uniform_top:
+                    last = 1.0 / (n - 1)
+                    self._top_cell_target = (r_out - r_in) / (n - 1)
+                else:
+                    last = self.settings.surface_cell_thickness / (r_out - r_in)
                 initial_spatial = r_in + (r_out - r_in) * self._refined_unit_grid(
-                    self.settings.cmb_cell_thickness / (r_out - r_in),
-                    self.settings.surface_cell_thickness / (r_out - r_in),
+                    self._cmb_cell / (r_out - r_in), last
                 ).reshape(-1, 1)
                 initial_spatial[[0, -1], 0] = r_in, r_out
             basic_coordinates = initial_spatial
@@ -461,13 +495,46 @@ class Mesh:
         return dxidr
 
     @property
+    def _uniform_top(self) -> bool:
+        return self.settings.surface_cell_thickness == UNIFORM_CELL
+
+    @property
     def _refined(self) -> bool:
-        return bool(self.settings.surface_cell_thickness or self.settings.cmb_cell_thickness)
+        """True unless both ends are uniform: a CMB cell of 0 and a surface cell of 0 or
+        ``'uniform'``."""
+        return bool(self._cmb_cell) or not (
+            self._uniform_top or self.settings.surface_cell_thickness == 0
+        )
+
+    def _cmb_fallback(self, first: float, uniform_bottom: Callable[[], float]) -> None:
+        """Set the CMB cell to 0 (no CMB refinement) when it is at or above the bottom cell of
+        the uniform mesh of the mode to ``CMB_FALLBACK_RTOL`` relative: ``first``, the CMB cell
+        as a fraction of the coordinate span, against 1/(n - 1) (the test of the stretched
+        grid), or the CMB cell against ``uniform_bottom()`` [m]; log that at INFO level. Raise
+        ``ValueError`` when a CMB cell that refines the mesh has fewer than 4 nodes."""
+        n = self.settings.number_of_nodes
+        bottom = uniform_bottom() if n >= 2 else math.inf  # 1 node: no uniform bottom cell
+        keep = 1.0 - CMB_FALLBACK_RTOL
+        if n >= 2 and (first >= keep / (n - 1) or self._cmb_cell >= keep * bottom):
+            logger.info(
+                'mesh.cmb_cell_thickness = %.6g m is not below the bottom cell of the uniform '
+                'mesh, %.6g m, by more than %g of it: no CMB refinement',
+                self._cmb_cell,
+                bottom,
+                CMB_FALLBACK_RTOL,
+            )
+            self._cmb_cell = 0.0
+        elif n < 4:
+            raise ValueError(
+                f'mesh.cmb_cell_thickness = {self._cmb_cell} m refines the mesh, which needs '
+                f'number_of_nodes >= 4, got {self.settings.number_of_nodes}'
+            )
 
     def _check_refined_radii(self, r) -> None:
         """Raise ``ValueError`` unless the refined basic radii ``r`` [m] increase strictly,
         start and end at the shell radii exactly, and each set end cell has its thickness to
-        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger."""
+        1e-6 relative, or to 2 ``REFINED_XTOL`` in mass-coordinate mode if that is larger. The
+        target of a ``'uniform'`` surface cell is the top cell of the uniform mesh of the mode."""
         r_inner, r_outer = self.settings.inner_radius, self.settings.outer_radius
         # brentq places a solved node to REFINED_XTOL; an end cell holds twice that.
         atol = 2 * REFINED_XTOL if self.settings.mass_coordinates else 0.0
@@ -478,21 +545,41 @@ class Mesh:
                 f'the end radii {r[0]!r}, {r[-1]!r} m are not {r_inner!r}, {r_outer!r} m'
             )
         for name, cell in (('cmb_cell_thickness', d[0]), ('surface_cell_thickness', d[-1])):
-            target = getattr(self.settings, name)
+            target = (
+                self._cmb_cell if name == 'cmb_cell_thickness' else getattr(self.settings, name)
+            )
+            label = f'{target} m'
+            if target == UNIFORM_CELL:
+                target = self._top_cell_target
+                label = f'{UNIFORM_CELL} ({target} m)'
             if target and not abs(cell - target) <= max(atol, 1e-6 * target):
-                bad.append(f'mesh.{name} = {target} m gives an end cell of {cell} m')
+                bad.append(f'mesh.{name} = {label} gives an end cell of {cell} m')
+        k_s, st = self.settings.adiabatic_bulk_modulus, self.settings
+        if bad and st.mass_coordinates and st.eos_method == 1 and k_s >= AW_CANCELLATION_K_S:
+            bad.append(
+                f'likely cause: adiabatic_bulk_modulus = {k_s:.3g} Pa is at or above '
+                f'{AW_CANCELLATION_K_S:.0e} Pa, where the Adams-Williamson mass integral '
+                'cancels to round-off and moves the solved nodes'
+            )
         if bad:
-            raise ValueError('refined mesh: ' + '; '.join(bad))
+            raise ValueError(
+                'refined mesh: '
+                + '; '.join(bad)
+                + '; mesh.cmb_cell_thickness = 0 and mesh.surface_cell_thickness = 0 give the '
+                'uniform mesh of the mode'
+            )
 
     def _refined_unit_grid(self, first: float, last: float) -> npt.NDArray:
         """Stretched unit grid for ``mesh.cmb_cell_thickness`` and
         ``mesh.surface_cell_thickness``, as fractions of the coordinate span."""
         try:
             return stretched_unit_grid(self.settings.number_of_nodes, first, last)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:  # RuntimeError: a brentq without convergence
+            top = self.settings.surface_cell_thickness
+            top = top if top == UNIFORM_CELL else f'{top} m'
             raise ValueError(
-                f'mesh.cmb_cell_thickness = {self.settings.cmb_cell_thickness} m and '
-                f'mesh.surface_cell_thickness = {self.settings.surface_cell_thickness} m '
+                f'mesh.cmb_cell_thickness = {self._cmb_cell} m and '
+                f'mesh.surface_cell_thickness = {top} '
                 f'give no refined grid of {self.settings.number_of_nodes} nodes: {exc}'
             ) from exc
 

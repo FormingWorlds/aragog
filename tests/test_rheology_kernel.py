@@ -2118,13 +2118,15 @@ def test_rheology_kernel_reference_grid_parity():
     r_out = float(radii[-1])
     ml_col = np.minimum(radii - r_in, r_out - radii)
     np.testing.assert_allclose(
-        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np),
+        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, bottom_slope=1.0, xp=np),
         data['vml_none'],
         rtol=1.0e-12,
         atol=0.0,
     )
     np.testing.assert_allclose(
-        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np),
+        viscous_mixing_length_factor(
+            radii, r_in, r_out, ml_col, bottom_slope=1.0, theta=15.0, xp=np
+        ),
         data['vml_theta'],
         rtol=1.0e-12,
         atol=0.0,

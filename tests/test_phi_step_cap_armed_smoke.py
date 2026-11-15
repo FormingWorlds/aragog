@@ -73,6 +73,8 @@ def _build_mushy_parameters(*, solver_method: str, n_nodes: int = 12, end_time: 
         mixing_length_profile='nearest_boundary',
         core_density=10500.0,
         eos_method=1,
+        cmb_cell_thickness=0.0,  # uniform mesh: the reference numbers of its tests
+        surface_cell_thickness=0.0,
     )
     pl = _PhaseParameters(
         density=4000.0,

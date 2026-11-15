@@ -69,6 +69,9 @@ def _build_const_properties_parameters(*, n_nodes: int = 10, end_time: float = 5
         mixing_length_profile='nearest_boundary',
         core_density=10500.0,
         eos_method=1,
+        # the uniform mesh of the analytic and stored cases built on this helper
+        cmb_cell_thickness=0.0,
+        surface_cell_thickness=0.0,
     )
     pl = _PhaseParameters(
         density=4000.0,

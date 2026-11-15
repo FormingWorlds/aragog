@@ -94,10 +94,10 @@ def test_unit_grid_hits_both_end_cells_over_a_wide_range():
     np.testing.assert_array_equal(stretched_unit_grid(50), np.linspace(0.0, 1.0, 50))
 
 
-def test_unit_grid_rejects_cells_at_or_above_the_uniform_cell():
-    """A cell fraction below 0, at or above the uniform cell 1 / (n - 1), or NaN is refused at
-    either end."""
-    for bad in (-1e-3, 1.0 / 99, 0.5, np.nan):
+def test_unit_grid_rejects_cells_above_the_uniform_cell():
+    """A cell fraction below 0, above the uniform cell 1 / (n - 1), or NaN is refused at either
+    end; the uniform cell itself is accepted (test_mesh_uniform_top_cell.py)."""
+    for bad in (-1e-3, np.nextafter(1.0 / 99, 1.0), 0.5, np.nan):
         with pytest.raises(ValueError, match='cell fraction'):
             stretched_unit_grid(100, bad, 0.0)
         with pytest.raises(ValueError, match='cell fraction'):
@@ -233,20 +233,15 @@ def test_mesh_rejects_a_cell_thicker_than_the_uniform_cell():
         type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': -1.0})
 
 
-def test_mass_mode_refuses_a_cmb_cell_between_its_uniform_cell_and_the_radial_bound():
+def test_mass_mode_gives_no_cmb_refinement_between_its_uniform_cell_and_the_radial_cell():
     """abe_solid in mass-coordinate mode has a uniform CMB cell of 9.33 km, below the
-    10.1 km radial cell the parser checks: 9.5 km passes the parser and the mesh refuses
-    it with both field values. In radius mode 9.5 km is the CMB cell."""
+    10.1 km radial cell: 9.5 km is at or above the mass-mode bottom cell, so the mass-mode
+    mesh is the uniform mesh. In radius mode 9.5 km is the CMB cell."""
     p = Parameters.from_file(CFG)
     radial = (p.mesh.outer_radius - p.mesh.inner_radius) / (p.mesh.number_of_nodes - 1)
     assert np.diff(_radii(_mesh(mass_coordinates=True)))[0] < 9.5e3 < radial
-    type(p.mesh)(**{**vars(p.mesh), 'cmb_cell_thickness': 9.5e3})
-    with pytest.raises(
-        ValueError,
-        match='mesh.cmb_cell_thickness = 9500.0 m and '
-        'mesh.surface_cell_thickness = 0.0 m give no refined grid',
-    ):
-        _mesh(0.0, 9.5e3, mass_coordinates=True)
+    mass = _radii(_mesh(0.0, 9.5e3, mass_coordinates=True))
+    assert np.array_equal(mass, _radii(_mesh(0.0, 0.0, mass_coordinates=True)))
     assert np.diff(_radii(_mesh(0.0, 9.5e3)))[0] == pytest.approx(9.5e3, abs=1e-3)
 
 
@@ -418,7 +413,7 @@ def _external_mesh(tmp_path, mass_coordinates, top=1e3):
     _write_synthetic_external_mesh(ef, n=30)
     p = _build_parameters_eos_method_2(ef, n_nodes=40)
     p.mesh.mass_coordinates = mass_coordinates
-    p.mesh.surface_cell_thickness = top
+    p.mesh.surface_cell_thickness, p.mesh.cmb_cell_thickness = top, 0.0
     return Mesh(p), ef
 
 
@@ -569,10 +564,11 @@ def test_the_end_gradient_of_a_cubic_has_the_stencil_truncation_term(top, bottom
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(('top', 'bottom'), [(200.0, 0.0), (0.0, 200.0), (200.0, 200.0)])
+@pytest.mark.parametrize(('top', 'bottom'), [(200.0, 0.0), (200.0, 200.0)])
 def test_the_smallest_accepted_node_count_builds_a_mesh(top, bottom):
-    """The smallest node count the cell-thickness check accepts builds a mesh with its d/dr
-    transform, not an IndexError."""
+    """The smallest node count the cell-thickness check accepts with a set surface cell builds
+    a mesh with its d/dr transform, not an IndexError. A CMB cell alone is checked against the
+    node count by the mesh (test_mesh_cmb_fallback.py)."""
     from aragog.config.mesh import check_cell_thickness
 
     p = Parameters.from_file(CFG)

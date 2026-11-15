@@ -60,6 +60,7 @@ def _commit() -> str:
 def _parameters(mass_coordinates: bool) -> Parameters:
     p = Parameters.from_file(CFG)
     p.mesh.mass_coordinates = mass_coordinates
+    p.mesh.cmb_cell_thickness = p.mesh.surface_cell_thickness = 0.0  # the off path
     p.solver.end_time = 100.0
     return p
 

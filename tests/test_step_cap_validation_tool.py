@@ -425,3 +425,32 @@ def test_v4_cases_use_their_end_times(monkeypatch, tmp_path):
     with pytest.raises(Built):
         tool.run_v4(tmp_path, 'v4_rheo_off', 5.0)
     assert seen == [1.2e8, 1.0e9, 5.0]
+
+
+def test_v4_cases_build_the_uniform_mesh_with_slope_1(monkeypatch, tmp_path):
+    """The v4 rows of numerics.md come from the uniform mesh and the bottom slope 1: both end
+    cells are 0 in both cases, and the rheology case sets mlt_bottom_slope 1.0."""
+    import hashlib
+
+    (tmp_path / 'temperature_solid.dat').write_text('table\n')
+    monkeypatch.setattr(tool, 'PALEOS_LOWT_MD5', hashlib.md5(b'table\n').hexdigest())
+    monkeypatch.setattr(tool, 'EntropyEOS', lambda _eos_dir: object())
+    seen = {}
+
+    class Built(Exception):
+        pass
+
+    def solver(p, entropy_eos):
+        rheo = p.phase_solid.rheology
+        seen[len(seen)] = (
+            p.mesh.cmb_cell_thickness,
+            p.mesh.surface_cell_thickness,
+            rheo.mlt_bottom_slope if rheo is not None and rheo.enabled else None,
+        )
+        raise Built
+
+    monkeypatch.setattr(tool, 'EntropySolver', solver)
+    for name in ('v4_rheo_off', 'v4_rheo_on'):
+        with pytest.raises(Built):
+            tool.run_v4(tmp_path, name)
+    assert seen == {0: (0.0, 0.0, None), 1: (0.0, 0.0, 1.0)}

@@ -386,7 +386,9 @@ $$
 l_v(r) = \min\big( s_\text{bot} (r - r_\text{in}), \; s_\text{top}(\theta) (r_\text{out} - r) \big)
 $$
 
-Here $s_\text{bot}$ is the lower boundary slope (`mlt_bottom_slope`, default $1.0$). `compute_mlt_top_slope` calculates the upper boundary slope:
+Here $s_\text{bot}$ is the lower boundary slope, `mlt_bottom_slope`, with the default 1.0, the slope with which $s_{\text{top},\infty}$ was calibrated. The solver reads it only with the solid rheology on.
+
+`compute_mlt_top_slope` calculates the upper boundary slope:
 
 $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
@@ -400,9 +402,13 @@ The decay rate is $c_\theta = 0.15$ (`c_theta`), and the stagnant-lid slope is $
 
 **How the slope acts on the flux.** The viscous eddy diffusivity scales as $l^4$ and the viscous velocity scales as $l^3$. `viscous_mixing_length_factor` therefore returns $(l_v / l)^4$, with $l$ the mixing length defined in the word list. At interior nodes, the solver multiplies the viscous velocity by $(l_v / l)^3$ and the viscous eddy diffusivity by $(l_v / l)^4$.
 
-So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5 \times 10^{-3}$ at $\theta = 18$. It rises to 1 deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
+So the slope acts over most of the depth, not only near the surface. With the profile `'nearest_boundary'`, $(l_v / l)^4 = s_\text{top}^4$ from the surface to mid-depth: about $2 \times 10^{-3}$ at $s_{\text{top},\infty}$ and $5.5 \times 10^{-3}$ at $\theta = 18$. It rises to $s_\text{bot}^4 = 1$ deeper down, and it stays 1 at the boundary nodes, where $l = 0$. With the profile `'constant'` at $l = 0.25\,d$, the factor at $\theta = 0$ is 16 at mid-depth and 0 at the boundary nodes.
 
 Pass 1 uses $s_{\text{top},\infty}$ in both closure modes. In `'lid'` mode the code finds the lid state from the pass-1 fluxes. Pass 2 uses $s_\text{top}(\theta)$ in `'lid'` mode. In `'local'` mode it uses $s_{\text{top},\infty}$ again, so `c_theta` has no effect there.
+
+### The Bottom Slope and Tachinami et al. (2011)
+
+Tachinami et al. (2011)[^cite-tachinami2011] write the viscous convective flux with $\ell^4$ and no numerical factor (their Eq. 13 and 14, p. 5). They set $\ell$ to 0.82 times the distance from the nearest boundary, fitted for a radially constant viscosity without internal heating (their Appendix A, p. 15). The viscous velocity of Aragog carries a factor 1/18, so at the same mixing length its convective flux is 1/18 of theirs. In their terms, $s_\text{bot} = 1$ is a mixing length of 0.49 times the distance from the CMB. Their 0.82 would need $s_\text{bot} = 1.69$, outside the accepted range (0, 1].
 
 **Known limit.** At the default pair $(0.22, 0.15)$, the slope fits neither the planar nor the spherical benchmark set. Of the 2 stored pairs, only $(0.25, 0.25)$ meets the planar tolerance, and a single upper slope without a spherical-curvature geometry factor does not match the spherical set as well. [Top slope against published grids](../Validation/solid_state_convection.md#the-top-slope-against-published-convection-grids) gives the conditions and the numbers.
 
@@ -783,6 +789,7 @@ The effect of the rheology on the trajectory, and the spread of 5 perturbed star
 [^cite-moresi1998]: L. Moresi, V. Solomatov, *[Mantle convection with a brittle lithosphere: thoughts on the global tectonic styles of the Earth and Venus](https://doi.org/10.1046/j.1365-246X.1998.00521.x)*, Geophysical Journal International, 133, 669–682, 1998. [SciX](https://scixplorer.org/abs/1998GeoJI.133..669M/abstract).
 [^cite-solomatov1995]: V. S. Solomatov, *[Scaling of temperature- and stress-dependent viscosity convection](https://doi.org/10.1063/1.868624)*, Physics of Fluids, 7, 266–274, 1995. [SciX](https://scixplorer.org/abs/1995PhFl....7..266S/abstract).
 [^cite-solomatov2000]: V. S. Solomatov, L.-N. Moresi, *[Scaling of time-dependent stagnant lid convection: Application to small-scale convection on Earth and other terrestrial planets](https://doi.org/10.1029/2000JB900197)*, Journal of Geophysical Research, 105, 21795–21817, 2000. [SciX](https://scixplorer.org/abs/2000JGR...10521795S/abstract).
+[^cite-tachinami2011]: C. Tachinami, H. Senshu, S. Ida, *[Thermal evolution and lifetime of intrinsic magnetic fields of super-Earths in habitable zones](https://doi.org/10.1088/0004-637X/726/2/70)*, The Astrophysical Journal, 726, 70, 2011. [SciX](https://scixplorer.org/abs/2011ApJ...726...70T/abstract).
 [^cite-tackley2000]: P. J. Tackley, *[Self-consistent generation of tectonic plates in time-dependent, three-dimensional mantle convection simulations](https://doi.org/10.1029/2000GC000036)*, Geochemistry, Geophysics, Geosystems, 1, 1021, 2000. [SciX](https://scixplorer.org/abs/2000GGG.....1.1021T/abstract).
 [^cite-tackley2013]: P. J. Tackley, M. Ammann, J. P. Brodholt, D. P. Dobson, D. Valencia, *[Mantle dynamics in super-Earths: Post-perovskite rheology and self-regulation of viscosity](https://doi.org/10.1016/j.icarus.2013.03.013)*, Icarus, 225, 50–61, 2013. [SciX](https://scixplorer.org/abs/2013Icar..225...50T/abstract).
 [^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138–153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).

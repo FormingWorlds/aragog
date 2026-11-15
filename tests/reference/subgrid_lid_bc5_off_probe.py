@@ -29,7 +29,7 @@ def probe(rheology: bool) -> dict:
     s = _solver()
     p = s.parameters
     if rheology:
-        p.phase_solid.rheology = SolidRheologyParams(enabled=True)
+        p.phase_solid.rheology = SolidRheologyParams(enabled=True, mlt_bottom_slope=1.0)
         S0 = np.array(s._S0, dtype=float)
         s = EntropySolver(p, entropy_eos=None)
         s.initialize()
