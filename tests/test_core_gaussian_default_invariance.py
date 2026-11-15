@@ -82,6 +82,26 @@ def _all_values() -> dict:
     }
 
 
+def _assert_matches(key, got, ref):
+    """Assert `got` equals the stored `ref` of output `key` to 1e-12 relative."""
+    np.testing.assert_allclose(got, ref, rtol=1e-12, atol=0.0, err_msg=key)
+
+
+def test_the_comparison_takes_the_round_off_of_another_cpu():
+    """The nucleation factor of a Linux x86 runner passes; a 1e-9 change of its exponent fails.
+
+    The factor is sigmoid(-x) with x near 21.8 at 3600 K, so a round-off of x reaches the
+    factor multiplied by x; the Linux value differs from the stored one by 1.002e-12.
+    """
+    stored = 3.398694876168228e-10
+    _assert_matches('nucleation_factor', [3.3986948761716334e-10], [stored])
+    x = -np.log(stored)
+    with pytest.raises(AssertionError):
+        _assert_matches('nucleation_factor', [float(np.exp(-x * (1 + 1e-9)))], [stored])
+    with pytest.raises(AssertionError):
+        _assert_matches('density', [1.0 + 2e-12], [1.0])
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('case', sorted(CASES))
 def test_gaussian_path_is_unchanged(case):
@@ -96,7 +116,7 @@ def test_gaussian_path_is_unchanged(case):
     got = _values(build_core_module_budget(params, **geometry))
     assert sorted(got) == sorted(stored)
     for key, ref in stored.items():
-        np.testing.assert_allclose(got[key], ref, rtol=1e-12, atol=0.0, err_msg=key)
+        _assert_matches(key, got[key], ref)
     # The grid must reach the inner core, or the boundary terms are held only at zero.
     assert max(stored['latent_capacity']) > 0.0
     assert max(stored['r_icb']) > 0.0
