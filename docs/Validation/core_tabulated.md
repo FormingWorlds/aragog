@@ -47,7 +47,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 ??? info "Test details"
     - Reference: the integral of $\nabla_\text{ad}$ of the same table (independent column).
-    - Tolerance: relative $10^{-5}$ in $T$; measured at most 1.3e-7. A 1 % error in $\nabla_\text{ad}$ moves the centre by more than $10^{-3}$.
+    - Tolerance: relative $10^{-5}$ in $T$; measured at most 1.1e-7. A 1 % error in $\nabla_\text{ad}$ moves the centre by more than $10^{-3}$.
     - Test id: `tests/test_core_tabulated_validation.py::test_the_isentrope_equals_the_integral_of_nabla_ad` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k nabla_ad`
 

@@ -2,7 +2,9 @@
 
 The cores are the Zalmoxis core arrays of 1, 3 and 5 Earth-mass planets
 (``tests/validation/data/zalmoxis_core_arrays_*.npz``, provenance beside them); the table is
-the 40-per-decade PALEOS liquid iron cut to 3 TPa.
+the 40-per-decade PALEOS liquid iron cut to 3 TPa. The 1 and 3 Earth-mass cores are liquid;
+the 5 Earth-mass structure has a solid core (Zalmoxis gave no liquid one there), and the cases
+use only its pressures.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from aragog.core.iron_table import LiquidIronTable
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.module import _FACTORY_DEFAULTS, load_core_arrays
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
+from tests.conftest import legend_outside
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
@@ -26,7 +29,7 @@ DATA = pathlib.Path(__file__).parent / 'validation' / 'data'
 CUT = DATA / 'paleos_iron_liquid_cut_3tpa.npz'
 CORES = {
     '1 M_E': 'zalmoxis_core_arrays_1me_3000K.npz',
-    '3 M_E': 'zalmoxis_core_arrays_3me_2510K.npz',
+    '3 M_E': 'zalmoxis_core_arrays_3me_3500K.npz',
     '5 M_E': 'zalmoxis_core_arrays_5me_2510K.npz',
 }
 SEAM_RTOL = 1e-5
@@ -46,20 +49,12 @@ def cores(table):
     }
 
 
-def _legend_outside(fig, ax):
-    """Put the legend right of the axes and check that it covers no data."""
-    legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
-    fig.tight_layout()
-    fig.canvas.draw()
-    assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
-
-
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_the_isentrope_equals_the_integral_of_nabla_ad(cores, table, validation_plot):
     """The isentrope the budget reads (the inverted table entropy on bicubic patches) equals
     the integral of ``d ln T / d ln P = nabla_ad`` of the same table from the CMB, to 1e-5 in
-    T (measured at most 1.3e-7) on the 1, 3 and 5 M_E cores, 500 and 2000 K above the pure-iron
+    T (measured at most 1.1e-7) on the 1, 3 and 5 M_E cores, 500 and 2000 K above the pure-iron
     melting point at the CMB; the plot shows the larger of the 2 at each pressure. A 1 % error in nabla_ad moves the centre by more than 1e-3."""
     curve = IronMeltingCurve()
     rows = []
@@ -99,7 +94,7 @@ def test_the_isentrope_equals_the_integral_of_nabla_ad(cores, table, validation_
         ax.axhline(SEAM_RTOL, color=plt.rcParams['text.color'], lw=1, ls=':', label='tolerance')
         ax.set(xlabel='Pressure [GPa]', ylabel='|Relative difference in T|')
         ax.minorticks_off()
-        _legend_outside(fig, ax)
+        legend_outside(fig, ax)
         return fig
 
     validation_plot(figure, 'core_tabulated_isentrope_seam')
@@ -146,7 +141,7 @@ def test_a_pure_iron_core_freezes_from_the_centre(table, validation_plot):
             )
         ax.axhline(0.0, color=plt.rcParams['text.color'], lw=1, ls=':')
         ax.set(xlabel='Pressure [GPa]', ylabel='Slope ratio minus 1', ylim=(-0.4, 1.1))
-        _legend_outside(fig, ax)
+        legend_outside(fig, ax)
         return fig
 
     validation_plot(figure, 'core_tabulated_pure_iron_direction')
@@ -171,7 +166,7 @@ def test_the_entropy_of_fusion_against_the_ab_initio_value(validation_plot):
         ax.plot([300.0, 1000.0], [1.05 * per_atom, 0.8 * per_atom], 'o', label='ab initio')
         ax.axhline(_FACTORY_DEFAULTS['ds_fusion'], label='aragog constant')
         ax.set(xlabel='Pressure [GPa]', ylabel='Entropy of fusion [J/kg/K]', ylim=(0.0, 200.0))
-        _legend_outside(fig, ax)
+        legend_outside(fig, ax)
         return fig
 
     validation_plot(figure, 'core_entropy_of_fusion')

@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre; command: pytest tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[234, 127.68720115910568, 2104.8039118241095, 902.9141253943948, 344.99419549809744, 0.05386530184301952, 1.0413574461194508, 0.2804439283597425, 0.14786687643783814], [2, 127.68720115910568, 348.8840670322265, 238.2856340956661, 110.5984329365604, -0.12, -0.12, -0.12, 0.0], [2, 401.8547118202943, 1207.595258635244, 804.7249852277691, 402.8702734074748, -0.2, -0.2, -0.2, 0.0], [2, 683.4538811234644, 2104.8039118241095, 1394.1288964737869, 710.6750153503225, -0.28, -0.28, -0.28, 0.0], [2, 0.0, 1.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre; command: pytest tests/test_core_tabulated_validation.py::test_a_pure_iron_core_freezes_from_the_centre --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "linear"], "categories": [null, null], "lines": [[235, 127.68720115910568, 2104.8039118241095, 855.6718798967917, 336.2854311092942, 0.05386530184301952, 1.0413574461194508, 0.262955698622439, 0.14369950061660378], [2, 127.68720115910568, 348.8840670322265, 238.2856340956661, 110.5984329365604, -0.12, -0.12, -0.12, 0.0], [2, 355.13713913654544, 1004.9511194858156, 680.0441293111805, 324.9069901746351, -0.2, -0.2, -0.2, 0.0], [2, 683.4538811234644, 2104.8039118241095, 1394.1288964737869, 710.6750153503225, -0.28, -0.28, -0.28, 0.0], [2, 0.0, 1.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]], "collections": [], "values": [], "value_scales": [], "patches": [], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -866,20 +866,21 @@ L 88.234947 156.462434
 L 98.858361 157.048701 
 L 104.070438 157.070422 
 L 109.448372 156.868049 
-L 112.358377 156.667257 
-L 122.307836 155.541218 
-L 128.503504 154.532061 
-L 134.685585 153.316676 
-L 140.824987 151.920838 
-L 148.895317 149.821705 
-L 156.775558 147.501272 
-L 164.405295 145.012678 
-L 171.727166 142.407802 
-L 180.364767 139.066336 
-L 188.340146 135.723411 
-L 196.912564 131.850912 
-L 204.269129 128.291484 
-L 211.991754 124.312547 
+L 114.25069 156.504019 
+L 119.315416 155.947387 
+L 126.023523 154.962229 
+L 132.633674 153.742013 
+L 139.098063 152.331648 
+L 146.905298 150.366079 
+L 154.332759 148.248245 
+L 161.304667 146.052125 
+L 168.973391 143.412129 
+L 177.287086 140.290136 
+L 184.966683 137.167735 
+L 193.071179 133.622373 
+L 198.84783 130.935965 
+L 205.953896 127.444906 
+L 212.993229 123.777886 
 L 219.950547 119.941593 
 L 226.810881 115.943594 
 L 233.559418 111.792349 
@@ -909,8 +910,8 @@ L 112.358377 181.998642
 " clip-path="url(#p72f7cc484c)" style="fill: none; stroke: #e23d28; stroke-width: 4; stroke-linecap: square"/>
    </g>
    <g id="line2d_23">
-    <path d="M 118.984064 193.460848 
-L 219.767896 193.460848 
+    <path d="M 113.140526 193.460848 
+L 194.420714 193.460848 
 " clip-path="url(#p72f7cc484c)" style="fill: none; stroke: #e0a32e; stroke-width: 4; stroke-linecap: square"/>
    </g>
    <g id="line2d_24">
