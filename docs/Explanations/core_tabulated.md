@@ -2,7 +2,7 @@
 
 How much heat does a liquid iron core give up as it cools, when its structure comes from Zalmoxis and its temperature from the PALEOS equation of state (EOS)?
 
-The short answer: Aragog keeps the core structure that Zalmoxis computed and puts the convecting core on one isentrope of the PALEOS liquid iron table. An isentrope is a curve of constant specific entropy. The heat the core gives up per kelvin of cooling at the core-mantle boundary (CMB) is then an integral of the temperature along that isentrope. Aragog tabulates it once per structure, so a run costs no more than with the Gaussian profile of [the core module](core_bc.md).
+The short answer: Aragog keeps the core structure that Zalmoxis computed and puts the convecting core on one isentrope of the PALEOS liquid iron table. An isentrope is a curve of constant specific entropy; for a convecting liquid it is also called the adiabat, the word the Gaussian profile uses. The heat the core gives up per kelvin of cooling at the core-mantle boundary (CMB) is then an integral of the temperature along that isentrope. Aragog tabulates it once per structure, so a run costs no more than with the Gaussian profile of [the core module](core_bc.md).
 
 ## When to use it
 
@@ -43,17 +43,17 @@ A worked example: for the Zalmoxis core of a 1 Earth-mass planet in the [tutoria
 
 ## The secular heat capacity
 
-The secular term is the heat a core gives up as its whole convecting mass cools. At fixed pressure, the change of the specific enthalpy $h$ is $dh = T\,ds$. Every parcel shares the change of $s_c$, so the heat content $H$ of the core changes with $T_\text{cmb}$ as
+The secular term is the heat a core gives up as its whole convecting mass cools. At fixed pressure, the change of the specific enthalpy $h$ is $dh = T\,ds$. Every parcel shares the change of $s_c$. At the CMB the pressure does not change, so $ds_c = c_p\,dT_\text{cmb}/T_\text{cmb}$, with $c_p$ (J kg$^{-1}$ K$^{-1}$) the heat capacity at the CMB. The heat content $H$ of the core then changes with $T_\text{cmb}$ as
 
 $$
 C_s = \frac{dH}{dT_\text{cmb}} = \frac{ds_c}{dT_\text{cmb}} \int T_a \, dm = \frac{c_p}{T_\text{cmb}} \int T_a \, dm,
 $$
 
-with $c_p$ (J kg$^{-1}$ K$^{-1}$) taken at the CMB. For a constant $c_p$ and the Gaussian adiabat this is the secular capacity of the Gaussian profile.
+For a constant $c_p$ and the Gaussian adiabat this is the secular capacity of the Gaussian profile.
 
 By default $c_p$ is 840 J kg$^{-1}$ K$^{-1}$ (`core_cp_override`), not the table value. The PALEOS liquid sets its heat capacity at constant volume to $3nR$ (Attia et al. 2026, p. 5), with $n$ atoms per formula unit and $R$ the gas constant, so it holds no electronic heat capacity. In the worked example above, the table gives $c_p$ = 506 J kg$^{-1}$ K$^{-1}$ at the CMB at 4000 K. `core_cp_override = "table"` takes the table value.
 
-In the example, $C_s$ is $1.989\times10^{27}$ J K$^{-1}$ at 4000 K. That is 1.22 times $c_p$ times the core mass: the mass-weighted mean of $T_a / T_\text{cmb}$.
+In the example, $C_s$ is $1.989\times10^{27}$ J K$^{-1}$ at 4000 K. That is 1.22 times $c_p$ times the core mass. The factor 1.22 is the mass-weighted mean of $T_a / T_\text{cmb}$.
 
 ## Why the core energy balance closes in each solver call
 
@@ -70,19 +70,19 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 ## What the path refuses
 
 - The CMB temperature must lie on the grid of isentropes. The grid runs from the lowest table temperature to the CMB temperature whose isentrope reaches the highest table temperature at the centre. Outside it, or at a NaN temperature, the solver and `CoreModule` stop with an error that names the temperature.
-- The grid holds at most 20,000 temperatures.
+- The grid holds at most 2,000,000 cells, nodes times temperatures. A larger grid stops with an error; make `core_t_cmb_step` larger. A core whose isentrope misses $s_c$ by more than $10^{-6}$ between its radial nodes stops too; give the core arrays more nodes.
 - `stratification = true` is refused: the heat content of a stratified core depends on the CMB heat flow, not on $T_\text{cmb}$ alone.
 - `capacity_mode = "legacy"` is refused, for the same reason.
 - The dynamo diagnostics, the entropy margin and the field strength, are not computed on this path. Their entropy budget (`CoreEntropyBudget`) takes a constant $\alpha$ and $c_p$ and refuses a tabulated profile.
 
 ## Limits of the model
 
-- The Gaussian keys `alpha`, `c_p` and `adiabat_mode` are accepted and not used. The heat capacity of the secular term comes from `core_cp_override`.
-- The liquid of the PALEOS table is calibrated between 8000 and 14,000 K and between 50 and 1300 GPa (Attia et al. 2026, p. 5). `TabulatedCoreProfiles.outside_calibration_fraction` gives the core mass fraction outside this window, and the diagnostics of `CoreModule` report it as `core_eos_outside_calibration`; the run continues.
+- The Gaussian profile keys are accepted and not used ([parameters](core_bc.md#parameters) lists them). The heat capacity of the secular term comes from `core_cp_override`.
+- The liquid of the PALEOS table is calibrated between 8000 and 14,000 K and between 50 and 1300 GPa (Attia et al. (2026), p. 5). `TabulatedCoreProfiles.outside_calibration_fraction` gives the core mass fraction outside this window, and the diagnostics of `CoreModule` report it as `core_eos_outside_calibration`; the run continues.
 - With the override, the isentrope shape comes from the PALEOS $c_p$ and the heat capacity from 840 J kg$^{-1}$ K$^{-1}$, so the two are not from one EOS.
 - The isentrope is that of pure liquid iron, also when the density of the arrays holds light elements.
-- The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ per atom at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer 2023, p. 9), so the constant is 1.45 times the value at 1000 GPa.
-- Near the top pressure of the table the interpolation loses accuracy, with no warning. On the 3 TPa test table the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to $10^{-5}$ up to 2.1 TPa and misses by more than $10^{-4}$ above 2.38 TPa.
+- The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ per atom at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer (2023), p. 9), so the constant is 1.45 times the value at 1000 GPa.
+- The interpolation of the table loses accuracy near its edges, with no warning. On the 3 TPa test table the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to $10^{-5}$ on the table nodes from 50 GPa to 2.1 TPa. It misses by up to $1.3\times10^{-5}$ between nodes below 2 TPa, by $3.6\times10^{-5}$ at the lowest pressure, 45 GPa, and by more than $10^{-4}$ above 2.38 TPa.
 
 **Where this is checked.** [Tabulated core](../Validation/core_tabulated.md) on the Validation tab.
 

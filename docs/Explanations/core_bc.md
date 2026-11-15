@@ -336,7 +336,7 @@ PROTEUS writes seven diagnostics of this budget to its output helpfile on every 
 - `core_strat_depth`: the stable layer thickness below the CMB;
 - `core_T_top`: the temperature at the top of the core (the top shell cell with a shell, else $T_\text{cmb}$).
 
-With `profile_source = "paleos"`, `CoreModule.diagnostics()` also returns `core_eos_outside_calibration`, the core mass fraction outside the calibration window of the PALEOS liquid (8000 to 14,000 K, 50 to 1300 GPa), and Aragog does not compute the entropy budget behind `core_dynamo_margin` and `core_B_rms` ([limits](core_tabulated.md#what-the-path-refuses)).
+With `profile_source = "paleos"`, `CoreModule.diagnostics()` also returns `core_eos_outside_calibration`. It is the core mass fraction outside the calibration window of the PALEOS liquid: 8000 to 14,000 K and 50 to 1300 GPa. On this path Aragog does not compute the entropy budget behind `core_dynamo_margin` and `core_B_rms` ([limits](core_tabulated.md#what-the-path-refuses)).
 
 The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call, checked at every accepted step; the energetics of those regimes are not modelled. A call that fails is not checked: it stops early and books no energy.
 

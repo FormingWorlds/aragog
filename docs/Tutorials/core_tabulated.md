@@ -6,7 +6,7 @@ This tutorial builds the core energy budget of a 1 Earth-mass planet from a Zalm
 
 ## 1. Build the budget
 
-The core arrays come from a Zalmoxis structure: radius, enclosed mass, pressure, density and gravity at each core node. The table is a cut of the PALEOS liquid iron table to 45 GPa to 3 TPa and 2000 to 20,000 K. In a solver run the CMB radius comes from the mantle mesh; here it comes from the arrays.
+The core arrays come from a Zalmoxis structure: radius, enclosed mass, pressure, density and gravity at each core node. The table is a cut of the PALEOS liquid iron table: pressures from 45 GPa to 3 TPa, temperatures from 1996 K to 20,000 K. In a solver run the CMB radius comes from the mantle mesh; here it comes from the arrays.
 
 ```python
 from aragog.core import CoreModule, build_core_module_budget, load_core_arrays
@@ -81,7 +81,7 @@ print(f"inner core {diag['inner_core_present']}, "
 inner core False, outside calibration 1.00
 ```
 
-The whole core lies outside the window in which the PALEOS liquid is calibrated, 8000 to 14,000 K. The run continues; the value flags the extrapolation.
+At a CMB of 5000 K the centre is at 7676 K (step 2), so the whole core is colder than the calibration window of the PALEOS liquid, 8000 to 14,000 K. The run continues; the value flags the extrapolation.
 
 ## 5. A table of your own
 
