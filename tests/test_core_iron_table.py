@@ -185,3 +185,15 @@ def test_ds_dp_is_the_maxwell_relation(table):
     np.testing.assert_allclose(
         slope / (table.value('nabla_ad', pp, tt) * tt / pp), 1.0, atol=3e-5
     )
+
+
+def test_a_text_table_that_is_not_a_full_rectangle_is_refused(tmp_path):
+    """A .dat table with one row missing is refused before any interpolant is built."""
+    data = np.load(CUT)
+    path = _write_dat(tmp_path / 't.dat', data)
+    lines = path.read_text().splitlines()
+    path.write_text('\n'.join(lines[:-1]) + '\n')
+    with pytest.raises(ValueError, match='not a full rectangle'):
+        LiquidIronTable.from_file(path)
+    path.write_text('\n'.join(lines) + '\n')
+    assert LiquidIronTable.from_file(path).fields['rho'].shape == data['rho'].shape

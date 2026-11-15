@@ -249,10 +249,37 @@ def test_tabulated_budget_refusals(paleos_budget):
             legacy_rho_core=1e4,
             legacy_tfac=1.1,
         )
-    with pytest.raises(ValueError, match='constant alpha and c_p'):
+    with pytest.raises(
+        ValueError, match='dynamo diagnostics .entropy margin, field strength. are not computed'
+    ):
         CoreEntropyBudget(paleos_budget, k_core=40.0)
     with pytest.raises(ValueError, match='needs t_cmb'):
         paleos_budget.secular_capacity()
     with pytest.raises(ValueError, match='outside the tabulated isentropes'):
         refuse_unmodelled_regime(paleos_budget, [4000.0, 7100.0])
     refuse_unmodelled_regime(paleos_budget, [6900.0, 6950.0])
+
+
+def test_effective_tfac_of_a_tabulated_profile(paleos_budget):
+    """The mean of T_a/T_cmb over the mass is C_s / (840 M) with the override, between 1 and
+    T_cen/T_cmb, and rising with T_cmb on the PALEOS isentrope; without an override it is
+    refused, since C_s then carries the table c_p."""
+    b = paleos_budget
+    tfac = float(b.effective_tfac(t_cmb=4000.0))
+    assert tfac == pytest.approx(
+        float(b.secular_capacity(t_cmb=4000.0)) / (840.0 * b.profiles.m_core), rel=1e-15
+    )
+    assert 1.0 < tfac < float(b.profiles.t_cen(4000.0)) / 4000.0
+    assert float(b.effective_tfac(t_cmb=6000.0)) > tfac
+    table_cp = CoreEnergyBudget(
+        TabulatedCoreProfiles(
+            core_arrays(GaussianCoreProfiles(**EARTH), 41),
+            LiquidIronTable.from_file(CUT),
+            c_p=None,
+            t_cmb_range=(2500.0, 7000.0),
+        ),
+        IronMeltingCurve(),
+        **BUDGET,
+    )
+    with pytest.raises(ValueError, match='constant c_p of an override'):
+        table_cp.effective_tfac(t_cmb=4000.0)
