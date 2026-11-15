@@ -1,6 +1,6 @@
 # `aragog.core`
 
-The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. The radial structure comes from 1 of 2 sources. The closed-form Gaussian profile family of Labrosse et al. (2001)[^cite-labrosse2001] and Nimmo (2015)[^cite-nimmo2015b] makes every budget term an analytic integral or a fixed-order quadrature, so the module stays at ODE cost. A Zalmoxis core on a PALEOS liquid iron isentrope is tabulated once per structure. All evaluation runs through `jax.numpy` at 64-bit precision and is jit- and grad-safe.
+The `aragog.core` package carries the core evolution module: the core as a component with its own state rather than an isothermal reservoir. The radial structure comes from 1 of 2 sources. The closed-form Gaussian profile family of Labrosse et al. (2001)[^cite-labrosse2001] and Nimmo (2015)[^cite-nimmo2015b] makes every budget term an analytic integral or a fixed-order quadrature, so the module stays at ODE cost. A Zalmoxis core on a PALEOS liquid iron isentrope is tabulated once per structure. The capacities, the adiabat and the rates run through `jax.numpy` at 64-bit precision and are jit- and grad-safe. The heat content and the heat change of a call, and on a tabulated profile also `secular_heat_change`, `t_cmb_at_centre` and `outside_calibration_fraction`, run eagerly on concrete values.
 
 | Name | Role |
 |------|------|

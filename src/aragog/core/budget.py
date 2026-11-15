@@ -450,7 +450,10 @@ class CoreEnergyBudget:
         capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
         turns the square-root cusp of the latent and gravitational terms at onset,
         ``C ~ (T_onset - T)^(1/2)``, into a smooth integrand.
-        Evaluated eagerly (``t_onset`` is a Python float).
+        Evaluated eagerly (``t_onset`` is a Python float). On a tabulated profile the
+        content is defined up to a constant that depends on the structure and the table
+        (its lowest tabulated temperature): differences on one structure are exact, a
+        difference between 2 structures is not a heat.
 
         Raises
         ------

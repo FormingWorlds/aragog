@@ -285,7 +285,7 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built.
 
-The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. With the Gaussian profile, the core takes its heat capacity from `c_p` and its density from the profile keys below, or from `legacy_rho_core` with `capacity_mode = "legacy"`. With `profile_source = "paleos"`, it takes its heat capacity from `core_cp_override` and its density from the core arrays of `core_profile_file`. Each solver logs one INFO message that names the 2 configured values.
+The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. With the Gaussian profile, the core takes its heat capacity from `c_p` and its density from the profile keys below, or from `legacy_rho_core` with `capacity_mode = "legacy"`. With `profile_source = "paleos"`, it takes its heat capacity from `core_cp_override` and its density from the core arrays of `core_profile_file`. On both paths each solver logs one INFO message that names the 2 unused values, `core_heat_capacity` and `core_density`.
 
 When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the configuration is read, so `aragog validate` reports it:
 

@@ -116,10 +116,11 @@ class TabulatedCoreProfiles:
     ------
     ValueError
         On a missing or malformed array, core pressures outside the pressure range of the
-        table, a density whose integral misses the node mass by more than 1e-2, an isentrope
-        that leaves the table between nodes, a node outside the table box on the range, an
-        isentrope that misses ``s_c`` by more than 1e-6 relative, a mass that differs from
-        ``m_core``, or a heat capacity that is not positive.
+        table, a density whose integral misses the node mass by more than 1e-2 (Zalmoxis
+        cores miss by at most 1.1e-3, at a density jump of the inner-core boundary), an
+        isentrope that leaves the table between nodes, a node outside the table box on the
+        range, an isentrope that misses ``s_c`` by more than 1e-6 relative, a mass that
+        differs from ``m_core``, or a heat capacity that is not positive.
     """
 
     adiabat_mode = 'tabulated'
