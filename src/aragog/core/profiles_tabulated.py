@@ -39,6 +39,7 @@ G = sp_constants.G
 REQUIRED_KEYS = ('r', 'm', 'P', 'rho', 'g')
 ISENTROPE_RTOL = 1e-6  # relative entropy miss of the isentrope, at nodes and midpoints
 MASS_RTOL = 1e-10  # arrays against the structure mass
+MASS_DENSITY_RTOL = 1e-2  # int 4 pi r^2 rho dr against m; 1.1e-3 measured at an ICB jump
 MAX_CELLS = 2_000_000  # nodes x CMB temperatures of the isentrope grid
 # Calibration window of the Luo et al. (2024) liquid (Attia et al. 2026, p. 5).
 LUO_P_PA = (50e9, 1300e9)
@@ -115,9 +116,10 @@ class TabulatedCoreProfiles:
     ------
     ValueError
         On a missing or malformed array, core pressures outside the pressure range of the
-        table, a node outside the table box on the range, an isentrope that misses ``s_c``
-        by more than 1e-6 relative, a mass that differs from ``m_core``, or a heat capacity
-        that is not positive.
+        table, a density whose integral misses the node mass by more than 1e-2, an isentrope
+        that leaves the table between nodes, a node outside the table box on the range, an
+        isentrope that misses ``s_c`` by more than 1e-6 relative, a mass that differs from
+        ``m_core``, or a heat capacity that is not positive.
     """
 
     adiabat_mode = 'tabulated'
@@ -164,6 +166,12 @@ class TabulatedCoreProfiles:
         if m_core is not None and not abs(m[-1] / float(m_core) - 1.0) <= MASS_RTOL:
             raise ValueError(
                 f'core arrays hold {m[-1]:.10e} kg, the structure {m_core:.10e} kg'
+            )
+        m_rho = PchipInterpolator(r, 4.0 * np.pi * r**2 * rho).integrate(0.0, r[-1])
+        if not abs(m_rho / m[-1] - 1.0) <= MASS_DENSITY_RTOL:
+            raise ValueError(
+                f'core density integrates to {m_rho:.6e} kg, the node mass m is {m[-1]:.6e} kg '
+                f'(more than {MASS_DENSITY_RTOL:g} apart); check rho and m of the core arrays'
             )
         if c_p is not None and not is_positive_number(c_p):
             raise ValueError(f'c_p must be a positive finite number or None, got {c_p!r}')
@@ -240,9 +248,14 @@ class TabulatedCoreProfiles:
         def check(r_x, t_x, where):
             p_x = np.asarray(self.pressure(r_x))[:, None]
             t_a_x = self.adiabat(r_x[:, None], t_x)
-            miss = np.max(
-                np.abs(tab.value('s', p_x, t_a_x) / tab.value('s', self.p_cmb, t_x) - 1)
-            )
+            try:
+                s_x = tab.value('s', p_x, t_a_x)
+            except ValueError as err:
+                raise ValueError(
+                    f'the isentrope leaves the liquid iron table {where.split(";")[0]} ({err}); '
+                    'check the core arrays (r, m, P, rho, g) for a consistent structure'
+                ) from err
+            miss = np.max(np.abs(s_x / tab.value('s', self.p_cmb, t_x) - 1))
             if not miss <= ISENTROPE_RTOL:
                 raise ValueError(f'isentrope misses s_c by {miss:.2e} relative {where}')
 
