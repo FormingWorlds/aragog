@@ -150,7 +150,8 @@ def cmb_boundary_layer_flux(
             viscosity=viscosity,
             gravity=gravity,
             shell_thickness=shell_thickness,
-            shell_contrast=shell_contrast,
+            # The shell spans the CMB layer: its contrast is at least the CMB contrast.
+            shell_contrast=jnp.maximum(shell_contrast, dT_pos),
         )
         ra_crit = jnp.where(jnp.isnan(ra_crit), eq16, ra_crit)
     q_conv = (
