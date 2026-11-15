@@ -19,10 +19,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 ![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms.svg#only-light){ width="70%" }
 ![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms_dark.svg#only-dark){ width="70%" }
 
-![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference.svg#only-light){ width="70%" }
-![Relative difference of the 3 capacities between the tabulated and the Gaussian budget](../assets/validation/core_tabulated_constant_property_difference_dark.svg#only-dark){ width="70%" }
-
-**How to read the plot.** The first plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The second plot shows the relative difference of each capacity. A difference below $10^{-8}$ is drawn on the dotted floor at $10^{-8}$, because its last digits change from one CPU to another; the secular difference, 6.5e-10 at every temperature, lies on the floor. All lines lie below the dashed tolerance; that is a pass.
+**How to read the plot.** The plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The markers lie on the lines; the differences are too small to draw. On an Apple M1 Ultra the largest relative differences are 6.5e-10 for the secular capacity, 3.0e-7 for the latent, 5.1e-7 for the gravitational, 5.3e-8 for $r_\text{icb}$ and 2.0e-9 for the onset temperature, all below the tolerance of $10^{-6}$. The latent and gravitational differences change in their fifth digit on another CPU, since they pass through the root of $r_\text{icb}$; the page gives them as numbers, not as a plot.
 
 ??? info "Test details"
     - Reference: the Gaussian adiabat $T_\text{cmb}\exp(-\alpha\psi/c_p)$ (analytical).
