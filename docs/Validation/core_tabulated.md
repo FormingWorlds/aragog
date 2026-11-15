@@ -4,7 +4,7 @@
 
 This page checks the core on the PALEOS liquid iron isentrope, `profile_source = "paleos"` ([explanation](../Explanations/core_tabulated.md)). Validation here means that a test runs the code on a case with a known right answer and checks that the code gives it, within a stated tolerance. The answers are an analytical limit, a published budget, an independent integral of the same table, a slope comparison, energy conservation and a published ab initio value. A wrong isentrope or a wrong heat capacity changes how fast the core cools, when its inner core starts to grow and how much heat crosses the core-mantle boundary (CMB) into the mantle. Each case says why the check exists, what it tests, how we know the right answer and why it matters, then shows its plot and ends with a box "Test details".
 
-The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M_E$), in `tests/validation/data/` with their provenance. The 1 and 3 $M_E$ cores are liquid. The 5 $M_E$ structure has a solid core, since no liquid one was available; the cases take only its pressures. The table is the PALEOS liquid iron table on 40 points per decade of pressure, cut to 45 GPa to 3 TPa and 1996 to 20,000 K.
+The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M_E$), in `tests/validation/data/` with their provenance. The 1 and 3 $M_E$ cores are liquid. The 5 $M_E$ structure has a solid core, since no liquid one was available; the cases take only its pressures. The table is the PALEOS liquid iron table on 40 points per decade of pressure, cut to 45 GPa to 3 TPa and 1996 to 20,000 K. The Gaussian budget, which several cases compare with, is the budget of the default core profile, `profile_source = "gaussian"`: a closed-form density with a constant $\alpha$ and $c_p$ ([core module](../Explanations/core_bc.md)).
 
 ## A table of constant properties gives the Gaussian budget
 
@@ -36,7 +36,12 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 **What it tests.** The core has the structure, melting curve, latent heat (750 kJ kg$^{-1}$) and density jump of Nimmo (2015)[^cite-nimmo2015a] (ch. 8.02, Table 2), as in the [Gaussian case](core.md#5-nimmo-2015-earth-core-budget). Only the temperature profile changes, to the PALEOS liquid isentrope with $c_p$ = 840 J kg$^{-1}$ K$^{-1}$, on 801 nodes of the same structure. At a CMB heat flow of 15.2 TW the test computes the secular, latent and gravitational heat flows $Q_s$, $Q_L$ and $Q_g$, the cooling rate of the CMB and the growth rate of the inner core.
 
-**How we know the right answer.** Table 4 of the same chapter gives the terms on the Gaussian adiabat; the Gaussian path of Aragog meets them to 2 %. On the PALEOS isentrope the terms have no published value, because the isentrope moves the inner core; the test holds only the direction of each change, with wide bounds. Held are the parts that do not depend on it: $Q_L/Q_g$ must equal its Gaussian value, because both terms scale with the speed of the inner-core boundary on one structure, and the latent heat per unit mass must stay 750 kJ kg$^{-1}$.
+**How we know the right answer.** Table 4 of the same chapter gives the terms on the Gaussian adiabat; the Gaussian path of Aragog meets them to 2 %. On the PALEOS isentrope the terms have no published value, because the isentrope moves the inner core. The test holds 2 parts exactly, because they do not depend on where the inner core is:
+
+- $Q_L/Q_g$ must equal its Gaussian value: both terms scale with the speed of the inner-core boundary on one structure.
+- The latent heat per unit mass must stay 750 kJ kg$^{-1}$.
+
+For the other PALEOS terms the test holds only the direction of the change from Table 4, with wide bounds.
 
 **Why it matters.** The PALEOS isentrope is steeper than the Earth adiabat of the chapter. This changes when an inner core forms and how fast it grows, which sets the heat that drives a dynamo.
 
@@ -45,7 +50,14 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 
 **How to read the plot.** Each mark is a term divided by its value in Table 4; the dotted line at 1 is the table. Circles are the Gaussian adiabat, squares the PALEOS isentrope, both at a 1220 km inner core. $|\dot T_c|$ is the cooling rate of the CMB and $\dot r_i$ the growth rate of the inner core. The test holds the circles within 2 % of the line, too close to draw; it holds the squares only to wide bounds (above 1.1 for $Q_L$, $Q_g$ and $\dot r_i$, below 0.8 for $Q_s$ and $|\dot T_c|$).
 
-**Known limit.** At the 4180 K of Table 4 the PALEOS isentrope has no inner core: its centre is at 6278 K, above the melting point of 5808 K there. The inner core appears below 3874 K, against 4239 K on the Gaussian adiabat. So the terms are compared at the 1220 km inner core of Table 2, at 3835 K. There the speed of the boundary per kelvin of cooling, $|dr_\text{icb}/dT_\text{cmb}|$, is 1.67 times that on the Gaussian adiabat. The latent and gravitational heat per kelvin rise with it, and the CMB cools at 0.69 of the table rate. $Q_L$, $Q_g$ and the growth rate end at 1.18 times the table, $Q_s$ at 0.73. Both paths freeze out at 3818 K, where the CMB reaches the melting curve, so on the PALEOS isentrope the whole inner core grows over 56 K of cooling, against 421 K on the Gaussian adiabat; the 1220 km point lies 17 K above freeze-out.
+**Known limit.** Table 4 is at a CMB temperature of 4180 K, but there the PALEOS isentrope has no inner core. So the terms are compared at the 1220 km inner core of Table 2:
+
+- At 4180 K the PALEOS centre is at 6278 K, above the melting point there, 5808 K.
+- The inner core appears below 3874 K on the PALEOS isentrope, against 4239 K on the Gaussian adiabat.
+- Both paths freeze out at 3818 K, where the CMB reaches the melting curve. So the whole inner core grows over 56 K of cooling on the PALEOS isentrope, against 421 K on the Gaussian adiabat.
+- The 1220 km inner core is at 3835 K on the PALEOS isentrope, 17 K above freeze-out.
+- There the speed of the boundary per kelvin of cooling, $|dr_\text{icb}/dT_\text{cmb}|$, is 1.67 times that on the Gaussian adiabat, and the latent and gravitational heat per kelvin rise with it.
+- So the CMB cools at 0.69 of the table rate. $Q_L$, $Q_g$ and the growth rate end at 1.18 times the table, $Q_s$ at 0.73.
 
 ??? info "Test details"
     - Reference: Nimmo (2015)[^cite-nimmo2015a], ch. 8.02, Table 2 (inputs) and Table 4 (terms at 15.2 TW).
@@ -66,7 +78,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 ![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam.svg#only-light){ width="70%" }
 ![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores](../assets/validation/core_tabulated_isentrope_seam_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Each line is one core, from its CMB pressure to its centre pressure. It shows the larger of the 2 starting temperatures at each pressure. The dotted line is the tolerance; lines below it pass.
+**How to read the plot.** Each line is one core, from its CMB pressure to its centre pressure. The test runs 2 starting temperatures for each core; at each pressure the line shows the larger of their 2 differences. The dotted line is the tolerance, a relative $10^{-5}$; lines below it pass.
 
 ??? info "Test details"
     - Reference: the integral of $\nabla_\text{ad}$ of the same table (independent column).
@@ -110,7 +122,7 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 ![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call.svg#only-light){ width="70%" }
 ![Ledger residual of 5 calls at the default and at 1000 times tighter tolerances, with the bounds](../assets/validation/core_tabulated_ledger_per_call_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The horizontal axis is the call number, 1 to 5. The vertical axis is the residual, as an absolute value divided by the CMB heat, on a log scale. Circles are the default tolerances, squares the 1000 times tighter ones. In each call the square lies more than 20 times below the circle. The dotted bound, $10^{-5}$, applies to the squares of calls 1 to 3; the dashed bound, 2e-6, to the circles of calls 4 and 5. The bounds of call 1 (3e-4 and 3e-6) are not drawn.
+**How to read the plot.** The horizontal axis is the call number, 1 to 5; the vertical axis is the absolute residual divided by the CMB heat, on a log scale. Circles are the default tolerances, squares the 1000 times tighter ones. In each call the square lies more than 20 times below the circle. The dotted bound, $10^{-5}$, applies to the squares of calls 1 to 3; the dashed bound, 2e-6, to the circles of calls 4 and 5. The bounds of call 1 (3e-4 and 3e-6) are not drawn.
 
 **Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates is not checked here; it needs the coupling to PROTEUS.
 

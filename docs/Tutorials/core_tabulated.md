@@ -101,4 +101,4 @@ print(f"rho at 200 GPa, 5000 K: {table.value('rho', 200e9, 5000.0):.1f} kg/m3")
 rho at 200 GPa, 5000 K: 11867.7 kg/m3
 ```
 
-Save the arrays with `np.savez_compressed` under the names `P_Pa`, `T_K`, the 7 field names and `header`, and point `core_liquid_table` to the file.
+Save the arrays with `np.savez_compressed` under the names `P_Pa`, `T_K`, the 7 field names and `header`, and point `core_liquid_table` to the file. Core arrays of your own go in an `.npz` with the arrays `r` (m), `m` (kg), `P` (Pa), `rho` (kg m$^{-3}$) and `g` (m s$^{-2}$), from the centre to the CMB; point `core_profile_file` to it.
