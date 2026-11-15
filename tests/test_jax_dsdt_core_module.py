@@ -649,7 +649,11 @@ def test_jacobian_core_column_matches_central_differences(state):
         scales = NonDimScales(state_scale=np.ones(y.size), t_ref=1.0)
         kw = dict(core_module_budget=budget, core_module_q_radio=args[7])
         rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
-            *args[:5], scales, 'core_module', core_module_ra_crit_cmb=args[8], **kw
+            *args[:5],
+            scales,
+            'core_module',
+            core_module_ra_crit_cmb=None if np.isnan(float(args[8])) else float(args[8]),
+            **kw,
         )
         out, J_cvode = np.empty(y.size), np.empty((y.size, y.size))
         assert rhs_fn(0.0, y, out) == 0 and jac_fn(0.0, y, out, J_cvode) == 0

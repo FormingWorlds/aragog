@@ -281,6 +281,10 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
             viscosity=first(bl.viscosity()),
             gravity=first(solver.state.phase_basic.gravitational_acceleration()),
             dr_half=dr_half,
+            ra_crit=solver._core_module_ra_crit_cmb,
+            shell_thickness=float(solver._r_basic_flat[-1] - solver._r_basic_flat[0]),
+            shell_contrast=t_core
+            - first(shared_eos.temperature(float(solver._P_stag_flat[-1]), y_end[n_stag - 1])),
         )
     )
     assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-10)
