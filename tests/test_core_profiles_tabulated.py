@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import pathlib
+import re
 
 import jax
 import numpy as np
@@ -13,6 +15,7 @@ from scipy.integrate import quad
 from scipy.optimize import brentq
 
 from aragog.core.iron_table import FIELDS, LiquidIronTable
+from aragog.core.module import load_core_arrays
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from tests.conftest import PALEOS_CUT as CUT
@@ -177,6 +180,34 @@ def test_a_range_that_leaves_the_table_is_refused(table):
     arrays, _ = gaussian_core()
     with pytest.raises(ValueError, match='leaves the liquid iron table'):
         TabulatedCoreProfiles(arrays, table, t_cmb_range=(4000.0, 19000.0))
+
+
+def _pressure_slice(table, lo, hi):
+    """The table restricted to pressures in [lo, hi] Pa."""
+    keep = (table.pressure >= lo) & (table.pressure <= hi)
+    fields = {f: table.fields[f][keep] for f in FIELDS}
+    return LiquidIronTable(table.pressure[keep], table.temperature, fields, table.header)
+
+
+def test_a_core_outside_the_pressure_range_of_its_table_is_refused(table):
+    """The pressure range comes from the table: cut at 1.5 TPa it holds the 3 M_E core (centre
+    1.0 TPa) and refuses the 5 M_E core (2.1 TPa); from 200 GPa up it refuses the 1 M_E core
+    (CMB 128 GPa). The message names the pressures of the core and of the table."""
+    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    core = {
+        k: load_core_arrays(data / f'zalmoxis_core_arrays_{k}.npz')
+        for k in ('1me_3000K', '3me_3500K', '5me_2510K')
+    }
+    top, bottom = _pressure_slice(table, 0.0, 1.5e12), _pressure_slice(table, 2e11, np.inf)
+    TabulatedCoreProfiles(core['3me_3500K'], top)
+    for name, tab in (('5me_2510K', top), ('1me_3000K', bottom)):
+        p = core[name]['P']
+        msg = (
+            f'core pressures {p.min():.4e} to {p.max():.4e} Pa leave the pressure range of the '
+            f'liquid iron table ({tab.pressure[0]:.4e} to {tab.pressure[-1]:.4e} Pa)'
+        )
+        with pytest.raises(ValueError, match=re.escape(msg)):
+            TabulatedCoreProfiles(core[name], tab)
 
 
 def test_the_core_mass_check(table):
