@@ -432,7 +432,9 @@ class CoreModule:
 
         Always contains ``t_cmb``, ``t_cen``, ``r_icb``,
         ``nucleation_factor``, ``effective_capacity``, and the phase flags
-        ``inner_core_present`` / ``fully_frozen``. With an entropy budget
+        ``inner_core_present`` / ``fully_frozen``; a tabulated profile adds
+        ``core_eos_outside_calibration``, the mass fraction outside the calibration window of
+        the Luo et al. (2024) liquid. With an entropy budget
         attached and ``q_cmb`` given, adds ``entropy_margin``,
         ``dynamo_active``, and ``b_rms_core``.
         """
@@ -449,6 +451,8 @@ class CoreModule:
             'fully_frozen': bool(~b._liquid_remains(t)),
             'regime': int(crystallization_regime(b, t)),
         }
+        if b.tabulated:
+            out['core_eos_outside_calibration'] = b.profiles.outside_calibration_fraction(t)
         if self.entropy is not None and q_cmb is not None:
             margin = float(self.entropy.entropy_margin(t, q_cmb, self.q_radio))
             out['entropy_margin'] = margin
