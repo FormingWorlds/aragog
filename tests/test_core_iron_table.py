@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -89,10 +91,14 @@ def test_outside_the_box_is_refused(table):
 
 
 def test_kind_other_than_liquid_is_refused(tmp_path):
-    """A solid or unified table is refused: the core isentrope needs the liquid branch."""
+    """A solid, unified or mixed-kind table is refused: the core isentrope needs the liquid
+    branch, and a kind word that starts with liquid is not the liquid branch."""
     data = np.load(CUT)
     with pytest.raises(ValueError, match="kind 'solid'"):
         LiquidIronTable.from_file(_write_dat(tmp_path / 's.dat', data, kind='solid'))
+    for kind in ('liquid-solid', 'liquid+solid'):
+        with pytest.raises(ValueError, match=f"kind '{re.escape(kind)}'"):
+            LiquidIronTable.from_file(_write_dat(tmp_path / 'm.dat', data, kind=kind))
     no_kind = tmp_path / 'n.dat'
     no_kind.write_text(
         '\n'.join(
