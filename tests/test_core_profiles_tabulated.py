@@ -276,6 +276,24 @@ def test_the_cmb_temperature_range_holds_every_node_of_a_bumped_entropy():
     assert 1000.0 < lo < hi < 20000.0
 
 
+class _SpreadTable:
+    """A stub table with s = ln T + k(P), k = 0 at the centre, 3.2 at an inner node and 1.6 at
+    the CMB: the node entropies spread more than ln(20) of the table temperature range."""
+
+    temperature = np.array([1000.0, 20000.0])
+
+    def value(self, field, pressure, temperature):
+        k = np.interp(np.log10(pressure), np.log10([1e11, 2e11, 3e11]), [1.6, 3.2, 0.0])
+        return np.log(np.asarray(temperature)) + k
+
+
+def test_a_cmb_temperature_range_that_no_isentrope_fits_is_refused():
+    """When the coldest isentrope that stays in the table is hotter than the hottest one, no
+    CMB temperature fits every node and the range is refused."""
+    with pytest.raises(ValueError, match='at every node'):
+        TabulatedCoreProfiles._full_range(_SpreadTable(), np.array([3e11, 2e11, 1e11]))
+
+
 def test_the_core_mass_check(table):
     """``m_core`` must equal the last node mass to 1e-10."""
     arrays, _ = gaussian_core()
