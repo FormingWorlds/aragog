@@ -4,7 +4,8 @@ the sub-grid lid branches from.
 Run from the repository root with that commit's ``src`` first on the path, for example
 ``PYTHONPATH=<checkout of the base>/src:. python <this file>``. With ``--core-module`` it
 replaces only the core_module entries, from ``CORE_MODULE_COMMIT`` (the boundary-layer CMB flux
-with the eq. 16 critical Rayleigh number), and stores that commit in ``mode_core_module/commit``.
+with the eq. 16 critical Rayleigh number of the interior viscosity), and stores that commit in
+``mode_core_module/commit``.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import aragog
 from tests.reference.subgrid_lid_v0_probe import CASES, MODES, case_name, mode_probe, probe
 
 BASE_COMMIT = '65e0d18ef13606515da9fa6ecba917e0620208d1'
-CORE_MODULE_COMMIT = '2377b6c5ad271fd78d02e30d50c636ebe1f07cef'
+CORE_MODULE_COMMIT = '03962559665104b50d7893c1a2c1cefec38d43aa'
 OUT = Path(__file__).resolve().parent / 'subgrid_lid_v0_reference.npz'
 
 if __name__ == '__main__':
