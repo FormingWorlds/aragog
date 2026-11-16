@@ -252,6 +252,30 @@ def test_a_pure_iron_10_earth_mass_core_builds_on_the_default_grid():
     assert t_min <= t_a.min() and t_a.max() <= t_max
 
 
+class _BumpTable:
+    """A stub table with s = ln T - c(T) q(P), q = log10(P / 2e11)^2: at 1000 K (c = 0.3) the
+    entropy peaks at the inner node 2e11 Pa, at 2e4 K (c = -0.3) it has its minimum there."""
+
+    temperature = np.array([1000.0, 20000.0])
+
+    def value(self, field, pressure, temperature):
+        t = np.asarray(temperature)
+        c = 0.3 - 0.6 * np.log(t / 1000.0) / np.log(20.0)
+        return np.log(t) - c * np.log10(np.asarray(pressure) / 2e11) ** 2
+
+
+def test_the_cmb_temperature_range_holds_every_node_of_a_bumped_entropy():
+    """Where the entropy at the lowest and highest table temperature peaks at an inner node,
+    the range runs from the CMB temperature whose entropy reaches the largest node entropy at
+    the lowest temperature to the one that reaches the smallest at the highest."""
+    tab, p = _BumpTable(), np.geomspace(4e11, 1e11, 9)
+    lo, hi = TabulatedCoreProfiles._full_range(tab, p)
+    s_cmb = lambda t: float(tab.value('s', p[-1], t))  # noqa: E731
+    assert s_cmb(lo) == pytest.approx(np.max(tab.value('s', p, 1000.0)), rel=1e-8)
+    assert s_cmb(hi) == pytest.approx(np.min(tab.value('s', p, 20000.0)), rel=1e-8)
+    assert 1000.0 < lo < hi < 20000.0
+
+
 def test_the_core_mass_check(table):
     """``m_core`` must equal the last node mass to 1e-10."""
     arrays, _ = gaussian_core()
