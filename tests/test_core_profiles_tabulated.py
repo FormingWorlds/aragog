@@ -18,14 +18,11 @@ from aragog.core.iron_table import FIELDS, LiquidIronTable
 from aragog.core.module import load_core_arrays
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
+from tests.conftest import EARTH, gaussian_core_arrays
 from tests.conftest import PALEOS_CUT as CUT
-from tests.conftest import gaussian_core_arrays
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
-EARTH = dict(
-    rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
-)
 T_RANGE = (2500.0, 7000.0)
 
 
@@ -423,8 +420,6 @@ def test_a_core_that_misses_the_isentrope_inside_a_cell_is_refused(table):
 
 def test_the_out_of_grid_message_tells_the_value_from_the_bound(paleos):
     """A temperature 0.004 K beyond either end prints a value that differs from the bound."""
-    import re
-
     for bad in (float(paleos.t_grid[0]) - 0.004, float(paleos.t_grid[-1]) + 0.004):
         with pytest.raises(ValueError) as err:
             paleos.check_t_cmb([bad])

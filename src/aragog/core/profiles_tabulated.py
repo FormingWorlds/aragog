@@ -323,8 +323,7 @@ class TabulatedCoreProfiles:
     def _outside_luo(self, p2, t_a, m):
         """Mass [kg] per CMB temperature outside the Luo et al. (2024) calibration window."""
         dmass = np.diff(m)
-        mid = lambda x: 0.5 * (x[1:] + x[:-1])  # noqa: E731
-        p_mid, t_mid = mid(p2), mid(t_a)
+        p_mid, t_mid = 0.5 * (p2[1:] + p2[:-1]), 0.5 * (t_a[1:] + t_a[:-1])
         out = (
             (p_mid < LUO_P_PA[0])
             | (p_mid > LUO_P_PA[1])

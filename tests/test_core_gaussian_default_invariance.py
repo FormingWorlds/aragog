@@ -47,7 +47,7 @@ def _values(budget) -> dict:
     p = budget.profiles
     r = [x * p.r_cmb for x in RADII]
     t = np.asarray(T_CMB)
-    out = {
+    return {
         'density': [float(p.density(x)) for x in r],
         'enclosed_mass': [float(p.enclosed_mass(x)) for x in r],
         'gravity': [float(p.gravity(x)) for x in r],
@@ -71,7 +71,6 @@ def _values(budget) -> dict:
         'heat_content': [budget.heat_content(x) for x in t],
         'heat_change': [budget.heat_change(x, -37.5) for x in t],
     }
-    return out
 
 
 def _all_values() -> dict:

@@ -9,7 +9,6 @@ liquid iron table.
 
 from __future__ import annotations
 
-import jax
 import numpy as np
 import pytest
 
@@ -20,14 +19,11 @@ from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import refuse_unmodelled_regime
+from tests.conftest import EARTH, gaussian_core_arrays, legend_outside, reference_heat_change
 from tests.conftest import PALEOS_CUT as CUT
-from tests.conftest import gaussian_core_arrays, legend_outside, reference_heat_change
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
-EARTH = dict(
-    rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
-)
 BUDGET = dict(ds_fusion=172.8, icn_width=10.0, alpha_c=0.8, c_light=0.05)
 T_RANGE = (2900.0, 6100.0)
 V1_RTOL = 1e-6
@@ -158,33 +154,17 @@ def test_a_constant_property_table_gives_the_gaussian_budget(v1_budgets, validat
 
 @pytest.mark.physics_invariant
 def test_heat_change_is_the_integral_of_the_effective_capacity(paleos_budget):
-    """On the PALEOS isentrope the booked heat change equals the quadrature of the capacity
-    the solver integrates, across the onset of the inner core, across freeze-out and away from
-    both, to 1e-6. The largest difference, 3.2e-7 on the piece from onset to freeze-out
-    (measured, with the reference converged from 200 to 1600 nodes), is the error of the
-    48-point panel of ``heat_change`` that the Gaussian path also uses."""
+    """On the PALEOS isentrope the booked heat change equals a composite quadrature of the
+    capacity the solver integrates (64 points on 256 panels per piece), across the onset of the
+    inner core, across freeze-out and away from both, to 1e-10; measured at most 5.0e-13."""
     b = paleos_budget
     t_on = b.t_onset
-    cap = jax.jit(jax.vmap(b.effective_capacity))
-    x, w = np.polynomial.legendre.leggauss(400)
-
-    def integral(t_a, t_b):
-        """GL integral of the capacity; below onset in u = sqrt(t_on - T), smooth there."""
-        if t_a >= t_on and t_b >= t_on:
-            mid, half = 0.5 * (t_a + t_b), 0.5 * (t_b - t_a)
-            return half * float(np.sum(w * np.asarray(cap(mid + half * x))))
-        u_a, u_b = np.sqrt(t_on - t_a), np.sqrt(t_on - t_b)
-        u = 0.5 * (u_a + u_b) + 0.5 * (u_b - u_a) * x
-        return 0.5 * (u_b - u_a) * float(np.sum(w * np.asarray(cap(t_on - u**2)) * -2.0 * u))
-
     # The cases cross the onset, stay below it, cross freeze-out (the boundary terms jump to
     # zero there), and stay above the onset.
     for t0, dt in ((t_on + 80.0, -200.0), (t_on - 30.0, -45.0), (t_on + 400.0, -10.0)):
-        t1 = t0 + dt
-        cuts = [t for t in (t_on, b.t_freeze) if min(t0, t1) < t < max(t0, t1)]
-        edges = [t0, *sorted(cuts, reverse=dt < 0), t1]
-        ref = sum(integral(a, c) for a, c in zip(edges[:-1], edges[1:]))
-        assert b.heat_change(t0, dt) == pytest.approx(ref, rel=1e-6)
+        assert b.heat_change(t0, dt) == pytest.approx(
+            reference_heat_change(b, t0, dt), rel=1e-10
+        )
     assert t_on + 80.0 - 200.0 < b.t_freeze < t_on  # the first case crosses both
     assert b.heat_content(t_on - 50.0) - b.heat_content(t_on + 50.0) == pytest.approx(
         b.heat_change(t_on + 50.0, -100.0), rel=1e-9

@@ -71,6 +71,11 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
 PALEOS_CUT = Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
 
 
+EARTH = dict(
+    rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
+)
+
+
 def gaussian_core_arrays(g, n: int) -> dict:
     """Core arrays ``r, m, P, rho, g`` of the Gaussian profile ``g`` on ``n`` uniform nodes."""
     r = np.linspace(0.0, g.r_cmb, n)
@@ -83,14 +88,7 @@ def write_core(path, rho_cen: float = 12500.0, n: int = 101, **extra):
     Zalmoxis-style ``.npz`` at ``path``; return the path and the core mass [kg]."""
     from aragog.core.profiles import GaussianCoreProfiles
 
-    g = GaussianCoreProfiles(
-        rho_cen=rho_cen,
-        length_scale=7272e3,
-        r_cmb=3.48e6,
-        p_cmb=136e9,
-        alpha=1.35e-5,
-        c_p=840.0,
-    )
+    g = GaussianCoreProfiles(**{**EARTH, 'rho_cen': rho_cen})
     arrays = gaussian_core_arrays(g, n)
     arrays |= {
         'phase': np.zeros(n),

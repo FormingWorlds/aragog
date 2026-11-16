@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import pathlib
-
 import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aragog.core.iron_table import FIELDS, LiquidIronTable
+from tests.conftest import PALEOS_CUT as CUT
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
-
-CUT = pathlib.Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
 
 
 @pytest.fixture(scope='module')
