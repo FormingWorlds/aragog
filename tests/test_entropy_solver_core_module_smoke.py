@@ -535,14 +535,16 @@ def test_an_atol_below_the_floor_is_reported_once(shared_eos, caplog):
 @pytest.mark.physics_invariant
 def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
     """A core 300 K above a liquid base, hot-started through calls ending at 1, 2, 12, 22 and
-    122 yr as a coupled run makes them, closes its heat against the CMB heat to 1e-6 in each
-    call and cumulatively (2.3e-7 in the 22 to 122 yr call, 2.1e-7 cumulative)."""
+    122 yr as a coupled run makes them, closes its heat against the CMB heat within twice the
+    call's tolerance scale step_core_tol_J in each call and cumulatively (measured: per call
+    1.2e-6 to 1.9e-6 of the CMB heat against scales of 1.9e-6 to 4.5e-5; at 1000 times tighter
+    tolerances the residuals fall 93 to 350 times, so they are integration error)."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
     n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
     S = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
     solver.set_initial_core_temperature(float(shared_eos.temperature(p_cmb, S[:1])[0]) + 300.0)
     solver.set_initial_entropy(S)
-    residual, cmb_heat = 0.0, 0.0
+    residual, cmb_heat, tol = 0.0, 0.0, 0.0
     for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0, 22.0, 122.0)):
         solver.parameters.solver.start_time, solver.parameters.solver.end_time = start, end
         if start > 0.0:
@@ -553,8 +555,9 @@ def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
         assert out.step_dE_F_cmb_J > 0.0
         residual += out.step_dE_core_J + out.step_dE_F_cmb_J
         cmb_heat += out.step_dE_F_cmb_J
-        assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * out.step_dE_F_cmb_J
-    assert abs(residual) < 1e-6 * cmb_heat
+        tol += out.step_core_tol_J
+        assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 2.0 * out.step_core_tol_J
+    assert abs(residual) < 2.0 * tol < 1e-4 * cmb_heat
 
 
 def test_a_core_that_freezes_from_the_top_is_refused(shared_eos, monkeypatch):
@@ -755,10 +758,11 @@ def test_a_stratified_call_on_a_3000_m_cmb_cell_closes_its_core_ledger():
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
-    """A 5 yr call of an unstratified core from the driven start moves T_core by only 2e-12 K
-    and books 3.9e15 J of CMB heat, 3.5 float spacings of the absolute core heat (8.95e30 J); at
-    tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat (measured 1.1e-7), which
-    the difference heat_content(T1) - heat_content(T0) misses."""
+    """A 5 yr call of an unstratified core 0.1 K above the bottom cell moves T_core by only
+    3.2e-11 K and books 5.9e16 J of CMB heat, about 53 float spacings of the absolute core heat
+    (8.95e30 J); at tolerances 1e-3 of the default its ledger closes to 1e-6 of that heat
+    (measured 5.0e-7), which the difference heat_content(T1) - heat_content(T0) misses (by 9.8e-3).
+    The start lies off the slope change of the CMB law at T_core = T_m (see the next test)."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -766,7 +770,11 @@ def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
         end_time=5.0,
         solver_method='cvode',
     )
-    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    S = _driven_s_profile(solver._n_stag)
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m = float(np.asarray(solver.entropy_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    solver.set_initial_core_temperature(t_m + 0.1)
+    solver.set_initial_entropy(S)
     solver._atol_sf = 1e-3
     solver.parameters.solver.rtol *= 1e-3
     solver.solve()
@@ -776,6 +784,33 @@ def test_a_low_flux_call_books_the_core_heat_below_its_float_spacing():
     budget = solver._core_module_budget
     old = float(budget.heat_content(t1) - budget.heat_content(t0))
     assert abs(old + out.step_dE_F_cmb_J) > 1e-6 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_call_from_the_cmb_slope_change_closes_with_the_tolerance():
+    """The CMB law conducts across the half cell for T_core <= T_m (slope k / dr_half) and takes
+    the boundary-layer flux above it (slope 0 at T_core = T_m), so a call that starts at
+    T_core = T_m starts on a slope change of its right-hand side. Its ledger error is set by the
+    solver tolerance: at tolerances 1e-3 of the default it closes to 2.84e-4, at 1e-5 to 2.0e-5
+    (measured), falling more than 10 times."""
+    closure = {}
+    for factor in (1e-3, 1e-5):
+        solver = _build(
+            'core_module',
+            entropy_eos_copy(),
+            CORE_MODULE_PARAMS,
+            end_time=5.0,
+            solver_method='cvode',
+        )
+        solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+        solver._atol_sf = factor
+        solver.parameters.solver.rtol *= factor
+        solver.solve()
+        out = solver.get_state()
+        closure[factor] = (out.step_dE_core_J + out.step_dE_F_cmb_J) / abs(out.step_dE_F_cmb_J)
+    assert abs(closure[1e-3]) < 4e-4 and abs(closure[1e-5]) < 3e-5, closure
+    assert abs(closure[1e-3]) > 10.0 * abs(closure[1e-5]), closure
 
 
 @needs_cvode
