@@ -20,6 +20,7 @@ from aragog.core import (
     RA_CRIT_UPPER_LAYER,
     check_ra_crit,
     cmb_boundary_layer_flux,
+    critical_rayleigh_eq16,
 )
 
 pytestmark = pytest.mark.unit
@@ -176,6 +177,48 @@ def test_eq16_rayleigh_number_takes_the_interior_viscosity():
     )
 
 
+# Six states of a 1 Earth-mass coupled run (CMB cell 1500 m): time [Myr], T_core, T_m, the top
+# cell T [K], mantle thickness [m], the layer's k, rho, cp, alpha, g at the mean temperature,
+# the layer and the interior viscosity [Pa s], and Ra_i, Ra_crit and q [W/m^2] as the run log
+# prints them (4 decimals for Ra_crit, 5 significant digits otherwise).
+_RUN_STATES = [
+    (0.0983, 5118.811704813429, 5083.533916503925, 2381.400790730236, 3670481.5816515163, 4.0, 4332.787038192286, 5644.44744909633, 5.3480562222107306e-05, 11.012233868575926, 5880.986890556698, 10215.40949939358, 2.0674e+26, 94058.1465, 140.88),
+    (0.4996, 4939.818551378954, 4664.90397794359, 1904.2924786796275, 3670481.5816515163, 4.0, 4551.9367805792235, 4042.34997843334, 4.0571510416005524e-05, 11.012233868575926, 2009662022598.5461, 2.888313099508526e+17, 4.8621e+12, 129.2381, 23.614),
+    (0.9996, 4933.2693144609475, 4476.473589334745, 1851.9265309624834, 3670481.5816515163, 4.0, 4628.313008403075, 3519.6520287194166, 3.607255608918772e-05, 11.012233868575926, 1.2981748697774718e+16, 3.043132352645164e+21, 3.7491e+08, 17.6882, 4.4957),
+    (2.4980, 4922.568201321717, 4347.101038455513, 1687.778531128513, 3670481.5816515163, 4.0, 4684.783131124418, 3144.145014622264, 3.274617417439798e-05, 11.012233868575926, 2.2777956448009418e+18, 4.82608729203438e+22, 2.0619e+07, 9.6196, 1.2584),
+    (5.0319, 4902.783984810352, 4313.858952868887, 1570.4865457801793, 3670481.5816515163, 4.0, 4706.52169888826, 3001.9930368828554, 3.146566024635326e-05, 11.012233868575926, 1.1522746073845006e+19, 8.505628079231984e+22, 1.1160e+07, 8.4561, 0.76922),
+    (6.9755, 4887.673385940018, 4308.210350087209, 1548.757275183266, 3670481.5816515163, 4.0, 4715.08715445909, 2946.3421343237537, 3.09611106698747e-05, 11.012233868575926, 2.0666773683355165e+19, 1.0073213819539438e+23, 9.1517e+06, 8.1110, 0.62174),
+]  # fmt: skip
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('row', _RUN_STATES, ids=[f'{r[0]}Myr' for r in _RUN_STATES])
+def test_eq16_reproduces_the_states_of_a_coupled_run(row):
+    """At six states from molten (0.1 Myr) to solid (7 Myr), eq. 16 and the layer flux equal
+    eqs. 3, 13, 14 and 16 by hand to 1e-9, and the hand values equal the run log to its
+    printed digits."""
+    t, t_core, t_m, t_top, depth, k, rho, cp, alpha, g, eta, eta_i, ra_log, rc_log, q_log = row
+    kappa = k / (rho * cp)
+    ra_i = alpha * rho * g * (t_core - t_top) * depth**3 / (kappa * eta_i)
+    ra_crit = 0.28 * ra_i**0.21
+    delta = (ra_crit * kappa * eta / (alpha * rho * g * (t_core - t_m))) ** (1.0 / 3.0)
+    layer = dict(conductivity=k, density=rho, heat_capacity=cp, expansivity=alpha, gravity=g)
+    shell = dict(shell_thickness=depth, shell_contrast=t_core - t_top)
+    assert float(critical_rayleigh_eq16(viscosity=eta_i, **layer, **shell)) == pytest.approx(
+        ra_crit, rel=1e-9
+    )
+    q = float(
+        cmb_boundary_layer_flux(
+            t_core, t_m, viscosity=eta, interior_viscosity=eta_i, dr_half=1500.0,
+            ra_crit=None, **layer, **shell,
+        )
+    )  # fmt: skip
+    assert q == pytest.approx(k * (t_core - t_m) / delta, rel=1e-9)
+    assert ra_i == pytest.approx(ra_log, rel=5e-5)
+    assert ra_crit == pytest.approx(rc_log, abs=6e-5)
+    assert q == pytest.approx(q_log, rel=5e-5)
+
+
 def test_non_buoyant_layer_conducts():
     """Zero or negative expansivity removes the convective branch."""
     for alpha in (0.0, -1e-5):
@@ -189,6 +232,21 @@ def test_ra_crit_scales_the_convective_flux():
     assert _flux(100.0, _LIQUID, ra_crit=8.0 * RA_CRIT_UPPER_LAYER) == pytest.approx(
         base / 2.0, rel=1e-12
     )
+
+
+@pytest.mark.physics_invariant
+def test_eq16_flux_has_the_sign_of_the_contrast_and_vanishes_at_zero():
+    """At the 5.03 Myr state with eq. 16, from dT = -50 K to +50 K the flux has the sign of dT,
+    a colder core conducts across the half cell (k dT / dr_half), and the flux is below
+    1e-6 W/m^2 at |dT| = 1e-6 K on both sides (Validation V4)."""
+    dTs = np.concatenate([np.linspace(-50.0, 50.0, 101), [-1e-6, 1e-6]])
+    t_m = 4313.9
+    q = np.asarray(cmb_boundary_layer_flux(t_m + dTs, t_m, ra_crit=None, **_STATE))
+    dT = (t_m + dTs) - t_m  # the contrast after rounding at t_m
+    assert np.array_equal(np.sign(q), np.sign(dT))
+    cold = dT <= 0.0
+    np.testing.assert_allclose(q[cold], 4.0 * dT[cold] / 750.0, rtol=1e-12, atol=0.0)
+    assert np.abs(q[-2:]).max() < 1e-6
 
 
 def test_flux_is_continuous_and_differentiable_through_zero():
