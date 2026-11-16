@@ -80,16 +80,25 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 
 ## When the whole core freezes
 
-The freeze-out temperature is the CMB temperature at which the CMB reaches the melting curve, that is, the melting temperature at the CMB pressure. Below it the whole core is solid. Aragog decides this from its own melting curve, not from the Zalmoxis `phase`. The solver accepts a fully solid core only when both of these hold:
+What happens when the CMB cools below the melting temperature of iron at the CMB pressure? Under the 2 conditions below, the core runs on fully solid and gives up only its secular heat.
 
-- The core froze from the centre outward: the freeze-out temperature is at or below the onset temperature of the inner core. Otherwise the solver stops with an error that names the regime `fully_frozen`.
-- No light elements are in use: `alpha_c` times `c_light` is zero, and `light_element_fraction` times `depression` is zero. With light elements, the solver stops once the inner core holds more than a tenth of the core mass ([diagnostic outputs](core_bc.md#diagnostic-outputs)), so a fully solid core never runs.
+The freeze-out temperature is the melting temperature at the CMB pressure. Below it the CMB is solid; when the core froze from the centre outward, the whole core is solid. The solver accepts a fully solid core only when both hold:
+
+- The core froze from the centre outward: the freeze-out temperature is at or below the onset temperature of [the inner core](#the-inner-core), and no `snow` state comes on the way down. Otherwise the solver stops with an error that names the regime: `top_down` or `snow` while liquid remains, `fully_frozen` when a call starts below both temperatures.
+- No light-element parameters are set ([parameters](core_bc.md#parameters)): `alpha_c` times `c_light` and `light_element_fraction` times `depression` are zero. Otherwise the solver stops once the inner core holds more than a tenth of the core mass, before the core is fully solid. A `quadratic` curve holds its depression in `t_m0`, which this check does not see.
 
 A fully solid core that runs has no latent or gravitational term. Its temperature stays on the liquid isentrope of its $T_\text{cmb}$, so the whole core cools with the CMB and gives up only the heat of [the secular heat capacity](#the-secular-heat-capacity). A solid core that conducts heat, with its own temperature profile, is not modelled.
 
-The run gives no warning. The output column `core_regime` is 4 ([diagnostic outputs](core_bc.md#diagnostic-outputs)), and `CoreModule.diagnostics()` returns `fully_frozen` true and `regime` 4.
+The run gives no warning. The PROTEUS output column `core_regime` is 4 ([diagnostic outputs](core_bc.md#diagnostic-outputs)), and `CoreModule.diagnostics()` returns `fully_frozen` true and `regime` 4.
 
-Examples are the dry pure-Fe Zalmoxis cores of 3, 5, 7 and 10 $M_E$ at a surface temperature of 2510 K, on the default Zalmoxis grid. Their CMB temperatures (5615, 6481, 7247 and 8147 K) lie below their freeze-out temperatures (6872, 9044, 11,029 and 13,811 K), and their onset temperatures (7359, 10,552, 14,342 and 21,678 K) lie above these, so all 4 run.
+The pure-Fe Zalmoxis cores below (surface temperature 2510 K, default Zalmoxis grid) are fully solid, and the regime check accepts each at its CMB temperature:
+
+| Planet mass ($M_E$) | CMB temperature (K) | Freeze-out temperature (K) | Onset temperature (K) |
+|---|---|---|---|
+| 3 | 5615 | 6872 | 7359 |
+| 5 | 6481 | 9044 | 10,552 |
+| 7 | 7247 | 11,029 | 14,342 |
+| 10 | 8147 | 13,811 | 21,678 |
 
 ## What the path refuses
 
