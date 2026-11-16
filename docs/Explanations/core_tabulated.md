@@ -37,7 +37,14 @@ At each node $k$, the temperature $T_{a,k}$ of the isentrope solves $s(P_k, T_{a
 
 The table is the liquid side of the PALEOS iron EOS, which Zalmoxis writes and `core_liquid_table` names. It holds the liquid also below the melting curve, where the liquid is metastable. So the isentrope stays liquid at all temperatures of the table, and no latent heat enters it. The inner core is treated separately (below).
 
-Aragog solves the isentrope on a grid of CMB temperatures, 10 K apart by default (`core_t_cmb_step`). The grid covers every CMB temperature whose isentrope stays inside the table. The slopes in radius and in $T_\text{cmb}$ come from the table derivatives, and the mixed slope from a spline in $T_\text{cmb}$, so the solver reads a surface $T_a(r, T_\text{cmb})$ with continuous slopes. Aragog checks the entropy of this surface at the nodes on the grid temperatures, at the nodes between the grid temperatures, at the radial midpoints and at the centres of the grid cells. At each point it must equal $s_c$ to a relative $10^{-6}$; [What the path refuses](#what-the-path-refuses) says what happens when it does not.
+Aragog solves the isentrope on a grid of CMB temperatures, 10 K apart by default (`core_t_cmb_step`). The grid covers every CMB temperature whose isentrope stays inside the table. The slopes in radius and in $T_\text{cmb}$ come from the table derivatives, and the mixed slope from a spline in $T_\text{cmb}$, so the solver reads a surface $T_a(r, T_\text{cmb})$ with continuous slopes. Aragog checks the entropy of this surface at 4 sets of points; at each it must equal $s_c$ to a relative $10^{-6}$:
+
+- at the nodes on the grid temperatures;
+- at the nodes between the grid temperatures;
+- at the radial midpoints;
+- at the centres of the grid cells.
+
+[What the path refuses](#what-the-path-refuses) says what happens when it does not.
 
 A worked example: for the Zalmoxis core of a 1 Earth-mass planet in the [tutorial](../Tutorials/core_tabulated.md), a CMB at 4000 K gives a centre at 6111 K.
 

@@ -19,11 +19,12 @@ The cores are the Zalmoxis core arrays of planets of 1, 3 and 5 Earth masses ($M
 ![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms.svg#only-light){ width="70%" }
 ![Secular, latent and gravitational capacity against CMB temperature, Gaussian lines and tabulated markers](../assets/validation/core_tabulated_constant_property_terms_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The markers lie on the lines; the differences are too small to draw. On an Apple M1 Ultra the largest relative differences are 6.5e-10 for the secular capacity, 3.0e-7 for the latent, 5.1e-7 for the gravitational, 5.3e-8 for $r_\text{icb}$ and 2.0e-9 for the onset temperature, all below the tolerance of $10^{-6}$. The latent and gravitational differences change in their fifth digit on another CPU, since they pass through the root of $r_\text{icb}$; the page gives them as numbers, not as a plot.
+**How to read the plot.** The plot shows each capacity against the CMB temperature: lines are the Gaussian budget, markers the tabulated one. The latent and gravitational terms exist only while an inner core grows, between freeze-out and onset. The markers lie on the lines; the differences are below the tolerance of $10^{-6}$ and too small to draw. The measured differences are in the box below.
 
 ??? info "Test details"
     - Reference: the Gaussian adiabat $T_\text{cmb}\exp(-\alpha\psi/c_p)$ (analytical).
-    - Tolerance: relative $10^{-6}$ on every term, $r_\text{icb}$ and the onset temperature; measured at most 5.1e-7.
+    - Tolerance: relative $10^{-6}$ on every term, $r_\text{icb}$ and the onset temperature.
+    - Measured: on an Apple M1 Ultra the largest relative differences are 6.5e-10 for the secular capacity, 3.0e-7 for the latent, 5.1e-7 for the gravitational, 5.3e-8 for $r_\text{icb}$ and 2.0e-9 for the onset temperature. The latent and gravitational differences change in their fifth digit on another CPU, since they pass through the root of $r_\text{icb}$.
     - Test id: `tests/test_core_budget_tabulated.py::test_a_constant_property_table_gives_the_gaussian_budget` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_budget_tabulated.py -k constant_property`
 
@@ -77,11 +78,12 @@ For the other PALEOS terms the test holds only the direction of the change from 
 ![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores, with the difference for a 1 % error in the gradient](../assets/validation/core_tabulated_isentrope_seam.svg#only-light){ width="70%" }
 ![Relative difference in temperature between the isentrope and the integral of the adiabatic gradient against pressure, 3 cores, with the difference for a 1 % error in the gradient](../assets/validation/core_tabulated_isentrope_seam_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Each solid line with markers is one core, from its CMB pressure to its centre pressure. The test runs 2 starting temperatures for each core; at each pressure the line shows the larger of their 2 differences. A difference below 2e-7 is drawn on the dash-dotted floor at 2e-7, because its last digits change from one CPU to another; all 3 cores lie on the floor (largest difference 1.1e-7). The dashed lines are the same comparison with $\nabla_\text{ad}$ 1 % too large: they rise from round-off at the CMB to between 4.3e-3 and 5.3e-3 at the centre. The dotted line is the tolerance, a relative $10^{-5}$. The solid lines lie below it and the dashed lines above it, so the test separates the isentrope from one with a 1 % error.
+**How to read the plot.** Each solid line with markers is one core, from its CMB pressure to its centre pressure. The test runs 2 starting temperatures for each core; at each pressure the line shows the larger of their 2 differences. A difference below 2e-7 is drawn on the dash-dotted floor at 2e-7, because its last digits change from one CPU to another; all 3 cores lie on the floor. The dashed lines are the same comparison with $\nabla_\text{ad}$ 1 % too large; they rise from round-off at the CMB to their largest value at the centre. The dotted line is the tolerance, a relative $10^{-5}$. The solid lines lie below it and the dashed lines above it, so the test separates the isentrope from one with a 1 % error.
 
 ??? info "Test details"
     - Reference: the integral of $\nabla_\text{ad}$ of the same table (independent column).
-    - Tolerance: relative $10^{-5}$ in $T$; measured at most 1.1e-7. A 1 % error in $\nabla_\text{ad}$ moves the centre by more than $10^{-3}$.
+    - Tolerance: relative $10^{-5}$ in $T$. A 1 % error in $\nabla_\text{ad}$ moves the centre by more than $10^{-3}$.
+    - Measured: largest difference 1.1e-7; with $\nabla_\text{ad}$ 1 % too large, 4.3e-3 to 5.3e-3 at the centre.
     - Test id: `tests/test_core_tabulated_validation.py::test_the_isentrope_equals_the_integral_of_nabla_ad` (unit tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_validation.py -k nabla_ad`
 
@@ -140,8 +142,8 @@ The residuals move with the SUNDIALS build. On the same CPU with SUNDIALS 7.2.1,
 ??? info "Test details"
     - Reference: energy conservation; the rule of the Gaussian path.
     - Tolerance:
-        - call 1: below 3e-4 at the default tolerances and below 3e-6 at the tight ones;
-        - calls 1 to 3 and the onset call: fall at least 20 times, to below $10^{-5}$;
+        - call 1: between $10^{-5}$ and 3e-4 at the default tolerances, below 3e-6 at the tight ones;
+        - calls 1 to 3 and the onset call: fall at least 20 times, to below $10^{-5}$; at each tolerance the residual is below twice the tolerance scale `step_core_tol_J`, that scale is less than 1000 times the residual, and it also falls at least 20 times;
         - calls 4 and 5: below 2e-6 at the default tolerances, and fall at least 20 times.
     - Measured (SUNDIALS 7.7.0 and 7.2.1): call 1 -1.3e-4 and -1.2e-6; calls 1 to 3 fall more than 100 times; calls 4 and 5 -1.4e-7 and 1.3e-6.
     - Test id: `tests/test_core_tabulated_ledger.py::test_the_tabulated_core_ledger_converges_with_the_tolerance`, `::test_a_tabulated_call_across_the_onset_converges_with_the_tolerance` (smoke tier)
@@ -149,7 +151,7 @@ The residuals move with the SUNDIALS build. On the same CPU with SUNDIALS 7.2.1,
 
 ## The entropy of fusion
 
-**Why this check exists.** The latent heat of the inner core is the entropy of fusion times the temperature at its boundary. This case shows how the constant compares with an ab initio value.
+**Why this check exists.** The latent heat of the inner core is the entropy of fusion times the temperature at its boundary. The test fails if the default of `ds_fusion` changes, or if the conversion from $k_B$ per atom to J kg$^{-1}$ K$^{-1}$ uses a wrong atomic mass or constant. It also shows how far the constant lies from an ab initio value.
 
 **What it tests.** The constant 172.8 J kg$^{-1}$ K$^{-1}$ of `ds_fusion` against 1.05 $k_B$ per atom at 300 GPa, with $k_B$ the Boltzmann constant, converted to 156.3 J kg$^{-1}$ K$^{-1}$ for iron.
 
