@@ -7,7 +7,8 @@ CVODE with the finite-difference Jacobian and with a JAX factory (built with
 ``lid_params=None``). The mesh and the right-hand side must match to rtol 1e-10 and the solve to
 rtol 1e-9, above the round-off between the macOS and Linux builds; a JAX case must have called
 the JAX right-hand side. On each core mode a 5-yr NumPy solve also matches its end state and its
-energy integrals to rtol 1e-8, with tidal and radiogenic heating. The solver residual and the
+energy integrals to rtol 1e-8, with tidal and radiogenic heating; the core_module entries come
+from the commit in ``mode_core_module/commit``, which holds the current CMB boundary-layer law. The solver residual and the
 core energy are differences of large terms, so they match to 1e-15 and 1e-12 of the surface
 energy (measured between macOS and Linux: 8.2e-17 and 2.2e-14); they act only across platforms.
 """
