@@ -531,7 +531,8 @@ def item9_cvode_onset(output_points: int = 130) -> None:
     for i in range(t_yr.size):
         solver.dSdt(t_yr[i], sol.y[:, i])
         flux.append(
-            solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i])) * solver._cmb_area
+            solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i]), float(sol.y[n - 1, i]))
+            * solver._cmb_area
         )
     cmb_heat = cumulative_trapezoid(flux, t_yr, initial=0.0) * YEAR
     record(9, 't_onset', t_on)

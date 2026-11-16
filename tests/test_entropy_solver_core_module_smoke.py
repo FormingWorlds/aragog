@@ -705,13 +705,11 @@ def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
-    """At tolerances 1e-3 of the default the 5 yr stratified call closes its core ledger to 1e-8
-    of its CMB heat (6.2e17 J, measured 1.7e-10): the core and shell heat changes are booked from
-    the integrated temperature changes, not from absolute temperatures, whose float spacing
-    (9e-13 K) times C_eff is 2.3e-4 of that heat; the same booking from the stored states misses
-    the bound. The case needs the uniform mesh: on a 3000 m CMB cell the call carries 4.5e20 J,
-    the float spacing is 720 times smaller against it, and the stored-state booking closes to
-    8.2e-8, closer than the integrated one (1.3e-7)."""
+    """At tolerances 1e-5 of the default the 5 yr stratified call closes its core ledger to 1e-8
+    of its CMB heat (9.35e17 J, measured 3.0e-10; 2.0e-8 at 1e-3, so the closure is integration
+    error): the core and shell heat changes are booked from the integrated temperature changes,
+    not from absolute temperatures, and the same booking from the stored states misses by 1.7e-5.
+    The case needs the uniform mesh; the next test covers a 3000 m CMB cell."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),
@@ -720,8 +718,8 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
         solver_method='cvode',
     )
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
-    solver._atol_sf = 1e-3
-    solver.parameters.solver.rtol *= 1e-3
+    solver._atol_sf = 1e-5
+    solver.parameters.solver.rtol *= 1e-5
     solver.solve()
     out = solver.get_state()
     assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
