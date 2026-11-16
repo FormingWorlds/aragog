@@ -97,13 +97,14 @@ def test_a_hotter_core_flux_does_not_depend_on_the_cell(dT, eta, dr_half):
 
 
 # The layer state of a 1 Earth-mass coupled run at 5.03 Myr (1500 m CMB cell): layer properties
-# at (T_core + T_m)/2, mantle thickness and the core-to-top contrast of the shell.
+# at (T_core + T_m)/2, interior viscosity at T_m, mantle thickness and the core-to-top contrast.
 _STATE = dict(
     conductivity=4.0,
     density=4706.5,
     heat_capacity=3002.0,
     expansivity=3.147e-5,
     viscosity=1.152e19,
+    interior_viscosity=8.506e22,
     gravity=11.012,
     dr_half=750.0,
     shell_thickness=3670.5e3,
@@ -114,8 +115,9 @@ _STATE = dict(
 @pytest.mark.physics_invariant
 def test_eq16_critical_rayleigh_number_by_hand():
     """Thiriet et al. (2019) eq. 3 and eq. 16 (0.28 Ra_i^0.21, Deschamps and Sotin 2000), eqs.
-    13-14 with beta = 1/3, at the stored state: Ra_i = 8.2e10, Ra_crit = 54.9, delta = 5.71 km,
-    q = 0.412 W/m^2 (against 0.205 W/m^2 at Ra_crit 450)."""
+    13-14 with beta = 1/3, at the stored state: Ra_i = 1.12e7 with the interior viscosity,
+    Ra_crit = 8.46, delta = 3.06 km with the mid-layer viscosity, q = 0.769 W/m^2 (against
+    0.205 W/m^2 at Ra_crit 450)."""
     t_core, t_m = 4902.8, 4313.9
     k, rho, cp, alpha, eta, g = (
         _STATE[x]
@@ -129,22 +131,49 @@ def test_eq16_critical_rayleigh_number_by_hand():
         )
     )
     kappa = k / (rho * cp)
-    ra_i = alpha * rho * g * 3332.0 * 3670.5e3**3 / (kappa * eta)
+    ra_i = alpha * rho * g * 3332.0 * 3670.5e3**3 / (kappa * _STATE['interior_viscosity'])
     ra_crit = 0.28 * ra_i**0.21
     delta = (ra_crit * kappa * eta / (alpha * rho * g * (t_core - t_m))) ** (1.0 / 3.0)
     q = float(cmb_boundary_layer_flux(t_core, t_m, ra_crit=None, **_STATE))
     assert q == pytest.approx(k * (t_core - t_m) / delta, rel=1e-12)
     assert (ra_i, ra_crit, delta, q) == pytest.approx(
-        (8.238e10, 54.89, 5713.0, 0.4124), rel=2e-3
+        (1.116e7, 8.456, 3062.0, 0.7693), rel=2e-3
     )
     q450 = float(cmb_boundary_layer_flux(t_core, t_m, ra_crit=450.0, **_STATE))
     assert q450 == pytest.approx(0.2045, rel=2e-3)
 
 
 def test_eq16_needs_the_shell():
-    """With no critical Rayleigh number set, the shell thickness and contrast are required."""
-    with pytest.raises(ValueError, match='shell_thickness and shell_contrast'):
+    """With no critical Rayleigh number set, the shell thickness and contrast and the interior
+    viscosity are required."""
+    with pytest.raises(
+        ValueError, match='shell_thickness, shell_contrast and interior_viscosity'
+    ):
         cmb_boundary_layer_flux(5000.0, 4000.0, **{**_LIQUID, 'ra_crit': None})
+    state = {k: v for k, v in _STATE.items() if k != 'interior_viscosity'}
+    with pytest.raises(
+        ValueError, match='shell_thickness, shell_contrast and interior_viscosity'
+    ):
+        cmb_boundary_layer_flux(4902.8, 4313.9, ra_crit=None, **state)
+
+
+@pytest.mark.physics_invariant
+def test_eq16_rayleigh_number_takes_the_interior_viscosity():
+    """Ra_i (eq. 3) takes the interior viscosity, the layer law (eq. 14) the mid-layer one: an
+    8x interior viscosity scales q by 8^(0.21/3) through Ra_crit only, an 8x layer viscosity
+    halves q and leaves Ra_crit alone. A fixed Ra_crit ignores the interior viscosity."""
+    t_core, t_m = 4902.8, 4313.9
+
+    def q(**kw):
+        return float(cmb_boundary_layer_flux(t_core, t_m, **{**_STATE, 'ra_crit': None, **kw}))
+
+    eta_i, eta = _STATE['interior_viscosity'], _STATE['viscosity']
+    assert q(interior_viscosity=8.0 * eta_i) == pytest.approx(q() * 8.0 ** (0.07), rel=1e-12)
+    assert q(viscosity=8.0 * eta) == pytest.approx(q() / 2.0, rel=1e-12)
+    fixed = {**_STATE, 'ra_crit': 450.0}
+    assert float(cmb_boundary_layer_flux(t_core, t_m, **fixed)) == float(
+        cmb_boundary_layer_flux(t_core, t_m, **{**fixed, 'interior_viscosity': 1.0})
+    )
 
 
 def test_non_buoyant_layer_conducts():

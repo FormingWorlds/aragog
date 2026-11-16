@@ -270,6 +270,11 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     bl.set_entropy(np.array([s_bl]))
     bl.update()
     k = first(bl.thermal_conductivity())
+    eta_layer = first(bl.viscosity())
+    # Ra_i of eq. 16 takes the interior viscosity: the bottom cell's own state, at T_m.
+    bl.set_entropy(np.asarray(y_end[:1]))
+    bl.update()
+    eta_interior = first(bl.viscosity())
     dr_half = 0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0])
     expected = float(
         cmb_boundary_layer_flux(
@@ -279,7 +284,8 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
             density=first(bl.density()),
             heat_capacity=first(shared_eos.heat_capacity(p_cmb, s_bl)),
             expansivity=first(shared_eos.material_expansivity(p_cmb, s_bl)),
-            viscosity=first(bl.viscosity()),
+            viscosity=eta_layer,
+            interior_viscosity=eta_interior,
             gravity=first(solver.state.phase_basic.gravitational_acceleration()),
             dr_half=dr_half,
             ra_crit=solver._core_module_ra_crit_cmb,
