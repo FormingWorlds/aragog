@@ -86,10 +86,10 @@ the solver books the core heat change from it, so this identity is what ties the
 **What is tested.** For a core hotter than the mantle side of the CMB, the CMB heat flux is
 
 $$
-q = \frac{k\, \Delta T}{\min(\Delta r_{1/2},\, \delta)}, \qquad \delta = \left(\frac{\kappa\, \eta\, Ra_\mathrm{crit}}{\rho\, g\, \alpha\, \Delta T}\right)^{1/3},
+q = \frac{k\, \Delta T}{\delta}, \qquad \delta = \left(\frac{\kappa\, \eta\, Ra_\mathrm{crit}}{\rho\, g\, \alpha\, \Delta T}\right)^{1/3},
 $$
 
-where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to the bottom mantle cell and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016[^cite-foley2016], eq. 20 and the text below it; Thiriet et al. 2019[^cite-thiriet2019], eqs. 13 and 14). On the convective branch $q \propto \Delta T^{4/3}$; a core colder than the mantle gains heat by conduction across the half cell only, so the flux always has the sign of $\Delta T$.
+where $\Delta T = T_\mathrm{core} - T_m$ and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016[^cite-foley2016], eq. 20 and the text below it; Thiriet et al. 2019[^cite-thiriet2019], eqs. 13 and 14). So $q \propto \Delta T^{4/3}$ at any $\delta$. A core colder than the mantle gains heat by conduction across the half cell only, $k\,\Delta T/\Delta r_{1/2}$, with $\Delta r_{1/2}$ the distance to the bottom mantle cell, so the flux always has the sign of $\Delta T$.
 
 **Reference.** The law is evaluated for a bottom cell with constant properties, over a liquid and a solid base:
 
@@ -104,19 +104,19 @@ where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to th
 | Viscosity $\eta$ of the liquid base | 0.1 Pa s |
 | Viscosity $\eta$ of the solid base | $10^{21}$ Pa s |
 
-The default $Ra_\mathrm{crit} = 450$ is the critical value Thiriet et al. (2019[^cite-thiriet2019], Table 2) use for the upper boundary layer of their mantle; for the lower boundary layer they scale it with the internal Rayleigh number (their eq. 16), so here it is a parameter, `ra_crit_cmb`.
+This check fixes $Ra_\mathrm{crit}$ at 450, the value Thiriet et al. (2019[^cite-thiriet2019], Table 2) use for the upper boundary layer of their mantle, and at 1800. By default the solver takes their lower-layer law instead, eq. 16, which sets $Ra_\mathrm{crit}$ from the internal Rayleigh number of the mantle ([core_bc.md](../Explanations/core_bc.md#critical-rayleigh-number-of-the-layer)); `test_eq16_critical_rayleigh_number_by_hand` checks that law against a hand calculation.
 
-**Result.** The convective branch has the slope 1.333<!--k:3.convective_slope--> in log-log and $Ra_\mathrm{crit} = 1800$ lowers the flux by the factor 0.630<!--k:3.ra_crit_ratio_1800_450--> $= (450/1800)^{1/3}$. At a 100 K contrast the flux is 5.55e+04<!--k:3.q_liquid_100K--> W m$^{-2}$ over the liquid base and 0.04<!--k:3.q_solid_100K--> W m$^{-2}$ over a solid base, where conduction across the half cell sets it; a colder core conducts at the same rate over either base, to 4.2e-15<!--k:3.cold_core_flux_equals_solid_base-->.
+**Result.** The convective branch has the slope 1.333<!--k:3.convective_slope--> in log-log and $Ra_\mathrm{crit} = 1800$ lowers the flux by the factor 0.630<!--k:3.ra_crit_ratio_1800_450--> $= (450/1800)^{1/3}$. At a 100 K contrast the flux is 5.55e+04<!--k:3.q_liquid_100K--> W m$^{-2}$ over the liquid base and 2.6e-03<!--k:3.q_solid_100K--> W m$^{-2}$ over a solid base, below the conduction across the half cell (0.04 W m$^{-2}$); a colder core conducts across the half cell over either base, to 2.0e-10<!--k:3.cold_core_flux_equals_conduction-->, the round-off of a contrast of $10^{-3}$ K at 4000 K.
 
 ![CMB boundary-layer flux](../figures/vv/fig_10_cmb_boundary_layer_flux.png)
 
-**Figure 3.** Magnitude of the CMB heat flux against the core-mantle temperature contrast, for a liquid and a solid bottom cell with the properties of section 3, at $Ra_\mathrm{crit} = 450$ (solid) and 1800 (dashed); the dotted line is a core colder than the mantle, which conducts across the half cell over either base.
+**Figure 3.** Magnitude of the CMB heat flux against the core-mantle temperature contrast, for a liquid and a solid bottom cell with the properties of section 3, at $Ra_\mathrm{crit} = 450$ (solid lines) and 1800 (dashed lines); the dotted line is a core colder than the mantle, which conducts across the half cell over either base.
 
-**What the figure shows.** The two lines of the liquid base are straight and parallel on the logarithmic axes, with the slope of the convective branch, and the dashed line lies below the solid one by the factor of the result above. The line of the solid base and the dotted line of the colder core lie on each other with the slope 1 of conduction. A wrong exponent in $\delta$ would change the slope of the liquid-base lines, and a law without the conduction floor would put the solid-base line below the dotted one. This flux sets the cooling rate of the core in a `core_module` run.
+**What the figure shows.** The two lines of the liquid base are straight and parallel on the logarithmic axes, with the slope of the convective branch, and the dashed line lies below the solid one by the factor of the result above. The lines of the solid base have the same slope and lie below the dotted line of the colder core, which has the slope 1 of conduction: a hot core under a viscous layer loses less heat than conduction across the bottom cell would carry, and the flux does not depend on that cell. A wrong exponent in $\delta$ would change the slope of the convective lines, and a conduction floor would put the solid-base line on the dotted one. This flux sets the cooling rate of the core in a `core_module` run.
 
 **Limits.** The properties of this check are constants; in the solver they come from the mantle phase model at the layer's mean temperature ([core_bc.md](../Explanations/core_bc.md)), and sections 9, 11 and 12 test the flux in the solver. The figure plots magnitudes, so it does not show the sign of the flux; the tests below hold the sign.
 
-**Pinned by** `tests/test_core_boundary_layer.py` (sign, hand-computed convective value, conduction branch, $Ra_\mathrm{crit}$ scaling, continuity and slopes through zero contrast).
+**Pinned by** `tests/test_core_boundary_layer.py` (sign, hand-computed convective value, conduction of a colder core, the boundary-layer flux under a solid base and its independence of the cell, eq. 16 by hand, $Ra_\mathrm{crit}$ scaling, continuity and slopes through zero contrast).
 
 ## 4. Inner-core nucleation
 

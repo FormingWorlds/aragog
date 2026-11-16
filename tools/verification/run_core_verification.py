@@ -254,8 +254,11 @@ def item3_flux() -> None:
             color=col,
             fontsize='small',
         )
-    # A colder core conducts across the half cell over either base: one line for both.
-    qn = -np.asarray(cmb_boundary_layer_flux(4000.0 - dT, 4000.0, viscosity=0.1, **BL_PROPS))
+    # A colder core conducts across the half cell over either base: one line for both;
+    # a hotter core convects over either base, even where that is below conduction.
+    qn = -np.asarray(
+        cmb_boundary_layer_flux(4000.0 - dT, 4000.0, viscosity=0.1, ra_crit=450.0, **BL_PROPS)
+    )
     ax.loglog(dT, qn, ':', lw=2.4, color=colour('ocean', 'C0'))
     ax.annotate(
         'core colder (either base)',
@@ -266,11 +269,8 @@ def item3_flux() -> None:
         color=colour('ocean', 'C0'),
         fontsize='small',
     )
-    record(
-        3,
-        'cold_core_flux_equals_solid_base',
-        float(np.max(np.abs(qn / styles[('solid base', 450.0)] - 1))),
-    )
+    q_cond = BL_PROPS['conductivity'] * dT / BL_PROPS['dr_half']
+    record(3, 'cold_core_flux_equals_conduction', float(np.max(np.abs(qn / q_cond - 1))))
     q_liq = styles[('liquid base', 450.0)]
     hi = dT > 10
     slope = np.polyfit(np.log(dT[hi]), np.log(q_liq[hi]), 1)[0]
@@ -283,12 +283,16 @@ def item3_flux() -> None:
     record(
         3,
         'q_liquid_100K',
-        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=0.1, **BL_PROPS)),
+        float(
+            cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=0.1, ra_crit=450.0, **BL_PROPS)
+        ),
     )
     record(
         3,
         'q_solid_100K',
-        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=1e21, **BL_PROPS)),
+        float(
+            cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=1e21, ra_crit=450.0, **BL_PROPS)
+        ),
     )
     record(3, 'conduction_slope', BL_PROPS['conductivity'] / BL_PROPS['dr_half'])
     ax.set_xlabel(r'$|T_\mathrm{core} - T_m|$ (K)')
