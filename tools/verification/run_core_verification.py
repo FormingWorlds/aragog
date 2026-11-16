@@ -499,7 +499,7 @@ def _solver_helpers():
 
 def item9_cvode_onset(output_points: int = 130) -> None:
     """Core heat across the inner-core onset: solver ledger, heat content and CMB heat, on
-    ``output_points`` CVODE output intervals (the reconstruction error falls with order 1.9, 1.5
+    ``output_points`` CVODE output intervals (the reconstruction error falls with order 1.9, 1.6
     and 2.0 from 65 to 520 intervals)."""
     params0, build, eos_copy = _solver_helpers()
     params = {

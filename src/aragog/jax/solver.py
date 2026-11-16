@@ -971,7 +971,8 @@ def dSdt_core_module(
         plus the ``aragog.core.CoreEnergyBudget`` whose rates close the
         boundary, the constant core internal source power [W] and the critical
         Rayleigh number of the CMB boundary layer (NaN selects Thiriet et al. 2019 eq. 16,
-        with the mantle thickness and the core-to-top-cell contrast). A stratified budget's CMB flux
+        with the mantle thickness, the core-to-top-cell contrast and the bottom cell's
+        viscosity at the CMB pressure). A stratified budget's CMB flux
         sees the top shell cell, and the CMB basic node rides on it.
 
     Returns
@@ -1031,6 +1032,8 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     t_m = eos.temperature(mesh.P_basic[0], S[0])
     s_bl = eos.entropy_at_temperature(mesh.P_basic[0], 0.5 * (t_hot + t_m))
     bl = evaluate_phase(eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)))
+    # Ra_i of eq. 16 takes the interior viscosity: the bottom cell's own state, at T_m.
+    interior = evaluate_phase(eos, params, mesh.P_basic[:1], S[:1])
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
             t_hot,
@@ -1045,6 +1048,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             ra_crit=ra_crit,
             shell_thickness=r_basic[-1] - r_basic[0],
             shell_contrast=t_hot - eos.temperature(mesh.P_stag[-1], S[-1]),
+            interior_viscosity=interior.viscosity[0],
         )
     )
 

@@ -234,8 +234,8 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
        (positive flux and booked CMB energy), a core 1000 K colder gains it.
 
     The driven profile's base is mushy (phi 0.19); over the hot core the layer's mean
-    temperature is past the rheological transition (phi 0.51), so the flux is about 6.7e3 W/m^2
-    (eq. 16 gives Ra_crit 5.9e4 at this low viscosity, 0.20 times the flux of Ra_crit 450),
+    temperature is past the rheological transition (phi 0.51), so the flux is about 7.8e4 W/m^2
+    (eq. 16 gives Ra_crit 37 with the viscosity of the base, 2.3 times the flux of Ra_crit 450),
     while below the cold core it is conduction of about 0.03 W/m^2.
     """
     from aragog.core import cmb_boundary_layer_flux
@@ -270,6 +270,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     bl.set_entropy(np.array([s_bl]))
     bl.update()
     k = first(bl.thermal_conductivity())
+    rho = first(bl.density())
     eta_layer = first(bl.viscosity())
     # Ra_i of eq. 16 takes the interior viscosity: the bottom cell's own state, at T_m.
     bl.set_entropy(np.asarray(y_end[:1]))
@@ -281,7 +282,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
             t_core,
             t_m,
             conductivity=k,
-            density=first(bl.density()),
+            density=rho,
             heat_capacity=first(shared_eos.heat_capacity(p_cmb, s_bl)),
             expansivity=first(shared_eos.material_expansivity(p_cmb, s_bl)),
             viscosity=eta_layer,
@@ -316,7 +317,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
-        assert 6.586e3 < out.F_cmb < 6.719e3  # 6.652e3 +- 1 %
+        assert 7.688e4 < out.F_cmb < 7.844e4  # 7.766e4 +- 1 %
         # the layer's mean temperature lies past the rheological transition, the base below it
         assert first(shared_eos.melt_fraction(p_cmb, s_bl)) == pytest.approx(0.51, abs=0.01)
 
@@ -344,7 +345,7 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
 @pytest.mark.physics_invariant
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
     """A core 300 K above a partly molten base (phi 0.67 to 0.65) loses heat through the
-    boundary layer fast enough to cool by about 0.14 K in 4 yr (eq. 16 gives Ra_crit 3.4e5 at
+    boundary layer fast enough to cool by about 0.16 K in 4 yr (eq. 16 gives Ra_crit 2.8e5 at
     this low viscosity). The heat it loses is the heat booked into the mantle (q_radio = 0), and
     it equals the budget's content change between the start and end core temperatures (secular
     only, the core stays above nucleation)."""
@@ -365,8 +366,8 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     ]
     # The numbers core_bc.md quotes for this case, which hold on a base at these melt fractions.
     assert phi == pytest.approx([0.67, 0.65], abs=0.01)
-    assert 0.03579 < float(t_core[0] - t_core[-1]) / 4.0 < 0.03651  # 0.03615 K/yr +- 1 %
-    assert 1.3725e4 < out.F_cmb < 1.4003e4  # 1.3864e4 W/m^2 +- 1 %
+    assert 0.03888 < float(t_core[0] - t_core[-1]) / 4.0 < 0.03966  # 0.03927 K/yr +- 1 %
+    assert 1.4908e4 < out.F_cmb < 1.5210e4  # 1.5059e4 W/m^2 +- 1 %
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
@@ -375,10 +376,10 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
 @pytest.mark.physics_invariant
 def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     """A core 2 K above the inner-core onset over a partly molten base cools through it in 16 yr
-    under CVODE, to 0.29 K below it (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset
+    under CVODE, to 0.53 K below it (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset
     above the base). The core heat change across the square-root cusp equals the heat_content
-    difference and, at rtol 1e-10, the CMB heat to 1e-6 (measured 2.9e-7; 5.7e-7 at rtol 1e-8,
-    3.3e-7 at 1e-12)."""
+    difference and, at rtol 1e-10, the CMB heat to 1e-6 (measured 4.3e-7; 1.0e-6 at rtol 1e-8,
+    4.1e-7 at 1e-12)."""
     params = dict(UNENRICHED_PARAMS)
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=16.0, solver_method='cvode')

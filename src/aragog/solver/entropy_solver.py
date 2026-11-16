@@ -4397,8 +4397,9 @@ class EntropySolver:
         properties at the CMB pressure and the mean of the two temperatures (Thiriet et al.
         2019; the heat capacity and the expansivity of the phases, without the phase-change
         terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``. The internal
-        Rayleigh number of eq. 16 takes the mantle thickness of the mesh and the contrast
-        from the core to the top cell (entropy ``s_top`` at its pressure).
+        Rayleigh number of eq. 16 takes the mantle thickness of the mesh, the contrast
+        from the core to the top cell (entropy ``s_top`` at its pressure) and the viscosity
+        of the bottom cell's own state at the CMB pressure (the interior at ``T_m``).
         """
         from aragog.core import cmb_boundary_layer_flux
 
@@ -4417,6 +4418,9 @@ class EntropySolver:
         t_top_cell = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
         s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
         bl = self._bl_phase
+        bl.set_entropy(np.array([s_bottom]))
+        bl.update()
+        eta_interior = first(bl.viscosity())
         bl.set_entropy(np.array([s_bl]))
         bl.update()
         return float(
@@ -4433,6 +4437,7 @@ class EntropySolver:
                 ra_crit=self._core_module_ra_crit_cmb,
                 shell_thickness=float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
                 shell_contrast=t_hot - t_top_cell,
+                interior_viscosity=eta_interior,
             )
         )
 

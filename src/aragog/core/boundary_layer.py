@@ -9,7 +9,8 @@ Thiriet et al. (2019)[^cite-thiriet2019], eqs. 13-14 with ``beta = 1/3``,
 and the layer properties at the mean of the two temperatures. The critical Rayleigh
 number is their eq. 16 (from Deschamps and Sotin 2000[^cite-deschamps2000]),
 ``Ra_crit = 0.28 Ra_i^0.21``, with the internal Rayleigh number of their eq. 3,
-``Ra_i = alpha rho g dT_shell D^3 / (kappa eta)``, unless a fixed value is given
+``Ra_i = alpha rho g dT_shell D^3 / (kappa eta_i)`` with the viscosity ``eta_i`` of the
+interior at ``T_m``, unless a fixed value is given
 (450 is the value Thiriet et al. take for the upper layer). The flux does not depend
 on the mesh. Two choices are this module's own, not the papers': a core colder than
 the mantle above it (a stably stratified layer) receives heat by conduction across
@@ -60,9 +61,10 @@ def critical_rayleigh_eq16(
 ):
     """Thiriet et al. (2019) eq. 16, ``0.28 Ra_i^0.21``, with ``Ra_i`` of their eq. 3.
 
-    ``shell_thickness`` [m] is the mantle thickness and ``shell_contrast`` [K] the
-    temperature difference across the shell; the other arguments are the layer properties
-    as in ``cmb_boundary_layer_flux``. A non-positive ``Ra_i`` is held at a tiny positive
+    ``shell_thickness`` [m] is the mantle thickness, ``shell_contrast`` [K] the
+    temperature difference across the shell and ``viscosity`` [Pa s] that of the interior
+    at ``T_m``; the other arguments are the layer properties as in
+    ``cmb_boundary_layer_flux``. A non-positive ``Ra_i`` is held at a tiny positive
     value so the power stays finite (the caller conducts there).
     """
     kappa = conductivity / (density * heat_capacity)
@@ -91,6 +93,7 @@ def cmb_boundary_layer_flux(
     ra_crit=RA_CRIT_CMB_DEFAULT,
     shell_thickness=None,
     shell_contrast=None,
+    interior_viscosity=None,
 ):
     """Heat flux out of the core across the CMB [W/m^2].
 
@@ -116,6 +119,10 @@ def cmb_boundary_layer_flux(
     shell_thickness, shell_contrast : float, optional
         Mantle thickness [m] and temperature difference across the shell [K] for the
         internal Rayleigh number of eq. 16; required when ``ra_crit`` is None.
+    interior_viscosity : float, optional
+        Viscosity of the interior at ``t_mantle`` [Pa s], the viscosity of the internal
+        Rayleigh number of eq. 16; required when ``ra_crit`` is None. The layer law
+        (eq. 14) keeps ``viscosity``.
 
     Returns
     -------
@@ -126,12 +133,15 @@ def cmb_boundary_layer_flux(
     Raises
     ------
     ValueError
-        When ``ra_crit`` is None and the shell thickness or contrast is missing.
+        When ``ra_crit`` is None and the shell thickness or contrast or the interior
+        viscosity is missing.
     """
+    eq16_inputs = (shell_thickness, shell_contrast, interior_viscosity)
     if ra_crit is None:
-        if shell_thickness is None or shell_contrast is None:
+        if any(x is None for x in eq16_inputs):
             raise ValueError(
-                'ra_crit=None (Thiriet eq. 16) needs shell_thickness and shell_contrast'
+                'ra_crit=None (Thiriet eq. 16) needs shell_thickness, shell_contrast and '
+                'interior_viscosity'
             )
         ra_crit = jnp.nan
     dT = t_core - t_mantle
@@ -141,13 +151,13 @@ def cmb_boundary_layer_flux(
     kappa = conductivity / (density * heat_capacity)
     buoyant = expansivity * density * gravity > 0.0
     buoyancy = jnp.where(buoyant, expansivity * density * gravity, 1.0)
-    if shell_thickness is not None and shell_contrast is not None:
+    if all(x is not None for x in eq16_inputs):
         eq16 = critical_rayleigh_eq16(
             conductivity=conductivity,
             density=density,
             heat_capacity=heat_capacity,
             expansivity=jnp.where(buoyant, expansivity, 1.0),
-            viscosity=viscosity,
+            viscosity=interior_viscosity,
             gravity=gravity,
             shell_thickness=shell_thickness,
             # The shell spans the CMB layer: its contrast is at least the CMB contrast.

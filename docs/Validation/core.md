@@ -297,13 +297,13 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **How we know the right answer.** Energy conservation: the core heat change of the call must equal its CMB heat ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)). The bound is $10^{-6}$ for a core without a layer solved alone.
 
-The core cools from 6414.4<!--k:9.t_core_start--> K to 6412.1<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 78<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 2.9e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
+The core cools from 6414.4<!--k:9.t_core_start--> K to 6411.9<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 105<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 4.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
 
-The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 2.3e-03<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.9, 1.5 and 2.0, close to the order 2 of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
+The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 3.5e-03<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.9, 1.6 and 2.0, close to the order 2 of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
 
 | Output intervals | 65 | 130 | 260 | 520 |
 |---|---|---|---|---|
-| Error of the reconstructed CMB heat | 8.7e-3 | 2.3e-3 | 8.1e-4 | 2.0e-4 |
+| Error of the reconstructed CMB heat | 1.3e-2 | 3.5e-3 | 1.2e-3 | 2.9e-4 |
 
 **Why it matters.** The core energy ledger of a `core_module` run rests on this closure.
 
@@ -311,7 +311,7 @@ The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the 
 
 **How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow. The 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 5.7e-07<!--k:9.core_vs_cmb_rel_rtol1e-8-->, also within the bound. With atol at its floor the closure stops near $3 \times 10^{-7}$ for any rtol (3.2e-7 at $10^{-12}$); with atol 1000 times tighter it falls to 2.5e-8 at an rtol of $10^{-10}$, so it is integration error set by atol, not round-off (the float spacing of the core heat content is $5 \times 10^{-13}$ of the CMB heat). Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.0e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, just above the bound, which holds from an rtol of $10^{-9}$ (5.4e-7). With atol at its floor the closure stops near $4 \times 10^{-7}$ for any rtol (4.2e-7 at $10^{-12}$); with atol 1000 times tighter it falls to 3.6e-8 at an rtol of $10^{-10}$, so it is integration error set by atol, not round-off (the float spacing of the core heat content is $5 \times 10^{-13}$ of the CMB heat). Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 ??? info "Test details"
     - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.

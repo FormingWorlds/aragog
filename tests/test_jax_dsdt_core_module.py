@@ -536,8 +536,8 @@ def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax(
 def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boundaries():
     """Where the layer's mean temperature crosses the solidus or the liquidus by 1e-7 K (5e-7
     J/kg/K in the mush; the tables' pure-phase T(S) is flat next to both edges), the NumPy and
-    the JAX CMB fluxes step only with the mantle-model viscosity: with Thiriet eq. 16,
-    Ra_crit ~ eta^(-0.21), so delta ~ eta^((1 - 0.21)/3) and q ~ eta^(-0.79/3)."""
+    the JAX CMB fluxes step only with the layer viscosity: Ra_crit of Thiriet eq. 16 takes the
+    interior viscosity of the solid bottom cell, which stays fixed, so q ~ eta^(-1/3)."""
     solver = _build_numpy_solver(entropy_eos_copy())
     eos, bl, n = solver.entropy_eos, solver._bl_phase, solver._n_stag
     P = float(solver._P_basic_flat[0])
@@ -556,7 +556,7 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
             flux.append(np.array([f_np, f_jax]))
             eta.append(float(np.asarray(bl.viscosity()).flat[0]))
         np.testing.assert_allclose(
-            flux[1] / flux[0] * (eta[1] / eta[0]) ** ((1 - 0.21) / 3), 1.0, atol=1e-6
+            flux[1] / flux[0] * (eta[1] / eta[0]) ** (1 / 3), 1.0, atol=1e-6
         )
 
 

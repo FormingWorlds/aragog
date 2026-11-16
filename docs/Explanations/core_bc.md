@@ -87,19 +87,22 @@ with the layer's conductivity $k$, density $\rho$, heat capacity $c_p$, expansiv
 How thick is the boundary layer above a hot core? By default Aragog takes the lower-layer law of Thiriet et al. (2019) eq. 16, p. 141, a fit of Deschamps & Sotin (2000)[^cite-deschamps2000] eq. 33:
 
 $$
-\mathrm{Ra}_\text{crit} = 0.28\, \mathrm{Ra}_i^{0.21}, \qquad \mathrm{Ra}_i = \frac{\alpha \rho g\, \Delta T_\text{sh}\, D^3}{\kappa\, \eta}.
+\mathrm{Ra}_\text{crit} = 0.28\, \mathrm{Ra}_i^{0.21}, \qquad \mathrm{Ra}_i = \frac{\alpha \rho g\, \Delta T_\text{sh}\, D^3}{\kappa\, \eta_i}.
 $$
 
-Here $\mathrm{Ra}_i$ is the internal Rayleigh number of the mantle (their eq. 3), $D$ the mantle thickness and $\Delta T_\text{sh}$ the temperature of the core minus that of the top mantle cell, at least $\Delta T$. The other properties are those of the layer at $\bar{T}$.
+Here $\mathrm{Ra}_i$ is the internal Rayleigh number of the mantle (their eq. 3), $D$ the mantle thickness and $\Delta T_\text{sh}$ the temperature of the core minus that of the top mantle cell, at least $\Delta T$. Its viscosity $\eta_i$ is that of the interior: the bottom mantle cell at the CMB pressure and $T_m$, as Deschamps & Sotin (2000), p. 204, take the temperature of the well-mixed interior. The other properties are those of the layer at $\bar{T}$, and the layer law above keeps the layer viscosity $\eta$.
 
-Against a fixed number at the same state, a less viscous mantle has a larger $\mathrm{Ra}_i$ and $\mathrm{Ra}_\text{crit}$, so a thicker layer and a smaller flux; a more viscous mantle has a thinner layer and a larger flux. For example, a layer at $\eta = 1.15 \times 10^{19}$ Pa s over a 3670 km mantle has $\mathrm{Ra}_i = 8.2 \times 10^{10}$ and $\mathrm{Ra}_\text{crit} = 55$. Its thickness is 5.7 km and its flux 0.41 W m$^{-2}$, 2.0 times the flux of a fixed 450.
+Against a fixed number at the same state, a less viscous interior has a larger $\mathrm{Ra}_i$ and $\mathrm{Ra}_\text{crit}$, so a thicker layer and a smaller flux; a more viscous interior has a thinner layer and a larger flux. For example, a 1 Earth-mass run at 5.03 Myr has a layer at $\eta = 1.15 \times 10^{19}$ Pa s and an interior at $\eta_i = 8.5 \times 10^{22}$ Pa s over a 3670 km mantle, so $\mathrm{Ra}_i = 1.1 \times 10^{7}$ and $\mathrm{Ra}_\text{crit} = 8.5$. The layer is 3.1 km thick and its flux 0.77 W m$^{-2}$, 3.8 times the flux of a fixed 450.
 
 A positive `ra_crit_cmb` fixes the number instead; 450 is the value Thiriet et al. (2019), Table 2, take for the upper boundary layer.
 
-**Known limit.** Deschamps & Sotin (2000) fit the law on $2.4 \times 10^5 \le \mathrm{Ra}_i \le 2.2 \times 10^7$ (Table 3a, p. 210; Fig. 10, p. 215). Aragog applies it outside that range:
+**Known limit.** Deschamps & Sotin (2000) fit the law on $2.4 \times 10^5 \le \mathrm{Ra}_i \le 2.2 \times 10^7$ (Table 3a, p. 210; Fig. 10, p. 215) in a 2-D box heated from below, without internal heat sources (p. 206); radiogenic or tidal heating of the mantle is outside that setting. In the same 1 Earth-mass run:
 
-- a solid-like layer has $\mathrm{Ra}_i$ of $10^{9}$ to $10^{11}$, $\mathrm{Ra}_\text{crit}$ of 28 to 55 and a flux 2.0 to 2.5 times that of 450;
-- a molten or mushy mantle base has $\mathrm{Ra}_i$ up to about $10^{29}$, $\mathrm{Ra}_\text{crit}$ near $3.5 \times 10^5$ and a flux about 0.1 times that of 450.
+- from 2.5 to 7 Myr ($\eta_i$ of $5 \times 10^{22}$ to $10^{23}$ Pa s), $\mathrm{Ra}_i$ falls from $2.1 \times 10^{7}$ to $9.2 \times 10^{6}$, inside the fit range, with $\mathrm{Ra}_\text{crit}$ of 9.6 to 8.1;
+- at 0.5 to 1 Myr ($\eta_i$ of $3 \times 10^{17}$ to $3 \times 10^{21}$ Pa s), $\mathrm{Ra}_i$ is $5 \times 10^{12}$ to $4 \times 10^{8}$, above the range;
+- at 0.1 Myr ($\eta_i = 10^{4}$ Pa s), $\mathrm{Ra}_i$ is $2 \times 10^{26}$ and $\mathrm{Ra}_\text{crit}$ about $9 \times 10^4$, a flux 0.17 times that of 450.
+
+The interior viscosity in $\mathrm{Ra}_i$ gives 1.8 to 2.4 times the flux of the layer viscosity in that run from 0.5 Myr on, and 1.04 times at 0.1 Myr.
 
 ### Properties of the boundary layer
 
@@ -186,7 +189,7 @@ $$
 
 with $A_\text{cmb}$ the area of the CMB, so that $Q_\text{cmb} = A_\text{cmb}\, q$; the contrast itself also follows the mantle base, which can cool much faster. The case with a shell is under [Resolved stable layer](#resolved-stable-layer-experimental).
 
-In the 10-node test of a 300 K contrast over a partly molten base (melt fraction 0.67 to 0.65 over 4 yr), the flux is about $1.4 \times 10^4$ W m$^{-2}$ and the core cools by about 0.036 K per year, while the base cools faster and the contrast grows to about 330 K.
+In the 10-node test of a 300 K contrast over a partly molten base (melt fraction 0.67 to 0.65 over 4 yr), the flux is about $1.5 \times 10^4$ W m$^{-2}$ and the core cools by about 0.039 K per year, while the base cools faster and the contrast grows to about 330 K.
 
 The flux follows the layer's mean temperature rather than the base: a 1000 K contrast over a base at melt fraction 0.19 puts the layer at melt fraction 0.51, past the rheological transition, and carries about $6.7 \times 10^3$ W m$^{-2}$, while a layer whose mean temperature stays below the transition has a solid-like viscosity and a far smaller flux.
 
