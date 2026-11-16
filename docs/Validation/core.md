@@ -311,7 +311,7 @@ The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the 
 
 **How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow. The 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 5.7e-07<!--k:9.core_vs_cmb_rel_rtol1e-8-->, also within the bound, but only 2 times above the tight solve, so the closure of this call is not set by the tolerance alone. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 5.7e-07<!--k:9.core_vs_cmb_rel_rtol1e-8-->, also within the bound. With atol at its floor the closure stops near $3 \times 10^{-7}$ for any rtol (3.2e-7 at $10^{-12}$); with atol 1000 times tighter it falls to 2.5e-8 at an rtol of $10^{-10}$, so it is integration error set by atol, not round-off (the float spacing of the core heat content is $5 \times 10^{-13}$ of the CMB heat). Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 ??? info "Test details"
     - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.
