@@ -78,6 +78,19 @@ The inner core starts to grow when the isentrope meets the melting curve at the 
 
 The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 300 GPa of González-Cataldo & Militzer (2023)[^cite-gonzalezcataldo2023], with $k_B$ the Boltzmann constant.
 
+## When the whole core freezes
+
+The freeze-out temperature is the CMB temperature at which the CMB reaches the melting curve, that is, the melting temperature at the CMB pressure. Below it the whole core is solid. Aragog decides this from its own melting curve, not from the Zalmoxis `phase`. The solver accepts a fully solid core only when both of these hold:
+
+- The core froze from the centre outward: the freeze-out temperature is at or below the onset temperature of the inner core. Otherwise the solver stops with an error that names the regime `fully_frozen`.
+- No light elements are in use: `alpha_c` times `c_light` is zero, and `light_element_fraction` times `depression` is zero. With light elements, the solver stops once the inner core holds more than a tenth of the core mass ([diagnostic outputs](core_bc.md#diagnostic-outputs)), so a fully solid core never runs.
+
+A fully solid core that runs has no latent or gravitational term. Its temperature stays on the liquid isentrope of its $T_\text{cmb}$, so the whole core cools with the CMB and gives up only the heat of [the secular heat capacity](#the-secular-heat-capacity). A solid core that conducts heat, with its own temperature profile, is not modelled.
+
+The run gives no warning. The output column `core_regime` is 4 ([diagnostic outputs](core_bc.md#diagnostic-outputs)), and `CoreModule.diagnostics()` returns `fully_frozen` true and `regime` 4.
+
+Examples are the dry pure-Fe Zalmoxis cores of 3, 5, 7 and 10 $M_E$ at a surface temperature of 2510 K, on the default Zalmoxis grid. Their CMB temperatures (5615, 6481, 7247 and 8147 K) lie below their freeze-out temperatures (6872, 9044, 11,029 and 13,811 K), and their onset temperatures (7359, 10,552, 14,342 and 21,678 K) lie above these, so all 4 run.
+
 ## What the path refuses
 
 - A core whose pressures leave the pressure range of the table that `core_liquid_table` names stops the build, with an error that names both ranges; give a table that covers the core. The range comes from the table: 45 GPa to 3 TPa for the test cut in `tests/validation/data/`. Pressure rows with cells that did not converge at the top or bottom of a table are dropped first (the default Zalmoxis grid ends at 1e14 Pa, its finite rows at 5.93e13 Pa); a non-finite cell inside the table stops the read.
@@ -94,7 +107,7 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 - The liquid of the PALEOS table is calibrated between 8000 and 14,000 K and between 50 and 1300 GPa (Attia et al. (2026), p. 5). The `CoreModule` diagnostic `core_eos_outside_calibration` gives the core mass fraction outside this window; the run continues.
 - The isentrope is that of pure liquid iron, also for a density with light elements.
 - The profile reads only `r`, `m`, `P`, `rho` and `g` of the core arrays, not `phase` or `M_ic`. It takes the density as given, solid or liquid, and finds its own inner-core boundary where the liquid isentrope meets the melting curve.
-- A fully solid core is refused with light elements. Without them it runs; only the diagnostic `fully_frozen` marks it: no latent or gravitational term, a temperature fixed to the liquid isentrope of its $T_\text{cmb}$ (it gives the secular term), and no heat conduction (`stratification` is refused). Examples: the dry pure-Fe Zalmoxis cores of 3, 5 and 7 $M_E$ at 2510 K (CMB at 5615, 6481, 7247 K; freeze-out at 6872, 9044, 11,029 K).
+- A fully solid core runs only under the 2 conditions of [When the whole core freezes](#when-the-whole-core-freezes), and it does not conduct heat.
 - The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer (2023), p. 9), so the constant is 1.45 times the value at 1000 GPa.
 - The interpolation loses accuracy near the edges of a table, with no warning. On the 3 TPa test cut the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to $10^{-5}$ on the table nodes from 50 GPa to 2.1 TPa; it misses by up to $1.3\times10^{-5}$ between nodes below 2 TPa, by $3.6\times10^{-5}$ at 45 GPa and by more than $10^{-4}$ above 2.38 TPa.
 
