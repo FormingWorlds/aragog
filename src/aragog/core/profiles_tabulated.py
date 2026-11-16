@@ -41,6 +41,7 @@ ISENTROPE_RTOL = 1e-6  # relative entropy miss of the isentrope, at nodes and mi
 MASS_RTOL = 1e-10  # arrays against the structure mass
 MASS_DENSITY_RTOL = 1e-2  # int 4 pi r^2 rho dr against m; 1.1e-3 measured at an ICB jump
 MAX_CELLS = 2_000_000  # nodes x CMB temperatures of the isentrope grid
+C_P_OVERRIDE = 840.0  # J/kg/K: the PALEOS liquid has no electronic heat capacity
 # Calibration window of the Luo et al. (2024) liquid (Attia et al. 2026, p. 5).
 LUO_P_PA = (50e9, 1300e9)
 LUO_T_K = (8000.0, 14000.0)
@@ -130,7 +131,7 @@ class TabulatedCoreProfiles:
         core: dict,
         table: LiquidIronTable,
         *,
-        c_p: float | None = 840.0,
+        c_p: float | None = C_P_OVERRIDE,
         t_cmb_range: tuple[float, float] | None = None,
         t_cmb_step: float = 10.0,
         m_core: float | None = None,

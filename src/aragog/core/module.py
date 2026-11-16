@@ -28,7 +28,11 @@ from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.iron_table import LiquidIronTable
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
-from aragog.core.profiles_tabulated import TabulatedCoreProfiles, is_positive_number
+from aragog.core.profiles_tabulated import (
+    C_P_OVERRIDE,
+    TabulatedCoreProfiles,
+    is_positive_number,
+)
 from aragog.core.regime import crystallization_regime
 
 logger = logging.getLogger('fwl.' + __name__)
@@ -83,7 +87,7 @@ _BUDGET_KEYS = frozenset(
 PROFILE_SOURCES = ('gaussian', 'paleos')
 _TABULATED_FILES = ('core_liquid_table', 'core_profile_file')
 _TABULATED_KEYS = frozenset({'profile_source', 'core_cp_override', 'core_t_cmb_step'})
-CORE_CP_OVERRIDE_DEFAULT = 840.0  # J/kg/K: the PALEOS liquid has no electronic heat capacity
+CORE_CP_OVERRIDE_DEFAULT = C_P_OVERRIDE
 # Shell settings of a stratified core: config key -> CoreShell keyword.
 _LAYER_KEYS = {
     'layer_base_fraction': 'base_fraction',
