@@ -293,17 +293,17 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **Why this check exists.** Where the inner core starts to grow, the latent heat capacity of the core rises as a square root of the undercooling. A solver that steps badly over this onset books a core heat change that does not match the heat through the core-mantle boundary (CMB).
 
-**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
+**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 16 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
 
 **How we know the right answer.** Energy conservation: the core heat change of the call must equal its CMB heat ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)). The bound is $10^{-6}$ for a core without a layer solved alone.
 
-The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 244<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
+The core cools from 6414.4<!--k:9.t_core_start--> K to 6412.1<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 78<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 2.9e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
 
-The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.5 and then 2.0, the order of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
+The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 2.3e-03<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.9, 1.5 and 2.0, close to the order 2 of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
 
-| Output intervals | 65 | 130 | 260 |
-|---|---|---|---|
-| Error of the reconstructed CMB heat | 2.3e-3 | 7.9e-4 | 1.9e-4 |
+| Output intervals | 65 | 130 | 260 | 520 |
+|---|---|---|---|---|
+| Error of the reconstructed CMB heat | 8.7e-3 | 2.3e-3 | 8.1e-4 | 2.0e-4 |
 
 **Why it matters.** The core energy ledger of a `core_module` run rests on this closure.
 
@@ -311,7 +311,7 @@ The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the 
 
 **How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow. The 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 5.7e-07<!--k:9.core_vs_cmb_rel_rtol1e-8-->, also within the bound, but only 2 times above the tight solve, so the closure of this call is not set by the tolerance alone. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 ??? info "Test details"
     - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.

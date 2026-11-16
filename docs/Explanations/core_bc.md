@@ -167,9 +167,9 @@ $$
 
 with $A_\text{cmb}$ the area of the CMB, so that $Q_\text{cmb} = A_\text{cmb}\, q$; the contrast itself also follows the mantle base, which can cool much faster. The case with a shell is under [Resolved stable layer](#resolved-stable-layer-experimental).
 
-In the 10-node test of a 300 K contrast over a partly molten base (melt fraction 0.67 to 0.65 over 4 yr), the flux is about $1.25 \times 10^5$ W m$^{-2}$ and the core cools by about 0.33 K per year, while the base cools faster and the contrast grows to about 330 K.
+In the 10-node test of a 300 K contrast over a partly molten base (melt fraction 0.67 to 0.65 over 4 yr), the flux is about $1.4 \times 10^4$ W m$^{-2}$ and the core cools by about 0.036 K per year, while the base cools faster and the contrast grows to about 330 K.
 
-The flux follows the layer's mean temperature rather than the base: a 1000 K contrast over a base at melt fraction 0.19 puts the layer at melt fraction 0.51, past the rheological transition, and carries about $3.4 \times 10^4$ W m$^{-2}$, while a layer whose mean temperature stays below the transition has a solid-like viscosity and a far smaller flux. Where $\delta$ exceeds the half cell, the flux is the conduction across it, $q_\text{cond}$, which scales with the mesh spacing.
+The flux follows the layer's mean temperature rather than the base: a 1000 K contrast over a base at melt fraction 0.19 puts the layer at melt fraction 0.51, past the rheological transition, and carries about $6.7 \times 10^3$ W m$^{-2}$, while a layer whose mean temperature stays below the transition has a solid-like viscosity and a far smaller flux. Where $\delta$ exceeds the half cell, the flux is the conduction across it, $q_\text{cond}$, which scales with the mesh spacing.
 
 ### State, output node and initial temperature
 

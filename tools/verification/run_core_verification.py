@@ -495,8 +495,8 @@ def _solver_helpers():
 
 def item9_cvode_onset(output_points: int = 130) -> None:
     """Core heat across the inner-core onset: solver ledger, heat content and CMB heat, on
-    ``output_points`` CVODE output intervals (the reconstruction error converges with order 2
-    from about 130)."""
+    ``output_points`` CVODE output intervals (the reconstruction error falls with order 1.9, 1.5
+    and 2.0 from 65 to 520 intervals)."""
     params0, build, eos_copy = _solver_helpers()
     params = {
         k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
@@ -508,7 +508,7 @@ def item9_cvode_onset(output_points: int = 130) -> None:
             'core_module',
             eos_copy(),
             params,
-            end_time=4.0,
+            end_time=16.0,
             solver_method='cvode',
             cvode_output_points=output_points,
         )
@@ -549,10 +549,10 @@ def item9_cvode_onset(output_points: int = 130) -> None:
     ax.axhline(t_on, color=colour('fog', '0.6'), lw=0.8, ls='--')
     ax.annotate(
         'inner-core onset',
-        (t_yr[-1], t_on),
-        xytext=(-4, 4),
+        (t_yr[0], t_on),
+        xytext=(4, 4),
         textcoords='offset points',
-        ha='right',
+        ha='left',
         fontsize='small',
         color=colour('fog', '0.5'),
     )

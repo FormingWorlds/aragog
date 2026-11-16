@@ -344,9 +344,11 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
     )
 
     # ra_crit_cmb reaches both RHS: with a core 1000 K above the base the flux is on the
-    # boundary-layer branch, so a 4x larger Ra_crit thickens the layer and slows the cooling.
+    # boundary-layer branch, so a 4x larger fixed Ra_crit thickens the layer and slows the
+    # cooling (the eq. 16 default here is larger than both).
     y_hot = y0.copy()
     y_hot[n_stag + 1] += 1000.0
+    monkeypatch.setattr(solver, '_core_module_ra_crit_cmb', 450.0)
     f_hot = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
     monkeypatch.setattr(solver, '_core_module_ra_crit_cmb', 1800.0)
     f_np_c = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
@@ -669,6 +671,8 @@ def test_jacobian_core_column_matches_central_differences(state):
     # The mixing flux curves strongly in the mixed region: there a central difference needs a
     # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
     h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
+    if state == 'boundary_layer':  # the gradient-slot entry is 8e-9: a 0.1 K step is round-off
+        h = 1.0  # noisy at 3.7e-5, a 1 K step agrees to 6e-7 in both rows
     up, down = y.copy(), y.copy()
     up[n + 1] += h
     down[n + 1] -= h

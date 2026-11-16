@@ -228,7 +228,7 @@ def test_budget_terms_match_the_thermal_history_table(script):
 @pytest.mark.physics_invariant
 def test_a_cvode_solve_across_the_onset_closes_its_heat(script):
     got = _reproduces(script, 9)
-    assert 0 < got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8']
+    assert 0 < got['core_vs_cmb_rel'] < got['core_vs_cmb_rel_rtol1e-8'] < 1e-6
 
 
 @pytest.mark.slow
