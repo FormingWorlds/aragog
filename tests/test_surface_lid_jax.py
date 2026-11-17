@@ -426,10 +426,13 @@ def test_padded_enthalpy_tables_share_one_program_and_keep_their_values():
 
     traces = []
 
-    def lid(e, T, s, T_s, T_b):
-        traces.append(1)
+    def ref(e, T, s, T_s, T_b):
         heat = jax.value_and_grad(jl.profile_heat, argnums=(2, 3))(e, s, T_s, T_b)
         return jl.enthalpy_H(e, T), heat, jl.profile_density(e, s, T_s, T_b)
+
+    def lid(*args):
+        traces.append(1)
+        return ref(*args)
 
     jitted = jax.jit(lid)
     T = np.concatenate([np.linspace(50.0, 1800.0, 997), _enthalpies()['kinked'].data[1]])
@@ -442,11 +445,11 @@ def test_padded_enthalpy_tables_share_one_program_and_keep_their_values():
             (1.5, 150.0, 1700.0),
         ):
             got = jax.tree_util.tree_leaves(jitted(padded, T, s_, T_s, T_b))
-            ref = jax.tree_util.tree_leaves(jax.jit(lid)(jl.enthalpy(hv), T, s_, T_s, T_b))
-            for a, b in zip(got, ref):
+            want = jax.tree_util.tree_leaves(jax.jit(ref)(jl.enthalpy(hv), T, s_, T_s, T_b))
+            for a, b in zip(got, want):
                 np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
                 assert np.all(np.isfinite(np.asarray(a)))
-    assert sum(traces) == 1 + 6  # the padded program once, the unpadded reference per call
+    assert sum(traces) == 1
 
 
 def test_enthalpy_refuses_a_size_below_its_knots():
