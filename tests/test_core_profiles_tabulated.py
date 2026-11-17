@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import pathlib
 import re
 
 import jax
@@ -190,7 +189,7 @@ def test_a_core_outside_the_pressure_range_of_its_table_is_refused(table):
     """The pressure range comes from the table: cut at 1.5 TPa it holds the 3 M_E core (centre
     1.0 TPa) and refuses the 5 M_E core (2.1 TPa); from 200 GPa up it refuses the 1 M_E core
     (CMB 128 GPa). The message names the pressures of the core and of the table."""
-    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    data = CUT.parent
     core = {
         k: load_core_arrays(data / f'zalmoxis_core_arrays_{k}.npz')
         for k in ('1me_3000K', '3me_3500K', '5me_2510K')
@@ -209,7 +208,7 @@ def test_a_core_outside_the_pressure_range_of_its_table_is_refused(table):
 
 def _fixture_core(name, rho=1.0, m=1.0):
     """A Zalmoxis core of the validation data, density and node mass scaled."""
-    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    data = CUT.parent
     core = dict(load_core_arrays(data / f'zalmoxis_core_arrays_{name}.npz'))
     core['rho'], core['m'] = core['rho'] * rho, core['m'] * m
     return core
@@ -239,7 +238,7 @@ def test_a_pure_iron_10_earth_mass_core_builds_on_the_default_grid():
     Zalmoxis grid. Along this core the entropy at the hottest table temperature is lowest at an
     inner node, not at the centre, so the hottest CMB temperature comes from the lowest entropy
     over the nodes: more than 1000 K below the one the centre alone gives."""
-    data = pathlib.Path(__file__).parent / 'validation' / 'data'
+    data = CUT.parent
     tab = LiquidIronTable.from_file(data / 'paleos_iron_liquid_default_cut_6tpa.npz')
     core = load_core_arrays(data / 'zalmoxis_core_arrays_fe_10me_2510K.npz')
     prof = TabulatedCoreProfiles(core, tab)

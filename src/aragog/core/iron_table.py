@@ -38,9 +38,7 @@ def _finite_pressure_rows(arrays, pressure):
     ValueError
         For a non-finite cell in a row between finite rows, or fewer than 4 finite rows.
     """
-    bad = np.zeros(pressure.size, bool)
-    for arr in arrays.values():
-        bad |= ~np.all(np.isfinite(arr), axis=1)
+    bad = ~np.logical_and.reduce([np.isfinite(a).all(axis=1) for a in arrays.values()])
     good = np.flatnonzero(~bad)
     if good.size < 4:
         raise ValueError(
@@ -117,11 +115,10 @@ class LiquidIronTable:
             if arr.shape != shape:
                 raise ValueError(f'{f} has shape {arr.shape}, expected {shape}')
         keep = _finite_pressure_rows(arrays, axes['pressure'])
-        self.fields = {}
-        for f, arr in arrays.items():
-            if f in _POSITIVE and not np.all(arr[keep] > 0.0):
+        self.fields = {f: arr[keep] for f, arr in arrays.items()}
+        for f in _POSITIVE:
+            if not np.all(self.fields[f] > 0.0):
                 raise ValueError(f'{f} must be positive in every cell')
-            self.fields[f] = arr[keep]
         self.pressure, self.temperature = axes['pressure'][keep], axes['temperature']
         self.header = header
         lp, lt = np.log10(self.pressure), np.log10(self.temperature)
