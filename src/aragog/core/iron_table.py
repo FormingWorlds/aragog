@@ -26,7 +26,7 @@ from scipy.interpolate import RectBivariateSpline
 FIELDS = ('rho', 'u', 's', 'cp', 'cv', 'alpha', 'nabla_ad')
 _POSITIVE = ('rho', 'cp', 'cv')
 _KIND = re.compile(r'^#\s*Kind:\s*(\S+)', re.MULTILINE)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 def _finite_pressure_rows(arrays, pressure):
