@@ -28,6 +28,7 @@ from aragog.config.boundary import (
     check_lid_mush_base,
     check_lid_surface,
     check_subgrid_lid,
+    check_surface_temperature,
     check_top_node,
 )
 from aragog.config.energy import (
@@ -127,6 +128,8 @@ class _BoundaryConditionsParameters:
     lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
     lid_surface_flux_slope: float | None = None
+    # Surface temperature [K] for the shell contrast of the core_module CMB law (BoundaryConfig).
+    surface_temperature: float | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -155,6 +158,7 @@ class _BoundaryConditionsParameters:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_top_node(self.top_node, self.core_bc)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
+        check_surface_temperature(self.surface_temperature)
         check_lid_surface(
             self.outer_boundary_condition,
             self.lid_mush_base,

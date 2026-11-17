@@ -114,6 +114,20 @@ def check_lid_surface_flux_slope(value, cap) -> None:
         raise ValueError('lid_surface_flux_slope needs lid_surface_flux_cap')
 
 
+def check_surface_temperature(value) -> None:
+    """Refuse a ``surface_temperature`` that is not None or a finite number above 0.
+
+    Raises
+    ------
+    ValueError
+        Naming the field and the value.
+    """
+    if value is None:
+        return
+    if not _is_real(value) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f'surface_temperature must be a finite number > 0, got {value!r}')
+
+
 def check_lid_surface(outer_boundary_condition, lid_mush_base, T_held, cap, slope) -> None:
     """Run the checks of the held lid surface: temperature, flux cap and flux slope."""
     check_lid_surface_temperature(T_held, outer_boundary_condition, lid_mush_base)
@@ -291,6 +305,11 @@ class BoundaryConfig:
         With ``lid_surface_flux_cap``: the slope ``F'`` [W/m^2/K] of the atmosphere flux with the
         surface temperature. Above the cap the lid then carries ``C + F' (T_s - T_held)``, the flux
         the atmosphere gives at the warmer surface to first order. None or 0: the cap alone.
+    surface_temperature : float or None
+        Surface temperature [K] of the planet, held through a call; the caller sets it between
+        calls. ``core_bc = 'core_module'`` takes the contrast across the shell of Thiriet et
+        al. (2019) eq. 3 from the core to this surface, in any outer boundary mode except 5,
+        which has its own surface temperature. None: the top cell's temperature stands in.
     """
 
     outer_boundary_condition: int
@@ -318,9 +337,11 @@ class BoundaryConfig:
     lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
     lid_surface_flux_slope: float | None = None
+    surface_temperature: float | None = None
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_surface_temperature(self.surface_temperature)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
         check_lid_surface(
             self.outer_boundary_condition,

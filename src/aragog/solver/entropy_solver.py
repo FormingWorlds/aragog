@@ -42,6 +42,7 @@ from aragog.config.boundary import (
     check_lid_mush_base,
     check_lid_surface,
     check_subgrid_lid,
+    check_surface_temperature,
 )
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
@@ -2663,6 +2664,17 @@ class EntropySolver:
         self._refresh_surface_temperature()
         return self.state._surface_temperature_bc
 
+    def cmb_shell_surface_temperature(self) -> float:
+        """Surface temperature [K] of the shell contrast of the core_module CMB law: the BC 5
+        surface temperature, else the ``surface_temperature`` setting, else NaN (the top cell
+        stands in). A setting changed between calls is checked here."""
+        if self._outer_bc_kind == 5:
+            self._refresh_surface_temperature()
+            return float(self.state._surface_temperature_bc[1])
+        value = self.evaluator.boundary_conditions._settings.surface_temperature
+        check_surface_temperature(value)
+        return math.nan if value is None else float(value)
+
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and after a change of
         ``outer_boundary_value``; ValueError unless it is a positive finite real [K]."""
@@ -4398,8 +4410,9 @@ class EntropySolver:
         2019; the heat capacity and the expansivity of the phases, without the phase-change
         terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``. The internal
         Rayleigh number of eq. 16 takes the mantle thickness of the mesh, the contrast
-        from the core to the top cell (entropy ``s_top`` at its pressure) and the viscosity
-        of the bottom cell's own state at the CMB pressure (the interior at ``T_m``).
+        across the shell from the core to ``cmb_shell_surface_temperature`` (the top cell's
+        temperature, entropy ``s_top`` at its pressure, without one) and the viscosity of the
+        bottom cell's own state at the CMB pressure (the interior at ``T_m``).
         """
         from aragog.core import cmb_boundary_layer_flux
 
@@ -4415,7 +4428,9 @@ class EntropySolver:
         eos, p_cmb = self.entropy_eos, float(self._P_basic_flat[0])
         t_hot = max(float(t_core), 1.0)
         t_m = first(eos.temperature(p_cmb, s_bottom))
-        t_top_cell = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
+        t_surf = self.cmb_shell_surface_temperature()
+        if math.isnan(t_surf):
+            t_surf = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
         s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
         bl = self._bl_phase
         bl.set_entropy(np.array([s_bottom]))
@@ -4436,7 +4451,7 @@ class EntropySolver:
                 dr_half=self._cmb_dr_half,
                 ra_crit=self._core_module_ra_crit_cmb,
                 shell_thickness=float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
-                shell_contrast=t_hot - t_top_cell,
+                shell_contrast=t_hot - t_surf,
                 interior_viscosity=eta_interior,
             )
         )
@@ -5482,6 +5497,7 @@ class EntropySolver:
             bc_s.lid_surface_flux_cap,
             bc_s.lid_surface_flux_slope,
         )
+        check_surface_temperature(bc_s.surface_temperature)
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.

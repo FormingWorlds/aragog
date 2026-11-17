@@ -221,6 +221,7 @@ def build_jax_rhs_and_jacobian(
     start_time: float | None = None,
     *,
     lid_params=None,
+    core_module_surface_temperature: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -270,6 +271,9 @@ def build_jax_rhs_and_jacobian(
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; None selects Thiriet
         et al. (2019) eq. 16; checked with ``aragog.core.check_ra_crit``.
+    core_module_surface_temperature : float or None
+        Surface temperature [K] of the shell contrast of eq. 16, the solver's
+        ``cmb_shell_surface_temperature()``; None or NaN: the top cell's temperature.
     lid_params : aragog.jax.surface_lid.LidParams, optional
         The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
         ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
@@ -428,6 +432,11 @@ def build_jax_rhs_and_jacobian(
         data = data + (
             jnp.float64(q_radio),
             jnp.float64(jnp.nan if ra_crit is None else ra_crit),
+            jnp.float64(
+                jnp.nan
+                if core_module_surface_temperature is None
+                else core_module_surface_temperature
+            ),
         )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
