@@ -562,7 +562,7 @@ class EntropyEOS_JAX(eqx.Module):
         where ``dT/dS`` is below ``1e-12 |T|``; NaN for a NaN ``P`` or ``T``.
         """
         solid, melt = self._get_tables('temperature')
-        span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
+        span = (jnp.minimum(solid.S_min, melt.S_min), jnp.maximum(solid.S_max, melt.S_max))
         t_fixed = jax.lax.stop_gradient(T)
         p_fixed = jax.lax.stop_gradient(P)
 

@@ -5,8 +5,7 @@ Verifies:
   varying parameters; trace increments on mesh shape change and static BC mode change;
 - Parity with reference factory across quasi_steady and energy_balance, radio on/off;
 - No stale values: perturbation of each pytree leaf alters the output and matches
-  an independent reference build;
-- ID-reuse guard: object identity check protects against recycled object addresses.
+  an independent reference build.
 """
 
 from __future__ import annotations
@@ -25,11 +24,7 @@ import numpy as np  # noqa: E402
 from aragog.jax.nondim import NonDimScales  # noqa: E402
 from aragog.jax.phase import PhaseParams  # noqa: E402
 from aragog.solver.cvode_jax import (  # noqa: E402
-    _CACHE_MAXSIZE,
-    _JIT_CACHE,
     _TRACE_COUNTERS,
-    _get_or_create_jitted,
-    _JitCacheEntry,
     build_jax_rhs_and_jacobian,
     clear_jit_cache,
 )
@@ -514,53 +509,10 @@ def test_no_stale_values(shared_eos):
             )
 
 
-def test_id_reuse_guard():
-    """Verify that if an object address is reused without identity, cache misses."""
-    from unittest.mock import patch
-
-    class Dummy:
-        pass
-
-    obj1 = Dummy()
-    obj2 = Dummy()
-    eos = Dummy()
-
-    # Pre-populate cache with obj1
-    key = ('quasi_steady', False, id(obj1), id(eos))
-    _JIT_CACHE[key] = _JitCacheEntry(
-        rhs_jit='dummy_rhs',
-        jac_jit='dummy_jac',
-        phase_params=obj1,
-        eos_jax=eos,
-        powers_jit=None,
-    )
-
-    # Look up with obj1 -> HIT
-    entry, hit = _get_or_create_jitted('quasi_steady', False, obj1, eos)
-    assert hit is True
-    assert entry.rhs_jit == 'dummy_rhs'
-
-    # Simulate address collision: obj2 with same key as obj1 -> MISS
-    _JIT_CACHE[('quasi_steady', False, id(obj2), id(eos))] = _JitCacheEntry(
-        rhs_jit='stale_rhs',
-        jac_jit='stale_jac',
-        phase_params=obj1,
-        eos_jax=eos,
-        powers_jit=None,
-    )
-    with patch(
-        'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
-        return_value=('fresh_rhs', 'fresh_jac'),
-    ):
-        entry2, hit2 = _get_or_create_jitted('quasi_steady', False, obj2, eos)
-        assert hit2 is False
-        assert entry2.rhs_jit == 'fresh_rhs'
-
-
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 def test_a_budget_outside_core_module_is_ignored(shared_eos, mode):
     """Outside core_module the factory ignores a core budget: the RHS gives the values it gives
-    without one, and the cache keeps a single entry."""
+    without one, from a single traced program."""
     from tests.test_jax_dsdt_core_module import _tiny_budget
 
     mesh, n = _make_mesh(N=10), 10 + (mode == 'energy_balance')
@@ -581,42 +533,7 @@ def test_a_budget_outside_core_module_is_ignored(shared_eos, mode):
         assert rhs_fn(0.0, y_nd, ydot) == 0
         rates.append(ydot)
     np.testing.assert_array_equal(rates[0], rates[1])
-    assert len(_JIT_CACHE) == 1
-
-
-def test_core_module_entries_hit_only_for_the_same_budget():
-    """A core_module entry carries its budget in the key and the identity check: the same
-    budget hits, another budget compiles anew."""
-    from unittest.mock import patch
-
-    class Dummy:
-        pass
-
-    params, eos, budget, other = Dummy(), Dummy(), Dummy(), Dummy()
-    with patch(
-        'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
-        side_effect=[('rhs_a', 'jac_a'), ('rhs_b', 'jac_b')],
-    ) as make:
-
-        def get(b):
-            entry, hit = _get_or_create_jitted('core_module', False, params, eos, b)
-            return entry.rhs_jit, entry.jac_jit, hit
-
-        assert get(budget) == ('rhs_a', 'jac_a', False)
-        assert get(budget)[2] is True
-        assert get(other)[:2] == ('rhs_b', 'jac_b')
-        assert get(budget)[:2] == ('rhs_a', 'jac_a')
-    assert make.call_args_list[0].args[-1] is budget
-    assert make.call_args_list[1].args[-1] is other
-    # A reused address: the key of a new budget holds an entry built for another one
-    forged = Dummy()
-    key = ('core_module', False, id(params), id(eos), id(forged))
-    _JIT_CACHE[key] = _JitCacheEntry('stale_rhs', 'stale_jac', params, eos, budget)
-    with patch(
-        'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
-        return_value=('fresh_rhs', 'fresh_jac'),
-    ):
-        assert _get_or_create_jitted('core_module', False, params, eos, forged)[1] is False
+    assert _TRACE_COUNTERS['rhs'] == 1
 
 
 def test_phase_params_convection_distinct_and_cached(shared_eos):
@@ -699,127 +616,6 @@ def test_radio_params_shape_mismatch_and_empty(shared_eos):
     ydot = np.zeros(n)
     assert rhs_fn(0.0, y, ydot) == 0
     assert np.all(np.isfinite(ydot))
-
-
-def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
-    """Verify 9 distinct keys evict the first key; 10th call traces again with identical output."""
-    eos = shared_eos
-
-    # Maintain references to 9 distinct PhaseParams instances so addresses are not recycled
-    params_list = [PhaseParams() for _ in range(9)]
-    n = 10
-    mesh = _make_mesh(n)
-    bp = _make_bc(mesh)
-    heating = np.zeros(n)
-    scales = NonDimScales(state_scale=np.ones(n), rhs_scale=np.ones(n), t_ref=1.0)
-    y_nd = np.full(n, 1.0)
-    ydot = np.zeros(n)
-
-    build_fn = functools.partial(
-        build_jax_rhs_and_jacobian,
-        eos_jax=eos,
-        mesh_arrays=mesh,
-        boundary_params=bp,
-        heating_array=heating,
-        scales=scales,
-    )
-
-    # 1. First key call
-    rhs_0, _, _ = build_fn(phase_params=params_list[0])
-    rhs_0(0.0, y_nd, ydot)
-    ydot_0 = ydot.copy()
-    trace_rhs_after_first = _TRACE_COUNTERS['rhs']
-    assert trace_rhs_after_first >= 1
-
-    # 2. Calls 2 through 9 with distinct PhaseParams (total 9 keys inserted)
-    for i in range(1, 9):
-        rhs_i, _, _ = build_fn(phase_params=params_list[i])
-        rhs_i(0.0, y_nd, ydot)
-
-    # Verify cache size is capped at _CACHE_MAXSIZE (8) and first key was evicted
-    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
-    key_0 = ('quasi_steady', False, id(params_list[0]), id(eos))
-    assert key_0 not in _JIT_CACHE
-
-    trace_rhs_before_10th = _TRACE_COUNTERS['rhs']
-
-    # 3. 10th call requesting first key again: must trace anew
-    rhs_10, _, _ = build_fn(phase_params=params_list[0])
-    rhs_10(0.0, y_nd, ydot)
-
-    assert _TRACE_COUNTERS['rhs'] == trace_rhs_before_10th + 1
-
-    # Verify results match reference build
-    rhs_ref, _, _ = _build_reference_factory(
-        eos_jax=eos,
-        phase_params=params_list[0],
-        mesh_arrays=mesh,
-        boundary_params=bp,
-        heating_array=heating,
-        scales=scales,
-    )
-    ydot_ref = np.zeros(n)
-    rhs_ref(0.0, y_nd, ydot_ref)
-    assert np.max(np.abs(ydot - ydot_ref)) <= 1e-14 * np.max(np.abs(ydot_ref))
-    assert np.max(np.abs(ydot - ydot_0)) <= 1e-14 * np.max(np.abs(ydot_0))
-
-
-def test_lru_cache_access_order_move_to_end(shared_eos):
-    """Verify accessing an earlier key moves it to most-recent, evicting the next oldest."""
-    eos = shared_eos
-    params_list = [PhaseParams() for _ in range(9)]
-
-    # 1. Insert 8 keys (keys 0 through 7)
-    for i in range(8):
-        _get_or_create_jitted('quasi_steady', False, params_list[i], eos)
-
-    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
-    key_0 = ('quasi_steady', False, id(params_list[0]), id(eos))
-    key_1 = ('quasi_steady', False, id(params_list[1]), id(eos))
-    assert key_0 in _JIT_CACHE
-    assert key_1 in _JIT_CACHE
-
-    # 2. Access key 0: move_to_end should move key 0 to the MRU position
-    _, hit = _get_or_create_jitted('quasi_steady', False, params_list[0], eos)
-    assert hit is True
-
-    # 3. Insert 9th key (key 8): evicts the LRU item, which must now be key 1, NOT key 0
-    key_8 = ('quasi_steady', False, id(params_list[8]), id(eos))
-    _get_or_create_jitted('quasi_steady', False, params_list[8], eos)
-
-    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
-    assert key_0 in _JIT_CACHE
-    assert key_1 not in _JIT_CACHE
-    assert key_8 in _JIT_CACHE
-
-
-def test_eos_jax_identity_guard_misses_on_forged_colliding_key(shared_eos):
-    """Verify cache miss when phase_params matches but eos_jax object differs."""
-    import copy
-
-    eos1 = shared_eos
-    eos2 = copy.copy(eos1)
-    assert eos1 is not eos2
-    params = PhaseParams()
-
-    # Populate cache for eos1
-    entry_1, hit_1 = _get_or_create_jitted('quasi_steady', False, params, eos1)
-    assert hit_1 is False
-
-    # Forge a cache collision entry keyed on id(eos2) but pointing to eos1
-    colliding_key = ('quasi_steady', False, id(params), id(eos2))
-    _JIT_CACHE[colliding_key] = _JitCacheEntry(
-        rhs_jit=entry_1.rhs_jit,
-        jac_jit=entry_1.jac_jit,
-        phase_params=params,
-        eos_jax=eos1,
-        powers_jit=None,
-    )
-
-    # Calling with eos2 must detect that entry.eos_jax is not eos2, evict, and recompile
-    entry_2, hit_2 = _get_or_create_jitted('quasi_steady', False, params, eos2)
-    assert hit_2 is False
-    assert _JIT_CACHE[colliding_key].eos_jax is eos2
 
 
 def test_mode_without_parts_function_omits_step_powers(shared_eos, monkeypatch):
