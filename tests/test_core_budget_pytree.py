@@ -176,3 +176,19 @@ def test_no_leaf_of_the_budget_is_weak_typed():
     for leaf in leaves:
         arr = jnp.asarray(leaf)
         assert not arr.weak_type and arr.dtype in (jnp.float64, jnp.int32, jnp.int64)
+
+
+def test_the_melting_point_of_an_argument_pressure_differs_by_at_most_one_float():
+    """The source of the last-bit differences of the budget programs: the iron melting point at a
+    pressure passed as an argument and broadcast against a batch is computed in the vectorised
+    kernel, at a constant or a scalar pressure once. On macOS arm64 with JAX 0.9.2 the 2 differ
+    by 1 float at 136 GPa (9.1e-13 K, measured), which moves the freeze-out edges of a budget by 1
+    to 2 floats; the scalar and the eager value agree exactly."""
+    from aragog.core.melting import IronMeltingCurve
+
+    f, p, x = IronMeltingCurve.t_melt_pure, 136e9, jnp.zeros(4)
+    scalar = float(jax.jit(f)(jnp.float64(p)))
+    constant = float(jax.jit(lambda x: f(p) + 0.0 * x)(x)[0])
+    argument = float(jax.jit(lambda q, x: f(q) + 0.0 * x)(jnp.float64(p), x)[0])
+    assert constant == scalar == float(f(p))
+    assert abs(argument - scalar) <= np.spacing(scalar)

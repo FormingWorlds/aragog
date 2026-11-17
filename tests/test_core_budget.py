@@ -496,8 +496,8 @@ def test_heat_change_heats_straddles_freeze_out_and_keeps_its_branches(prof, mon
 
 
 class _FreezeOutAboveTheJump(CoreEnergyBudget):
-    """A synthetic budget whose T_freeze sits ``shift`` floats above its own (3: 2 floats into the
-    liquid capacity); no melting curve probed puts the jump below T_freeze."""
+    """A synthetic budget whose T_freeze sits ``shift`` floats above its own (3: on the first float of
+    the liquid capacity); no melting curve probed puts the jump below T_freeze."""
 
     shift = 3
 
@@ -525,9 +525,9 @@ def _float_steps(t_ref, t):
 @pytest.mark.parametrize(
     ('fraction', 'depression', 'budget_class', 'steps'),
     [
-        (0.1, 1.2, CoreEnergyBudget, (0, 1)),
-        (0.05, 1.0, CoreEnergyBudget, (1, 2)),
-        (0.1, 1.2, _FreezeOutAboveTheJump, (-3, -2)),
+        (0.1, 1.2, CoreEnergyBudget, (2, 3)),
+        (0.05, 1.0, CoreEnergyBudget, (2, 3)),
+        (0.1, 1.2, _FreezeOutAboveTheJump, (-1, 0)),
     ],
 )
 def test_the_freeze_out_edges_are_the_floats_of_the_capacity_jump(
