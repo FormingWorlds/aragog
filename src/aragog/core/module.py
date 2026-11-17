@@ -157,7 +157,7 @@ def _check_tabulated_params(params: dict) -> None:
 
 def file_md5(path) -> str:
     """md5 of the bytes of the file at ``path``."""
-    return hashlib.md5(pathlib.Path(path).read_bytes()).hexdigest()
+    return hashlib.md5(pathlib.Path(path).read_bytes(), usedforsecurity=False).hexdigest()
 
 
 def core_module_cache_key(params: dict, r_cmb: float, p_cmb: float) -> tuple:
