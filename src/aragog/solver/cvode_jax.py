@@ -140,11 +140,13 @@ def _programs():
 
 
 def _strong(tree):
-    """``tree`` with its Python and NumPy float leaves as strong float64 scalars, so that every
-    build passes the same argument types."""
+    """``tree`` with its Python and NumPy float leaves as strong float64 scalars and its weak JAX
+    arrays as strong arrays, so that every build passes the same argument types."""
     import jax
 
     def leaf(x):
+        if isinstance(x, jax.Array) and x.weak_type:
+            return x.astype(x.dtype)
         return np.float64(x) if isinstance(x, (float, np.floating)) else x
 
     return jax.tree_util.tree_map(leaf, tree)
