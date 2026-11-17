@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as _np
 
+from aragog.core._pytree import register_pytree
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.stratification import _q_ad
@@ -38,6 +39,7 @@ _GL_W = jnp.asarray(_GL_W)
 _BISECT_ITERS = 80  # halves the bracket to ~1e-24 of r_cmb: machine precision
 
 
+@register_pytree
 class CoreEnergyBudget:
     """Energy budget of a well-mixed core with inner-core growth.
 
@@ -298,19 +300,38 @@ class CoreEnergyBudget:
         without this rule anything differentiating through the boundary
         would silently read zero.
         """
-        return self._r_icb_root(t_cmb)
+        if isinstance(t_cmb, jax.core.Tracer) or isinstance(
+            self.profiles.r_cmb, jax.core.Tracer
+        ):
+            return self._r_icb_root(t_cmb)
+        return _r_icb_one(self, t_cmb)
 
     @functools.cached_property
     def r_icb_batch(self):
-        """``r_icb`` vectorised and compiled, once per budget."""
-        return jax.jit(jax.vmap(self.r_icb))
+        """``r_icb`` vectorised, compiled once per budget form."""
+        return functools.partial(_r_icb_batch, self)
 
     @functools.cached_property
     def regime_batch(self):
-        """``crystallization_regime`` vectorised and compiled, once per budget."""
-        from aragog.core.regime import crystallization_regime
+        """``crystallization_regime`` vectorised, compiled once per budget form."""
+        return functools.partial(_regime_batch, self)
 
-        return jax.jit(jax.vmap(lambda t_cmb: crystallization_regime(self, t_cmb)))
+    @functools.cached_property
+    def capacity_batch(self):
+        """``effective_capacity`` vectorised, compiled once per budget form."""
+        return functools.partial(_capacity_batch, self)
+
+    @functools.cached_property
+    def capacity_upper_batch(self):
+        """``effective_capacity`` vectorised over CMB temperatures and light-element mixing
+        tops ``gravitational_upper``, compiled once per budget form."""
+        return functools.partial(_capacity_upper_batch, self)
+
+    @functools.cached_property
+    def rate(self):
+        """``dtcmb_dt``, or ``core_rates`` of a stratified core, compiled once per budget form;
+        the internal sources [W] are its last argument."""
+        return functools.partial(_core_rates if self.stratification else _rate, self)
 
     @functools.cached_property
     def _r_icb_root(self):
@@ -432,7 +453,7 @@ class CoreEnergyBudget:
         """
         if self.capacity_mode == 'legacy':
             return self.secular_capacity()
-        upper = self.r_convecting
+        upper = self.r_convecting if self.stratification else None
         top = upper if gravitational_upper is None else gravitational_upper
         return (
             self.secular_capacity(upper=upper, t_cmb=t_cmb)
@@ -568,10 +589,9 @@ class CoreEnergyBudget:
 
     @functools.cached_property
     def _boundary(self):
-        """Latent plus gravitational capacity [J/K] at CMB temperatures, jitted once."""
-        return jax.jit(
-            jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
-        )
+        """Latent plus gravitational capacity [J/K] at CMB temperatures, compiled once per
+        budget form."""
+        return functools.partial(_boundary_batch, self)
 
     @functools.cached_property
     def _freeze_out_edges(self):
@@ -628,3 +648,51 @@ class CoreEnergyBudget:
             t_cmb, gravitational_upper=shell.layer_base(t_shell, t_cmb)
         )
         return (q_conv - q_base) / capacity, d_shell
+
+
+# Programs of the budget functions, compiled once per budget form (classes, settings, shapes):
+# the budget is a pytree argument, so a new budget of the same form reuses them.
+@jax.jit
+def _r_icb_one(budget, t_cmb):
+    return budget.r_icb(t_cmb)
+
+
+@jax.jit
+def _r_icb_batch(budget, t_cmb):
+    return jax.vmap(budget.r_icb)(t_cmb)
+
+
+@jax.jit
+def _regime_batch(budget, t_cmb):
+    from aragog.core.regime import crystallization_regime
+
+    return jax.vmap(lambda t: crystallization_regime(budget, t))(t_cmb)
+
+
+@jax.jit
+def _boundary_batch(budget, t_cmb):
+    return jax.vmap(lambda t: budget.latent_capacity(t) + budget.gravitational_capacity(t))(
+        t_cmb
+    )
+
+
+@jax.jit
+def _capacity_batch(budget, t_cmb):
+    return jax.vmap(budget.effective_capacity)(t_cmb)
+
+
+@jax.jit
+def _capacity_upper_batch(budget, t_cmb, upper):
+    return jax.vmap(lambda t, u: budget.effective_capacity(t, gravitational_upper=u))(
+        t_cmb, upper
+    )
+
+
+@jax.jit
+def _rate(budget, t_cmb, q_cmb, q_sources=0.0):
+    return budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources)
+
+
+@jax.jit
+def _core_rates(budget, t_cmb, t_shell, q_cmb, q_sources=0.0):
+    return budget.core_rates(t_cmb, t_shell, q_cmb, q_sources=q_sources)

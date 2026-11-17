@@ -43,7 +43,9 @@ def _compiles(calls):
 
 @pytest.fixture
 def budget():
-    """A fresh Earth-like alloy budget in the partial-inner-core regime (onset near 4147 K)."""
+    """A fresh Earth-like alloy budget in the partial-inner-core regime (onset near 4147 K), with
+    no compiled program left: budgets of one form share them, so an earlier test can warm them."""
+    jax.clear_caches()
     prof = GaussianCoreProfiles(
         rho_cen=12500.0,
         length_scale=7200e3,

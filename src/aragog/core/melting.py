@@ -22,6 +22,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from aragog.core._pytree import register_pytree
+
 jax.config.update('jax_enable_x64', True)
 
 # Anzellini et al. (2013) fit constants as adopted by PALEOS T_melt_Fe.
@@ -64,6 +66,7 @@ def _checked_fraction(x, depression):
     return xs
 
 
+@register_pytree
 class IronMeltingCurve:
     """Melting temperature of the core alloy.
 
@@ -134,6 +137,7 @@ class IronMeltingCurve:
         return self.t_melt_pure(pressure) * (1.0 - self.depression * x)
 
 
+@register_pytree
 class QuadraticMeltingCurve:
     """Quadratic-in-pressure melting curve, ``T_m0 (1 + T_m1 P + T_m2 P^2)``.
 
