@@ -224,13 +224,15 @@ def _mass_miss(core):
 
 
 def test_a_density_that_misses_the_node_mass_is_refused(table):
-    """A density 5 % too large integrates to 1.05 times the node mass and is refused, with a
-    message that names the 2 masses. The stored single-phase cores miss by at most 5.0e-6; the
+    """A density 5 % too large or too small integrates to 1.05 or 0.95 times the node mass
+    and is refused, with a message that names the 2 masses. The stored single-phase cores miss by at most 5.0e-6; the
     Fe-S core with an inner-core boundary misses by 1.08e-3, from its density jump, and builds."""
     with pytest.raises(
         ValueError, match=r'core density integrates to .* kg, the node mass m is'
     ):
         TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=1.05), table)
+    with pytest.raises(ValueError, match='more than 0.01 apart'):
+        TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=0.95), table)
     single = ('1me_3000K', '3me_3500K', '5me_2510K', 'fe_10me_2510K')
     assert max(abs(_mass_miss(_fixture_core(n))) for n in single) < 5.1e-6
     icb = _fixture_core('1me_2510K')
