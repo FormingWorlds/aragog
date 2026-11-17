@@ -144,6 +144,9 @@ The steps of the flux, by `matprop_smooth_width`, are:
 |---|---|---|---|
 | 0 | the viscosity | 7.7 % | 0.5 % |
 | $10^{-2}$ | the temperature band, test configuration | 2.7 % | 0.16 % |
+| $10^{-2}$ | the temperature band, 1 Earth-mass run (PALEOS, 103 GPa) | 6.3 % | 1.3 % |
+
+**Known limit.** These steps come from the mantle viscosity model, not from the flux law. In the 1 Earth-mass run at $\Delta T = 100$ K the layer viscosity steps by a factor 0.833 at the solidus and 0.962 at the liquidus, and $q\,\eta^{1/3}$ is continuous to $10^{-10}$.
 
 ### Closure choices of Aragog
 
