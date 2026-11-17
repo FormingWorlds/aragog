@@ -900,3 +900,17 @@ def test_lid_params_follows_the_positional_arguments_of_main():
     names = list(params)
     assert names.index('start_time') == names.index('core_module_ra_crit_cmb') + 1
     assert params['lid_params'].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_lid_enthalpy_table_has_one_shape_for_every_structure():
+    """The JAX lid enthalpy table of the solver is padded to the most knots the slice below
+    the solidus can hold, so its shape does not follow the top-cell pressure; ``n`` is the
+    knot count of the NumPy table."""
+    from aragog.solver.entropy_solver import LID_TABLE_KNOTS
+
+    s = _lid_solver()
+    e = s.jax_lid_params().e
+    assert LID_TABLE_KNOTS == 2049
+    assert e.T.shape == (LID_TABLE_KNOTS,) and e.c.shape == (4, LID_TABLE_KNOTS - 1)
+    assert int(e.n) == len(s._lid_hv.data[1]) < LID_TABLE_KNOTS
+    assert np.all(np.isinf(np.asarray(e.T)[int(e.n) :]))
