@@ -571,6 +571,7 @@ def build_jax_rhs_and_jacobian(
     rhs_fn.phase_params = phase_params
     rhs_fn.rheology = getattr(phase_params, 'rheology', None)
     rhs_fn.lid = lid_params is not None
+    rhs_fn.program_args = (data, consts)
 
     return rhs_fn, jacfn, info
 
