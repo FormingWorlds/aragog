@@ -1052,7 +1052,7 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
 
-    budget._vmap_effective_capacity = fail_vmap
+    budget.capacity_upper_batch = fail_vmap
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
