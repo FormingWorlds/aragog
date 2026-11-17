@@ -160,3 +160,26 @@ def test_each_input_reaches_the_reused_program(eos, name):
     assert not np.array_equal(got[0], first[0])
     assert np.max(np.abs(got[0] - want[0])) <= 1e-14 * np.max(np.abs(want[0]))
     assert np.max(np.abs(got[1] - want[1])) <= 2e-12 * np.max(np.abs(want[1]))
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_no_argument_of_the_programs_is_weak_typed(eos, mode):
+    """Every float leaf of the program arguments (the data and the phase parameters, EOS and
+    budget) is a strong float64, so builds from Python and NumPy floats pass one type."""
+    mesh = _make_mesh(N=N)
+    rhs, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=PhaseParams(),
+        mesh_arrays=mesh,
+        boundary_params=_make_bc(mesh, outer_type=4, inner_type=1, outer_val=10.0),
+        heating_array=np.zeros(N),
+        scales=_scales(mode),
+        core_bc_mode=mode,
+        core_module_budget=_budget() if mode == 'core_module' else None,
+        core_module_ra_crit_cmb=450.0 if mode == 'core_module' else None,
+    )
+    leaves = jax.tree_util.tree_leaves(rhs.program_args)
+    floats = [x for x in leaves if np.issubdtype(np.asarray(x).dtype, np.floating)]
+    assert len(floats) > 20
+    for x in floats:
+        assert not jax.numpy.asarray(x).weak_type and np.asarray(x).dtype == np.float64
