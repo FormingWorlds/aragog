@@ -536,8 +536,8 @@ def test_a_budget_outside_core_module_is_ignored(shared_eos, mode):
     assert _TRACE_COUNTERS['rhs'] == 1
 
 
-def test_phase_params_convection_distinct_and_cached(shared_eos):
-    """Verify distinct PhaseParams instances alter output and are cached independently."""
+def test_phase_params_convection_share_one_program(shared_eos):
+    """Convection on and off give different rates from one compiled program."""
     eos = shared_eos
     params_a = PhaseParams()
     params_b = PhaseParams(convection=0)
@@ -568,20 +568,18 @@ def test_phase_params_convection_distinct_and_cached(shared_eos):
     rhs_b, _, _ = build_fn(phase_params=params_b)
     ydot_b = np.zeros(n_stag)
     assert rhs_b(t_nd, y_nd, ydot_b) == 0
-    assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
+    assert _TRACE_COUNTERS['rhs'] == traces_after_a1
 
     max_f = np.max(np.abs(ydot_a1))
     diff_ab = np.max(np.abs(ydot_a1 - ydot_b))
     assert diff_ab > 1e-3 * max_f, f'Convection on vs off diff {diff_ab} <= 1e-3 * {max_f}'
 
-    # 3. Build A again: must return A's values (cache hit on params_a, no new trace)
+    # 3. Build A again: the same program returns A's rates
     rhs_a2, _, _ = build_fn(phase_params=params_a)
     ydot_a2 = np.zeros(n_stag)
     assert rhs_a2(t_nd, y_nd, ydot_a2) == 0
-    assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
-
-    diff_a1_a2 = np.max(np.abs(ydot_a2 - ydot_a1))
-    assert diff_a1_a2 <= 1e-14 * max_f, f'Repeated build of A diverged: {diff_a1_a2}'
+    assert _TRACE_COUNTERS['rhs'] == traces_after_a1
+    np.testing.assert_array_equal(ydot_a2, ydot_a1)
 
 
 def test_radio_params_shape_mismatch_and_empty(shared_eos):
