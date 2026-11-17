@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from aragog.core.iron_table import FIELDS, LiquidIronTable
@@ -19,25 +20,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 def table():
     """The 40-per-decade liquid cut, 45 GPa to 3 TPa, 2000 to 2e4 K."""
     return LiquidIronTable.from_file(CUT)
-
-
-class _log_capture:
-    """Collect the log records of ``aragog.core.iron_table`` as text."""
-
-    def __enter__(self):
-        import logging
-
-        self.text, self._log = '', logging.getLogger('aragog.core.iron_table')
-        self._handler = logging.Handler()
-        self._handler.emit = lambda rec: setattr(self, 'text', self.text + rec.getMessage())
-        self._level = self._log.level
-        self._log.addHandler(self._handler)
-        self._log.setLevel(logging.INFO)
-        return self
-
-    def __exit__(self, *exc):
-        self._log.removeHandler(self._handler)
-        self._log.setLevel(self._level)
 
 
 def _write_dat(path, data, kind='liquid'):
@@ -146,7 +128,9 @@ def test_a_non_finite_cell_inside_is_refused(field, bad, i, j):
         LiquidIronTable(p, t, fields, header='# Kind: liquid')
 
 
-@settings(max_examples=40, deadline=None)
+@settings(
+    max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 @given(
     field=st.sampled_from(FIELDS),
     bad=st.sampled_from([np.nan, np.inf, -np.inf]),
@@ -154,7 +138,7 @@ def test_a_non_finite_cell_inside_is_refused(field, bad, i, j):
     high=st.integers(0, 2),
     j=st.integers(0, 5),
 )
-def test_non_finite_rows_at_a_pressure_edge_are_dropped(field, bad, low, high, j):
+def test_non_finite_rows_at_a_pressure_edge_are_dropped(caplog, field, bad, low, high, j):
     """Pressure rows with a non-finite cell at the bottom or top of the table are dropped and
     the new range is logged; the finite rows between keep their values."""
     data = np.load(CUT)
@@ -162,12 +146,14 @@ def test_non_finite_rows_at_a_pressure_edge_are_dropped(field, bad, low, high, j
     fields = {f: data[f][:9, :6].copy() for f in FIELDS}
     for i in [*range(low), *range(9 - high, 9)]:
         fields[field][i, j] = bad
-    with _log_capture() as log:
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
         tab = LiquidIronTable(p, t, fields, header='# Kind: liquid')
+    log = ' '.join(r.getMessage() for r in caplog.records if r.name.startswith('fwl.aragog.'))
     np.testing.assert_array_equal(tab.pressure, p[low : 9 - high])
     assert tab.value('s', p[low + 1], t[2]) == pytest.approx(data['s'][low + 1, 2], rel=1e-12)
     dropped = low + high
-    assert (f'drops {dropped} pressure rows' in log.text) == (dropped > 0), log.text
+    assert (f'drops {dropped} pressure rows' in log) == (dropped > 0), log
 
 
 def test_a_table_with_no_finite_row_is_refused():
