@@ -149,6 +149,10 @@ _LID_OUTPUT_FIELDS = (
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
+# Entropy intervals of the lid enthalpy table below the solidus, in the melt band and above it;
+# the JAX table is padded to the most knots the slice below the solidus holds.
+_LID_TABLE_COUNTS = (2048, 512, 2048)
+LID_TABLE_KNOTS = _LID_TABLE_COUNTS[0] + 1
 
 
 @dataclass(frozen=True)
@@ -3452,7 +3456,7 @@ class EntropySolver:
             return _lid.LidEnthalpy.linear(p.rho, p.cp, 0.0, 0.0)
         eos, P = self.entropy_eos, self._lid_P
         edges = (float(eos.S_min), self._lid_S_sol, self._lid_S_liq, float(eos.S_max))
-        counts = (2048, 512, 2048)  # intervals below the solidus, in the melt band, above it
+        counts = _LID_TABLE_COUNTS
         S = np.unique(
             np.concatenate(
                 [np.linspace(a, b, n + 1) for a, b, n in zip(edges, edges[1:], counts)]
@@ -3501,7 +3505,7 @@ class EntropySolver:
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
         return jl.LidParams(
-            e=jl.enthalpy(self._lid_hv),
+            e=jl.enthalpy(self._lid_hv, size=LID_TABLE_KNOTS),
             hs=jl.enthalpy(hs),
             P=self._lid_P,
             S_sol=self._lid_S_sol,

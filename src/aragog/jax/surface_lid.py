@@ -122,17 +122,25 @@ def profile_nodes(s):
 
 
 class Enthalpy(NamedTuple):
-    """Heat content per volume H(T) as cubic pieces on the knots ``T`` (coefficients ``c``,
-    highest power first) with linear continuation, and the density on the same knots."""
+    """Heat content per volume H(T) as cubic pieces on the first ``n`` knots ``T`` (coefficients
+    ``c``, highest power first) with linear continuation, and the density on the same knots.
+    Knots past ``n`` are padding (``T = inf``), so tables of different knot counts share a shape."""
 
     T: jax.Array
     c: jax.Array
     slopes: jax.Array
     rho: jax.Array
+    n: jax.Array
 
 
-def enthalpy(hv) -> Enthalpy:
-    """The JAX form of a :class:`aragog.surface_lid.LidEnthalpy`."""
+def enthalpy(hv, size: int | None = None) -> Enthalpy:
+    """The JAX form of a :class:`aragog.surface_lid.LidEnthalpy`, padded to ``size`` knots.
+
+    Raises
+    ------
+    ValueError
+        When ``size`` is smaller than the knot count of the table.
+    """
     import numpy as np
     from scipy.interpolate import PchipInterpolator
 
@@ -141,30 +149,40 @@ def enthalpy(hv) -> Enthalpy:
         rho, cp, T_b, h_b = v
         T = np.array([T_b - 1.0e4, T_b + 1.0e4])
         H0 = rho * (h_b + cp * (T[0] - T_b))
-        c = np.array([[0.0], [0.0], [rho * cp], [H0]])
-        return Enthalpy(*(jnp.asarray(a) for a in (T, c, [rho * cp, rho * cp], [rho, rho])))
-    T, H, rho = v
-    spline = PchipInterpolator(T, H)
-    d = spline.derivative()
-    slopes = [float(d(T[0])), float(d(T[-1]))]
-    return Enthalpy(*(jnp.asarray(a) for a in (T, spline.c, slopes, rho)))
+        c, slopes, rho = np.array([[0.0], [0.0], [rho * cp], [H0]]), [rho * cp] * 2, [rho] * 2
+    else:
+        T, H, rho = v
+        spline = PchipInterpolator(T, H)
+        d = spline.derivative()
+        c, slopes = spline.c, [float(d(T[0])), float(d(T[-1]))]
+    n = len(T)
+    pad = n if size is None else int(size)
+    if pad < n:
+        raise ValueError(f'pad size {pad} is below the {n} knots of the lid enthalpy table')
+    T = np.concatenate([np.asarray(T, dtype=float), np.full(pad - n, np.inf)])
+    c = np.concatenate([np.asarray(c, dtype=float), np.zeros((4, pad - n))], axis=1)
+    rho = np.concatenate([np.asarray(rho, dtype=float), np.full(pad - n, rho[-1])])
+    arrays = (jnp.asarray(a, dtype=jnp.float64) for a in (T, c, slopes, rho))
+    return Enthalpy(*arrays, jnp.asarray(n, dtype=jnp.int32))
 
 
 def enthalpy_H(e: Enthalpy, T):
     """H(T) [J/m^3] of a JAX enthalpy table, linear outside its knots."""
     T = jnp.asarray(T, dtype=float)
-    i = jnp.clip(jnp.searchsorted(e.T, T, side='right') - 1, 0, e.T.size - 2)
-    dx = jnp.clip(T, e.T[0], e.T[-1]) - e.T[i]
+    T_end = e.T[e.n - 1]
+    i = jnp.clip(jnp.searchsorted(e.T, T, side='right') - 1, 0, e.n - 2)
+    dx = jnp.clip(T, e.T[0], T_end) - e.T[i]
     inside = ((e.c[0, i] * dx + e.c[1, i]) * dx + e.c[2, i]) * dx + e.c[3, i]
     H_lo, H_hi = e.c[3, 0], _H_end(e)
     below = H_lo + e.slopes[0] * (T - e.T[0])
-    above = H_hi + e.slopes[1] * (T - e.T[-1])
-    return jnp.where(T < e.T[0], below, jnp.where(T > e.T[-1], above, inside))
+    above = H_hi + e.slopes[1] * (T - T_end)
+    return jnp.where(T < e.T[0], below, jnp.where(T > T_end, above, inside))
 
 
 def _H_end(e: Enthalpy):
-    dx = e.T[-1] - e.T[-2]
-    return ((e.c[0, -1] * dx + e.c[1, -1]) * dx + e.c[2, -1]) * dx + e.c[3, -1]
+    k = e.n - 2
+    dx = e.T[e.n - 1] - e.T[k]
+    return ((e.c[0, k] * dx + e.c[1, k]) * dx + e.c[2, k]) * dx + e.c[3, k]
 
 
 def profile_heat(e: Enthalpy, s, T_s, T_b):
