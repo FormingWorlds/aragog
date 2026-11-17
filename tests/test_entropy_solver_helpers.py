@@ -1376,6 +1376,10 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
         def heat_change(t0, dt):
             return (2.0e27 + 1.0e24 * (t0 - 4000.0 + 0.5 * dt)) * dt
 
+        @staticmethod
+        def capacity_batch(t):
+            return 2.0e27 + 1.0e24 * (np.asarray(t) - 4000.0)
+
     s = SimpleNamespace(_n_stag=0)
     t_core = 4000.0 - np.arange(n_nodes) ** 1.5
     change = t_core - t_core[0] + 1e-9 * np.arange(n_nodes)

@@ -55,7 +55,10 @@ def _leaf(v):
 
 
 def register_pytree(cls):
-    """Register ``cls`` as a pytree over its instance attributes (see the module docstring)."""
+    """Register ``cls`` and its subclasses as pytrees over their instance attributes (see the
+    module docstring)."""
+    if cls in _REGISTERED:
+        return cls
     cached = frozenset(
         k
         for c in cls.__mro__
@@ -82,4 +85,11 @@ def register_pytree(cls):
 
     jax.tree_util.register_pytree_node(cls, flatten, unflatten)
     _REGISTERED.add(cls)
+    if '__init_subclass__' not in vars(cls):
+
+        def init_subclass(sub, **kwargs):
+            super(cls, sub).__init_subclass__(**kwargs)
+            register_pytree(sub)
+
+        cls.__init_subclass__ = classmethod(init_subclass)
     return cls
