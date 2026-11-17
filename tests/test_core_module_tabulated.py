@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import pathlib
 
@@ -14,6 +15,7 @@ from aragog.core.module import (
     CoreModule,
     build_core_module_budget,
     core_module_cache_key,
+    file_md5,
     load_core_arrays,
     split_core_module_params,
 )
@@ -147,6 +149,22 @@ def test_the_cache_key_follows_the_file_content(paleos_params, tmp_path):
     write_core(path, rho_cen=12400.0)
     assert core_module_cache_key(paleos_params, R_CMB, 136e9) != key
     assert core_module_cache_key({'rho_cen': 1.0}, R_CMB, 136e9)[-1] == ()
+
+
+def test_file_md5_runs_on_a_fips_python(tmp_path, monkeypatch):
+    """The file fingerprint asks for md5 with usedforsecurity=False, which a FIPS build
+    of Python needs, and gives the md5 of the file bytes."""
+    path = tmp_path / 'core.npz'
+    path.write_bytes(b'core arrays')
+    real = hashlib.md5
+
+    def fips_md5(data, **kw):
+        if kw.get('usedforsecurity') is not False:
+            raise ValueError('md5 is not allowed for security use')
+        return real(data, **kw)
+
+    monkeypatch.setattr('aragog.core.module.hashlib.md5', fips_md5)
+    assert file_md5(path) == real(b'core arrays').hexdigest()
 
 
 @needs_eos
