@@ -68,6 +68,67 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     return _ssc_helpers.entropy_eos_jax(eos_dir)
 
 
+PALEOS_CUT = Path(__file__).parent / 'validation' / 'data' / 'paleos_iron_liquid_cut_3tpa.npz'
+
+
+EARTH = dict(
+    rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
+)
+
+
+def gaussian_core_arrays(g, n: int) -> dict:
+    """Core arrays ``r, m, P, rho, g`` of the Gaussian profile ``g`` on ``n`` uniform nodes."""
+    r = np.linspace(0.0, g.r_cmb, n)
+    names = {'m': g.enclosed_mass, 'P': g.pressure, 'rho': g.density, 'g': g.gravity}
+    return {'r': r, **{k: np.asarray(f(r)) for k, f in names.items()}}
+
+
+def write_core(path, rho_cen: float = 12500.0, n: int = 101, **extra):
+    """Write the core arrays of an Earth Gaussian core (r_cmb 3480 km, P_cmb 136 GPa) as a
+    Zalmoxis-style ``.npz`` at ``path``; return the path and the core mass [kg]."""
+    from aragog.core.profiles import GaussianCoreProfiles
+
+    g = GaussianCoreProfiles(**{**EARTH, 'rho_cen': rho_cen})
+    arrays = gaussian_core_arrays(g, n)
+    arrays |= {
+        'phase': np.zeros(n),
+        'M_ic': np.array(0.0),
+        'w_layers': np.array('{"outer": {"S": 0.0}}'),
+    }
+    np.savez_compressed(path, **(arrays | extra))
+    return path, float(arrays['m'][-1])
+
+
+def reference_heat_change(b, t0, dt, n=256):
+    """Composite 64-point Gauss-Legendre integral of the effective capacity on ``n`` panels per
+    piece, in u = sqrt(T_onset - T) below the onset; split at the onset and freeze-out."""
+    import jax
+
+    x, w = np.polynomial.legendre.leggauss(64)
+    cap = jax.jit(jax.vmap(b.effective_capacity))
+    on, t1 = b.t_onset, t0 + dt
+    inner = [c for c in (on, b.t_freeze) if min(t0, t1) < c < max(t0, t1)]
+    cuts = sorted({t0, t1, *inner})
+    total = 0.0
+    for a, c in zip(cuts[:-1], cuts[1:]):
+        above = a >= on
+        lo, hi = (a, c) if above else (np.sqrt(on - c), np.sqrt(on - a))
+        edges = np.linspace(lo, hi, n + 1)
+        for e0, e1 in zip(edges[:-1], edges[1:]):
+            s = 0.5 * (e0 + e1) + 0.5 * (e1 - e0) * x
+            vals = np.asarray(cap(s)) if above else np.asarray(cap(on - s**2)) * 2.0 * s
+            total += 0.5 * (e1 - e0) * float(np.sum(w * vals))
+    return total if dt > 0 else -total
+
+
+def legend_outside(fig, ax) -> None:
+    """Put the legend of ``ax`` right of the axes and assert that it covers no data."""
+    legend = ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small')
+    fig.tight_layout()
+    fig.canvas.draw()
+    assert legend.get_window_extent().x0 >= ax.get_window_extent().x1
+
+
 def opaque_legend(ax, **kwargs):
     """Draw a legend of ``ax`` in 8 pt whose frame, in the axes colour, hides the grid."""
     kwargs.setdefault('fontsize', 8)

@@ -96,11 +96,14 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
     ValueError
         At the first state in a refused regime, naming the regime and its temperature, or
         when the coldest state of the call leaves an outer-core mass fraction below the
-        bound, naming that fraction and temperature.
+        bound, naming that fraction and temperature, or, for a tabulated profile, at a
+        temperature outside its tabulated isentropes.
     """
     if budget.capacity_mode == 'legacy':  # no inner core, latent or gravitational heat
         return
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
+    if budget.tabulated:
+        budget.profiles.check_t_cmb(t_cmb)
     # Pad to a power of two (at least 8) so the batch compiles once per length bucket.
     size = max(8, 1 << (t_cmb.size - 1).bit_length())
     codes = np.asarray(budget.regime_batch(np.resize(t_cmb, size)))[: t_cmb.size]

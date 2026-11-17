@@ -123,6 +123,12 @@ class CoreEnergyBudget:
             raise ValueError(f'unknown capacity_mode {capacity_mode!r}')
         if capacity_mode == 'legacy' and (legacy_rho_core is None or legacy_tfac is None):
             raise ValueError('legacy mode needs legacy_rho_core and legacy_tfac')
+        self.tabulated = getattr(profiles, 'adiabat_mode', None) == 'tabulated'
+        if self.tabulated and (stratification or capacity_mode == 'legacy'):
+            raise ValueError(
+                'a tabulated core profile needs the profile capacity mode without '
+                'stratification: its heat content is a function of T_cmb alone'
+            )
         if stratification:
             if capacity_mode == 'legacy':
                 raise ValueError(
@@ -164,16 +170,29 @@ class CoreEnergyBudget:
             raise ValueError('conducted_adiabatic_flow needs k_core (a stratified budget)')
         return _q_ad(self.profiles, self.k_core, r, t_cmb)
 
-    def secular_capacity(self, upper=None):
+    def secular_capacity(self, upper=None, t_cmb=None):
         """Secular heat capacity dQ_s / d(dT_cmb/dt) [J/K].
 
         Profile mode: ``c_p int rho(r) f(r) 4 pi r^2 dr`` over the
         convecting volume (``upper`` defaults to the CMB radius), with
         ``f`` the adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M
         tfac_eff``. Legacy mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the
-        reservoir constant.
+        reservoir constant. A tabulated profile depends on ``t_cmb`` [K], which it
+        then needs, and refuses an ``upper`` other than the CMB radius:
+        :meth:`TabulatedCoreProfiles.secular_capacity`.
         """
         p = self.profiles
+        if self.tabulated:
+            if t_cmb is None:
+                raise ValueError(
+                    'a tabulated core profile needs t_cmb for its secular capacity'
+                )
+            if upper is not None and not float(upper) == p.r_cmb:
+                raise ValueError(
+                    f'a tabulated core profile has the capacity of the whole core; upper radius '
+                    f'{upper!r} m is not the CMB radius {p.r_cmb!r} m'
+                )
+            return p.secular_capacity(t_cmb)
         if self.capacity_mode == 'legacy':
             volume = 4.0 / 3.0 * jnp.pi * p.r_cmb**3
             return volume * self.legacy_rho_core * p.c_p * self.legacy_tfac
@@ -185,9 +204,14 @@ class CoreEnergyBudget:
         top = p.r_cmb if upper is None else upper
         return p.c_p * self._quad_0_upper(top, integrand)
 
-    def effective_tfac(self):
-        """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode)."""
+    def effective_tfac(self, t_cmb=None):
+        """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode); ``t_cmb`` [K] for
+        a tabulated profile, whose mean is ``C_s / (c_p M)`` with its override ``c_p``."""
         p = self.profiles
+        if self.tabulated:
+            if p.c_p_override is None:
+                raise ValueError('effective_tfac needs the constant c_p of an override')
+            return self.secular_capacity(t_cmb=t_cmb) / (p.c_p_override * p.m_core)
 
         def mass_integrand(r):
             return p.density(r) * 4.0 * jnp.pi * r**2
@@ -199,11 +223,30 @@ class CoreEnergyBudget:
 
     @property
     def t_onset(self) -> float:
-        """CMB temperature [K] for inner-core nucleation onset at the centre."""
+        """CMB temperature [K] for inner-core nucleation onset at the centre; for a tabulated
+        profile whose isentropes never meet the melting curve at the centre, the end of its
+        grid (see ``_t_onset_tabulated``), which is then no nucleation temperature."""
+        if self.tabulated:
+            return self._t_onset_tabulated
         p = self.profiles
         p_cen = float(p.pressure(0.0))
         adiabat_factor = float(p.adiabat(0.0, 1.0))
         return float(self.melting_curve.t_melt(p_cen)) / adiabat_factor
+
+    @functools.cached_property
+    def _t_onset_tabulated(self) -> float:
+        """Onset CMB temperature [K] of a tabulated profile: the isentrope that meets the
+        melting curve at the centre, a root solve done once. A centre melting point below every
+        tabulated centre (no inner core on the grid) gives the lowest grid temperature, one
+        above every centre (frozen centre on the whole grid) the highest."""
+        p = self.profiles
+        t_m = float(self.melting_curve.t_melt(float(p.pressure(0.0))))
+        lo, hi = float(p.t_grid[0]), float(p.t_grid[-1])
+        if float(p.t_cen(lo)) >= t_m:
+            return lo
+        if float(p.t_cen(hi)) <= t_m:
+            return hi
+        return p.t_cmb_at_centre(t_m)
 
     @property
     def t_freeze(self) -> float:
@@ -392,7 +435,7 @@ class CoreEnergyBudget:
         upper = self.r_convecting
         top = upper if gravitational_upper is None else gravitational_upper
         return (
-            self.secular_capacity(upper=upper)
+            self.secular_capacity(upper=upper, t_cmb=t_cmb)
             + self.latent_capacity(t_cmb)
             + self.gravitational_capacity(t_cmb, upper=top)
         )
@@ -400,13 +443,17 @@ class CoreEnergyBudget:
     def heat_content(self, t_cmb) -> float:
         """Core heat content [J] at CMB temperature ``t_cmb`` of the full, unstratified core.
 
-        ``t_cmb * C_secular`` minus the latent and gravitational energy released
-        between nucleation onset and ``t_cmb`` (zero above onset), so that
+        ``t_cmb * C_secular`` (for a tabulated profile, the integral of its secular capacity
+        from the lowest tabulated temperature) minus the latent and gravitational energy
+        released between nucleation onset and ``t_cmb`` (zero above onset), so that
         ``heat_content(T2) - heat_content(T1)`` is the integral of the effective
         capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
         turns the square-root cusp of the latent and gravitational terms at onset,
         ``C ~ (T_onset - T)^(1/2)``, into a smooth integrand.
-        Evaluated eagerly (``t_onset`` is a Python float).
+        Evaluated eagerly (``t_onset`` is a Python float). On a tabulated profile the
+        content is defined up to a constant that depends on the structure and the table
+        (its lowest tabulated temperature): differences on one structure are exact, a
+        difference between 2 structures is not a heat.
 
         Raises
         ------
@@ -420,9 +467,17 @@ class CoreEnergyBudget:
                 'only its convecting volume'
             )
         if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
-            return float(t_cmb) * float(self.secular_capacity())
-        on_set = self.t_onset * float(self.secular_capacity())
+            return self._secular_content(float(t_cmb))
+        on_set = self._secular_content(self.t_onset)
         return on_set + self.heat_change(self.t_onset, float(t_cmb) - self.t_onset)
+
+    def _secular_content(self, t_cmb: float) -> float:
+        """Secular heat content [J]: ``t_cmb C_s``, or for a tabulated profile the integral of
+        its capacity from the lowest tabulated temperature."""
+        if self.tabulated:
+            t_ref = float(self.profiles.t_grid[0])
+            return self.profiles.secular_heat_change(t_ref, t_cmb - t_ref)
+        return t_cmb * float(self.secular_capacity())
 
     def heat_change(self, t_cmb, d_t) -> float:
         """Core heat change [J] from CMB temperature ``t_cmb`` to ``t_cmb + d_t``.
@@ -430,9 +485,11 @@ class CoreEnergyBudget:
         The integral of the effective capacity, equal to ``heat_content(t_cmb + d_t) -
         heat_content(t_cmb)`` but without that difference of 2 contents near 1e31 J, whose float
         spacing (near 1e15 J) can exceed the change of a short call: the secular term is
-        ``d_t C_secular`` and the released energy is integrated over ``u = sqrt(T_onset - T)``
-        with the panel width ``-d_t / (u_0 + u_1)``, split at freeze-out by the exact change
-        ``T_freeze - t_cmb``.
+        ``d_t C_secular`` (for a tabulated profile, the exact integral of its secular capacity,
+        :meth:`TabulatedCoreProfiles.secular_heat_change`) and the released energy is
+        integrated over ``u = sqrt(T_onset - T)`` with the panel width ``-d_t / (u_0 + u_1)``,
+        split at freeze-out by the exact change ``T_freeze - t_cmb`` (for a tabulated profile
+        also where the boundary crosses a radial node, ``_kinks``).
 
         Parameters
         ----------
@@ -459,7 +516,10 @@ class CoreEnergyBudget:
         t0, dt = float(t_cmb), float(d_t)
         if not (_np.isfinite(t0) and _np.isfinite(dt)):
             return float('nan')
-        secular = dt * float(self.secular_capacity())
+        if self.tabulated:
+            secular = self.profiles.secular_heat_change(t0, dt)
+        else:
+            secular = dt * float(self.secular_capacity())
         s0, s1 = max(self.t_onset - t0, 0.0), max(self.t_onset - t0 - dt, 0.0)
         if self.capacity_mode == 'legacy' or s0 == s1 == 0.0:
             return secular
@@ -467,6 +527,8 @@ class CoreEnergyBudget:
         d_freeze = self.t_freeze - t0  # exact for t0 within a factor 2 of T_freeze
         if min(0.0, dt) < d_freeze < max(0.0, dt):  # on the changes: the subcooling rounds
             pieces = [(t0, d_freeze), (self.t_freeze, dt - d_freeze)]
+        if self.tabulated:
+            pieces = [q for piece in pieces for q in self._split_at_kinks(*piece)]
         released = 0.0
         for t_a, d_a in pieces:
             s_a, s_b = max(self.t_onset - t_a, 0.0), max(self.t_onset - t_a - d_a, 0.0)
@@ -476,6 +538,33 @@ class CoreEnergyBudget:
                 above = t_a > self.t_freeze or (t_a == self.t_freeze and d_a > 0.0)
                 released += self._released_panel(u_a, width, above)
         return secular - released
+
+    @functools.cached_property
+    def _kinks(self):
+        """CMB temperatures [K] between freeze-out and onset where the inner-core boundary of a
+        tabulated profile crosses a radial node: the Hermite surfaces are C1 in radius, so the
+        boundary sensitivity, and with it the boundary capacity, has a kink there."""
+        p = self.profiles
+        grid = _np.asarray(p.t_grid)
+        nodes = p.r_nodes
+        lo, hi = jnp.full(nodes.shape, grid[0]), jnp.full(nodes.shape, grid[-1])
+        crosses = _np.asarray(
+            (self.superheat(nodes, lo) < 0.0) & (self.superheat(nodes, hi) > 0.0)
+        )
+        for _ in range(_BISECT_ITERS):
+            mid = 0.5 * (lo + hi)
+            frozen = self.superheat(nodes, mid) < 0.0
+            lo, hi = jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
+        t_k = _np.unique(_np.asarray(0.5 * (lo + hi))[crosses])
+        return t_k[(t_k > self.t_freeze) & (t_k < self.t_onset)]
+
+    def _split_at_kinks(self, t_a, d_a):
+        """The change ``d_a`` [K] from ``t_a``, cut at the kinks of the capacity, in order."""
+        k = self._kinks
+        cuts = k[(k > min(t_a, t_a + d_a)) & (k < max(t_a, t_a + d_a))]
+        edges = [0.0, *_np.sort(_np.abs(cuts - t_a)).tolist(), abs(d_a)]  # exact widths
+        sign = 1.0 if d_a > 0 else -1.0
+        return [(t_a + sign * e0, sign * (e1 - e0)) for e0, e1 in zip(edges[:-1], edges[1:])]
 
     @functools.cached_property
     def _boundary(self):

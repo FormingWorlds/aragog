@@ -2472,24 +2472,39 @@ class EntropySolver:
                     "pip install 'fwl-aragog[jax]'"
                 ) from err
 
-            from aragog.core.module import build_core_module_budget, split_core_module_params
+            from aragog.core.module import (
+                build_core_module_budget,
+                core_module_cache_key,
+                split_core_module_params,
+            )
 
             params, q_radio, ra_crit = split_core_module_params(
                 getattr(bc, 'core_module_params', None)
             )
             # A reset with the same inputs keeps the budget and its compiled functions.
             p_cmb = float(self._P_basic_flat[0])
-            key = (sorted(params.items()), float(r_cmb), params.get('p_cmb', p_cmb))
+            key = core_module_cache_key(params, r_cmb, p_cmb)
             if getattr(self, '_core_module_key', None) != key:
                 budget = build_core_module_budget(params, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
                 self._core_module_budget, self._core_module_key = budget, key
                 rate = budget.core_rates if budget.stratification else budget.dtcmb_dt
                 self._core_module_budget_rate = jax.jit(rate)
-                logger.info(
-                    'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, length_scale=%.1f km',
-                    float(budget.profiles.rho_cen),
-                    float(budget.profiles.length_scale) / 1e3,
-                )
+                if budget.tabulated:
+                    logger.info(
+                        'Aragog core_module tabulated profile: %d nodes, M_core=%.4e kg, '
+                        'isentropes for T_cmb %.0f to %.0f K',
+                        budget.profiles.n_nodes,
+                        budget.profiles.m_core,
+                        float(budget.profiles.t_grid[0]),
+                        float(budget.profiles.t_grid[-1]),
+                    )
+                else:
+                    logger.info(
+                        'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, '
+                        'length_scale=%.1f km',
+                        float(budget.profiles.rho_cen),
+                        float(budget.profiles.length_scale) / 1e3,
+                    )
             self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
             self._warn_once(
                 'core_fields_unused',
