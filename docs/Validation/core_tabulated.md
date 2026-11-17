@@ -125,7 +125,7 @@ For the other PALEOS terms the test holds only the direction of the change from 
 
 **How to read the plot.** The horizontal axis is the call number, 1 to 5; the vertical axis is the bound on the absolute residual divided by the CMB heat, on a log scale. A circle is the bound at the default tolerances, a square the bound at the 1000 times tighter ones; each mark is drawn only when the test passes it. Calls 2 and 3 have no fixed bound at the default tolerances and calls 4 and 5 none at the tight ones. There the test asks that the residual falls at least 20 times; in calls 1 to 3 each residual also stays below twice the tolerance scale of the solver. The plot shows the bounds and not the residuals, because the residuals change with the CPU: the smallest residual at the default tolerances is 1.39e-7 on an Apple M1 Ultra and 1.03e-7 on the Linux x86 runner of the nightly tests.
 
-The residuals on an Apple M1 Ultra (macOS) with SUNDIALS 7.7.0 (scikits-odes-sundials 3.1.1), NumPy 2.4.6, SciPy 1.17.1, OpenBLAS 0.3.33 and JAX 0.9.2, at the default tolerances (rtol and atol $10^{-8}$) and at tolerances 1000 times tighter:
+The residuals on an Apple M1 Ultra (macOS), at the default tolerances (rtol and atol $10^{-8}$) and at tolerances 1000 times tighter:
 
 | Call | Time [yr] | Default tolerances | 1000 times tighter | Ratio |
 |---|---|---|---|---|
@@ -135,8 +135,6 @@ The residuals on an Apple M1 Ultra (macOS) with SUNDIALS 7.7.0 (scikits-odes-sun
 | 4 | 12 to 22 | -1.39e-7 | -2.16e-9 | 64 |
 | 5 | 22 to 122 | 1.30e-6 | 1.09e-8 | 120 |
 
-The residuals move with the SUNDIALS build. On the same CPU with SUNDIALS 7.2.1, NumPy 2.4.3, SciPy 1.16.0 and OpenBLAS 0.3.30, call 3 gives -3.36e-8 at the tight tolerances (ratio 132) and call 4 gives -1.41e-7 at the default ones (ratio 65); the other values agree to 3 digits. In both, calls 1 to 3 fall more than 100 times.
-
 **Known limit.** The checks cover single calls and calls in a chain, on a fixed structure. A run of billions of years with structure updates is not checked here; it needs the coupling to PROTEUS.
 
 ??? info "Test details"
@@ -145,7 +143,7 @@ The residuals move with the SUNDIALS build. On the same CPU with SUNDIALS 7.2.1,
         - call 1: between $10^{-5}$ and 3e-4 at the default tolerances, below 3e-6 at the tight ones;
         - calls 1 to 3 and the onset call: fall at least 20 times, to below $10^{-5}$; at each tolerance the residual is below twice the tolerance scale `step_core_tol_J`, that scale is less than 1000 times the residual, and it also falls at least 20 times;
         - calls 4 and 5: below 2e-6 at the default tolerances, and fall at least 20 times.
-    - Measured (SUNDIALS 7.7.0 and 7.2.1): call 1 -1.3e-4 and -1.2e-6; calls 1 to 3 fall more than 100 times; calls 4 and 5 -1.4e-7 and 1.3e-6.
+    - Measured: the table above, with SUNDIALS 7.7.0 (scikits-odes-sundials 3.1.1), NumPy 2.4.6, SciPy 1.17.1, OpenBLAS 0.3.33 and JAX 0.9.2. With SUNDIALS 7.2.1, NumPy 2.4.3, SciPy 1.16.0 and OpenBLAS 0.3.30 on the same CPU, call 3 gives -3.36e-8 at the tight tolerances (ratio 132) and call 4 gives -1.41e-7 at the default ones (ratio 65); the other values agree to 3 digits. In both builds call 1 is -1.3e-4 and -1.2e-6, calls 1 to 3 fall more than 100 times, and calls 4 and 5 are -1.4e-7 and 1.3e-6.
     - Test id: `tests/test_core_tabulated_ledger.py::test_the_tabulated_core_ledger_converges_with_the_tolerance`, `::test_a_tabulated_call_across_the_onset_converges_with_the_tolerance` (smoke tier)
     - Command: `pytest -o "addopts=" tests/test_core_tabulated_ledger.py`
 

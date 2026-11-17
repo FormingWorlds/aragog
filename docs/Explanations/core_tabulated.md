@@ -2,7 +2,7 @@
 
 How much heat does a liquid iron core give up as it cools, when its structure comes from Zalmoxis and its temperature from the PALEOS equation of state (EOS)?
 
-The short answer: Aragog keeps the core structure that Zalmoxis computed and puts the convecting core on one isentrope of the PALEOS liquid iron table. An isentrope is a curve of constant specific entropy; for a convecting liquid it is also called the adiabat, the word the Gaussian profile uses. The heat the core gives up per kelvin of cooling at the core-mantle boundary (CMB) is then an integral of the temperature along that isentrope. Aragog tabulates it once per structure, in about 10 s on the default Zalmoxis grid (8.9 to 12.8 s for pure-Fe cores of 1 to 7 $M_E$ on an Apple M1 Ultra); the solver steps then read the table. The Gaussian profile of [the core module](core_bc.md) needs no such step.
+The short answer: Aragog keeps the core structure that Zalmoxis computed and puts the convecting core on one isentrope of the PALEOS liquid iron table. An isentrope is a curve of constant specific entropy; for a convecting liquid it is also called the adiabat, the word the Gaussian profile uses. The heat the core gives up per kelvin of cooling at the core-mantle boundary (CMB) is then an integral of the temperature along that isentrope. Aragog tabulates it once per structure, before the run; the solver steps then read the table. The Gaussian profile of [the core module](core_bc.md) needs no such step.
 
 ## When to use it
 
@@ -11,7 +11,7 @@ The core module has 2 profile sources, set with `profile_source` in `core_module
 - `"gaussian"`, the default: a closed-form density profile with a constant thermal expansivity $\alpha$ and heat capacity $c_p$.
 - `"paleos"`: the density, pressure and gravity of a Zalmoxis core, and the temperature from the PALEOS liquid iron EOS of Attia et al. (2026)[^cite-attia2026].
 
-Use `"paleos"` when Zalmoxis solves the structure with PALEOS iron. Then the core structure and the isentrope come from one EOS; by default the heat capacity of the secular term does not (see the limits below). The Gaussian profile takes $\alpha$ and $c_p$ of the Earth's core, which do not hold for the cores of larger planets.
+Use `"paleos"` when Zalmoxis solves the structure with PALEOS iron. Then the core structure and the isentrope come from one EOS; by default the heat capacity of the secular term does not (see [Limits of the model](#limits-of-the-model)). The Gaussian profile takes $\alpha$ and $c_p$ of the Earth's core, which do not hold for the cores of larger planets.
 
 ## Where the structure comes from
 
@@ -37,6 +37,8 @@ At each node $k$, the temperature $T_{a,k}$ of the isentrope solves $s(P_k, T_{a
 
 The table is the liquid side of the PALEOS iron EOS, which Zalmoxis writes and `core_liquid_table` names. It holds the liquid also below the melting curve, where the liquid is metastable. So the isentrope stays liquid at all temperatures of the table, and no latent heat enters it. The inner core is treated separately (below).
 
+Some cells at the top or bottom of a table did not converge when Zalmoxis wrote it, and hold NaN. Aragog drops each pressure row that holds such a cell, logs the new pressure range and uses the rows that are left. A table cut to a narrow temperature range can keep more rows than the full table. On the full default Zalmoxis grid, which ends at 100 TPa, the last full row is at 59.3 TPa ([file format](../Reference/data.md)).
+
 Aragog solves the isentrope on a grid of CMB temperatures, 10 K apart by default (`core_t_cmb_step`). The grid covers every CMB temperature whose isentrope stays inside the table. The slopes in radius and in $T_\text{cmb}$ come from the table derivatives, and the mixed slope from a spline in $T_\text{cmb}$, so the solver reads a surface $T_a(r, T_\text{cmb})$ with continuous slopes. Aragog checks the entropy of this surface at 4 sets of points; at each it must equal $s_c$ to a relative $10^{-6}$:
 
 - at the nodes on the grid temperatures;
@@ -45,6 +47,8 @@ Aragog solves the isentrope on a grid of CMB temperatures, 10 K apart by default
 - at the centres of the grid cells.
 
 [What the path refuses](#what-the-path-refuses) says what happens when it does not.
+
+The tabulation takes about 10 s on the default Zalmoxis grid: 8 to 13 s for pure-Fe cores of 1 to 7 $M_E$ on an Apple M1 Ultra, in 2 runs.
 
 A worked example: for the Zalmoxis core of a 1 Earth-mass planet in the [tutorial](../Tutorials/core_tabulated.md), a CMB at 4000 K gives a centre at 6111 K.
 
@@ -66,7 +70,7 @@ Aragog uses only changes of $H$. `CoreEnergyBudget.heat_content` counts $H$ from
 
 ## Why the core energy balance closes in each solver call
 
-The core energy balance of a solver call compares 2 numbers: the heat the core loses, and the heat that crosses the CMB. Each call writes both to its output (`step_dE_core_J` and `step_dE_F_cmb_J`); the tests compare them, and a coupled code can. Aragog itself does not stop on a mismatch.
+The core energy balance of a solver call compares 2 numbers: the heat the core loses, and the heat that crosses the CMB. Each call writes both to its output (`step_dE_core_J` and `step_dE_F_cmb_J`); the tests compare them, and a caller can compare them too. Aragog itself does not stop on a mismatch.
 
 Aragog tabulates $C_s$ at the grid temperatures, with its derivative, and reads it as a cubic in $T_\text{cmb}$. The heat change of a call is the exact integral of that same cubic over the temperature change of the call. So the solver integrates and books one function, and the balance closes to the solver tolerance.
 
@@ -80,8 +84,9 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 
 ## What the path refuses
 
-- A core whose pressures leave the pressure range of the table that `core_liquid_table` names stops the build, with an error that names both ranges; give a table that covers the core. The range comes from the table: 45 GPa to 3 TPa for the test cut in `tests/validation/data/`. Pressure rows with cells that did not converge at the top or bottom of a table are dropped first (the default Zalmoxis grid ends at 1e14 Pa, its finite rows at 5.93e13 Pa); a non-finite cell inside the table stops the read.
-- The density of the arrays must integrate to the node mass $m$ at the CMB within $10^{-2}$. The Zalmoxis cores measured miss by at most $1.1\times10^{-3}$, at the density jump of an inner-core boundary, and by at most $3\times10^{-5}$ without one; a density 5 % too large misses by $5\times10^{-2}$. A structure whose pressure bends between nodes so far that the isentrope leaves the table stops with an error that points to the core arrays.
+- A core whose pressures leave the pressure range of the table that `core_liquid_table` names stops the build, with an error that names both ranges; give a table that covers the core. The range comes from the table: 45 GPa to 3 TPa for the cut `paleos_iron_liquid_cut_3tpa.npz` in `tests/validation/data/`.
+- A cell that did not converge (NaN) inside the table stops the read.
+- The density of the arrays must integrate to the node mass $m$ at the CMB within $10^{-2}$. The stored Zalmoxis cores in `tests/validation/data/` miss by at most $5\times10^{-6}$ with one phase, and by $1.08\times10^{-3}$ with an inner-core boundary, from its density jump; a density 5 % too large misses by $5\times10^{-2}$. A structure whose pressure bends between nodes so far that the isentrope leaves the table stops with an error that points to the core arrays.
 - The CMB temperature must lie on the grid of isentropes: every CMB temperature whose isentrope stays inside the table at every node. Outside it, or at a NaN temperature, the solver and `CoreModule` stop with an error that names the temperature.
 - The grid holds at most 2,000,000 cells, nodes times temperatures; make `core_t_cmb_step` larger for a larger grid.
 - An isentrope that misses $s_c$ by more than a relative $10^{-6}$ stops the build with an error that names where: between the grid temperatures (make `core_t_cmb_step` smaller), between the radial nodes (give the core arrays more nodes), or inside the grid cells (either).
@@ -95,10 +100,10 @@ The constant $\Delta s$ lies 10.5 % above the ab initio 1.05 $k_B$ per atom at 3
 - The isentrope is that of pure liquid iron, also for a density with light elements.
 - The profile reads only `r`, `m`, `P`, `rho` and `g` of the core arrays, not `phase` or `M_ic`. It takes the density as given, solid or liquid, and finds its own inner-core boundary where the liquid isentrope meets the melting curve.
 - A fully solid core keeps its temperature on the liquid isentrope of its $T_\text{cmb}$. Aragog models no heat conduction in the solid core.
-- The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer (2023), p. 9), so the constant is 1.45 times the value at 1000 GPa.
-- Above about 2.4 TPa the columns of the PALEOS liquid iron table disagree. The entropy column follows the density: with $\alpha = -(\partial \ln\rho/\partial T)_P$ from the density, the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to 0.6 % up to 5 TPa, outside the cells where this $\alpha$ is near 0. The `alpha` column departs from both: with it, the relation misses by $10^{-4}$ at 2.4 TPa, $2\times10^{-2}$ at 3 TPa and $8\times10^{-2}$ at 3.2 TPa. From 3.8 TPa the density gives a negative $\alpha$, while the `alpha` and `nabla_ad` columns stay positive (the `alpha` column holds its floor of $10^{-7}$ K$^{-1}$ in 569 cells from 4.5 TPa).
+- The entropy of fusion is one constant at all pressures. The ab initio value falls from 1.05 $k_B$ per atom at 300 GPa to 0.8 $k_B$ per atom at 1000 GPa (González-Cataldo & Militzer (2023), p. 9), so the constant is 1.45 times the value at 1000 GPa.
+- Above about 2.4 TPa the `alpha` column of the PALEOS liquid iron table departs from its density and entropy columns. These 2 agree: with $\alpha = -(\partial \ln\rho/\partial T)_P$ from the density, the Maxwell relation $(\partial s/\partial P)_T = -\alpha/\rho$ holds to 0.6 % up to 5 TPa, outside the cells where this $\alpha$ is near 0. With the `alpha` column it misses by $10^{-4}$ at 2.4 TPa and $2\times10^{-2}$ at 3 TPa. From 3.8 TPa the density gives a negative $\alpha$; the `alpha` and `nabla_ad` columns stay positive, `alpha` at its floor of $10^{-7}$ K$^{-1}$ in 569 cells from 4.5 TPa.
 - Aragog builds the isentrope from the entropy column. In a core whose centre pressure is above 3.8 TPa, the temperature therefore rises outward from the centre up to about 3.75 TPa. The stored pure-Fe 10 $M_E$ core (centre 4.7 TPa) is 48 K hotter there than at its centre for $T_\text{cmb} = 3000$ K, and 99 K hotter for 6000 K. A pure-Fe 7 $M_E$ core (centre 3.1 TPa) is at the edge of this region, and its temperature still falls outward. Aragog builds these cores with no warning.
-- On the cut `paleos_iron_liquid_cut_3tpa.npz` the Maxwell relation with the `alpha` column holds to $10^{-5}$ on the table nodes from 50 GPa to 2.1 TPa. It misses by up to $1.3\times10^{-5}$ between nodes below 2 TPa, and by $3.6\times10^{-5}$ at 45 GPa, the lowest pressure of the cut.
+- On the cut `paleos_iron_liquid_cut_3tpa.npz` the spline keeps the Maxwell relation with the `alpha` column to $10^{-5}$ at the nodes from 50 GPa to 2.1 TPa and to $1.3\times10^{-5}$ between the nodes below 2 TPa; at 45 GPa, the lowest pressure of the cut, it misses by $3.6\times10^{-5}$.
 
 **Where this is checked.** [Tabulated core](../Validation/core_tabulated.md) on the Validation tab.
 
