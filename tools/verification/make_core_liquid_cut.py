@@ -6,8 +6,9 @@ Usage::
         P_lo P_hi T_lo T_hi <name> [--keep-nan-edges]
 
 The cut keeps 1 grid line beyond each box edge. Without ``--keep-nan-edges`` a non-finite
-cell in the cut stops the script; with it, whole pressure rows of non-finite cells at the top
-or bottom of the cut are kept (the reader drops them) and any other non-finite cell stops it.
+cell in the cut stops the script. With it, the pressure rows that hold a non-finite cell are
+kept when they are at the top or bottom of the cut (the reader drops them); a non-finite cell
+in a row between finite rows, or a cut with no finite row, stops it.
 Writes ``<name>.npz`` (compressed; keys ``P_Pa``, ``T_K``, the 7 property arrays
 ``[P index, T index]`` and ``header``) and ``<name>_provenance.json``.
 """
@@ -35,14 +36,15 @@ def main(argv):
     lines = raw.decode().splitlines()
     header = [line for line in lines if line.startswith('#')]
     rows = [line.split() for line in lines if line and not line.startswith('#')]
-    assert all(r[-1] in ('liquid', 'out-of-range') for r in rows) and all(
-        len(r) == 10 for r in rows
-    )
+    if not all(len(r) == 10 and r[-1] in ('liquid', 'out-of-range') for r in rows):
+        raise ValueError(f'{src}: not a liquid side table of 10 columns')
     data = np.array([[float(x) for x in r[:9]] for r in rows])
     p_ax, t_ax = np.unique(data[:, 0]), np.unique(data[:, 1])
-    assert len(p_ax) * len(t_ax) == len(data), 'not a full rectangle'
+    if len(p_ax) * len(t_ax) != len(data):
+        raise ValueError(f'{src}: not a full rectangle in P and T')
     grid = data[np.lexsort((data[:, 1], data[:, 0]))].reshape(len(p_ax), len(t_ax), 9)
-    assert np.array_equal(grid[:, 0, 0], p_ax) and np.array_equal(grid[0, :, 1], t_ax)
+    if not (np.array_equal(grid[:, 0, 0], p_ax) and np.array_equal(grid[0, :, 1], t_ax)):
+        raise ValueError(f'{src}: rows do not form a P x T grid')
     ip = slice(
         max(np.searchsorted(p_ax, p_lo) - 1, 0),
         min(np.searchsorted(p_ax, p_hi, 'right') + 1, len(p_ax)),
@@ -53,11 +55,11 @@ def main(argv):
     )
     cut = grid[ip, it]
     bad = ~np.all(np.isfinite(cut), axis=(1, 2))
-    if keep_nan:
-        inner = np.flatnonzero(~bad)
-        assert inner.size and not bad[inner[0] : inner[-1] + 1].any(), 'non-finite cell inside'
-    else:
-        assert not bad.any(), 'non-finite cell in the box'
+    inner = np.flatnonzero(~bad)
+    if keep_nan and not (inner.size and not bad[inner[0] : inner[-1] + 1].any()):
+        raise ValueError('non-finite cell inside the cut, or no finite row')
+    if not keep_nan and bad.any():
+        raise ValueError('non-finite cell in the box; --keep-nan-edges keeps edge rows')
     arrays = {'P_Pa': cut[:, 0, 0], 'T_K': cut[0, :, 1]}
     arrays.update({c: cut[:, :, k] for k, c in enumerate(COLS) if k >= 2})
     arrays['header'] = np.array('\n'.join(header))
