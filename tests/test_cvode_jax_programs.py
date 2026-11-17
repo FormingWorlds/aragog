@@ -183,3 +183,13 @@ def test_no_argument_of_the_programs_is_weak_typed(eos, mode):
     assert len(floats) > 20
     for x in floats:
         assert not jax.numpy.asarray(x).weak_type and np.asarray(x).dtype == np.float64
+
+
+def test_clear_jit_cache_drops_the_traced_programs(eos):
+    """After ``clear_jit_cache`` a build of the same form traces its programs again, so a test
+    that counts traces does not depend on the tests before it."""
+    _evaluate('quasi_steady', eos, PhaseParams())
+    clear_jit_cache()
+    _evaluate('quasi_steady', eos, PhaseParams())
+    assert _TRACE_COUNTERS['rhs'] == 1
+    assert _TRACE_COUNTERS['jac'] == 1
