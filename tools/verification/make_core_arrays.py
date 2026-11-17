@@ -11,8 +11,9 @@ no finite solve. Setup: input/default.toml (adiabatic, surface anchor, Picard, t
 core is 'PALEOS-API-2phase:iron-liquid:0.8615+CoreAlloy:S:0.1385' with side tables on the
 40-per-decade grid (1e9-3e12 Pa, 1e3-2e4 K); with ``--pure-fe`` it is pure liquid iron with
 side tables on the default 2-phase iron grid (1e5-1e14 Pa, 300-1e5 K, 150 per decade).
-``--cache-root`` names the side-table cache (default: that of Zalmoxis); ``--skip-paleos-check``
-skips the PALEOS commit check, and the provenance then says so.
+``--cache-root`` names the side-table cache (default: that of Zalmoxis). The provenance records
+the verdict of the PALEOS commit check (tested, newer or dirty), or that ``--skip-paleos-check``
+skipped it.
 
 Writes zalmoxis_core_arrays[_fe]_<mass>me_<T_surf>K.npz (the arrays of result['core']) and a
 .json of the same name (scalars, config, source, md5 of the .npz), and prints the file name
@@ -51,6 +52,8 @@ ap.add_argument('--pure-fe', action='store_true', help='pure-Fe outer core, defa
 ap.add_argument('--cache-root', type=Path, help='side-table cache directory')
 ap.add_argument('--skip-paleos-check', action='store_true', help='skip the PALEOS commit check')
 args = ap.parse_args()
+if not args.out.is_dir():
+    ap.error(f'{args.out} is not a directory')
 
 LIQ, SOL = 'PALEOS-API-2phase:iron-liquid', 'PALEOS-API-2phase:iron-solid'
 if args.pure_fe:
@@ -70,7 +73,9 @@ for n in (LIQ, SOL):
 if args.cache_root is not None:
     paleos_api_cache._cache_root = lambda: args.cache_root
 if args.skip_paleos_check:
-    paleos_api_cache._check_paleos_once = lambda sha: 'skipped'
+    for mod in (paleos_api, paleos_api_cache):
+        mod._check_paleos_once = lambda sha: 'skipped (--skip-paleos-check)'
+paleos_check = paleos_api._check_paleos_once(paleos_api.paleos_installed_sha())
 paleos_api_cache.resolve_paleos_api_2phase_iron(grid, n_workers=1)
 for n in (LIQ, SOL):
     paleos_api_cache.resolve_registry_entry(md[n])
@@ -118,7 +123,7 @@ src = Path(zalmoxis.__file__).resolve().parents[2]
 def git(*cmd):
     """Output of a git command in the Zalmoxis source tree."""
     return subprocess.run(
-        ['git', '-C', str(src), *cmd], capture_output=True, text=True
+        ['git', '-C', str(src), *cmd], capture_output=True, text=True, check=True
     ).stdout.strip()
 
 
@@ -128,7 +133,7 @@ info = {
     'src_clean': not git('status', '--porcelain', 'src'),
     'paleos_tested_sha': paleos_api.PALEOS_TESTED_SHA,
     'paleos_installed_sha': paleos_api.paleos_installed_sha(),
-    'paleos_check': 'skipped (--skip-paleos-check)' if args.skip_paleos_check else 'passed',
+    'paleos_check': paleos_check,
     'build_key_iron': paleos_api.build_key('iron'),
     'grid': grid_text,
     'config': {
@@ -157,4 +162,5 @@ info = {
     + ", run on the Zalmoxis commit zalmoxis_sha; arrays of result['core']",
 }
 (args.out / f'{name}.json').write_text(json.dumps(info, default=str))
-print(npz.name, info['npz_md5'], {k: scalars.get(k) for k in ('M_ic', 'R_icb', 'P_icb')})
+print(npz.name, info['npz_md5'], 'converged', info['converged'], paleos_check)
+print({k: scalars.get(k) for k in ('M_ic', 'R_icb', 'P_icb')})
