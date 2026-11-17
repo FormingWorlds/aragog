@@ -38,8 +38,6 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections import OrderedDict
-from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
@@ -47,8 +45,6 @@ import numpy as np
 from aragog.config.boundary import CORE_BC_MODES
 
 logger = logging.getLogger('fwl.' + __name__)
-
-_CACHE_MAXSIZE = 8
 
 # Fixed chunk length for batched per-call energy power evaluation.
 C: int = 512
@@ -64,26 +60,11 @@ class UnsupportedCoreBCError(ValueError):
     """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
-@dataclass
-class _JitCacheEntry:
-    rhs_jit: Any
-    jac_jit: Any
-    phase_params: Any
-    eos_jax: Any
-    budget: Any = None
-    powers_jit: Any = None
-    weights_jit: Any = None
-
-
-_JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
-
-
 def clear_jit_cache() -> None:
-    """Clear the module-level JIT cache and reset trace counters."""
-    _JIT_CACHE.clear()
-    _TRACE_COUNTERS['rhs'] = 0
-    _TRACE_COUNTERS['jac'] = 0
-    _TRACE_COUNTERS['powers'] = 0
+    """Drop the compiled CVODE programs and reset the trace counters."""
+    _programs.cache_clear()
+    for key in _TRACE_COUNTERS:
+        _TRACE_COUNTERS[key] = 0
 
 
 def _args_from_data(
@@ -103,126 +84,85 @@ def _args_from_data(
     return args if budget is None else args + (budget, *data[8:])
 
 
-def _make_jitted_rhs_and_jacobian(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build JIT-compiled RHS and Jacobian functions.
-
-    PhaseParams, eos_jax and the core_module budget are closure constants. All remaining
-    parameters are passed as a pytree in data; for core_module it ends with the core source
-    power and the critical Rayleigh number of the CMB boundary layer.
-    """
-    import jax
-
+def _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+    """Nondimensional RHS of the state ``y_nd`` at time ``t_nd``; ``consts`` holds the phase
+    parameters, the EOS and the core_module budget (None in the other modes)."""
     from aragog.jax import solver as js
 
-    _rhs_jax = {
+    rhs = {
         'quasi_steady': js.dSdt,
         'energy_balance': js.dSdt_energy_balance,
         'core_module': js.dSdt_core_module,
     }[core_bc_mode]
-
-    def _eval_core(t_nd, y_nd, data):
-        state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
-        t_phys = t_nd * t_ref_jax
-        S_phys = y_nd * state_scale_jax + offset_jax
-        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
-        dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
-        return dydt_phys * rhs_scale_jax
-
-    def _make_wrapper(kind: str):
-        def _wrapper(t_nd, y_nd, data):
-            _TRACE_COUNTERS[kind] += 1
-            return _eval_core(t_nd, y_nd, data)
-
-        return _wrapper
-
-    rhs_jit = jax.jit(_make_wrapper('rhs'))
-    jac_jit = jax.jit(jax.jacrev(_make_wrapper('jac'), argnums=1))
-    return rhs_jit, jac_jit
+    phase_params, eos_jax, budget = consts
+    state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
+    args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
+    dydt_phys = rhs(t_nd * t_ref_jax, y_nd * state_scale_jax + offset_jax, args_tuple)
+    return dydt_phys * rhs_scale_jax
 
 
-def _make_jitted_powers(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build JIT-compiled vmapped step_powers function over chunks of size C."""
+def _rhs_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+    _TRACE_COUNTERS['rhs'] += 1
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+
+def _jac_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+    _TRACE_COUNTERS['jac'] += 1
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+
+def _powers_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, aux, consts):
     import jax
 
     from aragog.jax import solver as js
 
-    def _eval_node(t_phys, y_phys, data, aux):
+    _TRACE_COUNTERS['powers'] += 1
+    phase_params, eos_jax, budget = consts
+
+    def _eval_node(t_phys, y_phys):
         args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         return js.step_powers(t_phys, y_phys, args_tuple, core_bc_mode, aux)
 
-    def _eval_chunk(t_chunk, Y_chunk, data, aux):
-        _TRACE_COUNTERS['powers'] += 1
-        return jax.vmap(_eval_node, in_axes=(0, 1, None, None))(t_chunk, Y_chunk, data, aux)
-
-    return jax.jit(_eval_chunk)
+    return jax.vmap(_eval_node, in_axes=(0, 1))(t_chunk, Y_chunk)
 
 
-def _make_jitted_lid_weights(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build the JIT-compiled vmapped lid weight over chunks of size C."""
+def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts):
     import jax
 
     from aragog.jax import solver as js
 
-    def _eval_node(t_phys, y_phys, data):
+    phase_params, eos_jax, budget = consts
+
+    def _eval_node(t_phys, y_phys):
         args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         return js.lid_weight(t_phys, y_phys, args_tuple, core_bc_mode)
 
-    def _eval_chunk(t_chunk, Y_chunk, data):
-        return jax.vmap(_eval_node, in_axes=(0, 1, None))(t_chunk, Y_chunk, data)
-
-    return jax.jit(_eval_chunk)
+    return jax.vmap(_eval_node, in_axes=(0, 1))(t_chunk, Y_chunk)
 
 
-def _get_or_create_jitted(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-) -> tuple[_JitCacheEntry, bool]:
-    """Retrieve cached jitted functions or compile new ones.
+@functools.cache
+def _programs():
+    """The RHS, Jacobian, step-power and lid-weight programs. Every input is an argument, with the core_bc
+    mode and the radiogenic switch static, so a solver of the same form reuses them."""
+    import jax
 
-    Returns
-    -------
-    tuple
-        (_JitCacheEntry, is_cache_hit)
-    """
-    key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
-    key += () if budget is None else (id(budget),)
-    entry = _JIT_CACHE.pop(key, None)
-    hit = (
-        entry is not None
-        and entry.phase_params is phase_params
-        and entry.eos_jax is eos_jax
-        and entry.budget is budget
+    return (
+        jax.jit(_rhs_program, static_argnums=(0, 1)),
+        jax.jit(jax.jacrev(_jac_program, argnums=3), static_argnums=(0, 1)),
+        jax.jit(_powers_program, static_argnums=(0, 1)),
+        jax.jit(_lid_weight_program, static_argnums=(0, 1)),
     )
-    if not hit:
-        rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
-            core_bc_mode, use_radio, phase_params, eos_jax, budget
-        )
-        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax, budget)
-    _JIT_CACHE[key] = entry
-    if len(_JIT_CACHE) > _CACHE_MAXSIZE:
-        _JIT_CACHE.popitem(last=False)
-    return entry, hit
+
+
+def _strong(tree):
+    """``tree`` with its Python and NumPy float leaves as strong float64 scalars, so that every
+    build passes the same argument types."""
+    import jax
+
+    def leaf(x):
+        return np.float64(x) if isinstance(x, (float, np.floating)) else x
+
+    return jax.tree_util.tree_map(leaf, tree)
 
 
 class LidFactoryMismatch(ValueError):
@@ -468,11 +408,22 @@ def build_jax_rhs_and_jacobian(
         )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
-    entry, is_cache_hit = _get_or_create_jitted(
-        core_bc_mode, use_radio, phase_params, eos_jax, budget
-    )
-    rhs_jit = entry.rhs_jit
-    jac_jit = entry.jac_jit
+    data, consts = _strong(data), _strong((phase_params, eos_jax, budget))
+    rhs_program, jac_program, powers_program, weights_program = _programs()
+
+    def rhs_jit(t_nd, y_nd, data):
+        return rhs_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+    def jac_jit(t_nd, y_nd, data):
+        return jac_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+    def first_call(kind, label, call):
+        """Run ``call`` and log whether it compiled a program or reused one."""
+        before = _TRACE_COUNTERS[kind]
+        out = call()
+        how = 'compiled for new inputs' if _TRACE_COUNTERS[kind] > before else 'reused'
+        logger.info('JAX %s first call: program %s', label, how)
+        return out
 
     info = {
         'lid': lid_params is not None,
@@ -485,15 +436,15 @@ def build_jax_rhs_and_jacobian(
     def rhs_fn(t_nd, y_nd, ydot_nd):
         """scikits.odes RHS function: fills ydot in-place."""
         try:
-            result = rhs_jit(float(t_nd), jnp.asarray(y_nd), data)
+
+            def call():
+                return rhs_jit(float(t_nd), jnp.asarray(y_nd), data)
+
+            first = not info['first_rhs_compile_done']
+            result = first_call('rhs', 'RHS', call) if first else call()
             ydot_nd[:] = np.asarray(result)
             info['rhs_calls'] += 1
-            if not info['first_rhs_compile_done']:
-                info['first_rhs_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX RHS cache hit')
-                else:
-                    logger.info('JAX RHS first call (JIT compile complete)')
+            info['first_rhs_compile_done'] = True
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -502,15 +453,15 @@ def build_jax_rhs_and_jacobian(
     def jacfn(t_nd, y_nd, fy_nd, J, user_data=None):
         """scikits.odes Jacobian function: fills J in-place."""
         try:
-            jac = jac_jit(float(t_nd), jnp.asarray(y_nd), data)
+
+            def call():
+                return jac_jit(float(t_nd), jnp.asarray(y_nd), data)
+
+            first = not info['first_jac_compile_done']
+            jac = first_call('jac', 'Jacobian', call) if first else call()
             J[...] = np.asarray(jac)
             info['jac_calls'] += 1
-            if not info['first_jac_compile_done']:
-                info['first_jac_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX Jacobian cache hit')
-                else:
-                    logger.info('JAX Jacobian first call (JIT compile complete)')
+            info['first_jac_compile_done'] = True
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
@@ -562,20 +513,18 @@ def build_jax_rhs_and_jacobian(
             if n == 0:
                 return np.empty((0, 7), dtype=np.float64)
 
-            if entry.powers_jit is None:
-                entry.powers_jit = _make_jitted_powers(
-                    core_bc_mode, use_radio, phase_params, eos_jax, budget
-                )
-
             pad_len = -n % C
             t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
             Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
             chunks = [
-                entry.powers_jit(
+                powers_program(
+                    core_bc_mode,
+                    use_radio,
                     t_pad[k : k + C],
                     Y_pad[:, k : k + C],
                     data,
                     aux,
+                    consts,
                 )
                 for k in range(0, t_pad.size, C)
             ]
@@ -595,15 +544,20 @@ def build_jax_rhs_and_jacobian(
                     )
                 if t_arr.size == 0:
                     return np.empty(0, dtype=np.float64)
-                if entry.weights_jit is None:
-                    entry.weights_jit = _make_jitted_lid_weights(
-                        core_bc_mode, use_radio, phase_params, eos_jax, budget
-                    )
                 pad_len = -t_arr.size % C
                 t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
                 Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
                 chunks = [
-                    np.asarray(entry.weights_jit(t_pad[k : k + C], Y_pad[:, k : k + C], data))
+                    np.asarray(
+                        weights_program(
+                            core_bc_mode,
+                            use_radio,
+                            t_pad[k : k + C],
+                            Y_pad[:, k : k + C],
+                            data,
+                            consts,
+                        )
+                    )
                     for k in range(0, t_pad.size, C)
                 ]
                 return np.concatenate(chunks)[: t_arr.size]
