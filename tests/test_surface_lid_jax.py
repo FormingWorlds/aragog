@@ -407,3 +407,51 @@ def test_mush_base_flux_matches_numpy():
         )
         got = float(jl.mush_base_flux(lp, S_f, delta, F_in, q_conv))
         assert got == pytest.approx(want, rel=1e-12), dS
+
+
+def _cut_tables():
+    """The kinked table and its first 90 knots: 2 lid tables of different knot counts."""
+    from aragog import surface_lid as sl
+
+    full = _enthalpies()['kinked']
+    T, H, rho = full.data[1:]
+    return full, sl.LidEnthalpy.table(T[:90], H[:90], rho[:90])
+
+
+def test_padded_enthalpy_tables_share_one_program_and_keep_their_values():
+    """Tables of 121 and 90 knots padded to 200 have one shape, so one jitted lid function
+    traces once for both; H, the profile heat and density and their slopes in T_s and T_b equal
+    those of the unpadded table bit for bit, below, inside and above the knots."""
+    from aragog.jax import surface_lid as jl
+
+    traces = []
+
+    def lid(e, T, s, T_s, T_b):
+        traces.append(1)
+        heat = jax.value_and_grad(jl.profile_heat, argnums=(2, 3))(e, s, T_s, T_b)
+        return jl.enthalpy_H(e, T), heat, jl.profile_density(e, s, T_s, T_b)
+
+    jitted = jax.jit(lid)
+    T = np.concatenate([np.linspace(50.0, 1800.0, 997), _enthalpies()['kinked'].data[1]])
+    for hv in _cut_tables():
+        padded = jl.enthalpy(hv, size=200)
+        assert padded.T.shape == (200,) and padded.c.shape == (4, 199)
+        for s_, T_s, T_b in (
+            (-300.0, 260.0, 1300.0),
+            (0.0, 400.0, 900.0),
+            (1.5, 150.0, 1700.0),
+        ):
+            got = jax.tree_util.tree_leaves(jitted(padded, T, s_, T_s, T_b))
+            ref = jax.tree_util.tree_leaves(jax.jit(lid)(jl.enthalpy(hv), T, s_, T_s, T_b))
+            for a, b in zip(got, ref):
+                np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+                assert np.all(np.isfinite(np.asarray(a)))
+    assert sum(traces) == 1 + 6  # the padded program once, the unpadded reference per call
+
+
+def test_enthalpy_refuses_a_size_below_its_knots():
+    """A pad size smaller than the knot count of the table is refused."""
+    from aragog.jax import surface_lid as jl
+
+    with pytest.raises(ValueError, match='121 knots'):
+        jl.enthalpy(_enthalpies()['kinked'], size=120)
