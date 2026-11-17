@@ -39,7 +39,7 @@ G = sp_constants.G
 REQUIRED_KEYS = ('r', 'm', 'P', 'rho', 'g')
 ISENTROPE_RTOL = 1e-6  # relative entropy miss of the isentrope, at nodes and midpoints
 MASS_RTOL = 1e-10  # arrays against the structure mass
-MASS_DENSITY_RTOL = 1e-2  # int 4 pi r^2 rho dr against m; 1.1e-3 measured at an ICB jump
+MASS_DENSITY_RTOL = 1e-2  # int 4 pi r^2 rho dr against m; stored ICB core 1.08e-3
 MAX_CELLS = 2_000_000  # nodes x CMB temperatures of the isentrope grid
 C_P_OVERRIDE = 840.0  # J/kg/K: the PALEOS liquid has no electronic heat capacity
 # Calibration window of the Luo et al. (2024) liquid (Attia et al. 2026, p. 5).

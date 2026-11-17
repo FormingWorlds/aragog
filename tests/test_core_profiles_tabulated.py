@@ -11,6 +11,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from scipy.integrate import quad
+from scipy.interpolate import PchipInterpolator
 from scipy.optimize import brentq
 
 from aragog.core.iron_table import FIELDS, LiquidIronTable
@@ -214,14 +215,28 @@ def _fixture_core(name, rho=1.0, m=1.0):
     return core
 
 
+def _mass_miss(core):
+    """PCHIP integral of 4 pi r^2 rho over the core, relative to the node mass m, minus 1."""
+    r, rho = core['r'], core['rho']
+    return (
+        PchipInterpolator(r, 4.0 * np.pi * r**2 * rho).integrate(0.0, r[-1]) / core['m'][-1] - 1
+    )
+
+
 def test_a_density_that_misses_the_node_mass_is_refused(table):
     """A density 5 % too large integrates to 1.05 times the node mass and is refused, with a
-    message that names the 2 masses; the stored cores build (largest mismatch 1.8e-5)."""
+    message that names the 2 masses. The stored single-phase cores miss by at most 5.0e-6; the
+    Fe-S core with an inner-core boundary misses by 1.08e-3, from its density jump, and builds."""
     with pytest.raises(
         ValueError, match=r'core density integrates to .* kg, the node mass m is'
     ):
         TabulatedCoreProfiles(_fixture_core('1me_3000K', rho=1.05), table)
-    TabulatedCoreProfiles(_fixture_core('1me_3000K'), table)
+    single = ('1me_3000K', '3me_3500K', '5me_2510K', 'fe_10me_2510K')
+    assert max(abs(_mass_miss(_fixture_core(n))) for n in single) < 5.1e-6
+    icb = _fixture_core('1me_2510K')
+    assert set(np.unique(icb['phase'])) == {0, 1}
+    assert _mass_miss(icb) == pytest.approx(1.083e-3, rel=1e-3)
+    TabulatedCoreProfiles(icb, table)
 
 
 def test_an_isentrope_that_leaves_the_table_names_the_core_arrays(table):
