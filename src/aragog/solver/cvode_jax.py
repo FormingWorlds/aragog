@@ -62,6 +62,9 @@ class UnsupportedCoreBCError(ValueError):
 
 def clear_jit_cache() -> None:
     """Drop the compiled CVODE programs and reset the trace counters."""
+    if _programs.cache_info().currsize:
+        for program in _programs():
+            program.clear_cache()
     _programs.cache_clear()
     for key in _TRACE_COUNTERS:
         _TRACE_COUNTERS[key] = 0
