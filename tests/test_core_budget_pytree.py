@@ -132,7 +132,6 @@ CHANGES = [
     ('light_element_fraction', 0.12),
     ('depression', 1.0),
     ('ds_fusion', 150.0),
-    ('icn_width', 20.0),
     ('alpha_c', 0.6),
     ('c_light', 0.08),
 ]
