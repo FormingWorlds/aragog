@@ -250,9 +250,10 @@ def test_an_isentrope_that_leaves_the_table_names_the_core_arrays(table):
 
 def test_a_pure_iron_10_earth_mass_core_builds_on_the_default_grid():
     """A dry pure-Fe Zalmoxis core of 10 M_E (centre 4.7 TPa) builds on a cut of the default
-    Zalmoxis grid. Along this core the entropy at the hottest table temperature is lowest at an
-    inner node, not at the centre, so the hottest CMB temperature comes from the lowest entropy
-    over the nodes: more than 1000 K below the one the centre alone gives."""
+    Zalmoxis grid. Above 3.8 TPa the PALEOS liquid density gives a negative thermal expansion,
+    so the table entropy at its hottest temperature is lowest at an inner node at 3.75 TPa,
+    not at the centre. The hottest CMB temperature comes from the lowest entropy over the
+    nodes: more than 1000 K below the one the centre alone gives."""
     data = CUT.parent
     tab = LiquidIronTable.from_file(data / 'paleos_iron_liquid_default_cut_6tpa.npz')
     core = load_core_arrays(data / 'zalmoxis_core_arrays_fe_10me_2510K.npz')

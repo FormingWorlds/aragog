@@ -224,9 +224,10 @@ def test_a_field_of_the_wrong_shape_or_a_missing_field_is_refused():
 @pytest.mark.physics_invariant
 def test_ds_dp_is_the_maxwell_relation(table):
     """``(ds/dP)_T = -alpha / rho`` and ``-(ds/dP)/(ds/dT) = nabla_ad T / P`` on the interior
-    nodes up to 2 TPa, to the error of the grid (7.5e-6 at most measured there; the last
-    nodes before the 3 TPa edge of the cut reach 1.5e-3, so they are left out). A missing
-    ln(10) or a wrong axis gives an error of order 1."""
+    nodes up to 2 TPa, to the error of the grid (7.5e-6 at most measured there). Above 2.4 TPa
+    the alpha column of the table departs from its entropy column (1.4e-3 to 1.5e-3 at 2.67 TPa,
+    on both cuts), so those nodes are left out. A missing ln(10) or a wrong axis gives an
+    error of order 1."""
     data = np.load(CUT)
     keep = data['P_Pa'][2:-2] <= 2e12
     pp, tt = np.meshgrid(data['P_Pa'][2:-2][keep], data['T_K'][2:-2], indexing='ij')
