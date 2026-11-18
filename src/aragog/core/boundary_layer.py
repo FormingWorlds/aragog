@@ -29,7 +29,9 @@ from __future__ import annotations
 import math
 import numbers
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 # None selects Thiriet et al. (2019) eq. 16; a number fixes the critical Rayleigh number;
 # 'phase' blends 450 (liquid bottom cell) and eq. 16 (solid) across the rheological transition.
@@ -56,6 +58,16 @@ def check_ra_crit(ra_crit) -> float | str | None:
             f"ra_crit_cmb must be positive and finite (or 'phase'), got {ra_crit!r}"
         )
     return float(ra_crit)
+
+
+def _concrete_scalar(x) -> float | None:
+    """``float(x)`` for a concrete real scalar (Python, NumPy, or JAX outside a trace), else None."""
+    if x is None or isinstance(x, (bool, str, jax.core.Tracer)):
+        return None
+    try:
+        return float(x) if np.ndim(x) == 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def liquid_weight(melt_fraction, loc, width):
@@ -191,12 +203,10 @@ def cmb_boundary_layer_flux(
         or without those inputs, or with a fixed ``ra_crit`` while the band is on.
     """
     eq16_inputs = (shell_thickness, shell_contrast, interior_viscosity)
-    if (
-        liquid_band is not None
-        and isinstance(ra_crit, numbers.Real)
-        and isinstance(liquid_band[0], numbers.Real)
-        and not math.isnan(liquid_band[0])
-    ):
+    # a NaN ra_crit is the eq. 16 sentinel and a NaN band centre means the band is off
+    fixed = _concrete_scalar(ra_crit)
+    loc = None if liquid_band is None else _concrete_scalar(liquid_band[0])
+    if fixed is not None and not math.isnan(fixed) and loc is not None and not math.isnan(loc):
         raise ValueError(
             f'ra_crit = {ra_crit!r} and liquid_band (the CMB law by phase) exclude each other: '
             'the law by phase blends 450 and eq. 16; give ra_crit=None'
