@@ -407,3 +407,42 @@ def test_the_solver_refuses_the_law_by_phase_with_a_band_outside_zero_to_one():
     object.__setattr__(pm, 'rheological_transition_width', 0.2)
     with pytest.raises(ValueError, match='band'):
         solver._cache_bc_constants()
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot):
+    """Validation: across the melt fraction of the bottom cell the flux under 'phase' equals
+    F_450^s F_16^(1 - s), with s the viscosity-blend weight of ``aragog.utilities``, to rel
+    1e-12, and lies between the two laws."""
+    from aragog.utilities import tanh_weight
+
+    grid = np.linspace(0.0, 1.0, 41)
+    f450, f16 = _flux(RA_CRIT_UPPER_LAYER), _flux(None)
+    q = np.array([float(_phase_flux(p)) for p in grid])
+    s = np.asarray(tanh_weight(grid, LOC, WID))
+    ref = f450**s * f16 ** (1.0 - s)
+    rel = np.abs(q / ref - 1.0)
+    assert rel.max() < 1e-12
+    assert np.all((q > f16) & (q < f450))
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (top, bottom) = plt.subplots(2, 1, sharex=True, figsize=(6.4, 5.6))
+        top.axhline(f450 / f16, ls='--', color='C1', label='450')
+        top.axhline(1.0, ls=':', color='C2', label='eq. 16')
+        top.plot(grid, ref / f16, color='C0', lw=3, alpha=0.4, label='expected')
+        top.plot(grid, q / f16, '.', ms=3, color='C0', label="'phase'")
+        top.set(ylabel='Flux / eq. 16 flux')
+        top.legend(fontsize=8, loc='lower right')
+        bottom.plot(grid, rel / 1e-12, '.', ms=3)
+        bottom.set(
+            xlabel='Melt fraction of the bottom cell',
+            ylabel='Difference / tolerance',
+            ylim=(0.0, 1.0),
+        )
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'core_cmb_law_by_phase')

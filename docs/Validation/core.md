@@ -620,6 +620,30 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 - Test id: `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`
 - Command: `pytest tests/test_core_layer.py -k erfc` (add `--validation-plots` to write the plot pairs)
 
+## 15. Critical Rayleigh number by phase
+
+This section states the setup and the tolerance its test asserts; its numbers come from the test, so the page test has no number of it to check.
+
+**Why this check exists.** With `ra_crit_cmb = "phase"` the CMB flux blends the 2 laws of the boundary layer by the melt fraction of the bottom mantle cell ([explanation](../Explanations/core_bc.md#critical-rayleigh-number-by-phase)). A wrong weight (a wrong sign, a wrong width, or a weight that is not the one of the viscosity blend) or a blend of the fluxes in place of the critical Rayleigh numbers would move the core cooling while the mantle freezes; this test fails on each of them.
+
+**What it tests.** A core 600 K hotter than the bottom cell, under a layer with fixed properties, has the flux $q_{450}$ at $\mathrm{Ra}_\text{crit} = 450$ and $q_{16}$ under eq. 16. The test moves the melt fraction $\phi_0$ of the bottom cell from 0 to 1 at 41 points. At each point the flux under `"phase"` must equal $q_{450}^{\,s}\, q_{16}^{\,1-s}$, where $s = [1 + \tanh((\phi_0 - 0.4)/0.2)]/2$ is the weight the viscosity blend gives the liquid. It must also lie between the 2 laws.
+
+**How we know the right answer.** The flux goes as $\mathrm{Ra}_\text{crit}^{-1/3}$, so a blend of $\ln \mathrm{Ra}_\text{crit}$ with weight $s$ gives exactly this weighted geometric mean of the 2 fluxes. The weight comes from `aragog.utilities.tanh_weight`, the function the NumPy viscosity blend calls.
+
+**Why it matters.** This flux sets how fast the core cools from the magma ocean to the solid mantle. In a 1 Earth-mass run the bottom cell passes the transition between about 0.1 and 0.8 Myr.
+
+![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase.svg#only-light){ width="80%" }
+![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The top panel shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The bottom panel shows the difference of the code from the expected value, divided by the tolerance. A pass puts every dot on the thick line and every lower dot below 1.
+
+??? info "Test details"
+    - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from `aragog.utilities.tanh_weight` (exact identity of the law).
+    - Tolerance: relative $10^{-12}$; the flux lies strictly between the 2 laws.
+    - Discrimination: a weight with the opposite sign and a weight with twice the width each fail tests of `tests/test_cmb_law_by_phase.py` (10 and 6 of them).
+    - Test id: `tests/test_cmb_law_by_phase.py::test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws`
+    - Command: `pytest tests/test_cmb_law_by_phase.py -k weighted_mean` (add `--validation-plots` to write the plot pair)
+
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
 [^cite-christensen2009]: Christensen, U.R., Holzwarth, V. & Reiners, A., *[Energy flux determines magnetic field strength of planets and stars](https://doi.org/10.1038/nature07626)*, Nature, 457, 167-169, 2009. [SciX](https://scixplorer.org/abs/2009Natur.457..167C/abstract).
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).

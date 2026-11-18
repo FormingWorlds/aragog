@@ -122,7 +122,7 @@ Limits:
 - The weight never reaches 0 or 1. With the default transition, $s = 0.018$ at $\phi_0 = 0$ and $0.9975$ at $\phi_0 = 1$. A solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has a flux 0.976 times that of eq. 16; a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ has 0.995 times that of 450.
 - The conduction branch (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
 
-**Where this is checked.** [Critical Rayleigh number by phase](../Validation/core.md#critical-rayleigh-number-by-phase) on the core Validation page.
+**Where this is checked.** [Critical Rayleigh number by phase](../Validation/core.md#15-critical-rayleigh-number-by-phase) on the core Validation page.
 
 ### Properties of the boundary layer
 

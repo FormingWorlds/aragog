@@ -2,7 +2,7 @@
 
 This tutorial evaluates the CMB heat flux of the core module under the 3 settings of `ra_crit_cmb`: a fixed 450, eq. 16 of Thiriet et al. (2019)[^cite-thiriet2019], and `"phase"`, which blends the two by the melt fraction of the bottom mantle cell. It needs no EOS tables: the layer properties are given by hand. Run the block from the root of the aragog repository.
 
-[Critical Rayleigh number by phase](../Explanations/core_bc.md#critical-rayleigh-number-by-phase) explains the law, and [its validation](../Validation/core.md#critical-rayleigh-number-by-phase) shows the checks.
+[Critical Rayleigh number by phase](../Explanations/core_bc.md#critical-rayleigh-number-by-phase) explains the law, and [its validation](../Validation/core.md#15-critical-rayleigh-number-by-phase) shows the checks.
 
 ## 1. The flux of the 3 settings
 
