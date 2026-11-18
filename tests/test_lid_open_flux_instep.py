@@ -388,6 +388,51 @@ class TestOpenFluxJax:
             y = _state(s0, dS)
             np.testing.assert_array_equal(f1(y), f0(y))
 
+    def test_core_module_matches_numpy_with_open_conductance(self, eos):
+        """With ``core_bc='core_module'`` and a live lid, the JAX right-hand side passes
+        the top basic node for the open-part response and matches NumPy (rel 1e-9)."""
+        from aragog.parser import SolidRheologyParams
+        from aragog.solver.entropy_solver import EntropySolver
+        from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+        from tests.test_entropy_solver_core_module_smoke import _build as _cm_build
+
+        def _cm_open(G):
+            p = _cm_build(
+                core_bc='core_module', shared_eos=eos, core_module_params=CORE_MODULE_PARAMS
+            ).parameters
+            p.mesh.inner_radius = 6.346e6
+            p.energy.convection = True
+            p.boundary_conditions.outer_boundary_condition = 4
+            p.boundary_conditions.outer_boundary_value = -1.0
+            p.boundary_conditions.surface_temperature = 500.0
+            p.boundary_conditions.subgrid_lid = True
+            p.boundary_conditions.lid_mush_base = True
+            p.boundary_conditions.lid_delta_on = 1.0
+            p.boundary_conditions.open_surface_conductance = G
+            p.boundary_conditions.normalize()
+            p.phase_solid.rheology = SolidRheologyParams(
+                enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
+            )
+            s = EntropySolver(p, entropy_eos=eos)
+            s.initialize()
+            s.set_initial_entropy(3050.0)
+            return s
+
+        s0, s1 = _cm_open(0.0), _cm_open(G_OPEN)
+        n = s1._n_stag
+        y0 = s1._S0.copy()
+        y0[n - 4 : n] = s1._lid_S_sol + 100.0
+        y0[-2:] = (1.0, float(s1._lid_hv.profile_heat(0.0, 500.0, s1._lid_T_sol)))
+        y1 = y0.copy()
+        y1[n - 4 : n] = s1._lid_S_sol + 140.0
+        s1._set_lid_open_reference(y0)
+        want = np.asarray(s1._dSdt_single(0.0, y1), dtype=float)
+        got0 = self._rhs(s0)[2](y1)
+        got1 = self._rhs(s1)[2](y1)
+        top = n - 1
+        np.testing.assert_allclose(got1[top], want[top], rtol=1e-9)
+        assert got1[top] != got0[top]
+
 
 @pytest.mark.smoke
 @needs_eos
