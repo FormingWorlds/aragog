@@ -434,12 +434,37 @@ class TestAcceptedRange:
         t_bad, msg = s._eos_table_failure(self._sol(s, bad=True))
         assert t_bad == 1.0 and 'cell 2' in msg
 
-    def test_strict_accepted_range_is_off_by_default_and_a_bool(self):
+    @pytest.mark.parametrize('bad', [1, 0, 'true', None])
+    def test_strict_accepted_range_is_off_by_default_and_a_bool(self, bad):
+        """Off by default in the parser and in the config; anything but a bool is refused."""
+        from aragog.config.solver import SolverConfig
         from aragog.parser import _SolverParameters
 
-        assert {f.name: f.default for f in dataclasses.fields(_SolverParameters)}[
-            'strict_accepted_range'
-        ] is False
+        assert _SolverParameters(start_time=0.0, end_time=1.0).strict_accepted_range is False
+        assert SolverConfig(start_time=0.0, end_time=1.0).strict_accepted_range is False
+        with pytest.raises(TypeError, match='strict_accepted_range'):
+            _SolverParameters(start_time=0.0, end_time=1.0, strict_accepted_range=bad)
+        with pytest.raises(TypeError, match='strict_accepted_range'):
+            SolverConfig(start_time=0.0, end_time=1.0, strict_accepted_range=bad)
+
+    def test_a_handed_over_lid_has_weight_0(self, eos):
+        """After the hand-over the lid weight of the last evaluation reads 0, whatever its rates."""
+        s = _open_solver(eos, G=G_OPEN)
+        s._set_lid_open_reference(_state(s, 100.0))
+        s._dSdt_single(0.0, _state(s, 60.0))
+        w_live = s._lid_weight_now()
+        assert w_live > 0.5
+        s._lid_active = False
+        assert s._lid_weight_now() == 0.0
+
+    def test_the_lid_is_held_only_on_the_flux_boundary_with_the_mush_base(self):
+        """``held_lid_surface`` gives the surface only for boundary 4 with the mush base."""
+        from aragog.config.boundary import held_lid_surface
+
+        T_s = 500.0
+        assert held_lid_surface(4, True, T_s) == T_s
+        assert held_lid_surface(4, False, T_s) is None
+        assert held_lid_surface(1, True, T_s) is None
 
     def test_the_error_is_a_runtime_error(self):
         from aragog.solver.entropy_solver import AcceptedStateRangeError
