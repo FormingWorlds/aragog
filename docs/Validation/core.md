@@ -622,7 +622,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 ## 15. Critical Rayleigh number by phase
 
-This section states the setup and the tolerance its test asserts; its numbers come from the test, so the page test has no number of it to check.
+<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
 
 **Why this check exists.** With `ra_crit_cmb = "phase"` the CMB flux blends the 2 laws of the boundary layer by the melt fraction of the bottom mantle cell ([explanation](../Explanations/core_bc.md#critical-rayleigh-number-by-phase)). A wrong weight (a wrong sign, or a wrong width such as that of the viscosity blend) would move the core cooling while the mantle freezes; this test fails on each of them.
 
@@ -635,7 +635,7 @@ This section states the setup and the tolerance its test asserts; its numbers co
 ![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase.svg#only-light){ width="80%" }
 ![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The top panel shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The bottom panel shows the difference of the code from the expected value, divided by the tolerance. A pass puts every dot on the thick line and every lower dot below 1.
+**How to read the plot.** The top panel shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The bottom panel shows the difference of the code from the expected value, divided by the tolerance. A pass puts every dot on the thick line and every dot of the bottom panel below 1.
 
 ??? info "Test details"
     - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from the formula above (exact identity of the law).
