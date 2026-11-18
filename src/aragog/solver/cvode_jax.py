@@ -72,6 +72,7 @@ class _JitCacheEntry:
     eos_jax: Any
     budget: Any = None
     powers_jit: Any = None
+    weights_jit: Any = None
 
 
 _JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
@@ -164,6 +165,28 @@ def _make_jitted_powers(
     def _eval_chunk(t_chunk, Y_chunk, data, aux):
         _TRACE_COUNTERS['powers'] += 1
         return jax.vmap(_eval_node, in_axes=(0, 1, None, None))(t_chunk, Y_chunk, data, aux)
+
+    return jax.jit(_eval_chunk)
+
+
+def _make_jitted_lid_weights(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+    budget: Any = None,
+):
+    """Build the JIT-compiled vmapped lid weight over chunks of size C."""
+    import jax
+
+    from aragog.jax import solver as js
+
+    def _eval_node(t_phys, y_phys, data):
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
+        return js.lid_weight(t_phys, y_phys, args_tuple, core_bc_mode)
+
+    def _eval_chunk(t_chunk, Y_chunk, data):
+        return jax.vmap(_eval_node, in_axes=(0, 1, None))(t_chunk, Y_chunk, data)
 
     return jax.jit(_eval_chunk)
 
@@ -554,6 +577,33 @@ def build_jax_rhs_and_jacobian(
             return np.concatenate(chunks)[:n]
 
         rhs_fn.step_powers = step_powers
+
+        if lid_params is not None:
+
+            def lid_weights(t_nodes, Y_nodes):
+                """Lid weight at each accepted node, shape (n,), states in physical units."""
+                t_arr = np.asarray(t_nodes, dtype=np.float64).ravel()
+                Y_arr = np.asarray(Y_nodes, dtype=np.float64)
+                if Y_arr.shape != (expected_size, t_arr.size):
+                    raise ValueError(
+                        f'Y_nodes shape {Y_arr.shape}, expected ({expected_size}, {t_arr.size})'
+                    )
+                if t_arr.size == 0:
+                    return np.empty(0, dtype=np.float64)
+                if entry.weights_jit is None:
+                    entry.weights_jit = _make_jitted_lid_weights(
+                        core_bc_mode, use_radio, phase_params, eos_jax, budget
+                    )
+                pad_len = -t_arr.size % C
+                t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
+                Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
+                chunks = [
+                    np.asarray(entry.weights_jit(t_pad[k : k + C], Y_pad[:, k : k + C], data))
+                    for k in range(0, t_pad.size, C)
+                ]
+                return np.concatenate(chunks)[: t_arr.size]
+
+            rhs_fn.lid_weights = lid_weights
 
     if getattr(getattr(phase_params, 'rheology', None), 'enabled', False) and hasattr(
         mesh_arrays, 'validate_for_rheology'

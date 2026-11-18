@@ -36,6 +36,9 @@ class SolverConfig:
         Optional per-solve core-temperature change limit [K]. The flag is
         also set, independent of this limit, when any sampled core
         temperature is non-finite.
+    strict_accepted_range : bool
+        With the rheology off: an accepted state of a call outside the entropy range of the EOS
+        tables raises ``AcceptedStateRangeError`` instead of failing the call. Off by default.
     """
 
     start_time: float
@@ -69,4 +72,7 @@ class SolverConfig:
                 attrs.validators.gt(0.0),
             )
         ),
+    )
+    strict_accepted_range: bool = attrs.field(
+        default=False, validator=attrs.validators.instance_of(bool)
     )

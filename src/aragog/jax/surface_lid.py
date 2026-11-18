@@ -413,6 +413,8 @@ class LidParams(NamedTuple):
     H_arr: float
     phi_rheo: float
     phi_width: float
+    open_G: float = 0.0
+    open_T_m0: float = 0.0
 
 
 def floor_weight(S_f, S_sol):
@@ -465,23 +467,29 @@ def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
     )
 
 
-def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, heating):
+def lid_top(
+    lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, heating, T_node=None
+):
     """The lid at the top cell of one RHS evaluation, as the NumPy ``_lid_evaluate``.
 
     ``top`` holds the top-cell temperature, density, heat capacity, conductivity, expansivity,
     gravity, viscosity and melt fraction. ``F_in`` is the flux into the top cell from below and
-    ``F_grid`` the surface flux of the mesh [W/m^2].
+    ``F_grid`` the surface flux of the mesh [W/m^2]. With ``T_node``, the top basic node [K],
+    the open part carries ``F_grid + open_G (max(T_node, T_b) - open_T_m0)``, as the NumPy RHS.
 
     Returns
     -------
     tuple
-        ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger)``: the surface loss and the fluid flux
-        [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], and the
+        ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger, w)``: the surface loss and the fluid flux
+        [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], the
         ledger terms ``(H_f, m_lid)``: the fluid heat content per volume [J/m^3] and the lid
-        mass per area [kg/m^2].
+        mass per area [kg/m^2], and the lid weight.
     """
     delta, E = y_lid[0], y_lid[1]
     base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
+    if T_node is not None:
+        dT_m = jnp.maximum(T_node, base['T_b']) - lp.open_T_m0
+        F_grid = F_grid + jnp.where(lp.open_G > 0.0, lp.open_G * dT_m, 0.0)
     H_f = enthalpy_H(lp.hs, S_f)
     q_conv = lp.convection * convective_base_flux(
         top['T'] - base['T_b'],
@@ -548,4 +556,4 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
     )
     m_lid = delta * profile_density(lp.e, surf[3], surf[0], base['T_b'])
     ledger = (H_f, m_lid)
-    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger
+    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger, w

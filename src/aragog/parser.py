@@ -125,11 +125,12 @@ class _BoundaryConditionsParameters:
     lid_handover_cells: int = 3
     lid_ra_crit: float = 450.0
     lid_mush_base: bool = False
-    lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
     lid_surface_flux_slope: float | None = None
-    # Surface temperature [K] for the shell contrast of the core_module CMB law (BoundaryConfig).
+    # Surface temperature [K]: core_module shell contrast, and the held lid (BoundaryConfig).
     surface_temperature: float | None = None
+    # Open-part response of the lid on the flux boundary [W/m^2/K] (BoundaryConfig).
+    open_surface_conductance: float | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -162,9 +163,10 @@ class _BoundaryConditionsParameters:
         check_lid_surface(
             self.outer_boundary_condition,
             self.lid_mush_base,
-            self.lid_surface_temperature,
+            self.surface_temperature,
             self.lid_surface_flux_cap,
             self.lid_surface_flux_slope,
+            self.open_surface_conductance,
         )
         check_subgrid_lid(
             self.subgrid_lid,
@@ -633,8 +635,15 @@ class _SolverParameters:
     # flag is also set, independent of this limit, whenever any sampled
     # core temperature is non-finite; the measured change is always reported.
     tcore_change_limit: float | None = None
+    # Raise AcceptedStateRangeError, in place of a failed call, when an accepted state of a
+    # call leaves the entropy range of the EOS tables (rheology off; on, it always raises).
+    strict_accepted_range: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.strict_accepted_range, bool):
+            raise TypeError(
+                f'strict_accepted_range must be true or false, got {self.strict_accepted_range!r}'
+            )
         if not isinstance(self.cvode_output_points, int):
             raise TypeError(
                 f'cvode_output_points must be an integer, '
