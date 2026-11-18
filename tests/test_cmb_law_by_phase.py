@@ -287,3 +287,121 @@ def test_the_jax_factory_takes_the_phase_law():
         core_module_ra_crit_cmb='phase',
     )
     assert callable(rhs_fn) and callable(jac_fn)
+
+
+# C1: the weight is the tanh weight of the viscosity blend; the band follows the configuration.
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@settings(max_examples=300, deadline=None)
+@given(
+    phi=st.floats(0.0, 1.0),
+    loc=st.floats(0.05, 0.95),
+    wid=st.floats(0.01, 0.5),
+)
+def test_the_liquid_weight_is_the_viscosity_blend_weight(phi, loc, wid):
+    """The law takes the weight the viscosity blend gives the liquid at the same melt
+    fraction: equal to the JAX form (``aragog.jax.phase``) to rel 1e-14, and to the NumPy form
+    (``aragog.utilities``, NumPy's tanh) to rel 1e-14 or 2 ulp of 1, the rounding of
+    ``1 + tanh`` where tanh is near -1."""
+    from aragog.jax.phase import tanh_weight as tanh_weight_jax
+    from aragog.utilities import tanh_weight
+
+    s = float(liquid_weight(phi, loc, wid))
+    assert s == pytest.approx(float(tanh_weight_jax(phi, loc, wid)), rel=1e-14, abs=1e-300)
+    assert s == pytest.approx(float(tanh_weight(phi, loc, wid)), rel=1e-14, abs=4.5e-16)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('loc', 'wid'), [(0.4, 0.2), (0.5, 0.1), (0.4, 0.15)])
+def test_the_tails_follow_the_formula_and_the_weight_rises(loc, wid):
+    """At phi0 = 0 and 1 the weight is (1 + tanh((phi0 - loc)/wid))/2; it rises with phi0."""
+    for phi in (0.0, 1.0):
+        expected = 0.5 * (1.0 + math.tanh((phi - loc) / wid))
+        assert float(liquid_weight(phi, loc, wid)) == pytest.approx(expected, rel=1e-14)
+    grid = np.linspace(0.0, 1.0, 2001)
+    w = np.asarray(liquid_weight(jnp.asarray(grid), loc, wid))
+    assert np.all(np.diff(w) > 0.0)
+    f = np.array([float(_phase_flux(p, loc, wid)) for p in grid[::50]])
+    f450, f16 = _flux(RA_CRIT_UPPER_LAYER), _flux(None)
+    # Between the two laws everywhere, and towards the liquid law as phi0 rises.
+    assert np.all((f > min(f450, f16)) & (f < max(f450, f16)))
+    assert np.all(np.sign(np.diff(f)) == np.sign(f450 - f16))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('loc', 'wid'), [(0.05, 0.2), (0.95, 0.2), (0.3, 0.8), (0.4, 0.0)])
+def test_a_band_that_leaves_zero_to_one_is_refused(loc, wid):
+    from aragog.core import check_liquid_band
+
+    with pytest.raises(ValueError, match='band'):
+        check_liquid_band(loc, wid)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('loc', 'wid'), [(0.4, 0.2), (0.5, 0.1), (0.1, 0.2), (0.9, 0.2)])
+def test_a_band_inside_zero_to_one_is_accepted(loc, wid):
+    from aragog.core import check_liquid_band
+
+    check_liquid_band(loc, wid)
+
+
+def _set_band(solver, args, loc, wid):
+    """The solver and its JAX arguments with the rheological transition at ``loc``, ``wid``."""
+    import equinox as eqx
+
+    pm = solver.parameters.phase_mixed
+    object.__setattr__(pm, 'rheological_transition_melt_fraction', loc)
+    object.__setattr__(pm, 'rheological_transition_width', wid)
+    # The NumPy phase evaluators hold their own copy for the viscosity blend.
+    for ev in (solver._bl_phase, solver.state.phase_staggered, solver.state.phase_basic):
+        ev._phi_rheo, ev._phi_width = loc, wid
+    params = eqx.tree_at(lambda p: (p.phi_rheo, p.phi_width), args[1], (loc, wid))
+    return args[:1] + (params,) + args[2:]
+
+
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+@needs_eos
+@pytest.mark.parametrize('phi', [0.45, 0.5, 0.55])
+def test_the_band_follows_the_configured_transition(phi):
+    """With the transition at 0.5 and width 0.1 both paths weight the laws at the new band."""
+    from aragog.jax.solver import _dSdt_core_module_parts
+    from aragog.utilities import tanh_weight
+
+    solver = _phase_solver()
+    n = solver._n_stag
+    y = _bottom_state(solver, phi)
+    args = _set_band(solver, _phase_args(solver), 0.5, 0.1)
+    f = {}
+    for law in (RA_CRIT_UPPER_LAYER, None, 'phase'):
+        solver._core_module_ra_crit_cmb = law
+        f[law] = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
+    s = float(tanh_weight(phi, 0.5, 0.1))
+    assert s != pytest.approx(float(tanh_weight(phi, 0.4, 0.15)), rel=1e-2)
+    assert f['phase'] == pytest.approx(
+        f[RA_CRIT_UPPER_LAYER] ** s * f[None] ** (1.0 - s), rel=1e-12
+    )
+    f_jax = float(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).heat_flux[0])
+    assert f_jax == pytest.approx(f['phase'], rel=1e-10)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_the_solver_refuses_the_law_by_phase_with_a_band_outside_zero_to_one():
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        {**CORE_MODULE_PARAMS, 'ra_crit_cmb': 'phase'},
+        s_init='driven',
+    )
+    assert solver._core_module_ra_crit_cmb == 'phase'
+    pm = solver.parameters.phase_mixed
+    object.__setattr__(pm, 'rheological_transition_melt_fraction', 0.95)
+    object.__setattr__(pm, 'rheological_transition_width', 0.2)
+    with pytest.raises(ValueError, match='band'):
+        solver._cache_bc_constants()
