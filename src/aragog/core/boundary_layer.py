@@ -14,8 +14,8 @@ interior at ``T_m``, unless a fixed value is given
 (450 is the value Thiriet et al. take for the upper layer). The selector ``'phase'``
 takes 450 while the bottom cell is liquid and eq. 16 while it is solid, the switch of
 Miyazaki and Korenaga (2019)[^cite-miyazaki2019b] at their critical melt fraction, blended
-across the rheological transition (``liquid_weight``) in the logarithm of ``Ra_crit``, so the
-flux is continuous in the melt fraction. The flux does not depend
+across the rheological transition with the weight of the viscosity blend (``liquid_weight``)
+in the logarithm of ``Ra_crit``, so the flux is continuous in the melt fraction. The flux does not depend
 on the mesh. Two choices are this module's own, not the papers': a core colder than
 the mantle above it (a stably stratified layer) receives heat by conduction across
 the half cell between the CMB and the bottom staggered node, and so does a layer
@@ -59,12 +59,11 @@ def check_ra_crit(ra_crit) -> float | str | None:
 def liquid_weight(melt_fraction, loc, width):
     """Weight of the liquid law (``Ra_crit = 450``) in the CMB law by phase.
 
-    A C1 smoothstep ``3u^2 - 2u^3`` of ``u = (phi - (loc - width/2)) / width`` clipped to
-    [0, 1]: 0 at and below ``loc - width/2``, 1 at and above ``loc + width/2``, 1/2 at the
-    rheological transition ``loc``.
+    The tanh weight of the viscosity blend, ``(1 + tanh((phi - loc) / width)) / 2``, with the
+    rheological transition ``loc`` and its width: the law changes where the viscosity does.
+    It is 1/2 at ``loc`` and tends to 1 on the liquid side and to 0 on the solid side.
     """
-    u = jnp.clip((melt_fraction - (loc - 0.5 * width)) / width, 0.0, 1.0)
-    return u * u * (3.0 - 2.0 * u)
+    return 0.5 * (1.0 + jnp.tanh((melt_fraction - loc) / width))
 
 
 def check_liquid_band(loc, width) -> None:
@@ -171,8 +170,8 @@ def cmb_boundary_layer_flux(
     liquid_band : tuple of float, optional
         ``(loc, width)`` of the rheological transition for the law by phase:
         ``ln Ra_crit = s ln 450 + (1 - s) ln Ra_crit,16`` with
-        ``s = liquid_weight(melt_fraction, loc, width)``, exactly 450 at ``s = 1`` and exactly
-        eq. 16 at ``s = 0``. It needs the eq. 16 inputs and replaces ``ra_crit``; a NaN ``loc``
+        ``s = liquid_weight(melt_fraction, loc, width)``; 450 where ``s`` rounds to 1 and
+        eq. 16 where it rounds to 0. It needs the eq. 16 inputs and replaces ``ra_crit``; a NaN ``loc``
         (the 'off' value inside a JAX trace) keeps ``ra_crit``.
 
     Returns

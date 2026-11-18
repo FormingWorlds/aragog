@@ -302,13 +302,15 @@ def test_the_jax_factory_takes_the_phase_law():
 )
 def test_the_liquid_weight_is_the_viscosity_blend_weight(phi, loc, wid):
     """The law takes the weight the viscosity blend gives the liquid at the same melt
-    fraction, in the NumPy (``aragog.utilities``) and the JAX (``aragog.jax.phase``) form."""
+    fraction: equal to the JAX form (``aragog.jax.phase``) to rel 1e-14, and to the NumPy form
+    (``aragog.utilities``, NumPy's tanh) to rel 1e-14 or 2 ulp of 1, the rounding of
+    ``1 + tanh`` where tanh is near -1."""
     from aragog.jax.phase import tanh_weight as tanh_weight_jax
     from aragog.utilities import tanh_weight
 
     s = float(liquid_weight(phi, loc, wid))
-    assert s == pytest.approx(float(tanh_weight(phi, loc, wid)), rel=1e-14, abs=1e-300)
     assert s == pytest.approx(float(tanh_weight_jax(phi, loc, wid)), rel=1e-14, abs=1e-300)
+    assert s == pytest.approx(float(tanh_weight(phi, loc, wid)), rel=1e-14, abs=4.5e-16)
 
 
 @pytest.mark.unit
@@ -353,6 +355,9 @@ def _set_band(solver, args, loc, wid):
     pm = solver.parameters.phase_mixed
     object.__setattr__(pm, 'rheological_transition_melt_fraction', loc)
     object.__setattr__(pm, 'rheological_transition_width', wid)
+    # The NumPy phase evaluators hold their own copy for the viscosity blend.
+    for ev in (solver._bl_phase, solver.state.phase_staggered, solver.state.phase_basic):
+        ev._phi_rheo, ev._phi_width = loc, wid
     params = eqx.tree_at(lambda p: (p.phi_rheo, p.phi_width), args[1], (loc, wid))
     return args[:1] + (params,) + args[2:]
 
