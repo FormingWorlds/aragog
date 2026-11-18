@@ -163,6 +163,13 @@ def _phase_solver():
     return solver
 
 
+def _band_point(solver, f):
+    """Melt fraction at the fraction ``f`` across the solver's transition band."""
+    pm = solver.parameters.phase_mixed
+    loc, wid = pm.rheological_transition_melt_fraction, pm.rheological_transition_width
+    return loc - 0.5 * wid + f * wid
+
+
 def _bottom_state(solver, phi):
     """Extended state with the bottom cell at melt fraction ``phi`` at the CMB pressure and a
     core 600 K above it (the boundary-layer branch)."""
@@ -179,10 +186,10 @@ def _bottom_state(solver, phi):
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
-@pytest.mark.parametrize('phi', [0.32, 0.4, 0.46])
-def test_the_numpy_flux_blends_the_two_laws_at_the_bottom_cell_melt_fraction(phi):
+@pytest.mark.parametrize('f', [0.1, 0.5, 0.85])
+def test_the_numpy_flux_blends_the_two_laws_at_the_bottom_cell_melt_fraction(f):
     solver = _phase_solver()
-    n = solver._n_stag
+    n, phi = solver._n_stag, _band_point(solver, f)
     y = _bottom_state(solver, phi)
     pm = solver.parameters.phase_mixed
     s = float(
@@ -214,12 +221,12 @@ def _phase_args(solver):
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
-@pytest.mark.parametrize('phi', [0.32, 0.4, 0.46])
-def test_the_jax_rhs_matches_numpy_under_the_phase_law(phi):
+@pytest.mark.parametrize('f', [0.1, 0.5, 0.85])
+def test_the_jax_rhs_matches_numpy_under_the_phase_law(f):
     from aragog.jax.solver import _dSdt_core_module_parts
 
     solver = _phase_solver()
-    n = solver._n_stag
+    n, phi = solver._n_stag, _band_point(solver, f)
     y = _bottom_state(solver, phi)
     args = _phase_args(solver)
     f_np = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
@@ -227,7 +234,12 @@ def test_the_jax_rhs_matches_numpy_under_the_phase_law(phi):
     assert f_jax == pytest.approx(f_np, rel=1e-10)
     off = args[:10] + (0.0,)
     f_eq16 = float(_dSdt_core_module_parts(0.0, jnp.asarray(y), off).heat_flux[0])
-    assert f_eq16 != pytest.approx(f_jax, rel=1e-3)
+    solver._core_module_ra_crit_cmb = None
+    assert f_eq16 == pytest.approx(
+        solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1]), rel=1e-10
+    )
+    solver._core_module_ra_crit_cmb = 'phase'
+    assert abs(f_eq16 / f_jax - 1.0) > 1e-5
     rate_np = np.asarray(solver.dSdt(0.0, y)).ravel()
     rate_jax = np.asarray(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).rate).ravel()
     np.testing.assert_allclose(rate_jax[n:], rate_np[n:], rtol=1e-8)
@@ -239,7 +251,7 @@ def test_the_jacobian_is_finite_inside_the_transition():
     from aragog.jax.solver import dSdt_core_module
 
     solver = _phase_solver()
-    y = _bottom_state(solver, 0.4)
+    y = _bottom_state(solver, _band_point(solver, 0.4))
     args = _phase_args(solver)
     jac = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
     assert np.all(np.isfinite(jac))

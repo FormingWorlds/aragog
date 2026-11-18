@@ -2473,6 +2473,7 @@ class EntropySolver:
                     "pip install 'fwl-aragog[jax]'"
                 ) from err
 
+            from aragog.core import RA_CRIT_PHASE, check_liquid_band
             from aragog.core.module import (
                 build_core_module_budget,
                 core_module_cache_key,
@@ -2506,6 +2507,11 @@ class EntropySolver:
                         float(budget.profiles.rho_cen),
                         float(budget.profiles.length_scale) / 1e3,
                     )
+            if ra_crit == RA_CRIT_PHASE:
+                pm = self.parameters.phase_mixed
+                check_liquid_band(
+                    pm.rheological_transition_melt_fraction, pm.rheological_transition_width
+                )
             self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
             self._warn_once(
                 'core_fields_unused',
@@ -4427,9 +4433,11 @@ class EntropySolver:
         Rayleigh number of eq. 16 takes the mantle thickness of the mesh, the contrast
         across the shell from the core to ``cmb_shell_surface_temperature`` (the top cell's
         temperature, entropy ``s_top`` at its pressure, without one) and the viscosity of the
-        bottom cell's own state at the CMB pressure (the interior at ``T_m``).
+        bottom cell's own state at the CMB pressure (the interior at ``T_m``). Under
+        ``ra_crit_cmb = 'phase'`` the melt fraction of that same state sets the weight of the
+        liquid law across the rheological transition of ``phase_mixed``.
         """
-        from aragog.core import cmb_boundary_layer_flux
+        from aragog.core import RA_CRIT_PHASE, cmb_boundary_layer_flux
 
         if self.entropy_eos is None:
             raise ValueError(
@@ -4451,6 +4459,16 @@ class EntropySolver:
         bl.set_entropy(np.array([s_bottom]))
         bl.update()
         eta_interior = first(bl.viscosity())
+        phase_law = {}
+        if self._core_module_ra_crit_cmb == RA_CRIT_PHASE:
+            pm = self.parameters.phase_mixed
+            phase_law = dict(
+                melt_fraction=first(bl.melt_fraction()),
+                liquid_band=(
+                    float(pm.rheological_transition_melt_fraction),
+                    float(pm.rheological_transition_width),
+                ),
+            )
         bl.set_entropy(np.array([s_bl]))
         bl.update()
         return float(
@@ -4464,10 +4482,11 @@ class EntropySolver:
                 viscosity=first(bl.viscosity()),
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,
-                ra_crit=self._core_module_ra_crit_cmb,
+                ra_crit=None if phase_law else self._core_module_ra_crit_cmb,
                 shell_thickness=float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
                 shell_contrast=t_hot - t_surf,
                 interior_viscosity=eta_interior,
+                **phase_law,
             )
         )
 

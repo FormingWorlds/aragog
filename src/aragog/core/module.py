@@ -229,13 +229,16 @@ def _tabulated_profiles(params: dict, r_cmb: float, p_cmb: float, m_core: float 
     return profiles
 
 
-def split_core_module_params(params: dict | None) -> tuple[dict, float, float]:
+def split_core_module_params(
+    params: dict | None,
+) -> tuple[dict, float, float | str | None]:
     """Split ``core_module_params`` into the budget keys, ``q_radio`` [W] and ``ra_crit_cmb``.
 
     Raises
     ------
     ValueError
-        On a ``ra_crit_cmb`` that is not a positive finite number, or on budget keys that
+        On a ``ra_crit_cmb`` that is not None, ``'phase'`` or a positive finite number, or on
+        budget keys that
         :func:`build_core_module_budget` refuses before it builds the core profile.
     """
     params = dict(params or {})
