@@ -3586,8 +3586,21 @@ class EntropySolver:
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
             open_G=self._lid_open_G(),
-            open_T_m0=float(getattr(self, '_lid_T_m0', None) or 0.0),
+            open_T_m0=self._lid_open_T_m0_for_jax(),
         )
+
+    def _lid_open_T_m0_for_jax(self) -> float:
+        """The start reference ``T_m0`` of the open part for the JAX parameters; 0 without a
+        conductance. A conductance without a reference raises, as the NumPy right-hand side does."""
+        T_m0 = getattr(self, '_lid_T_m0', None)
+        if T_m0 is None:
+            if self._lid_open_G() > 0.0:
+                raise RuntimeError(
+                    'open_surface_conductance is set but the open part has no start reference '
+                    'T_m0: solve() sets it from the start state'
+                )
+            return 0.0
+        return float(T_m0)
 
     def _lid_floor_integral(self) -> tuple:
         """The Kirchhoff integral ``Phi(S)`` [W/m] of the eddy-diffusivity floor at the
@@ -6831,7 +6844,13 @@ class EntropySolver:
         gives one, else from the NumPy right-hand side at each node."""
         batch_fn = getattr(self, '_cvode_lid_weights_batch', None)
         if batch_fn is not None:
-            return np.asarray(batch_fn(t_pts, y_pts), dtype=float)
+            try:
+                return np.asarray(batch_fn(t_pts, y_pts), dtype=float)
+            except Exception as exc:  # noqa: BLE001 - the NumPy loop below is the reference path
+                self._warn_once(
+                    'batch_lid_weights_failed',
+                    f'EntropySolver: batch lid weights failed ({exc}); falling back to numpy loop',
+                )
         weights = []
         for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
             self._dSdt_single(float(t), y)
