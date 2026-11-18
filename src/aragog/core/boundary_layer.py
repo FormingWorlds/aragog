@@ -13,9 +13,10 @@ number is their eq. 16 (from Deschamps and Sotin 2000[^cite-deschamps2000]),
 interior at ``T_m``, unless a fixed value is given
 (450 is the value Thiriet et al. take for the upper layer). The selector ``'phase'``
 takes 450 while the bottom cell is liquid and eq. 16 while it is solid, the switch of
-Miyazaki and Korenaga (2019)[^cite-miyazaki2019b] at their critical melt fraction, blended
-across the rheological transition with the weight of the viscosity blend (``liquid_weight``)
-in the logarithm of ``Ra_crit``, so the flux is continuous in the melt fraction. The flux does not depend
+Miyazaki & Korenaga (2019b)[^cite-miyazaki2019b] at their critical melt fraction, blended
+in the logarithm of ``Ra_crit`` with a tanh weight (``liquid_weight``) that is 0.05 and 0.95
+at the edges of the rheological transition band, so the flux is continuous in the melt
+fraction. The flux does not depend
 on the mesh. Two choices are this module's own, not the papers': a core colder than
 the mantle above it (a stably stratified layer) receives heat by conduction across
 the half cell between the CMB and the bottom staggered node, and so does a layer
@@ -35,6 +36,7 @@ import jax.numpy as jnp
 RA_CRIT_CMB_DEFAULT = None
 RA_CRIT_UPPER_LAYER = 450.0  # Thiriet et al. (2019), Table 2, the upper boundary layer
 RA_CRIT_PHASE = 'phase'
+_ATANH_09 = math.atanh(0.9)  # the band edges loc -+ width/2 take weights 0.05 and 0.95
 
 
 def check_ra_crit(ra_crit) -> float | str | None:
@@ -59,11 +61,12 @@ def check_ra_crit(ra_crit) -> float | str | None:
 def liquid_weight(melt_fraction, loc, width):
     """Weight of the liquid law (``Ra_crit = 450``) in the CMB law by phase.
 
-    The tanh weight of the viscosity blend, ``(1 + tanh((phi - loc) / width)) / 2``, with the
-    rheological transition ``loc`` and its width: the law changes where the viscosity does.
-    It is 1/2 at ``loc`` and tends to 1 on the liquid side and to 0 on the solid side.
+    ``(1 + tanh((phi - loc) / w)) / 2`` with ``w = (width / 2) / atanh(0.9)``: 1/2 at the
+    rheological transition ``loc``, 0.05 and 0.95 at the band edges ``loc -+ width / 2``,
+    towards 0 on the solid side and 1 on the liquid side. It is narrower than the weight of
+    the viscosity blend, ``(1 + tanh((phi - loc) / width)) / 2``.
     """
-    return 0.5 * (1.0 + jnp.tanh((melt_fraction - loc) / width))
+    return 0.5 * (1.0 + jnp.tanh((melt_fraction - loc) / (0.5 * width / _ATANH_09)))
 
 
 def check_liquid_band(loc, width) -> None:
