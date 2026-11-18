@@ -637,6 +637,8 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 **How to read the plot.** The top panel shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The bottom panel shows the difference of the code from the expected value, divided by the tolerance. A pass puts every dot on the thick line and every dot of the bottom panel below 1.
 
+**Known limit.** The test checks the law at one state; in a coupled run its effect is smaller than the stored states suggest. In a 1 Earth-mass segment from 150.4 to 500 kyr the law by phase leaves the core 3.0 K warmer at 500 kyr than a fixed 450, against 8.2 K estimated from the stored states of the run with 450. In that segment the run with the law by phase takes 2.4 times the CVODE steps and 35 % more wall time while the bottom cell crosses the transition.
+
 ??? info "Test details"
     - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from the formula above (exact identity of the law).
     - Tolerance: relative $10^{-12}$; the flux lies strictly between the 2 laws.
