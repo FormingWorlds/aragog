@@ -29,7 +29,8 @@ def shared_eos():
 
 @pytest.fixture(scope='module')
 def params(tmp_path_factory):
-    """A PALEOS Earth core (Gaussian structure on 201 nodes) on the smoke-test mesh."""
+    """A PALEOS Earth core (Gaussian structure on 201 nodes) on the smoke-test mesh, with the
+    fixed critical Rayleigh number 450 of the CMB layer: these tests hold the ledger, not the law."""
     core, _ = write_core(tmp_path_factory.mktemp('core') / 'core.npz', n=201)
     return dict(
         profile_source='paleos',
@@ -38,6 +39,7 @@ def params(tmp_path_factory):
         ds_fusion=172.8,
         icn_width=10.0,
         q_radio=0.0,
+        ra_crit_cmb=450.0,
     )
 
 
@@ -100,6 +102,21 @@ def test_the_tabulated_core_ledger_converges_with_the_tolerance(
         return fig
 
     validation_plot(figure, 'core_tabulated_ledger_per_call')
+
+
+@pytest.mark.physics_invariant
+def test_the_tabulated_core_ledger_closes_under_the_eq16_law(shared_eos, params):
+    """The first call of the zero-flux start under Thiriet et al. (2019) eq. 16. It books 9.2
+    times less CMB heat than with 450 and closes 2.1 times better in J (measured -2.3e20 against
+    -4.7e20 J), so its residual per CMB heat is larger: -5.7e-4 at the default tolerances and
+    -4.4e-6 at 1000 times tighter ones (bounds 1e-3 and 1e-5, a fall of at least 20)."""
+    eq16 = {k: v for k, v in params.items() if k != 'ra_crit_cmb'}
+    res = {}
+    for sf in (1.0, 1.0e-3):
+        (res[sf], _), _, solver = _call(shared_eos, eq16, 0.0, 1.0, None, sf)
+        assert solver._core_module_ra_crit_cmb is None
+    assert 1e-5 < abs(res[1.0]) < 1e-3 and abs(res[1.0e-3]) < 1e-5, res
+    assert abs(res[1.0]) > 20.0 * abs(res[1.0e-3]), res
 
 
 @pytest.mark.physics_invariant
