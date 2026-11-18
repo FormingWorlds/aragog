@@ -348,7 +348,7 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 **Why this check exists.** In a coupled step the open part of the surface, the fraction $1 - w$ without a lid, starts at the flux of the atmosphere call. Inside the call the melt under it warms or cools, and the atmosphere would answer. If the open part kept its start value, a melt that warms would lose no more heat, and the surface temperature would swing from one coupled step to the next. If the response took the node temperature below the lid base, the open part would cool a melt that is held at the base. The test fails on both.
 
-**What it tests.** The loss of the open part changes by $(1 - w)\, G\, (T_m - T_{m0})$ within a call ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $G$ is `open_surface_conductance` (0.5 W m$^{-2}$ K$^{-1}$ in the test), $T_m = \max(T_\mathrm{node}, T_b)$ is the top node held at least at the lid base $T_b$, and $T_{m0}$ its value at the call start. The test compares the surface loss with and without $G$ at 21 states. The top node moves from 13 K below $T_b$ to 24 K above it. At 7 more states it lies 836 to 884 K below the base. It also compares the JAX right-hand side of the top cell with NumPy at each state.
+**What it tests.** The loss of the open part changes by $(1 - w)\, G\, (T_m - T_{m0})$ within a call ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $G$ is `open_surface_conductance` (0.5 W m$^{-2}$ K$^{-1}$ in the test), $T_m = \max(T_\mathrm{node}, T_b)$ is the top node held at least at the lid base $T_b$, and $T_{m0}$ its value at the call start. The test compares the surface loss with and without $G$ at 21 states where the top node moves from 13 K below $T_b$ to 24 K above it; in the states with the node below $T_b$ the lid covers the whole surface ($w = 1$), so these check only that the open part then adds nothing. At 7 more states the node lies 836 to 884 K below the base while the open part covers 98.5 to 100 % of the surface; these states check the floor. It also compares the JAX right-hand side of the top cell with NumPy at each state.
 
 **How we know the right answer.** The response is a linear term on top of the start value, so the difference of the two losses is the term itself. A node below the lid base gives $T_m = T_b$, and from a start state at the base the term is 0.
 
@@ -362,7 +362,7 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 ??? info "Test details"
     - Reference: the response term $(1 - w)\, G\, (\max(T_\mathrm{node}, T_b) - T_{m0})$ (exact identity of the boundary flux).
     - Tolerance: relative $10^{-9}$, plus absolute $10^{-12}$ W m$^{-2}$ where $1 - w$ rounds near $w = 1$; JAX top-cell rate against NumPy to relative $10^{-9}$.
-    - Discrimination: a response on $T_\mathrm{node}$ in place of $T_m$ fails the test, by 435 W m$^{-2}$ at its first failing state.
+    - Discrimination: a response on $T_\mathrm{node}$ in place of $T_m$ in the current state, with the start value still floored, fails by 435 W m$^{-2}$ at the first state far below the base.
     - Test id: `tests/test_lid_open_flux_instep.py::test_the_open_part_follows_the_open_node_across_the_lid_base`
     - Command: `pytest tests/test_lid_open_flux_instep.py -k across_the_lid_base` (add `--validation-plots` to write the plot pair)
 

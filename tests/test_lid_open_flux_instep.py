@@ -143,7 +143,7 @@ class TestOpenFluxNumpy:
         )
 
     def test_start_of_step_reference(self, eos):
-        """D1: ``T_m0`` is ``max(T_node, T_b)`` of the start state, and at that state the
+        """``T_m0`` is ``max(T_node, T_b)`` of the start state, and at that state the
         right-hand side with the conductance is the one without it, bit for bit."""
         s0, s1 = _open_solver(eos), _open_solver(eos, G=G_OPEN)
         y0 = _state(s0, 100.0)
@@ -155,7 +155,7 @@ class TestOpenFluxNumpy:
         np.testing.assert_array_equal(got, want)
 
     def test_open_flux_follows_the_node_above_the_lid_base(self, eos):
-        """D5: away from the start the open part adds ``(1 - w) G (T_m - T_m0)`` to the loss."""
+        """Away from the start the open part adds ``(1 - w) G (T_m - T_m0)`` to the loss."""
         s0, s1 = _open_solver(eos), _open_solver(eos, G=G_OPEN)
         y0, y1 = _state(s0, 100.0), _state(s0, 140.0)
         s1._set_lid_open_reference(y0)
@@ -167,7 +167,7 @@ class TestOpenFluxNumpy:
         assert F1 - F0 == pytest.approx((1.0 - w1) * G_OPEN * (T_node - T_m0), rel=1e-9)
 
     def test_open_flux_is_flat_below_the_lid_base(self, eos):
-        """D5: with the node below ``T_b`` at the start and now, ``T_m`` is ``T_b`` both times
+        """With the node below ``T_b`` at the start and now, ``T_m`` is ``T_b`` both times
         and the open part keeps its start value."""
         s0, s1 = _open_solver(eos, T_s=1200.0), _open_solver(eos, G=G_OPEN, T_s=1200.0)
         y0, y1 = _state(s0, 60.0, flat=False), _state(s0, 70.0, flat=False)
@@ -179,7 +179,7 @@ class TestOpenFluxNumpy:
 
     @pytest.mark.parametrize('dS, flat', [(100.0, True), (140.0, True), (60.0, False)])
     def test_zero_or_no_conductance_is_the_flux_boundary_of_main(self, eos, dS, flat):
-        """a3: ``None`` and 0 give the same right-hand side, bit for bit."""
+        """``None`` and 0 give the same right-hand side, bit for bit."""
         s0, s1 = _open_solver(eos), _open_solver(eos, G=0.0)
         y = _state(s0, dS, flat=flat)
         s1._set_lid_open_reference(_state(s0, 100.0))
@@ -194,7 +194,7 @@ class TestOpenFluxNumpy:
         assert s._lid_T_m0 == max(T_node, T_b)
 
     def test_booked_surface_energy_holds_the_open_flux_response(self, eos):
-        """D6: the booked surface integral of a call is the trapezoid, over the accepted
+        """The booked surface integral of a call is the trapezoid, over the accepted
         states, of the loss without the conductance plus ``(1 - w) G (T_m - T_m0)``."""
         s = _open_solver(eos, G=G_OPEN, F_atm=-200.0, end=200.0)
         s._S0 = _state(s, 100.0)
@@ -223,7 +223,7 @@ class TestOpenFluxNumpy:
         assert abs(trap(response)) > 1e-3 * abs(total)
 
     def test_an_inward_start_flux_shrinks_as_the_node_warms(self, eos):
-        """a5: under an inward boundary flux the response makes the open part take in less, so
+        """Under an inward boundary flux the response makes the open part take in less, so
         the mantle gains less energy over the call than with the start flux held."""
         gained, rise = [], []
         for G in (None, 5.0):
@@ -254,7 +254,7 @@ class TestOpenFluxNumpy:
         assert out.T_magma > w * T_b + (1.0 - w) * T_node + 1.0
 
     def test_largest_lid_weight_of_the_accepted_states(self, eos):
-        """a7: ``lid_weight_max`` of a call is the largest weight over its accepted states."""
+        """``lid_weight_max`` of a call is the largest weight over its accepted states."""
         s = _open_solver(eos, G=G_OPEN, end=200.0)
         s._S0 = _state(s, 100.0)
         s.solve()
@@ -386,7 +386,7 @@ class TestAcceptedRange:
         return s
 
     def test_strict_check_raises_on_an_accepted_state_out_of_the_table(self, eos):
-        """G1: with ``strict_accepted_range`` an accepted state outside the tables raises a
+        """With ``strict_accepted_range`` an accepted state outside the tables raises a
         named error with the node, the entropy and the time; without it the call fails."""
         from aragog.solver.entropy_solver import AcceptedStateRangeError
 
@@ -415,7 +415,7 @@ class TestAcceptedRange:
 @pytest.mark.physics_invariant
 @needs_eos
 def test_the_open_part_follows_the_open_node_across_the_lid_base(validation_plot):
-    """Validation: across states from the node below the lid base to 9 K above the start, the
+    """Across states from the node below the lid base to 9 K above the start, the
     change of the surface loss with the conductance is ``(1 - w) G (T_m - T_m0)``, with
     ``T_m = max(T_node, T_b)``: relative 1e-9 (absolute 1e-12 W/m^2 where ``1 - w`` rounds); a
     node far below the lid base keeps the start value exactly. The JAX top-cell rate equals the
