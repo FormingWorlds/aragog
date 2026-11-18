@@ -174,7 +174,7 @@ def cmb_boundary_layer_flux(
         ``(loc, width)`` of the rheological transition for the law by phase:
         ``ln Ra_crit = s ln 450 + (1 - s) ln Ra_crit,16`` with
         ``s = liquid_weight(melt_fraction, loc, width)``; 450 where ``s`` rounds to 1 and
-        eq. 16 where it rounds to 0. It needs the eq. 16 inputs and replaces ``ra_crit``; a NaN ``loc``
+        eq. 16 where it rounds to 0. It needs the eq. 16 inputs and ``ra_crit=None``; a NaN ``loc``
         (the 'off' value inside a JAX trace) keeps ``ra_crit``.
 
     Returns
@@ -188,9 +188,19 @@ def cmb_boundary_layer_flux(
     ValueError
         When ``ra_crit`` is None and the shell thickness or contrast or the interior
         viscosity is missing, or when ``liquid_band`` is given without ``melt_fraction``
-        or without those inputs.
+        or without those inputs, or with a fixed ``ra_crit`` while the band is on.
     """
     eq16_inputs = (shell_thickness, shell_contrast, interior_viscosity)
+    if (
+        liquid_band is not None
+        and isinstance(ra_crit, numbers.Real)
+        and isinstance(liquid_band[0], numbers.Real)
+        and not math.isnan(liquid_band[0])
+    ):
+        raise ValueError(
+            f'ra_crit = {ra_crit!r} and liquid_band (the CMB law by phase) exclude each other: '
+            'the law by phase blends 450 and eq. 16; give ra_crit=None'
+        )
     if liquid_band is not None and (
         melt_fraction is None or any(x is None for x in eq16_inputs)
     ):
