@@ -240,7 +240,7 @@ def build_jax_rhs_and_jacobian(
     radio_isotope_params: tuple = (),
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
-    core_module_ra_crit_cmb: float | None = None,
+    core_module_ra_crit_cmb: float | str | None = None,
     start_time: float | None = None,
     *,
     lid_params=None,
@@ -289,11 +289,13 @@ def build_jax_rhs_and_jacobian(
     core_module_q_radio : float, default 0.0
         Constant core internal source power [W] for the core_module
         closure.
-    core_module_ra_crit_cmb : float or None
+    core_module_ra_crit_cmb : float, 'phase' or None
         Critical Rayleigh number of the CMB boundary layer for the
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; None selects Thiriet
-        et al. (2019) eq. 16; checked with ``aragog.core.check_ra_crit``.
+        et al. (2019) eq. 16; 'phase' blends 450 and eq. 16 by the bottom-cell melt fraction
+        across the rheological transition of ``phase_params``; checked with
+        ``aragog.core.check_ra_crit``.
     core_module_surface_temperature : float or None
         Surface temperature [K] of the shell contrast of eq. 16, the solver's
         ``cmb_shell_surface_temperature()``; None or NaN: the top cell's temperature.
@@ -448,18 +450,21 @@ def build_jax_rhs_and_jacobian(
         jnp.asarray(scales.state_offset),
     )
     if core_bc_mode == 'core_module':
-        from aragog.core import check_ra_crit
+        from aragog.core import RA_CRIT_PHASE, check_ra_crit
 
         q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
-        # NaN carries 'eq. 16' (ra_crit None) through the traced arguments.
+        phase_law = ra_crit == RA_CRIT_PHASE
+        # NaN carries 'eq. 16' (ra_crit None, also the base of the law by phase) through the
+        # traced arguments; the last entry switches the law by phase on.
         data = data + (
             jnp.float64(q_radio),
-            jnp.float64(jnp.nan if ra_crit is None else ra_crit),
+            jnp.float64(jnp.nan if ra_crit is None or phase_law else ra_crit),
             jnp.float64(
                 jnp.nan
                 if core_module_surface_temperature is None
                 else core_module_surface_temperature
             ),
+            jnp.float64(1.0 if phase_law else 0.0),
         )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None

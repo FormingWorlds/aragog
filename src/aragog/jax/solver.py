@@ -1003,14 +1003,17 @@ def dSdt_core_module(
         Extended state vector (entropy, dSdr_cmb, T_core, shell temperatures).
     args : tuple
         ``(eos, params, mesh, bc, heating_static, H_radio_fn,
-        core_budget, q_radio_core, ra_crit[, t_surf])``: the ``dSdt`` six
+        core_budget, q_radio_core, ra_crit[, t_surf[, phase_law]])``: the ``dSdt`` six
         plus the ``aragog.core.CoreEnergyBudget`` whose rates close the
         boundary, the constant core internal source power [W], the critical
         Rayleigh number of the CMB boundary layer (NaN selects Thiriet et al. 2019 eq. 16,
         with the mantle thickness, the contrast across the shell and the bottom cell's
         viscosity at the CMB pressure) and the surface temperature [K] of that contrast
-        (NaN or absent: the top cell's temperature). A stratified budget's CMB flux
-        sees the top shell cell, and the CMB basic node rides on it.
+        (NaN or absent: the top cell's temperature). ``phase_law`` 1.0 blends ``ra_crit`` 450
+        and eq. 16 by the melt fraction of that bottom-cell state across the rheological
+        transition of ``params`` (``ra_crit_cmb = 'phase'``); 0.0 or absent keeps ``ra_crit``.
+        A stratified budget's CMB flux sees the top shell cell, and the CMB basic node rides
+        on it.
 
     Returns
     -------
@@ -1029,6 +1032,8 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
     core_budget, q_radio_core, ra_crit = args[6:9]
     t_surf = args[9] if len(args) > 9 else jnp.nan
+    # 1.0 selects the CMB law by phase (ra_crit_cmb = 'phase', ra_crit NaN as its eq. 16 base).
+    phase_law = args[10] if len(args) > 10 else 0.0
     shell = core_budget.stratification
     heating = heating_static + H_radio_fn(t)
     state_ext, y_lid = _lid_split(state_ext, bc)
@@ -1088,6 +1093,11 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             shell_contrast=t_hot
             - jnp.where(jnp.isnan(t_surf), eos.temperature(mesh.P_stag[-1], S[-1]), t_surf),
             interior_viscosity=interior.viscosity[0],
+            melt_fraction=interior.melt_fraction[0],
+            liquid_band=(
+                jnp.where(phase_law > 0.0, params.phi_rheo, jnp.nan),
+                params.phi_width,
+            ),
         )
     )
 
