@@ -78,7 +78,9 @@ def check_liquid_band(loc, width) -> None:
     """
     lo, hi = float(loc) - 0.5 * float(width), float(loc) + 0.5 * float(width)
     if not (math.isfinite(lo) and math.isfinite(hi) and float(width) > 0.0):
-        raise ValueError(f'phase law band needs a finite centre and width > 0, got {loc}, {width}')
+        raise ValueError(
+            f'phase law band needs a finite centre and width > 0, got {loc}, {width}'
+        )
     if lo < 0.0 or hi > 1.0:
         raise ValueError(
             f"ra_crit_cmb = 'phase' needs the rheological transition band [{lo:g}, {hi:g}] "
