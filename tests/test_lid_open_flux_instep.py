@@ -344,6 +344,38 @@ class TestOpenFluxJax:
         assert J1[top] - J0[top] == pytest.approx(fd1[top] - fd0[top], rel=1e-6)
         assert abs(J1[top] - J0[top]) > 1e-3 * abs(J0[top])
 
+    def test_lid_params_refuse_a_conductance_without_a_reference(self, eos):
+        """With a conductance and no start reference the JAX parameters raise, as NumPy does."""
+        s = _open_solver(eos, G=G_OPEN)
+        with pytest.raises(RuntimeError, match='reference'):
+            s.jax_lid_params()
+        assert _open_solver(eos).jax_lid_params().open_G == 0.0
+
+    def test_the_lid_weight_batch_matches_numpy_and_falls_back(self, eos, caplog):
+        """The JAX batch of lid weights equals the NumPy weight at each node (rel 1e-9); when the
+        batch raises, ``_lid_weights_of`` falls back to the NumPy loop."""
+        s = _open_solver(eos, G=G_OPEN)
+        s._set_lid_open_reference(_state(s, 100.0))
+        rhs_fn = self._rhs(s)[0]
+        dS = (20.0, 60.0, 80.0, 100.0, 120.0)
+        Y = np.column_stack([_state(s, d) for d in dS])
+        t = np.zeros(len(dS))
+        want = []
+        for y in Y.T:
+            s._dSdt_single(0.0, y)
+            want.append(s._lid_weight_now())
+        want = np.array(want)
+        assert np.ptp(want) > 0.5  # the nodes span the onset
+        np.testing.assert_allclose(rhs_fn.lid_weights(t, Y), want, rtol=1e-9, atol=1e-15)
+        s._cvode_lid_weights_batch = rhs_fn.lid_weights
+        np.testing.assert_allclose(s._lid_weights_of(t, Y), want, rtol=1e-9, atol=1e-15)
+
+        def broken(t_pts, y_pts):
+            raise RuntimeError('batch failed')
+
+        s._cvode_lid_weights_batch = broken
+        np.testing.assert_array_equal(s._lid_weights_of(t, Y), want)
+
     def test_zero_conductance_is_the_rhs_of_main(self, eos):
         s0, s1 = _open_solver(eos), _open_solver(eos, G=0.0)
         s1._set_lid_open_reference(_state(s0, 100.0))
@@ -411,6 +443,7 @@ class TestAcceptedRange:
         assert issubclass(AcceptedStateRangeError, RuntimeError)
 
 
+@pytest.mark.smoke
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 @needs_eos
