@@ -130,6 +130,15 @@ def test_a_fixed_ra_crit_and_a_band_are_refused_together(ra_crit, loc):
 
 
 @pytest.mark.unit
+def test_a_saturated_weight_gives_each_law_exactly():
+    """In a band of width 1e-3 the tanh saturates in float64 at phi = 0 and 1: the flux is
+    then the eq. 16 flux and the 450 flux, bit for bit."""
+    assert _weight(0.0, LOC, 1e-3) == 0.0 and _weight(1.0, LOC, 1e-3) == 1.0
+    assert float(_phase_flux(0.0, wid=1e-3)) == _flux(None)
+    assert float(_phase_flux(1.0, wid=1e-3)) == _flux(450.0)
+
+
+@pytest.mark.unit
 def test_a_nan_ra_crit_with_a_band_is_the_law_by_phase():
     """NaN is the eq. 16 sentinel of the traced path: with a band it gives the law by phase."""
     kw = dict(melt_fraction=0.4, liquid_band=(LOC, WID), **LAYER)
