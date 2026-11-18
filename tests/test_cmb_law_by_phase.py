@@ -111,13 +111,30 @@ def test_a_band_switched_off_inside_a_trace_keeps_the_base_law_bit_equal(base):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('ra_crit', [450.0, 1800.0])
-def test_a_fixed_ra_crit_and_a_band_are_refused_together(ra_crit):
-    """The law by phase replaces a fixed number, so a call that gives both is refused."""
-    with pytest.raises(ValueError, match='ra_crit'):
+@pytest.mark.parametrize(
+    ('ra_crit', 'loc'),
+    [
+        (450.0, LOC),
+        (np.float64(1800.0), LOC),
+        (jnp.asarray(450.0), LOC),
+        (450.0, jnp.asarray(LOC)),
+    ],
+)
+def test_a_fixed_ra_crit_and_a_band_are_refused_together(ra_crit, loc):
+    """The law by phase replaces a fixed number, so a call that gives both is refused, for a
+    Python, NumPy or JAX scalar outside a trace."""
+    with pytest.raises(ValueError, match='exclude each other'):
         cmb_boundary_layer_flux(
-            T_CORE, T_M, ra_crit=ra_crit, melt_fraction=0.4, liquid_band=(LOC, WID), **LAYER
+            T_CORE, T_M, ra_crit=ra_crit, melt_fraction=0.4, liquid_band=(loc, WID), **LAYER
         )
+
+
+@pytest.mark.unit
+def test_a_nan_ra_crit_with_a_band_is_the_law_by_phase():
+    """NaN is the eq. 16 sentinel of the traced path: with a band it gives the law by phase."""
+    kw = dict(melt_fraction=0.4, liquid_band=(LOC, WID), **LAYER)
+    got = cmb_boundary_layer_flux(T_CORE, T_M, ra_crit=float('nan'), **kw)
+    assert float(got) == float(cmb_boundary_layer_flux(T_CORE, T_M, ra_crit=None, **kw))
 
 
 @pytest.mark.unit

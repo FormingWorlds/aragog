@@ -9,6 +9,7 @@ value at the call start. The held lid surface is ``surface_temperature``.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 
 import attrs
@@ -374,7 +375,10 @@ class TestOpenFluxJax:
             raise RuntimeError('batch failed')
 
         s._cvode_lid_weights_batch = broken
-        np.testing.assert_array_equal(s._lid_weights_of(t, Y), want)
+        with caplog.at_level(logging.WARNING):
+            got = s._lid_weights_of(t, Y)
+        np.testing.assert_array_equal(got, want)
+        assert 'batch lid weights failed (batch failed)' in caplog.text
 
     def test_zero_conductance_is_the_rhs_of_main(self, eos):
         s0, s1 = _open_solver(eos), _open_solver(eos, G=0.0)
