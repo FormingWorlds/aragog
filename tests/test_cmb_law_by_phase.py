@@ -94,14 +94,6 @@ def test_the_flux_is_the_weighted_geometric_mean_of_the_two_laws(phi):
 
 
 @pytest.mark.unit
-@pytest.mark.physics_invariant
-def test_the_centre_of_the_transition_takes_the_geometric_mean_of_ra_crit():
-    """At ``phi = loc``, ``Ra_crit = sqrt(450 Ra_crit,16)``."""
-    f450, f16 = _flux(RA_CRIT_UPPER_LAYER), _flux(None)
-    assert float(_phase_flux(LOC)) == pytest.approx(math.sqrt(f450 * f16), rel=1e-13)
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize('base', [None, 450.0, 1800.0])
 def test_a_band_switched_off_inside_a_trace_keeps_the_base_law_bit_equal(base):
     """A NaN band centre (the traced 'off') returns the base law unchanged, with finite
@@ -116,6 +108,16 @@ def test_a_band_switched_off_inside_a_trace_keeps_the_base_law_bit_equal(base):
     g = jax.grad(f, argnums=(0, 1))(T_M, 0.4)
     assert all(np.isfinite(float(x)) for x in g)
     assert float(g[1]) == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('ra_crit', [450.0, 1800.0])
+def test_a_fixed_ra_crit_and_a_band_are_refused_together(ra_crit):
+    """The law by phase replaces a fixed number, so a call that gives both is refused."""
+    with pytest.raises(ValueError, match='ra_crit'):
+        cmb_boundary_layer_flux(
+            T_CORE, T_M, ra_crit=ra_crit, melt_fraction=0.4, liquid_band=(LOC, WID), **LAYER
+        )
 
 
 @pytest.mark.unit
@@ -404,6 +406,7 @@ def test_the_solver_refuses_the_law_by_phase_with_a_band_outside_zero_to_one():
         solver._cache_bc_constants()
 
 
+@pytest.mark.unit
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot):
