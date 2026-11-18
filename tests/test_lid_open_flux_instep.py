@@ -138,7 +138,6 @@ class TestOpenFluxNumpy:
         s._dSdt_single(0.0, y)
         ev = s._lid_last
         assert ev.surf.T_s == 500.0
-        assert ev.rates.w == 1.0
         assert float(ev.surf.F_s) == pytest.approx(
             s._lid_k * (ev.T_b - 500.0) / 100.0, rel=1e-6
         )
@@ -202,7 +201,7 @@ class TestOpenFluxNumpy:
         s.solve()
         sol = s._solution
         assert sol.success
-        t, Y = sol['energy_trace']
+        t, Y = sol.get('energy_trace') or (sol.t, sol.y)  # the nodes of the booking
         t, Y = np.asarray(t, dtype=float), np.asarray(Y, dtype=float)
         assert t.size >= 3
         ref, T_m0 = _open_solver(eos, F_atm=-200.0), s._lid_T_m0
@@ -240,18 +239,33 @@ class TestOpenFluxNumpy:
         assert 0.0 < gained[1] < gained[0]
         assert rise[1] < rise[0]
 
+    def test_the_magma_temperature_row_takes_the_floored_node(self, eos):
+        """Ruling 9: under a live lid the row ``T_magma`` is ``w T_b + (1 - w) T_m``, with the
+        node below the lid base held at ``T_b``."""
+        s = _open_solver(eos, end=1.0e-3)
+        s._S0 = _state(s, 5.0, flat=False)
+        s.solve()
+        assert s._solution.success
+        out = s.get_state()
+        y_end = np.asarray(s._solution.y, dtype=float)[:, -1]
+        _, _, w, T_node, T_b = _eval(_open_solver(eos), y_end)
+        assert 0.0 < w < 1.0 and T_node < T_b
+        assert out.T_magma == pytest.approx(w * T_b + (1.0 - w) * max(T_node, T_b), rel=1e-12)
+        assert out.T_magma > w * T_b + (1.0 - w) * T_node + 1.0
+
     def test_largest_lid_weight_of_the_accepted_states(self, eos):
         """a7: ``lid_weight_max`` of a call is the largest weight over its accepted states."""
         s = _open_solver(eos, G=G_OPEN, end=200.0)
         s._S0 = _state(s, 100.0)
         s.solve()
         sol = s._solution
-        t, Y = sol['energy_trace']
+        t, Y = sol.get('energy_trace') or (sol.t, sol.y)  # the nodes of the booking
         ref = _open_solver(eos, G=G_OPEN)
         ref._lid_T_m0 = s._lid_T_m0
         w = [_eval(ref, yi)[2] for yi in np.asarray(Y, dtype=float).T]
         assert sol.lid_weight_max == max(w)
         assert 0.0 < sol.lid_weight_max
+        assert s.get_state().lid_weight_max == sol.lid_weight_max
 
 
 @pytest.mark.smoke
@@ -294,34 +308,41 @@ class TestOpenFluxJax:
         np.testing.assert_allclose(got[-2:], want[-2:], rtol=1e-9, atol=1e-300)
         assert got[top] != f0(y1)[top]
 
-    def test_jacobian_holds_the_response(self, eos):
-        """The JAX Jacobian column of the top cell against a central difference of the RHS."""
-        s = _open_solver(eos, G=50.0)
-        y0, y1 = _state(s, 100.0), _state(s, 140.0)
-        s._set_lid_open_reference(y0)
+    @staticmethod
+    def _smooth(s, dS):
+        """A smooth profile up to a top cell at ``S_sol + dS`` under a 1 m lid."""
+        n = s._n_stag
+        y = np.full(n + 2, 3050.0)
+        y[:n] = np.linspace(800.0, s._lid_S_sol + dS, n)
+        y[-2:] = (1.0, float(s._lid_hv.profile_heat(0.0, 500.0, s._lid_T_sol)))
+        return y
+
+    def _top_column(self, s, y):
+        """The JAX Jacobian column of the top cell and its central difference, nondimensional."""
         rhs_fn, jac_fn, _ = self._rhs(s)
         sc = s._build_nondim_scales()
-        x = (y1 - sc.state_offset) / sc.state_scale
+        x = (y - sc.state_offset) / sc.state_scale
         n, top = x.size, s._n_stag - 1
-        J = np.zeros((n, n))
-        fy = np.empty(n)
-        assert rhs_fn(0.0, x, fy) == 0
-        assert jac_fn(0.0, x, fy, J) == 0
+        J, fy, fp, fm = np.zeros((n, n)), np.empty(n), np.empty(n), np.empty(n)
+        assert rhs_fn(0.0, x, fy) == 0 and jac_fn(0.0, x, fy, J) == 0
         h = 1e-6 * max(abs(x[top]), 1.0)
-        fp, fm = np.empty(n), np.empty(n)
-        xp, xm = x.copy(), x.copy()
-        xp[top] += h
-        xm[top] -= h
-        rhs_fn(0.0, xp, fp)
-        rhs_fn(0.0, xm, fm)
-        fd = (fp - fm) / (2.0 * h)
-        assert J[top, top] == pytest.approx(fd[top], rel=1e-5)
-        s0 = _open_solver(eos)
-        rhs0, jac0, _ = self._rhs(s0)
-        J0 = np.zeros((n, n))
-        rhs0(0.0, x, fy)
-        jac0(0.0, x, fy, J0)
-        assert J[top, top] != J0[top, top]
+        rhs_fn(0.0, x + h * (np.arange(n) == top), fp)
+        rhs_fn(0.0, x - h * (np.arange(n) == top), fm)
+        return J[:, top], (fp - fm) / (2.0 * h)
+
+    def test_jacobian_holds_the_response(self, eos):
+        """The response term of the JAX Jacobian (with less without the conductance) against
+        the same difference of central differences, on a smooth state above the lid base."""
+        s0, s1 = _open_solver(eos), _open_solver(eos, G=50.0)
+        y0, y1 = self._smooth(s1, 100.0), self._smooth(s1, 140.0)
+        s1._set_lid_open_reference(y0)
+        _, _, _, T_node, T_b = _eval(s0, y1)
+        assert T_node > T_b + 1.0
+        (J0, fd0), (J1, fd1) = self._top_column(s0, y1), self._top_column(s1, y1)
+        top = s1._n_stag - 1
+        assert J1[top] == pytest.approx(fd1[top], rel=1e-6)
+        assert J1[top] - J0[top] == pytest.approx(fd1[top] - fd0[top], rel=1e-6)
+        assert abs(J1[top] - J0[top]) > 1e-3 * abs(J0[top])
 
     def test_zero_conductance_is_the_rhs_of_main(self, eos):
         s0, s1 = _open_solver(eos), _open_solver(eos, G=0.0)

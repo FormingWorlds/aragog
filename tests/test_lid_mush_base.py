@@ -235,9 +235,9 @@ class TestSolver:
     @pytest.mark.parametrize(
         ('bc', 'holds'),
         [
-            (dict(F_atm=200.0, lid_surface_temperature=500.0), True),
+            (dict(F_atm=200.0, surface_temperature=500.0), True),
             (
-                dict(F_atm=200.0, lid_surface_temperature=500.0, lid_surface_flux_cap=1.0e3),
+                dict(F_atm=200.0, surface_temperature=500.0, lid_surface_flux_cap=1.0e3),
                 True,
             ),
             (dict(F_atm=200.0), False),
@@ -372,8 +372,8 @@ class TestSolver:
         assert abs(ei['state_heat'] - budget) <= 1e-2 * abs(budget)
 
     def test_t_magma_is_the_blend_on_the_grey_body_boundary(self, eos, monkeypatch):
-        """On outer boundary 1, as on boundary 4, the output T_magma is w T_b + (1 - w) T_node
-        of the lid, at a partial and at a full weight."""
+        """On outer boundary 1, as on boundary 4, the output T_magma is w T_b + (1 - w) T_m of
+        the lid, ``T_m = max(T_node, T_b)``, at a partial and at a full weight."""
         s = _solver(eos, end=0.1)
         s.solve()
         assert s._outer_bc_kind == 1
@@ -389,7 +389,8 @@ class TestSolver:
             monkeypatch.setattr(s, '_dSdt_single', weighted)
             T_w = s.get_state().T_magma
             T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
-            assert T_w == pytest.approx(w * s._lid_last.T_b + (1.0 - w) * T_node, rel=1e-12)
+            T_b = s._lid_last.T_b
+            assert T_w == pytest.approx(w * T_b + (1.0 - w) * max(T_node, T_b), rel=1e-12)
             assert abs(T_w - T_node) > 1.0
 
     def test_jax_lid_top_matches_numpy(self, eos):
@@ -575,7 +576,7 @@ class TestFluxSolver:
         st = s.get_state()
         ev = s._lid_last
         T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
-        want = ev.rates.w * ev.T_b + (1.0 - ev.rates.w) * T_node
+        want = ev.rates.w * ev.T_b + (1.0 - ev.rates.w) * max(T_node, ev.T_b)
         assert st.T_magma == pytest.approx(want, rel=1e-9)
         assert st.lid_T_surface == ev.surf.T_s
         assert st.lid_conductance == pytest.approx(
@@ -607,7 +608,8 @@ class TestFluxSolver:
             monkeypatch.setattr(s, '_dSdt_single', weighted)
             T_w = s.get_state().T_magma
             T_node = float(np.asarray(s.state.phase_basic.temperature()).ravel()[-1])
-            assert T_w == pytest.approx(w * s._lid_last.T_b + (1.0 - w) * T_node, rel=1e-12)
+            T_b = s._lid_last.T_b
+            assert T_w == pytest.approx(w * T_b + (1.0 - w) * max(T_node, T_b), rel=1e-12)
             assert abs(T_w - T_node) > 1.0
 
     def test_jax_flux_mode_matches_numpy(self, eos):
@@ -1087,37 +1089,16 @@ def test_jax_factory_rhs_matches_on_the_mush_base(outer):
 
 
 @pytest.mark.unit
-@settings(max_examples=80, deadline=None)
-@given(
-    st.one_of(
-        st.floats(max_value=0.0),
-        st.just(math.nan),
-        st.just(math.inf),
-        st.booleans(),
-        st.text(max_size=3),
-    )
-)
-def test_lid_surface_temperature_refuses_every_other_value(value):
-    """A lid_surface_temperature that is not a finite positive number is refused by name."""
-    from aragog.config.boundary import check_lid_surface_temperature
-
-    with pytest.raises(ValueError, match='lid_surface_temperature'):
-        check_lid_surface_temperature(value, 4, True)
-
-
-@pytest.mark.unit
 @settings(max_examples=60, deadline=None)
 @given(st.floats(min_value=1.0e-3, max_value=1.0e5), st.integers(0, 6), st.booleans())
-def test_lid_surface_temperature_needs_the_flux_boundary_and_the_mush_base(T, bc, mush):
-    """lid_surface_temperature is accepted only with outer boundary 4 and the mush base."""
-    from aragog.config.boundary import check_lid_surface_temperature
+def test_the_lid_is_held_at_the_surface_temperature_on_the_flux_boundary_with_the_mush(
+    T, bc, mush
+):
+    """The held lid surface is surface_temperature only with outer boundary 4 and the mush base."""
+    from aragog.config.boundary import held_lid_surface
 
-    assert check_lid_surface_temperature(None, bc, mush) is None
-    if bc == 4 and mush:
-        assert check_lid_surface_temperature(T, bc, mush) is None
-    else:
-        with pytest.raises(ValueError, match='lid_surface_temperature'):
-            check_lid_surface_temperature(T, bc, mush)
+    assert held_lid_surface(bc, mush, None) is None
+    assert held_lid_surface(bc, mush, T) == (T if bc == 4 and mush else None)
 
 
 @pytest.mark.unit
@@ -1257,7 +1238,7 @@ def _held_solver(
         outer=4,
         F_atm=F_atm,
         thin=thin,
-        lid_surface_temperature=T_held,
+        surface_temperature=T_held,
         lid_surface_flux_cap=cap,
         lid_surface_flux_slope=slope,
     )
@@ -1408,15 +1389,15 @@ class TestHeldSurface:
         s = _held_solver(eos, 500.0)
         y = self._state(s, 100.0, 500.0)
         s._dSdt_single(0.0, y)
-        s.parameters.boundary_conditions.lid_surface_temperature = 800.0
+        s.parameters.boundary_conditions.surface_temperature = 800.0
         s._dSdt_single(0.0, y)
         assert s._lid_last.surf.T_s == 800.0
 
     def test_bad_value_set_between_calls_is_refused_at_the_solve(self, eos):
         """A negative held surface temperature set after setup is refused at the solve, by name."""
         s = _held_solver(eos, 500.0)
-        s.parameters.boundary_conditions.lid_surface_temperature = -3.0
-        with pytest.raises(ValueError, match='lid_surface_temperature'):
+        s.parameters.boundary_conditions.surface_temperature = -3.0
+        with pytest.raises(ValueError, match='surface_temperature'):
             s.solve()
 
     def test_jax_factory_matches_numpy_with_the_held_surface(self, eos):
@@ -1470,7 +1451,7 @@ class TestHeldSurface:
 
         def balance(T_held):
             """Lid state and flux of the atmosphere balance at a held surface."""
-            bc.lid_surface_temperature = T_held
+            bc.surface_temperature = T_held
             s._dSdt_single(0.0, y)
             ev = s._lid_last
             w, T_b = float(ev.rates.w), float(ev.T_b)
@@ -1514,7 +1495,7 @@ class TestHeldSurface:
 
         def row(T_held):
             """Surface temperature and weight of the next row."""
-            bc.lid_surface_temperature = T_held
+            bc.surface_temperature = T_held
             s._dSdt_single(0.0, y)
             ev = s._lid_last
             w, T_b = float(ev.rates.w), float(ev.T_b)
