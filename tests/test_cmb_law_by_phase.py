@@ -446,3 +446,53 @@ def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot)
         return fig
 
     validation_plot(figure, 'core_cmb_law_by_phase')
+
+
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+@needs_eos
+@pytest.mark.parametrize('law', ['phase', 450.0, None])
+def test_a_restore_inside_the_transition_continues_the_solve(law):
+    """C4: a solve stopped with the bottom cell inside the transition and restored into a new
+    solver continues bit-equal to a second restore, so the law keeps no state of its own. It
+    agrees with the same solver continued without a restore to 1e-11 K: that solver differs
+    from a fresh one at round-off under every law (measured 4.5e-13 to 1.8e-12 K)."""
+    from tests.test_entropy_solver_core_module_smoke import (
+        CORE_MODULE_PARAMS,
+        _build,
+        needs_cvode,
+    )
+
+    if needs_cvode.args[0]:
+        pytest.skip(needs_cvode.kwargs.get('reason', 'no CVODE'))
+    params = {**CORE_MODULE_PARAMS, 'ra_crit_cmb': law}
+
+    def solver():
+        return _build('core_module', entropy_eos_copy(), params, solver_method='cvode')
+
+    def call(s, start, end, state):
+        s.parameters.solver.start_time, s.parameters.solver.end_time = start, end
+        s.set_initial_core_temperature(state[0])
+        s.set_initial_entropy(state[1])
+        s.solve()
+        y = np.asarray(s._solution.y)
+        n = s._n_stag
+        return float(y[n + 1, -1]), y[:n, -1].copy()
+
+    first = solver()
+    pm = first.parameters.phase_mixed
+    loc, wid = pm.rheological_transition_melt_fraction, pm.rheological_transition_width
+    y = _bottom_state(first, loc)
+    start_state = (float(y[first._n_stag + 1]), y[: first._n_stag])
+    mid = call(first, 0.0, 1.0, start_state)
+    P = float(first._P_basic_flat[0])
+    phi_mid = float(np.asarray(first.entropy_eos.melt_fraction(P, mid[1][0])).flat[0])
+    assert 0.2 < float(liquid_weight(phi_mid, loc, wid)) < 0.8  # stopped inside the transition
+    continued = call(first, 1.0, 2.0, mid)
+    restored = call(solver(), 1.0, 2.0, mid)
+    again = call(solver(), 1.0, 2.0, mid)
+    assert restored[0] == again[0]
+    np.testing.assert_array_equal(restored[1], again[1])
+    assert restored[0] == pytest.approx(continued[0], abs=1e-11)
+    np.testing.assert_allclose(restored[1], continued[1], rtol=0.0, atol=1e-11)
+    assert continued[0] != mid[0]  # the second call moves the core
