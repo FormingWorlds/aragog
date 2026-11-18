@@ -16,7 +16,7 @@ State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ 
 | $T_\text{cmb}$ | CMB temperature, a solver state | start value from `set_initial_core_temperature`; without one, $T_m$ at a first start |
 | $T_m$ | bottom mantle cell at the CMB pressure | from the mantle state |
 | $q$, $k$, $\Delta r_{1/2}$ | CMB heat flux, conductivity of the boundary layer, half cell above the CMB | from the mantle phase model and the mesh |
-| $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | from the mantle state (Thiriet et al. 2019 eq. 16), 450 and eq. 16 blended by the phase of the bottom cell, or a fixed number: `ra_crit_cmb` |
+| $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | from the mantle state (Thiriet et al. (2019) eq. 16), 450 and eq. 16 blended by the phase of the bottom cell, or a fixed number: `ra_crit_cmb` |
 | $T_a(r)$ | core adiabat | `alpha` ($1.35\times 10^{-5}$ K$^{-1}$), `c_p` (840 J kg$^{-1}$ K$^{-1}$), `adiabat_mode` (`"exact"`) |
 | core structure | Gaussian core density and its pressure, or the core arrays of a Zalmoxis structure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`); `profile_source` (`"gaussian"`), `core_profile_file` |
 | melting curve | iron alloy or quadratic | `melting_curve` (`"iron"`), `light_element_fraction` (0), `depression` (0), or `t_m0`, `t_m1`, `t_m2` |

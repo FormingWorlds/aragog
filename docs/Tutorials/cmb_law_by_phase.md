@@ -1,6 +1,12 @@
 # The CMB law by phase
 
-This tutorial evaluates the CMB heat flux of the core module under the 3 settings of `ra_crit_cmb`: a fixed 450, eq. 16 of Thiriet et al. (2019)[^cite-thiriet2019], and `"phase"`, which blends the two by the melt fraction of the bottom mantle cell. It needs no EOS tables: the layer properties are given by hand. Run the block from the root of the aragog repository.
+How does the heat flux out of the core change as the mantle above it freezes? This tutorial computes the heat flux across the core-mantle boundary (CMB) of the core module under the 3 settings of `ra_crit_cmb`, the critical Rayleigh number of the boundary layer on the mantle side of the CMB:
+
+- 450, the value of Thiriet et al. (2019)[^cite-thiriet2019] Table 2 for the upper boundary layer;
+- none set, eq. 16 of Thiriet et al. (2019), which takes the number from the internal Rayleigh number of the mantle;
+- `"phase"`, which blends the two by the melt fraction of the bottom mantle cell: 450 while that cell is liquid, eq. 16 while it is solid.
+
+In the example below the 2 laws differ by a factor of about 10 in the flux. The block needs no tables of the equation of state (EOS): the layer properties are given by hand. Run it from the root of the aragog repository.
 
 [Critical Rayleigh number by phase](../Explanations/core_bc.md#critical-rayleigh-number-by-phase) explains the law, and [its validation](../Validation/core.md#15-critical-rayleigh-number-by-phase) shows the checks.
 
@@ -60,6 +66,7 @@ In an Aragog configuration the law is a key of the core module:
 
 ```toml
 [boundary_conditions]
+    inner_boundary_condition = 1
     core_bc = "core_module"
 
 [boundary_conditions.core_module_params]

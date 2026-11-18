@@ -294,7 +294,7 @@ def test_the_jax_factory_takes_the_phase_law():
     assert callable(rhs_fn) and callable(jac_fn)
 
 
-# C1: the weight is a tanh that is 0.05 and 0.95 at the band edges; the band follows the
+# The weight is a tanh that is 0.05 and 0.95 at the band edges; the band follows the
 # configuration. It is narrower than the weight of the viscosity blend, which is 0.27 and 0.73
 # at the same edges.
 
@@ -407,7 +407,7 @@ def test_the_solver_refuses_the_law_by_phase_with_a_band_outside_zero_to_one():
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot):
-    """Validation: across the melt fraction of the bottom cell the flux under 'phase' equals
+    """Across the melt fraction of the bottom cell the flux under 'phase' equals
     F_450^s F_16^(1 - s), with s the tanh weight that is 0.05 and 0.95 at the band edges, to rel
     1e-12, and lies between the two laws."""
     grid = np.linspace(0.0, 1.0, 41)
@@ -446,7 +446,7 @@ def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot)
 @needs_eos
 @pytest.mark.parametrize('law', ['phase', 450.0, None])
 def test_a_restore_inside_the_transition_continues_the_solve(law):
-    """C4: a solve stopped with the bottom cell inside the transition and restored into a new
+    """A solve stopped with the bottom cell inside the transition and restored into a new
     solver continues bit-equal to a second restore, so the law keeps no state of its own. It
     agrees with the same solver continued without a restore to 1e-11 K: that solver differs
     from a fresh one at round-off under every law (measured 4.5e-13 to 1.8e-12 K)."""
