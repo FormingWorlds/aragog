@@ -409,3 +409,59 @@ class TestAcceptedRange:
         from aragog.solver.entropy_solver import AcceptedStateRangeError
 
         assert issubclass(AcceptedStateRangeError, RuntimeError)
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+@needs_eos
+def test_the_open_part_follows_the_open_node_across_the_lid_base(validation_plot):
+    """Validation: across states from the node below the lid base to 9 K above the start, the
+    change of the surface loss with the conductance is ``(1 - w) G (T_m - T_m0)``, with
+    ``T_m = max(T_node, T_b)``: relative 1e-9 (absolute 1e-12 W/m^2 where ``1 - w`` rounds); a
+    node far below the lid base keeps the start value exactly. The JAX top-cell rate equals the
+    NumPy one to relative 1e-9 at each state."""
+    eos = entropy_eos_copy(EOS_DIR)
+    series = {}
+    for name, T_s, flat, ref_dS, grid in (
+        ('node near the lid base', 500.0, True, 100.0, range(-40, 170, 10)),
+        ('node far below the lid base', 1200.0, False, 60.0, range(60, 130, 10)),
+    ):
+        s0, s1 = _open_solver(eos, T_s=T_s), _open_solver(eos, G=G_OPEN, T_s=T_s)
+        s1._set_lid_open_reference(_state(s0, ref_dS, flat=flat))
+        T_m0, top = s1._lid_T_m0, s1._n_stag - 1
+        f1 = TestOpenFluxJax._rhs(s1)[2]
+        rows = []
+        for dS in grid:
+            y = _state(s0, float(dS), flat=flat)
+            _, F0, w, T_node, T_b = _eval(s0, y)
+            dS1, F1, w1, _, _ = _eval(s1, y)
+            assert w1 == w
+            want = (1.0 - w) * G_OPEN * (max(T_node, T_b) - T_m0)
+            assert abs((F1 - F0) - want) <= 1e-12 + 1e-9 * abs(want)
+            assert float(f1(y)[top]) == pytest.approx(float(dS1[top]), rel=1e-9)
+            rows.append((max(T_node, T_b) - T_m0, F1 - F0, want, 1.0 - w, T_node - T_b))
+        series[name] = np.array(rows)
+    near, far = series['node near the lid base'], series['node far below the lid base']
+    assert np.any(near[:, 4] < 0.0) and np.any(near[:, 4] > 1.0)  # both sides of the base
+    assert np.all(far[:, 4] < 0.0) and np.all(far[:, 1] == 0.0)  # flat below the base
+    assert np.max(np.abs(near[:, 1])) > 1.0  # the response is not vacuously 0
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (top_ax, bottom) = plt.subplots(2, 1, sharex=True, figsize=(6.4, 5.6))
+        x = np.linspace(near[:, 0].min(), near[:, 0].max(), 2)
+        top_ax.plot(x, G_OPEN * x, color='C0', label='G (T_m - T_m0)')
+        for (name, d), mk in zip(series.items(), ('o', 's'), strict=True):
+            m = d[:, 3] > 1e-6
+            top_ax.plot(d[m, 0], d[m, 1] / d[m, 3], mk, ms=4, mfc='none', label=name)
+        top_ax.set(ylabel='dF / (1 - w) [W/m2]')
+        top_ax.legend(fontsize=8)
+        for d, mk in zip(series.values(), ('o', 's'), strict=True):
+            err = np.abs(d[:, 1] - d[:, 2]) / (1e-12 + 1e-9 * np.abs(d[:, 2]))
+            bottom.plot(d[:, 0], err, mk, ms=4, mfc='none')
+        bottom.set(xlabel='T_m - T_m0 [K]', ylabel='Diff. / tol.', ylim=(0.0, 1.0))
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'surface_lid_open_part_in_step')

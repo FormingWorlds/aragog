@@ -344,6 +344,28 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
     - Test id: `tests/test_surface_lid_atmosphere.py::test_the_onset_weight_rises_without_a_step_below_the_base`
     - Command: `pytest tests/test_surface_lid_atmosphere.py` (add `--validation-plots` to write the plot pair)
 
+## The open part of the surface within a call
+
+**Why this check exists.** In a coupled step the open part of the surface, the fraction $1 - w$ without a lid, starts at the flux of the atmosphere call. Inside the call the melt under it warms or cools, and the atmosphere would answer. If the open part kept its start value, a melt that warms would lose no more heat, and the surface temperature would swing from one coupled step to the next. If the response took the node temperature below the lid base, the open part would cool a melt that is held at the base. The test fails on both.
+
+**What it tests.** The loss of the open part changes by $(1 - w)\, G\, (T_m - T_{m0})$ within a call ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $G$ is `open_surface_conductance` (0.5 W m$^{-2}$ K$^{-1}$ in the test), $T_m = \max(T_\mathrm{node}, T_b)$ is the top node held at least at the lid base $T_b$, and $T_{m0}$ its value at the call start. The test compares the surface loss with and without $G$ at 21 states. The top node moves from 13 K below $T_b$ to 24 K above it. At 7 more states it lies 836 to 884 K below the base. It also compares the JAX right-hand side of the top cell with NumPy at each state.
+
+**How we know the right answer.** The response is a linear term on top of the start value, so the difference of the two losses is the term itself. A node below the lid base gives $T_m = T_b$, and from a start state at the base the term is 0.
+
+**Why it matters.** This response keeps the surface temperature of a coupled run from swinging while a lid forms; PROTEUS sets $G$ from the slope of the atmosphere flux (its explanation of the lid coupling).
+
+![Change of the open-part loss per open area against the open node temperature, on the line of slope G, and its difference from the expected value](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="70%" }
+![Change of the open-part loss per open area against the open node temperature, on the line of slope G, and its difference from the expected value](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="70%" }
+
+**How to read the plot.** The top panel shows the change of the loss divided by the open fraction $1 - w$, against $T_m - T_{m0}$ in K. The line is $G (T_m - T_{m0})$; the circles are the states near the lid base, the square the states far below it, which keep the start value. States with $1 - w$ below $10^{-6}$ are not drawn there, since the division is not defined to round-off. The bottom panel shows the difference from the expected change divided by the tolerance, for every state; a pass keeps every point below 1.
+
+??? info "Test details"
+    - Reference: the response term $(1 - w)\, G\, (\max(T_\mathrm{node}, T_b) - T_{m0})$ (exact identity of the boundary flux).
+    - Tolerance: relative $10^{-9}$, plus absolute $10^{-12}$ W m$^{-2}$ where $1 - w$ rounds near $w = 1$; JAX top-cell rate against NumPy to relative $10^{-9}$.
+    - Discrimination: a response on $T_\mathrm{node}$ in place of $T_m$ fails the test, by 435 W m$^{-2}$ at its first failing state.
+    - Test id: `tests/test_lid_open_flux_instep.py::test_the_open_part_follows_the_open_node_across_the_lid_base`
+    - Command: `pytest tests/test_lid_open_flux_instep.py -k across_the_lid_base` (add `--validation-plots` to write the plot pair)
+
 ## Where the lid is not validated
 
 **Why this section exists.** The cases above compare the lid with a fine mesh for a solid shell with a fixed lid base and for a shell freezing from the mush without the solid rheology. For a molten shell without the solid rheology they compare only the hand-over and the coarse mesh after it. These configurations have no comparison with a fine mesh:
