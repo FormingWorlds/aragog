@@ -1,0 +1,17 @@
+{
+"source_file": "2phase_iron_liquid_b303091f12_897e5808_4896e6154f.dat",
+"source_md5": "f90a52027ede6e6a56a7fc398ed27b51",
+"source_data_rows_md5": "fe27f55461430b7edc62449262c36df4",
+"source_grid": [1351, 379],
+"box": {"P_Pa": [1400000000000.0, 6000000000000.0], "T_K": [3000.0, 100000.0]},
+"cut_P_Pa": [1380384260000.0, 6025595860000.0, 97],
+"cut_T_K": [2962.02917, 100000.0, 230],
+"nan_edge_rows": 0,
+"units": {"P_Pa": "Pa", "T_K": "K", "rho": "kg/m^3", "u": "J/kg", "s": "J/(kg K)", "cp": "J/(kg K)", "cv": "J/(kg K)", "alpha": "1/K", "nabla_ad": "-"},
+"layout": "each property is a 2D array [P index, T index]; h = u + P/rho; the source header names bilinear interpolation in (log10 P, log10 T); aragog LiquidIronTable reads the cut with a bicubic spline in (log10 P, log10 T)",
+"header_lines": ["# ==============================================================================", "# PALEOS Fe EoS Lookup Table \u2014 PROTEUS (live-generated)", "# ==============================================================================", "#", "# Kind: liquid (Luo24, metastable extension below melting)", "# Generator: zalmoxis.eos.paleos_api", "# PALEOS_SHA: b303091f12cc4cb73a3fdf04684ba89fda3e651a", "# BUILD_KEY: 897e5808", "# grid_hash: 4896e6154f", "# generated: 2026-11-07 12:39:02 UTC", "#", "# P grid: 1351 pts log-uniform in [1.00000000e+05, 1.00000000e+14] Pa", "# T grid: 379 pts log-uniform in [3.00000000e+02, 1.00000000e+05] K", "# Grid size: 1351 x 379 = 512029 points", "#            (508753 valid / 3276 skipped due to non-convergence)", "#", "# Columns: P[Pa] T[K] rho[kg/m^3] u[J/kg] s[J/(kg K)] cp[J/(kg K)] cv[J/(kg K)] alpha[1/K] nabla_ad[-] phase", "# Interpolation: bilinear in (log10 P, log10 T); NaNs mark non-converged cells, consumer uses NN fallback.", "# Luo24 evaluated everywhere; phase column is always \"liquid\".", "# =============================================================================="],
+"npz_file": "paleos_iron_liquid_default_cut_6tpa.npz",
+"npz_md5": "fcbcd2560015b5b91005d773b63bbe95",
+"npz_bytes": 802368,
+"script": "tools/verification/make_core_liquid_cut.py"
+}

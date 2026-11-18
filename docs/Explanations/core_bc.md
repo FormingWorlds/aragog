@@ -18,7 +18,7 @@ State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ 
 | $q$, $k$, $\Delta r_{1/2}$ | CMB heat flux, conductivity of the boundary layer, half cell above the CMB | from the mantle phase model and the mesh |
 | $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | from the mantle state (Thiriet et al. 2019 eq. 16), or `ra_crit_cmb` |
 | $T_a(r)$ | core adiabat | `alpha` ($1.35\times 10^{-5}$ K$^{-1}$), `c_p` (840 J kg$^{-1}$ K$^{-1}$), `adiabat_mode` (`"exact"`) |
-| core structure | Gaussian core density and its pressure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`) |
+| core structure | Gaussian core density and its pressure, or the core arrays of a Zalmoxis structure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`); `profile_source` (`"gaussian"`), `core_profile_file` |
 | melting curve | iron alloy or quadratic | `melting_curve` (`"iron"`), `light_element_fraction` (0), `depression` (0), or `t_m0`, `t_m1`, `t_m2` |
 | $Q_s$, $C_s$ | secular cooling | `capacity_mode` (`"profile"`) |
 | $Q_L$, $C_L$ | latent heat at the ICB | `ds_fusion` (172.8 J kg$^{-1}$ K$^{-1}$) or `latent_heat` |
@@ -36,7 +36,7 @@ $$
 Q_\text{cmb} = -\tilde{C}(T_\text{cmb})\, \frac{dT_\text{cmb}}{dt} + Q_R, \qquad \tilde{C} = C_s + C_L + C_g,
 $$
 
-where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, and the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
+where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, or, with `profile_source = "paleos"`, over the isentrope of the PALEOS liquid iron table on a Zalmoxis core ([a core on the PALEOS isentrope](core_tabulated.md)); the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
 
 All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015)[^cite-nimmo2015b], ch. 9.08, Table 2; the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
 
@@ -310,11 +310,11 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built.
 
-The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. The core takes its heat capacity from `c_p` and its density from the keys below: the Gaussian profile, or `legacy_rho_core` with `capacity_mode = "legacy"`. Each solver logs one INFO message that names the 2 configured values.
+The mode does not use `boundary_conditions.core_heat_capacity` or `mesh.core_density`. With the Gaussian profile, the core takes its heat capacity from `c_p` and its density from the profile keys below, or from `legacy_rho_core` with `capacity_mode = "legacy"`. With `profile_source = "paleos"`, it takes its heat capacity from `core_cp_override` and its density from the core arrays of `core_profile_file`. On both paths each solver logs one INFO message that names the 2 unused values, `core_heat_capacity` and `core_density`.
 
 When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the configuration is read, so `aragog validate` reports it:
 
-- `fit_profile`, `m_core`, `p_cen`: the core mass (kg) and central pressure (Pa) the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve.
+- `fit_profile`, `m_core`, `p_cen`: the core mass (kg) and central pressure (Pa) the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve. With `profile_source = "paleos"` no profile is fitted: `m_core` alone is accepted and checks the mass of the core arrays, and `p_cen` and `fit_profile` are unused.
 - `rho_cen`: Core central density (kg m$^{-3}$), used when no fit is made. Default $12500.0$. The fit does not start from it.
 - `length_scale`: Core Gaussian density length scale (m), used when no fit is made. Default $7.272\times 10^6$. The fit searches it in $[r_\text{cmb}/3, 100\, r_\text{cmb}]$ and does not start from this value.
 - `p_cmb`: CMB pressure (Pa) for the profile. Default: the solver's CMB pressure.
@@ -339,6 +339,11 @@ When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the 
 - `layer_top_cell`: Width of the shell cell at the CMB (m); the cells widen geometrically downward. Default $2000$.
 - `layer_k_mix`: Eddy diffusivity of convective mixing at the reference superadiabatic gradient (m$^2$ s$^{-1}$). Default $10^7$.
 - `layer_g_mix`: Reference superadiabatic gradient, as a fraction of the adiabatic gradient at the CMB. Default $10^{-3}$.
+- `profile_source`: `"gaussian"` (default) or `"paleos"`. `"paleos"` takes the core structure from `core_profile_file` and puts the convecting core on one isentrope of the PALEOS liquid iron table `core_liquid_table` ([explanation](core_tabulated.md)); the Gaussian profile keys (`alpha`, `c_p`, `adiabat_mode`, `pressure_mode`, `rho_cen`, `length_scale`) are then unused, and `stratification = true` and `capacity_mode = "legacy"` are refused.
+- `core_liquid_table`: Path of the PALEOS liquid iron table that Zalmoxis writes (`2phase_iron_liquid_<sha>_<build>_<grid>.dat`) or of an `.npz` cut of it; its `# Kind:` line must name `liquid`. Read only with `profile_source = "paleos"`.
+- `core_profile_file`: Path of an `.npz` with the core arrays of a Zalmoxis structure, `r` (m), `m` (kg), `P` (Pa), `rho` (kg m$^{-3}$) and `g` (m s$^{-2}$) from the centre to the CMB; the other keys of the Zalmoxis core arrays are accepted and unused. Read only with `profile_source = "paleos"`. The solver builds the budget again when the content of either file changes.
+- `core_cp_override`: Heat capacity of the secular term on the PALEOS path (J kg$^{-1}$ K$^{-1}$), or `"table"` for the value of the table at the CMB. Default $840.0$, because the PALEOS liquid sets $C_V = 3nR$ with no electronic heat capacity.
+- `core_t_cmb_step`: Spacing of the CMB temperatures at which the PALEOS isentropes are tabulated (K). Default $10.0$.
 - `q_radio`: Core radiogenic power (W). Default $0.0$.
 - `ra_crit_cmb`: Critical Rayleigh number of the mantle-side CMB boundary layer (dimensionless). Not set by default, which selects Thiriet et al. (2019) eq. 16 ([Critical Rayleigh number of the layer](#critical-rayleigh-number-of-the-layer)); a value must be positive and finite.
 
@@ -355,6 +360,8 @@ PROTEUS writes seven diagnostics of this budget to its output helpfile on every 
 - `core_regime`: the crystallisation regime code (0 fully liquid, 1 bottom-up, 4 fully frozen; the codes 2 top-down and 3 snow mark states the solver refuses, below);
 - `core_strat_depth`: the stable layer thickness below the CMB;
 - `core_T_top`: the temperature at the top of the core (the top shell cell with a shell, else $T_\text{cmb}$).
+
+With `profile_source = "paleos"`, `CoreModule.diagnostics()` also returns `core_eos_outside_calibration`. It is the core mass fraction outside the calibration window of the PALEOS liquid: 8000 to 14,000 K and 50 to 1300 GPa. On this path Aragog does not compute the entropy budget behind `core_dynamo_margin` and `core_B_rms` ([limits](core_tabulated.md#what-the-path-refuses)).
 
 The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call, checked at every accepted step; the energetics of those regimes are not modelled. A call that fails is not checked: it stops early and books no energy.
 

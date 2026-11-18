@@ -7,9 +7,11 @@ crystallization-regime flags. The module receives the CMB heat flow and
 returns the CMB temperature; with every feature disabled it reproduces the
 isothermal-reservoir closure, which is the regression anchor.
 
-All radial structure uses the closed-form Gaussian profile family
-(Labrosse et al. 2001; Nimmo 2015, Treatise on Geophysics 9.08), so every
-budget term is an analytic integral and the whole module stays at ODE cost.
+The radial structure is the closed-form Gaussian profile family (Labrosse
+et al. 2001; Nimmo 2015, Treatise on Geophysics 9.08), whose budget terms
+are analytic integrals, or a Zalmoxis core on an isentrope of the PALEOS
+liquid iron table, tabulated once per structure; either way the module
+stays at ODE cost.
 """
 
 from __future__ import annotations
@@ -24,9 +26,11 @@ from aragog.core.boundary_layer import (
 )
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
+from aragog.core.iron_table import LiquidIronTable
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
-from aragog.core.module import CoreModule, build_core_module_budget
+from aragog.core.module import CoreModule, build_core_module_budget, load_core_arrays
 from aragog.core.profiles import GaussianCoreProfiles, fit_gaussian_core_profiles
+from aragog.core.profiles_tabulated import TabulatedCoreProfiles
 from aragog.core.regime import REGIME_NAMES, crystallization_regime, regime_name
 from aragog.core.stratification import adiabatic_ratio, stratification_depth
 
@@ -38,8 +42,11 @@ __all__ = [
     'GaussianCoreProfiles',
     'fit_gaussian_core_profiles',
     'IronMeltingCurve',
+    'LiquidIronTable',
     'QuadraticMeltingCurve',
+    'TabulatedCoreProfiles',
     'build_core_module_budget',
+    'load_core_arrays',
     'check_ra_crit',
     'cmb_boundary_layer_flux',
     'RA_CRIT_CMB_DEFAULT',

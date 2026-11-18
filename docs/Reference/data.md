@@ -103,6 +103,16 @@ closed under constant gravitational acceleration. Parameters are set in the `[me
 
 The Adams-Williamson path requires no external data and is the default for standalone testing.
 
+## Core tables (`profile_source = "paleos"`)
+
+With `profile_source = "paleos"` the core module reads 2 files, named under `[boundary_conditions.core_module_params]` ([a core on the PALEOS isentrope](../Explanations/core_tabulated.md)).
+
+**Liquid iron table, `core_liquid_table`.** The liquid side of the PALEOS iron EOS that Zalmoxis writes, `2phase_iron_liquid_<sha>_<build>_<grid>.dat`. Each row holds `P` (Pa), `T` (K), `rho` (kg m$^{-3}$), `u` (J kg$^{-1}$), `s`, `cp` and `cv` (J kg$^{-1}$ K$^{-1}$), `alpha` (K$^{-1}$), `nabla_ad` (dimensionless) and a phase word, on a full rectangle in pressure and temperature. The `# Kind:` line of the header must name `liquid`. An `.npz` cut of the table holds the axes `P_Pa` and `T_K`, the 7 properties as 2-D arrays with one row per pressure, and `header`. Pressure rows with cells that did not converge (NaN) at the top or bottom of the table are dropped when the table is read; a NaN cell inside the table stops the read. Aragog interpolates the table with a bicubic spline in $\log_{10} P$ and $\log_{10} T$.
+
+**Core arrays, `core_profile_file`.** An `.npz` with `r` (m), `m` (kg), `P` (Pa), `rho` (kg m$^{-3}$) and `g` (m s$^{-2}$) from the centre to the CMB, as Zalmoxis returns them in `result['core']`. The other Zalmoxis keys, such as `T`, `phase` and `M_ic`, are accepted and not used. The density must integrate to the node mass within $10^{-2}$.
+
+The test data in `tests/validation/data/` hold files of both kinds with their provenance; `tools/verification/make_core_liquid_cut.py` cuts a Zalmoxis table to a pressure and temperature box.
+
 ## Configuration keys at a glance
 
 The relevant configuration keys are summarised here for cross-reference; the full schema is in [How-to: configuration](../How-to/configuration.md).
@@ -113,6 +123,9 @@ The relevant configuration keys are summarised here for cross-reference; the ful
 | `eos_method` | `[mesh]` | `1` = Adams-Williamson; `2` = external file |
 | `eos_file` | `[mesh]` | Path to the four-column external mesh file |
 | `surface_density`, `adiabatic_bulk_modulus`, `adams_williamson_beta`, `gravitational_acceleration`, `surface_pressure` | `[mesh]` | Adams-Williamson parameters |
+| `profile_source` | `[boundary_conditions.core_module_params]` | `"gaussian"` (default) or `"paleos"` |
+| `core_liquid_table` | `[boundary_conditions.core_module_params]` | Path of the liquid iron table (`.dat` or `.npz`) |
+| `core_profile_file` | `[boundary_conditions.core_module_params]` | Path of the core arrays (`.npz`) |
 
-[^cite-attia2026]: M. Attia, et al., *[PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors](https://arxiv.org/abs/2605.03741)*, A&A (submitted), arXiv:2605.03741, 2026. [SciX](https://scixplorer.org/abs/2026arXiv260503741A/abstract).
+[^cite-attia2026]: M. Attia, T. Lichtenberg, E. Jungová, M. Sastre, *[PALEOS: Multiphase equations of state and mass-radius relations for exoplanet interiors](https://doi.org/10.1051/0004-6361/202660790)*, Astronomy & Astrophysics, 713, A225, 2026. [arXiv:2605.03741](https://arxiv.org/abs/2605.03741).
 [^cite-wolfbower2018]: A. S. Wolf, D. J. Bower, *[An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt](https://doi.org/10.1016/j.pepi.2018.02.004)*, Physics of the Earth and Planetary Interiors, 278, 59–74, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..278...59W/abstract).
