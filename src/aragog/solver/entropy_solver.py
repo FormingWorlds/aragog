@@ -5564,7 +5564,8 @@ class EntropySolver:
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. With the rheology off, a call that leaves the EOS tables fails with status -1
-        (see ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that
+        (see ``_eos_table_failure``), or raises ``AcceptedStateRangeError`` with
+        ``strict_accepted_range`` on. ``_floor_discard`` (internal) refuses the call with that
         warning: a call whose floor root returns a state below the EOS table, or stops at the
         call start, is solved again this way, so it returns its start state; a lid trigger
         already passed at the call start still merges, so that state then holds the merged lid.
