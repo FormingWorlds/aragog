@@ -118,7 +118,7 @@ Here $\phi_0$ is the melt fraction of the bottom cell at the CMB pressure, the s
 
 Limits:
 
-- The band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ must lie inside [0, 1]; the solver raises a `ValueError` at setup otherwise, and PROTEUS refuses the configuration.
+- The band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ must lie inside \[0, 1\]; the solver raises a `ValueError` at setup otherwise, and PROTEUS refuses the configuration.
 - The weight never reaches 0 or 1. With the default transition, $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$. A solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has the flux of eq. 16 to $10^{-5}$, and a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ that of 450 to $10^{-7}$.
 - Conduction (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
 
