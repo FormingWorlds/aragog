@@ -43,16 +43,16 @@ for phi in (0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 1.0):
 
 ```text
 450: 6.175e+05 W/m^2   eq. 16: 5.995e+04 W/m^2
-phi0 0.0   s 0.0180   q 6.252e+04 W/m^2
-phi0 0.2   s 0.1192   q 7.916e+04 W/m^2
-phi0 0.3   s 0.2689   q 1.122e+05 W/m^2
+phi0 0.0   s 0.0000   q 5.995e+04 W/m^2
+phi0 0.2   s 0.0028   q 6.034e+04 W/m^2
+phi0 0.3   s 0.0500   q 6.736e+04 W/m^2
 phi0 0.4   s 0.5000   q 1.924e+05 W/m^2
-phi0 0.5   s 0.7311   q 3.298e+05 W/m^2
-phi0 0.6   s 0.8808   q 4.677e+05 W/m^2
-phi0 1.0   s 0.9975   q 6.14e+05 W/m^2
+phi0 0.5   s 0.9500   q 5.496e+05 W/m^2
+phi0 0.6   s 0.9972   q 6.136e+05 W/m^2
+phi0 1.0   s 1.0000   q 6.175e+05 W/m^2
 ```
 
-The weight `s` is 1/2 at the transition, and the flux there is the geometric mean of the two laws: $\sqrt{6.175 \times 10^5 \cdot 5.995 \times 10^4} \approx 1.924 \times 10^5$ W m$^{-2}$. At $\phi_0 = 0$ the flux is 1.04 times that of eq. 16, and at $\phi_0 = 1$ 0.994 times that of 450: the tanh weight never reaches 0 or 1.
+The weight `s` is 1/2 at the transition, and the flux there is the geometric mean of the two laws: $\sqrt{6.175 \times 10^5 \cdot 5.995 \times 10^4} \approx 1.924 \times 10^5$ W m$^{-2}$. At the band edges 0.3 and 0.5 the weight is 0.05 and 0.95. Outside the band the flux goes quickly to the law of that side: at $\phi_0 = 0.2$ it is 1.007 times that of eq. 16, and at $\phi_0 = 0.6$ 0.994 times that of 450.
 
 ## 2. Select the law in a run
 

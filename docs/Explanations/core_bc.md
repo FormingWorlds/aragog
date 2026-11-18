@@ -106,21 +106,21 @@ The interior viscosity in $\mathrm{Ra}_i$ gives 1.8 to 2.4 times the flux of the
 
 ### Critical Rayleigh number by phase
 
-Which critical Rayleigh number holds while the mantle above the core is still liquid? Eq. 16 is a fit to the convection of a solid with a strongly temperature-dependent viscosity. With `ra_crit_cmb = "phase"` Aragog takes it only where the bottom cell is solid, and takes 450 while that cell is liquid. Miyazaki & Korenaga (2019b)[^cite-miyazaki2019b] also switch the core flux at the critical melt fraction 0.4 of the lowest mantle layer (p. 3400; eq. 4, p. 3401): a boundary-layer flux above it, zero below it.
+Which critical Rayleigh number holds while the mantle above the core is still liquid? Eq. 16 is a fit to the convection of a solid. With `ra_crit_cmb = "phase"` Aragog takes it only where the bottom cell is solid, and takes 450 while that cell is liquid. Miyazaki & Korenaga (2019b)[^cite-miyazaki2019b] also switch the core flux at the critical melt fraction 0.4 of the lowest mantle layer (p. 3400; eq. 4, p. 3401): a boundary-layer flux above it, zero below it.
 
-A hard switch makes the flux jump. In a 1 Earth-mass run the bottom cell reaches melt fraction 0.4 at about 300 kyr, where eq. 16 gives $\mathrm{Ra}_\text{crit} \approx 1800$; the flux would fall to 0.63 of its value at once. Aragog therefore blends the two numbers in the logarithm:
+A hard switch makes the flux jump. In a 1 Earth-mass run the bottom cell reaches melt fraction 0.4 at about 300 kyr, where eq. 16 gives $\mathrm{Ra}_\text{crit} \approx 1800$; the flux would fall to 0.63 of its value. Aragog therefore blends the two numbers in the logarithm:
 
 $$
-\ln \mathrm{Ra}_\text{crit} = s \ln 450 + (1 - s) \ln \mathrm{Ra}_{\text{crit},16}, \qquad s = \tfrac{1}{2}\left[1 + \tanh\!\left(\frac{\phi_0 - \phi_\text{rheo}}{w}\right)\right].
+\ln \mathrm{Ra}_\text{crit} = s \ln 450 + (1 - s) \ln \mathrm{Ra}_{\text{crit},16}, \qquad s = \tfrac{1}{2}\left[1 + \tanh\!\left(\frac{\phi_0 - \phi_\text{rheo}}{w_s}\right)\right], \qquad w_s = \frac{w/2}{\operatorname{artanh} 0.9}.
 $$
 
-Here $\phi_0$ is the melt fraction of the bottom cell at the CMB pressure, the state that also gives $\eta_i$. $\phi_\text{rheo}$ and $w$ are the centre and the width of the rheological transition (`rheological_transition_melt_fraction`, `rheological_transition_width`; in PROTEUS `rfront_loc` and `rfront_wid`, 0.4 and 0.2 by default). The weight $s$ is the weight the viscosity blend gives the liquid, so the law changes where the viscosity does. Since the flux goes as $\mathrm{Ra}_\text{crit}^{-1/3}$, it is the weighted geometric mean $q = q_{450}^{\,s}\, q_{16}^{\,1-s}$, a continuous function of the mantle state.
+Here $\phi_0$ is the melt fraction of the bottom cell at the CMB pressure, the state that also gives $\eta_i$. $\phi_\text{rheo}$ and $w$ are the centre and the width of the rheological transition (`rheological_transition_melt_fraction`, `rheological_transition_width`; in PROTEUS `rfront_loc` and `rfront_wid`, 0.4 and 0.2 by default). The weight $s$ is 1/2 at $\phi_\text{rheo}$ and 0.05 and 0.95 at the band edges $\phi_\text{rheo} \mp w/2$, so the law changes inside the band of the rheological transition. The weight of the viscosity blend is wider: 0.27 and 0.73 at the same edges. Since the flux goes as $\mathrm{Ra}_\text{crit}^{-1/3}$, it is the weighted geometric mean $q = q_{450}^{\,s}\, q_{16}^{\,1-s}$, a continuous function of the mantle state.
 
 Limits:
 
 - The band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ must lie inside [0, 1]; the solver raises a `ValueError` at setup otherwise, and PROTEUS refuses the configuration.
-- The weight never reaches 0 or 1. With the default transition, $s = 0.018$ at $\phi_0 = 0$ and $0.9975$ at $\phi_0 = 1$. A solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has a flux 0.976 times that of eq. 16; a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ has 0.995 times that of 450.
-- The conduction branch (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
+- The weight never reaches 0 or 1. With the default transition, $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$. A solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has the flux of eq. 16 to $10^{-5}$, and a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ that of 450 to $10^{-7}$.
+- Conduction (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
 
 **Where this is checked.** [Critical Rayleigh number by phase](../Validation/core.md#15-critical-rayleigh-number-by-phase) on the core Validation page.
 
