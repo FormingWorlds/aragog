@@ -13,7 +13,7 @@ number is their eq. 16 (from Deschamps and Sotin 2000[^cite-deschamps2000]),
 interior at ``T_m``, unless a fixed value is given
 (450 is the value Thiriet et al. take for the upper layer). The selector ``'phase'``
 takes 450 while the bottom cell is liquid and eq. 16 while it is solid, the switch of
-Miyazaki and Korenaga (2019)[^cite-miyazaki2019b] at their critical melt fraction, blended
+Miyazaki & Korenaga (2019b)[^cite-miyazaki2019b] at their critical melt fraction, blended
 across the rheological transition with the weight of the viscosity blend (``liquid_weight``)
 in the logarithm of ``Ra_crit``, so the flux is continuous in the melt fraction. The flux does not depend
 on the mesh. Two choices are this module's own, not the papers': a core colder than

@@ -16,7 +16,7 @@ State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ 
 | $T_\text{cmb}$ | CMB temperature, a solver state | start value from `set_initial_core_temperature`; without one, $T_m$ at a first start |
 | $T_m$ | bottom mantle cell at the CMB pressure | from the mantle state |
 | $q$, $k$, $\Delta r_{1/2}$ | CMB heat flux, conductivity of the boundary layer, half cell above the CMB | from the mantle phase model and the mesh |
-| $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | from the mantle state (Thiriet et al. 2019 eq. 16), or `ra_crit_cmb` |
+| $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | from the mantle state (Thiriet et al. 2019 eq. 16), 450 and eq. 16 blended by the phase of the bottom cell, or a fixed number: `ra_crit_cmb` |
 | $T_a(r)$ | core adiabat | `alpha` ($1.35\times 10^{-5}$ K$^{-1}$), `c_p` (840 J kg$^{-1}$ K$^{-1}$), `adiabat_mode` (`"exact"`) |
 | core structure | Gaussian core density and its pressure, or the core arrays of a Zalmoxis structure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`); `profile_source` (`"gaussian"`), `core_profile_file` |
 | melting curve | iron alloy or quadratic | `melting_curve` (`"iron"`), `light_element_fraction` (0), `depression` (0), or `t_m0`, `t_m1`, `t_m2` |
@@ -103,6 +103,26 @@ A positive `ra_crit_cmb` fixes the number instead; 450 is the value Thiriet et a
 - at 0.1 Myr ($\eta_i = 10^{4}$ Pa s), $\mathrm{Ra}_i$ is $2 \times 10^{26}$ and $\mathrm{Ra}_\text{crit}$ about $9 \times 10^4$, a flux 0.17 times that of 450.
 
 The interior viscosity in $\mathrm{Ra}_i$ gives 1.8 to 2.4 times the flux of the layer viscosity in that run from 0.5 Myr on, and 1.04 times at 0.1 Myr.
+
+### Critical Rayleigh number by phase
+
+Which critical Rayleigh number holds while the mantle above the core is still liquid? Eq. 16 is a fit to the convection of a solid with a strongly temperature-dependent viscosity. With `ra_crit_cmb = "phase"` Aragog takes it only where the bottom cell is solid, and takes 450 while that cell is liquid. Miyazaki & Korenaga (2019b)[^cite-miyazaki2019b] also switch the core flux at the critical melt fraction 0.4 of the lowest mantle layer (p. 3400; eq. 4, p. 3401): a boundary-layer flux above it, zero below it.
+
+A hard switch makes the flux jump. In a 1 Earth-mass run the bottom cell reaches melt fraction 0.4 at about 300 kyr, where eq. 16 gives $\mathrm{Ra}_\text{crit} \approx 1800$; the flux would fall to 0.63 of its value at once. Aragog therefore blends the two numbers in the logarithm:
+
+$$
+\ln \mathrm{Ra}_\text{crit} = s \ln 450 + (1 - s) \ln \mathrm{Ra}_{\text{crit},16}, \qquad s = \tfrac{1}{2}\left[1 + \tanh\!\left(\frac{\phi_0 - \phi_\text{rheo}}{w}\right)\right].
+$$
+
+Here $\phi_0$ is the melt fraction of the bottom cell at the CMB pressure, the state that also gives $\eta_i$. $\phi_\text{rheo}$ and $w$ are the centre and the width of the rheological transition (`rheological_transition_melt_fraction`, `rheological_transition_width`; in PROTEUS `rfront_loc` and `rfront_wid`, 0.4 and 0.2 by default). The weight $s$ is the weight the viscosity blend gives the liquid, so the law changes where the viscosity does. Since the flux goes as $\mathrm{Ra}_\text{crit}^{-1/3}$, it is the weighted geometric mean $q = q_{450}^{\,s}\, q_{16}^{\,1-s}$, a continuous function of the mantle state.
+
+Limits:
+
+- The band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ must lie inside [0, 1]; the solver raises a `ValueError` at setup otherwise, and PROTEUS refuses the configuration.
+- The weight never reaches 0 or 1. With the default transition, $s = 0.018$ at $\phi_0 = 0$ and $0.9975$ at $\phi_0 = 1$. A solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has a flux 0.976 times that of eq. 16; a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ has 0.995 times that of 450.
+- The conduction branch (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
+
+**Where this is checked.** [Critical Rayleigh number by phase](../Validation/core.md#critical-rayleigh-number-by-phase) on the core Validation page.
 
 ### Properties of the boundary layer
 
@@ -345,7 +365,7 @@ When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the 
 - `core_cp_override`: Heat capacity of the secular term on the PALEOS path (J kg$^{-1}$ K$^{-1}$), or `"table"` for the value of the table at the CMB. Default $840.0$, because the PALEOS liquid sets $C_V = 3nR$ with no electronic heat capacity.
 - `core_t_cmb_step`: Spacing of the CMB temperatures at which the PALEOS isentropes are tabulated (K). Default $10.0$.
 - `q_radio`: Core radiogenic power (W). Default $0.0$.
-- `ra_crit_cmb`: Critical Rayleigh number of the mantle-side CMB boundary layer (dimensionless). Not set by default, which selects Thiriet et al. (2019) eq. 16 ([Critical Rayleigh number of the layer](#critical-rayleigh-number-of-the-layer)); a value must be positive and finite.
+- `ra_crit_cmb`: Critical Rayleigh number of the mantle-side CMB boundary layer (dimensionless). Not set by default, which selects Thiriet et al. (2019) eq. 16 ([Critical Rayleigh number of the layer](#critical-rayleigh-number-of-the-layer)); `"phase"` blends 450 and eq. 16 by the melt fraction of the bottom cell ([Critical Rayleigh number by phase](#critical-rayleigh-number-by-phase)); a number must be positive and finite.
 
 The dynamo field-strength options `f_ohm` and `flux_geometry` belong to PROTEUS, which builds the entropy budget itself; they are not accepted here.
 
@@ -417,6 +437,7 @@ The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along t
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
 [^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
 [^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
+[^cite-miyazaki2019b]: Y. Miyazaki, J. Korenaga, *[On the timescale of magma ocean solidification and its chemical consequences: 2. Compositional differentiation under crystal accumulation and matrix compaction](https://doi.org/10.1029/2018JB016928)*, Journal of Geophysical Research: Solid Earth, 124, 3399-3419, 2019. [SciX](https://scixplorer.org/abs/2019JGRB..124.3399M/abstract).
 [^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
 [^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
 [^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).

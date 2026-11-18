@@ -302,9 +302,11 @@ def test_the_jax_factory_takes_the_phase_law():
 )
 def test_the_liquid_weight_is_the_viscosity_blend_weight(phi, loc, wid):
     """The law takes the weight the viscosity blend gives the liquid at the same melt
-    fraction: equal to the JAX form (``aragog.jax.phase``) to rel 1e-14, and to the NumPy form
-    (``aragog.utilities``, NumPy's tanh) to rel 1e-14 or 2 ulp of 1, the rounding of
-    ``1 + tanh`` where tanh is near -1."""
+    fraction: equal to the JAX form (``aragog.jax.phase``) to rel 1e-14 and to the NumPy form
+    (``aragog.utilities``) to rel 1e-14 or abs 4.5e-16.
+
+    np.tanh and jnp.tanh differ by an ulp, which ``1 + tanh`` magnifies where tanh is near -1.
+    """
     from aragog.jax.phase import tanh_weight as tanh_weight_jax
     from aragog.utilities import tanh_weight
 
