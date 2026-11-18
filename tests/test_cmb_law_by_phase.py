@@ -44,6 +44,11 @@ T_CORE, T_M = 5400.0, 4800.0
 LOC, WID = 0.4, 0.2
 
 
+def _weight(phi, loc, wid):
+    """Expected liquid weight: a tanh at ``loc`` that is 0.05 and 0.95 at ``loc -+ wid/2``."""
+    return 0.5 * (1.0 + np.tanh((phi - loc) / (0.5 * wid / math.atanh(0.9))))
+
+
 def _flux(ra_crit=None, **kw):
     return float(cmb_boundary_layer_flux(T_CORE, T_M, ra_crit=ra_crit, **{**LAYER, **kw}))
 
@@ -289,39 +294,30 @@ def test_the_jax_factory_takes_the_phase_law():
     assert callable(rhs_fn) and callable(jac_fn)
 
 
-# C1: the weight is the tanh weight of the viscosity blend; the band follows the configuration.
+# C1: the weight is a tanh that is 0.05 and 0.95 at the band edges; the band follows the
+# configuration. It is narrower than the weight of the viscosity blend, which is 0.27 and 0.73
+# at the same edges.
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @settings(max_examples=300, deadline=None)
-@given(
-    phi=st.floats(0.0, 1.0),
-    loc=st.floats(0.05, 0.95),
-    wid=st.floats(0.01, 0.5),
-)
-def test_the_liquid_weight_is_the_viscosity_blend_weight(phi, loc, wid):
-    """The law takes the weight the viscosity blend gives the liquid at the same melt
-    fraction: equal to the JAX form (``aragog.jax.phase``) to rel 1e-14 and to the NumPy form
-    (``aragog.utilities``) to rel 1e-14 or abs 4.5e-16.
-
-    np.tanh and jnp.tanh differ by an ulp, which ``1 + tanh`` magnifies where tanh is near -1.
-    """
-    from aragog.jax.phase import tanh_weight as tanh_weight_jax
-    from aragog.utilities import tanh_weight
-
-    s = float(liquid_weight(phi, loc, wid))
-    assert s == pytest.approx(float(tanh_weight_jax(phi, loc, wid)), rel=1e-14, abs=1e-300)
-    assert s == pytest.approx(float(tanh_weight(phi, loc, wid)), rel=1e-14, abs=4.5e-16)
+@given(loc=st.floats(0.1, 0.9), wid=st.floats(0.01, 0.2))
+def test_the_weight_is_5_and_95_percent_at_the_band_edges(loc, wid):
+    lo, hi = loc - 0.5 * wid, loc + 0.5 * wid
+    assert float(liquid_weight(lo, loc, wid)) == pytest.approx(0.05, rel=1e-14)
+    assert float(liquid_weight(hi, loc, wid)) == pytest.approx(0.95, rel=1e-14)
+    assert float(liquid_weight(loc, loc, wid)) == pytest.approx(0.5, rel=1e-15)
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(('loc', 'wid'), [(0.4, 0.2), (0.5, 0.1), (0.4, 0.15)])
 def test_the_tails_follow_the_formula_and_the_weight_rises(loc, wid):
-    """At phi0 = 0 and 1 the weight is (1 + tanh((phi0 - loc)/wid))/2; it rises with phi0."""
+    """At phi0 = 0 and 1 the weight is (1 + tanh((phi0 - loc)/w))/2 with
+    w = (wid/2)/atanh(0.9); it rises with phi0."""
     for phi in (0.0, 1.0):
-        expected = 0.5 * (1.0 + math.tanh((phi - loc) / wid))
+        expected = 0.5 * (1.0 + math.tanh((phi - loc) / (0.5 * wid / math.atanh(0.9))))
         assert float(liquid_weight(phi, loc, wid)) == pytest.approx(expected, rel=1e-14)
     grid = np.linspace(0.0, 1.0, 2001)
     w = np.asarray(liquid_weight(jnp.asarray(grid), loc, wid))
@@ -371,7 +367,6 @@ def _set_band(solver, args, loc, wid):
 def test_the_band_follows_the_configured_transition(phi):
     """With the transition at 0.5 and width 0.1 both paths weight the laws at the new band."""
     from aragog.jax.solver import _dSdt_core_module_parts
-    from aragog.utilities import tanh_weight
 
     solver = _phase_solver()
     n = solver._n_stag
@@ -381,8 +376,8 @@ def test_the_band_follows_the_configured_transition(phi):
     for law in (RA_CRIT_UPPER_LAYER, None, 'phase'):
         solver._core_module_ra_crit_cmb = law
         f[law] = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
-    s = float(tanh_weight(phi, 0.5, 0.1))
-    assert s != pytest.approx(float(tanh_weight(phi, 0.4, 0.15)), rel=1e-2)
+    s = float(_weight(phi, 0.5, 0.1))
+    assert s != pytest.approx(float(_weight(phi, 0.4, 0.15)), rel=1e-2)
     assert f['phase'] == pytest.approx(
         f[RA_CRIT_UPPER_LAYER] ** s * f[None] ** (1.0 - s), rel=1e-12
     )
@@ -413,14 +408,12 @@ def test_the_solver_refuses_the_law_by_phase_with_a_band_outside_zero_to_one():
 @pytest.mark.physics_invariant
 def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot):
     """Validation: across the melt fraction of the bottom cell the flux under 'phase' equals
-    F_450^s F_16^(1 - s), with s the viscosity-blend weight of ``aragog.utilities``, to rel
+    F_450^s F_16^(1 - s), with s the tanh weight that is 0.05 and 0.95 at the band edges, to rel
     1e-12, and lies between the two laws."""
-    from aragog.utilities import tanh_weight
-
     grid = np.linspace(0.0, 1.0, 41)
     f450, f16 = _flux(RA_CRIT_UPPER_LAYER), _flux(None)
     q = np.array([float(_phase_flux(p)) for p in grid])
-    s = np.asarray(tanh_weight(grid, LOC, WID))
+    s = _weight(grid, LOC, WID)
     ref = f450**s * f16 ** (1.0 - s)
     rel = np.abs(q / ref - 1.0)
     assert rel.max() < 1e-12
