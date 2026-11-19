@@ -60,7 +60,7 @@ phi0 1.0   s 1.0000   q 6.175e+05 W/m^2
 
 The weight `s` is 1/2 at the transition, and the flux there is the geometric mean of the two laws: $\sqrt{6.175 \times 10^5 \cdot 5.995 \times 10^4} \approx 1.924 \times 10^5$ W m$^{-2}$. At the band edges 0.3 and 0.5 the weight is 0.05 and 0.95. Outside the band the flux goes quickly to the law of that side: at $\phi_0 = 0.2$ it is 1.007 times that of eq. 16, and at $\phi_0 = 0.6$ 0.994 times that of 450.
 
-In a coupled run the numbers differ. A 1 Earth-mass run at 5.03 Myr has a layer at $\eta = 1.15 \times 10^{19}$ Pa s and an interior at $\eta_i = 8.5 \times 10^{22}$ Pa s over a 3670 km mantle, so $\mathrm{Ra}_i = 1.1 \times 10^{7}$ and eq. 16 gives $\mathrm{Ra}_\text{crit} = 8.5$. The layer is 3.1 km thick and its flux 0.77 W m$^{-2}$, 3.8 times the flux of a fixed 450.
+A coupled run gives other numbers, quoted here from a 1 Earth-mass run at 5.03 Myr. The layer viscosity $\eta$ (`viscosity` above) is $1.15 \times 10^{19}$ Pa s and the interior viscosity $\eta_i$ (`interior_viscosity`) is $8.5 \times 10^{22}$ Pa s, over a 3670 km mantle. The internal Rayleigh number of the mantle is then $\mathrm{Ra}_i = 1.1 \times 10^{7}$, and eq. 16 gives $\mathrm{Ra}_\text{crit} = 8.5$. The layer is 3.1 km thick and its flux 0.77 W m$^{-2}$, 3.8 times the flux of a fixed 450. There eq. 16 gives the larger flux, because the interior is far more viscous than the layer; in the example above the 450 law does.
 
 ## 2. Select the law in a run
 

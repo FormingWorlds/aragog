@@ -92,7 +92,7 @@ $$
 
 Here $\mathrm{Ra}_i$ is the internal Rayleigh number of the mantle (their eq. 3), $D$ the mantle thickness and $\Delta T_\text{sh}$ the temperature difference across the shell (their eq. 3, p. 139), from the core to the surface temperature $T_s$, at least $\Delta T$. $T_s$ is the surface temperature of `outer_boundary_condition = 5`, else the `surface_temperature` boundary setting, which PROTEUS sets from the atmosphere before each call. A standalone run without either takes the temperature of the top mantle cell in place of $T_s$; that cell lies below the surface, so a fault of the top cell then also moves the CMB flux. In a coupled run $T_s$ is that of the last atmosphere step and stays fixed over the interior step. Since $\mathrm{Ra}_\text{crit}$ goes as $\Delta T_\text{sh}^{0.21}$, the flux goes as $\Delta T_\text{sh}^{-0.07}$, so this lag is small: in a 1 Earth-mass run to 10 Myr it changes the CMB flux by at most $1.8 \times 10^{-3}$ after 0.1 Myr (median $1.6 \times 10^{-5}$), for a step of $T_s$ of up to 79 K. Its viscosity $\eta_i$ is that of the interior: the bottom mantle cell at the CMB pressure and $T_m$, as Deschamps & Sotin (2000), p. 204, take the temperature of the well-mixed interior. The other properties are those of the layer at $\bar{T}$, and the layer law above keeps the layer viscosity $\eta$.
 
-Against a fixed number at the same state, a less viscous interior has a larger $\mathrm{Ra}_i$ and $\mathrm{Ra}_\text{crit}$, so a thicker layer and a smaller flux; a more viscous interior has a thinner layer and a larger flux. The [tutorial](../Tutorials/cmb_law_by_phase.md#1-the-flux-of-the-3-settings) gives an example from a coupled run.
+Against a fixed number at the same state, a less viscous interior has a larger $\mathrm{Ra}_i$ and $\mathrm{Ra}_\text{crit}$, so a thicker layer and a smaller flux; a more viscous interior has a thinner layer and a larger flux. The [tutorial](../Tutorials/cmb_law_by_phase.md#1-the-flux-of-the-3-settings) gives the numbers of a 1 Earth-mass coupled run: $\mathrm{Ra}_i$, $\mathrm{Ra}_\text{crit}$, the layer thickness and the flux against a fixed 450.
 
 A positive `ra_crit_cmb` fixes the number instead; 450 is the value Thiriet et al. (2019), Table 2, take for the upper boundary layer.
 
@@ -119,7 +119,7 @@ Here $\phi_0$ is the melt fraction of the bottom cell at the CMB pressure, the s
 Limits:
 
 - The band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ must lie inside \[0, 1\]; the solver raises a `ValueError` at setup otherwise, and PROTEUS refuses the configuration.
-- The weight never reaches 0 or 1; the [test details](../Validation/core.md#15-critical-rayleigh-number-by-phase) give its size at the ends of the range.
+- The weight never reaches 0 or 1, so each law keeps a small share far from the band; [its validation](../Validation/core.md#15-critical-rayleigh-number-by-phase) gives that share at the ends of the range.
 - Conduction (a core colder than the mantle, or no buoyancy) does not depend on $\mathrm{Ra}_\text{crit}$.
 
 **Where this is checked.** [Critical Rayleigh number by phase](../Validation/core.md#15-critical-rayleigh-number-by-phase) on the core Validation page.
