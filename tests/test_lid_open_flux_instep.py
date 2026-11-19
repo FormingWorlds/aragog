@@ -353,7 +353,8 @@ class TestOpenFluxJax:
             s.jax_lid_params()
         with pytest.raises(RuntimeError, match='no start reference'):
             s._dSdt_single(0.0, _state(s, 100.0))
-        assert _open_solver(eos).jax_lid_params().open_G == 0.0
+        lp0 = _open_solver(eos).jax_lid_params()
+        assert lp0.open_G == 0.0 and lp0.open_T_m0 == 0.0
 
     def test_the_lid_weight_batch_matches_numpy_and_falls_back(self, eos, caplog):
         """The JAX batch of lid weights equals the NumPy weight at each node (rel 1e-9); when the

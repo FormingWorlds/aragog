@@ -219,6 +219,7 @@ def test_rate_functions_match_numpy():
     q_b, F_b = rng.uniform(0, 200, n), rng.uniform(0, 200, n)
     F_b[:5] = q_b[:5]
     q_b[-6], F_b[-6] = 10.0, 100.0  # a melting lid below the stop, delta 0.3 < d_lo
+    delta[0], q_b[0], F_b[0] = 0.1, 10.0, 100.0  # one far below it, factor -0.8
     dh = rng.uniform(-1e4, 5e5, n)
     got = jax.vmap(lambda *v: jl.stefan_rate(*v, h_top, d_lo))(
         q_b, F_b, np.full(n, 3e3), dh, delta
