@@ -3586,12 +3586,12 @@ class EntropySolver:
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
             open_G=self._lid_open_G(),
-            open_T_m0=self._lid_open_T_m0_for_jax(),
+            open_T_m0=self._lid_open_T_m0(),
         )
 
-    def _lid_open_T_m0_for_jax(self) -> float:
-        """The start reference ``T_m0`` of the open part for the JAX parameters; 0 without a
-        conductance. A conductance without a reference raises, as the NumPy right-hand side does."""
+    def _lid_open_T_m0(self) -> float:
+        """The start reference ``T_m0`` of the open part, for the NumPy right-hand side and the JAX
+        parameters; 0 without a conductance. A conductance without a reference raises."""
         T_m0 = getattr(self, '_lid_T_m0', None)
         if T_m0 is None:
             if self._lid_open_G() > 0.0:
@@ -3958,7 +3958,7 @@ class EntropySolver:
         G_open = self._lid_open_G()
         if G_open > 0.0:  # the open part follows its node from the call start
             T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
-            F_grid += G_open * (max(T_node, base['T_b']) - self._lid_open_T_m0_for_jax())
+            F_grid += G_open * (max(T_node, base['T_b']) - self._lid_open_T_m0())
         eps, T_eq, T_surf = self._outer_bc_emiss, self._outer_bc_T_eq, self._lid_T_surf()
         if self._lid_mush:
             g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)

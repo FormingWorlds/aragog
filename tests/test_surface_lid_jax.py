@@ -218,6 +218,7 @@ def test_rate_functions_match_numpy():
     )
     q_b, F_b = rng.uniform(0, 200, n), rng.uniform(0, 200, n)
     F_b[:5] = q_b[:5]
+    q_b[-6], F_b[-6] = 10.0, 100.0  # a melting lid below the stop, delta 0.3 < d_lo
     dh = rng.uniform(-1e4, 5e5, n)
     got = jax.vmap(lambda *v: jl.stefan_rate(*v, h_top, d_lo))(
         q_b, F_b, np.full(n, 3e3), dh, delta
@@ -229,6 +230,7 @@ def test_rate_functions_match_numpy():
     assert len({round(f, 3) for f in want[:, 1]} & {0.0, 1.0}) == 2 and np.any(
         (want[:, 1] > 0) & (want[:, 1] < 1)
     )
+    assert np.any(want[:, 1] < 0.0)  # the branch below the melt-back stop
 
     F_b = np.concatenate([[0.0, -1.0, 1e9], 10.0 ** rng.uniform(-2, 6, n - 3)])
     T_b = rng.uniform(1200, 1800, n)

@@ -587,16 +587,43 @@ class TestFluxSolver:
         assert abs(float(d[-1]) - lo) <= max(1e-3 * abs(undershoot), 1e-12 * lo)
 
     @pytest.mark.physics_invariant
+    def test_the_rate_below_the_stop_pulls_a_melting_lid_back(self, eos):
+        """At a melting state of the melt-back solve moved 1e-7 m below delta_lo, the stop factor
+        is (delta - delta_lo) / delta_lo < 0 and the lid rate is positive; the JAX right-hand
+        side gives the same rate as NumPy."""
+        from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
+
+        s, t, y = self._melted_back(eos, 200.0, 1.0, 0.01)
+        lo = s._lid_delta_lo
+        melting = []
+        for k in np.flatnonzero((y[-2] > lo) & (y[-2] < 1.5 * lo)):
+            s._dSdt_single(float(t[k]), y[:, k])
+            if s._lid_last.rates.ddelta < 0.0:
+                melting.append(k)
+        assert melting, 'the solve must melt back through the ramp of the stop'
+        x = y[:, melting[-1]].copy()
+        x[-2] = lo - 1e-7
+        want = np.asarray(s._dSdt_single(0.0, x), dtype=float)
+        rates = s._lid_last.rates
+        assert rates.stop == pytest.approx(-1e-7 / lo, rel=1e-6)
+        assert rates.ddelta > 0.0
+        got = _physical(_factory_rhs(s, s.jax_lid_params())[0], s._build_nondim_scales())(x)
+        np.testing.assert_allclose(got[-2], want[-2], rtol=1e-9)
+
+    @pytest.mark.physics_invariant
     def test_a_lid_that_freezes_after_an_undershoot_grows_from_its_stop(self, eos):
-        """When the flux from below falls under the prescribed flux after the lid passed below
-        its stop, the lid never goes lower than its lowest point and grows from the stop."""
+        """When the flux from below falls under the prescribed flux after the lid reached its
+        stop, the lid grows well past it, and a freezing state below the stop keeps the full
+        rate (stop factor 1)."""
         s, t, y = self._melted_back(eos, 200.0, 100.0, 0.5)
         d, lo = y[-2], s._lid_delta_lo
-        k = int(np.argmin(d))
-        assert d[k] < lo
-        assert np.all(d[k:] >= d[k])
+        assert d.min() < lo * (1.0 + 1e-6)
         s._dSdt_single(float(t[-1]), y[:, -1])
         assert d[-1] > 2.0 * lo and s._lid_last.rates.ddelta > 0.0
+        x = y[:, -1].copy()
+        x[-2] = lo - 1e-7
+        s._dSdt_single(0.0, x)
+        assert s._lid_last.rates.stop == 1.0 and s._lid_last.rates.ddelta > 0.0
 
     def test_surface_loss_is_the_prescribed_flux(self, eos):
         """With a prescribed flux of 200 the top heat flux is 200 and the crust is below the base."""
