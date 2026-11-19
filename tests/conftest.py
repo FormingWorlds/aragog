@@ -310,7 +310,7 @@ def _isolated_package_logger():
 
 @pytest.fixture(autouse=True, scope='module')
 def _free_jax_caches_per_file():
-    """Free the compiled JAX programs after each test file, so an xdist worker does not keep them."""
+    """Free the compiled JAX programs when a process leaves a test file, so a worker does not keep them."""
     yield
     if 'jax' in sys.modules:
         sys.modules['jax'].clear_caches()
