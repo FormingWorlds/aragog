@@ -642,6 +642,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 ??? info "Test details"
     - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from the formula above (exact identity of the law).
     - Tolerance: relative $10^{-12}$; the flux lies strictly between the 2 laws.
+    - Ends of the range: the weight never reaches 0 or 1. With the default transition, $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$; a solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has the flux of eq. 16 to about $10^{-5}$, and a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ that of 450 to $10^{-7}$.
     - Discrimination: a weight with the opposite sign, one with $\operatorname{artanh} 0.8$ in place of $\operatorname{artanh} 0.9$, and one with the width of the viscosity blend each fail tests of `tests/test_cmb_law_by_phase.py` (10, 6 and 6 of them).
     - Test id: `tests/test_cmb_law_by_phase.py::test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws`
     - Command: `pytest tests/test_cmb_law_by_phase.py -k weighted_mean` (add `--validation-plots` to write the plot pair)
