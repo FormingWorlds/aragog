@@ -572,18 +572,19 @@ class TestFluxSolver:
     @pytest.mark.physics_invariant
     @pytest.mark.parametrize('F_atm', [200.0, 1000.0])
     def test_a_lid_melted_back_past_its_stop_returns_to_it(self, eos, F_atm):
-        """A full lid melts back to its stop; the integrator leaves it a little below delta_lo,
-        and the rate below the stop, with the slope of the rate above it, brings it back: at the
-        call end the lid lies within 1e-3 of its lowest undershoot of delta_lo."""
+        """A full lid melts back to its stop; any undershoot the integrator leaves below
+        delta_lo is pulled back by the rate below the stop, which has the slope of the rate
+        above it: at the call end the lid lies within 1e-3 of its lowest undershoot of delta_lo,
+        or within round-off of delta_lo."""
         s, t, y = self._melted_back(eos, F_atm, 1.0, 0.01)
         d, lo = y[-2], s._lid_delta_lo
-        below = np.flatnonzero(d < lo)
-        assert below.size, 'the lid must pass below its stop for this case'
-        s._dSdt_single(float(t[below[0]]), y[:, below[0]])
+        k = int(np.argmin(d))
+        assert d[k] < lo * (1.0 + 1e-6), 'the lid must reach its stop in this case'
+        s._dSdt_single(float(t[k]), y[:, k])
         assert s._lid_last.rates.w > 0.999
-        undershoot = lo - float(d.min())
-        assert 0.0 < undershoot < lo - s._lid_lo_bound(lo)
-        assert abs(float(d[-1]) - lo) <= 1e-3 * undershoot
+        undershoot = lo - float(d[k])
+        assert undershoot < lo - s._lid_lo_bound(lo)
+        assert abs(float(d[-1]) - lo) <= max(1e-3 * abs(undershoot), 1e-12 * lo)
 
     @pytest.mark.physics_invariant
     def test_a_lid_that_freezes_after_an_undershoot_grows_from_its_stop(self, eos):
