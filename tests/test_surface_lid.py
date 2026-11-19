@@ -254,12 +254,10 @@ def test_stefan_rate_stops():
 @example(x=-0.5, q=10.0, melting=False, lo=0.5)
 def test_stefan_rate_is_linear_through_the_melt_back_stop(x, q, melting, lo):
     """For r < 0 the rate is r clip((delta - delta_lo) / delta_lo, -1, 1) for delta in
-    (0, 4 delta_lo], so it pulls delta towards delta_lo from both sides; for r > 0 near the
+    [0, 4 delta_lo], so it pulls delta towards delta_lo from both sides; for r > 0 near the
     stop the factor is 1."""
     h = 1e4
     delta = lo * (1.0 + x)
-    if delta <= 0.0:
-        return
     q_b, F_b = (0.0, q) if melting else (q, 0.0)
     r0 = (q_b - F_b) / (3000.0 * 4e5)
     r, f = sl.stefan_rate(q_b, F_b, 3000.0, 4e5, delta, h, lo)
@@ -269,6 +267,18 @@ def test_stefan_rate_is_linear_through_the_melt_back_stop(x, q, melting, lo):
     else:
         assert f == 1.0
     assert r == pytest.approx(r0 * f, rel=1e-12, abs=0.0)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(('frac', 'want'), [(0.1, -0.9), (1e-9, -(1.0 - 1e-9)), (0.0, -1.0)])
+def test_the_melt_back_stop_factor_falls_to_minus_1_at_zero_thickness(frac, want):
+    """A melting lid of thickness frac * delta_lo has the stop factor frac - 1, which is -1
+    at zero thickness, where the rate is -r0: a full restoring rate."""
+    lo, q = 0.5, 10.0
+    r0 = -q / (3000.0 * 4e5)
+    r, f = sl.stefan_rate(0.0, q, 3000.0, 4e5, frac * lo, 1e4, lo)
+    assert f == pytest.approx(want, rel=1e-12, abs=0.0)
+    assert r == pytest.approx(r0 * want, rel=1e-12, abs=0.0)
 
 
 @pytest.mark.physics_invariant
