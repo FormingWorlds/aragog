@@ -38,7 +38,7 @@ def test_the_end_of_a_file_drops_its_compiled_programs_and_cyclic_garbage():
     assert ref() is None
 
 
-def test_every_test_file_frees_its_programs_once(request):
+def test_the_fixture_is_autouse_at_module_scope(request):
     """The fixture is autouse and module-scoped, so it runs once per file a process leaves."""
     assert '_free_jax_caches_per_file' in request.fixturenames
     (fixturedef,) = request._fixturemanager.getfixturedefs(
