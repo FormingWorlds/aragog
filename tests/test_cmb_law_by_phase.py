@@ -494,18 +494,20 @@ def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot)
     def figure():
         import matplotlib.pyplot as plt
 
-        fig, (top, bottom) = plt.subplots(2, 1, sharex=True, figsize=(6.4, 5.6))
-        top.axhline(f450 / f16, ls='--', color='C1', label='450')
-        top.axhline(1.0, ls=':', color='C2', label='eq. 16')
-        top.plot(grid, ref / f16, color='C0', lw=3, alpha=0.4, label='expected')
-        top.plot(grid, q / f16, '.', ms=3, color='C0', label="'phase'")
-        top.set(ylabel='Flux / eq. 16 flux')
-        top.legend(fontsize=8, loc='lower right')
-        bottom.plot(grid, rel / 1e-12, '.', ms=3)
-        bottom.set(
-            xlabel='Melt fraction of the bottom cell',
-            ylabel='Difference / tolerance',
-            ylim=(0.0, 1.0),
+        fig, ax = plt.subplots(figsize=(6.4, 4.2))
+        ax.axhline(f450 / f16, ls='--', color='C1', label='450')
+        ax.axhline(1.0, ls=':', color='C2', label='eq. 16')
+        ax.plot(grid, ref / f16, color='C0', lw=3, alpha=0.4, label='expected')
+        ax.plot(grid, q / f16, '.', ms=3, color='C0', label="'phase'")
+        ax.set(xlabel='Melt fraction of the bottom cell', ylabel='Flux / eq. 16 flux')
+        ax.legend(fontsize=8, loc='lower right')
+        # the round-off difference is text: its value depends on the platform
+        ax.text(
+            0.03,
+            0.55,
+            f'max |code / expected - 1|\n= {rel.max():.1e} (tolerance 1e-12)',
+            transform=ax.transAxes,
+            fontsize=8,
         )
         fig.tight_layout()
         return fig
