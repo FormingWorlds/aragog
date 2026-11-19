@@ -3957,13 +3957,8 @@ class EntropySolver:
         F_in, F_grid = float(self.state._heat_flux[-2]), float(self.state._heat_flux[-1])
         G_open = self._lid_open_G()
         if G_open > 0.0:  # the open part follows its node from the call start
-            T_m0 = getattr(self, '_lid_T_m0', None)
-            if T_m0 is None:
-                raise RuntimeError(
-                    'open_surface_conductance needs the call-start reference T_m0'
-                )
             T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
-            F_grid += G_open * (max(T_node, base['T_b']) - T_m0)
+            F_grid += G_open * (max(T_node, base['T_b']) - self._lid_open_T_m0_for_jax())
         eps, T_eq, T_surf = self._outer_bc_emiss, self._outer_bc_T_eq, self._lid_T_surf()
         if self._lid_mush:
             g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)

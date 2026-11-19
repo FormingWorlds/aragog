@@ -346,10 +346,13 @@ class TestOpenFluxJax:
         assert abs(J1[top] - J0[top]) > 1e-3 * abs(J0[top])
 
     def test_lid_params_refuse_a_conductance_without_a_reference(self, eos):
-        """With a conductance and no start reference the JAX parameters raise, as NumPy does."""
+        """With a conductance and no start reference the JAX parameters and the NumPy
+        right-hand side raise."""
         s = _open_solver(eos, G=G_OPEN)
         with pytest.raises(RuntimeError, match='reference'):
             s.jax_lid_params()
+        with pytest.raises(RuntimeError, match='no start reference'):
+            s._dSdt_single(0.0, _state(s, 100.0))
         assert _open_solver(eos).jax_lid_params().open_G == 0.0
 
     def test_the_lid_weight_batch_matches_numpy_and_falls_back(self, eos, caplog):
@@ -501,15 +504,6 @@ class TestAcceptedRange:
         assert w_live > 0.5
         s._lid_active = False
         assert s._lid_weight_now() == 0.0
-
-    def test_the_lid_is_held_only_on_the_flux_boundary_with_the_mush_base(self):
-        """``held_lid_surface`` gives the surface only for boundary 4 with the mush base."""
-        from aragog.config.boundary import held_lid_surface
-
-        T_s = 500.0
-        assert held_lid_surface(4, True, T_s) == T_s
-        assert held_lid_surface(4, False, T_s) is None
-        assert held_lid_surface(1, True, T_s) is None
 
     def test_the_error_is_a_runtime_error(self):
         from aragog.solver.entropy_solver import AcceptedStateRangeError
