@@ -622,7 +622,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 ## 15. Critical Rayleigh number by phase
 
-<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
+<!-- The numbers of this section come from its test and from the weight formula, so the page test has no number of it to check. -->
 
 **Why this check exists.** With `ra_crit_cmb = "phase"` the CMB flux blends the 2 laws of the boundary layer by the melt fraction of the bottom mantle cell ([explanation](../Explanations/core_bc.md#critical-rayleigh-number-by-phase)). A wrong weight (a wrong sign, or a wrong width such as that of the viscosity blend) would move the core cooling while the mantle freezes; this test fails on each of them.
 
@@ -637,12 +637,11 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 **How to read the plot.** The plot shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The text on the left gives the largest relative difference of the code from the expected value, against the tolerance. A pass puts every dot on the thick line and that difference below $10^{-12}$.
 
-**Known limit.** The test checks the law at one state; in a coupled run its effect is smaller than the stored states suggest. In a 1 Earth-mass segment from 150.4 to 500 kyr the law by phase leaves the core 3.0 K warmer at 500 kyr than a fixed 450, against 8.2 K estimated from the stored states of the run with 450. In that segment the run with the law by phase takes 2.4 times the CVODE steps and 35 % more wall time while the bottom cell crosses the transition.
+**Known limit.** The test checks the law at one state; in a coupled run its effect is smaller than the stored states suggest. In a 1 Earth-mass segment from 150.4 to 500 kyr the law by phase leaves the core 3.0 K warmer at 500 kyr than a fixed 450, against 8.2 K estimated from the stored states of the run with 450. In that segment the run with the law by phase takes 2.4 times the CVODE steps and 35 % more wall time while the bottom cell crosses the transition. The weight never reaches 0 or 1: with the default transition the formula gives $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$. A solid bottom cell where eq. 16 gives $\mathrm{Ra}_\text{crit} = 8.5$ then has the flux of eq. 16 to a relative $10^{-5}$, and a liquid cell where eq. 16 gives $2.7 \times 10^5$ has that of 450 to a relative $10^{-7}$. The test does not check these 2 states.
 
 ??? info "Test details"
     - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from the formula above (exact identity of the law).
     - Tolerance: relative $10^{-12}$; the flux lies strictly between the 2 laws.
-    - Ends of the range: the weight never reaches 0 or 1. With the default transition, $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$; a solid bottom cell with $\mathrm{Ra}_{\text{crit},16} = 8.5$ then has the flux of eq. 16 to about $10^{-5}$, and a liquid cell with $\mathrm{Ra}_{\text{crit},16} = 2.7 \times 10^5$ that of 450 to $10^{-7}$.
     - Discrimination: a weight with the opposite sign, one with $\operatorname{artanh} 0.8$ in place of $\operatorname{artanh} 0.9$, and one with the width of the viscosity blend each fail tests of `tests/test_cmb_law_by_phase.py` (10, 6 and 6 of them).
     - Test id: `tests/test_cmb_law_by_phase.py::test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws`
     - Command: `pytest tests/test_cmb_law_by_phase.py -k weighted_mean` (add `--validation-plots` to write the plot pair)
