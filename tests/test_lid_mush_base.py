@@ -552,6 +552,51 @@ class TestFluxSolver:
             d * s._lid_hv.profile_heat(0.0, T_b - sl.LID_DT_MIN, T_b), rel=1e-14
         )
 
+    def _melted_back(self, eos, F_atm, end, lo):
+        """A full lid (top cell at the floor gap, so w = 1) set at 3 delta_lo under a prescribed
+        flux below the flux from below, solved to ``end``; returns the solver and its trace."""
+        from tests.test_subgrid_lid_solver import _phantom_energy
+
+        s = _solver(eos, end=end, outer=4, F_atm=F_atm, lid_delta_lo=lo)
+        n = s._n_stag
+        S = np.full(n, 3050.0)
+        S[n - 1] = s._lid_S_sol + sl.LID_FLOOR_GAP
+        s.set_initial_entropy(S)
+        d0 = 3.0 * s._lid_delta_lo
+        s.set_initial_lid(d0, _phantom_energy(s, d0, 0.5 * (s._lid_T_sol + 300.0))[0])
+        s.solve()
+        sol = s._solution
+        t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
+        return s, t, y
+
+    @pytest.mark.physics_invariant
+    @pytest.mark.parametrize('F_atm', [200.0, 1000.0])
+    def test_a_lid_melted_back_past_its_stop_returns_to_it(self, eos, F_atm):
+        """A full lid melts back to its stop; the integrator leaves it a little below delta_lo,
+        and the rate below the stop, with the slope of the rate above it, brings it back: at the
+        call end the lid lies within 1e-3 of its lowest undershoot of delta_lo."""
+        s, t, y = self._melted_back(eos, F_atm, 1.0, 0.01)
+        d, lo = y[-2], s._lid_delta_lo
+        below = np.flatnonzero(d < lo)
+        assert below.size, 'the lid must pass below its stop for this case'
+        s._dSdt_single(float(t[below[0]]), y[:, below[0]])
+        assert s._lid_last.rates.w > 0.999
+        undershoot = lo - float(d.min())
+        assert 0.0 < undershoot < lo - s._lid_lo_bound(lo)
+        assert abs(float(d[-1]) - lo) <= 1e-3 * undershoot
+
+    @pytest.mark.physics_invariant
+    def test_a_lid_that_freezes_after_an_undershoot_grows_from_its_stop(self, eos):
+        """When the flux from below falls under the prescribed flux after the lid passed below
+        its stop, the lid never goes lower than its lowest point and grows from the stop."""
+        s, t, y = self._melted_back(eos, 200.0, 100.0, 0.5)
+        d, lo = y[-2], s._lid_delta_lo
+        k = int(np.argmin(d))
+        assert d[k] < lo
+        assert np.all(d[k:] >= d[k])
+        s._dSdt_single(float(t[-1]), y[:, -1])
+        assert d[-1] > 2.0 * lo and s._lid_last.rates.ddelta > 0.0
+
     def test_surface_loss_is_the_prescribed_flux(self, eos):
         """With a prescribed flux of 200 the top heat flux is 200 and the crust is below the base."""
         s = self._s(eos)

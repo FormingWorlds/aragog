@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import quad
 from scipy.optimize import brentq
@@ -237,6 +239,50 @@ def test_stefan_rate_stops():
     assert f == pytest.approx(1.0, abs=0) and r < 0.0
     r, _ = sl.stefan_rate(10.0, 0.0, 3000.0, -5.0, 1.0, h, lo)
     assert r == pytest.approx(10.0 / (3000.0 * sl.LID_DH_MIN), rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_stefan_rate_restores_a_lid_below_the_melt_back_stop():
+    """Below delta_lo a melting lid (r < 0) has the rate r (delta - delta_lo) / delta_lo > 0,
+    the slope of the rate above the stop, so delta_lo attracts from both sides; a freezing lid
+    (r > 0) keeps its full rate there."""
+    h, lo = 1000.0, 0.5
+    r_melt = -10.0 / (3000.0 * 4e5)
+    for x in (1e-9, 0.25, 0.75, 1.0):
+        r, f = sl.stefan_rate(0.0, 10.0, 3000.0, 4e5, lo * (1.0 - x), h, lo)
+        assert f == pytest.approx(-x, rel=1e-6) and r == pytest.approx(-x * r_melt, rel=1e-6)
+        assert r > 0.0
+        up, _ = sl.stefan_rate(0.0, 10.0, 3000.0, 4e5, lo * (1.0 + x), h, lo)
+        assert up == pytest.approx(-r, rel=1e-6)
+    r, f = sl.stefan_rate(10.0, 0.0, 3000.0, 4e5, 0.5 * lo, h, lo)
+    assert f == 1.0 and r == pytest.approx(10.0 / (3000.0 * 4e5), rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+@settings(max_examples=200, deadline=None)
+@given(
+    x=st.floats(-1.0, 3.0),
+    q=st.floats(1.0, 1e3),
+    melting=st.booleans(),
+    lo=st.floats(1e-3, 1.0),
+)
+def test_stefan_rate_is_linear_through_the_melt_back_stop(x, q, melting, lo):
+    """For r < 0 the rate is r clip((delta - delta_lo) / delta_lo, -1, 1) for delta in
+    (0, 4 delta_lo], so it pulls delta towards delta_lo from both sides; for r > 0 near the
+    stop the factor is 1."""
+    h = 1e4
+    delta = lo * (1.0 + x)
+    if delta <= 0.0:
+        return
+    q_b, F_b = (0.0, q) if melting else (q, 0.0)
+    r0 = (q_b - F_b) / (3000.0 * 4e5)
+    r, f = sl.stefan_rate(q_b, F_b, 3000.0, 4e5, delta, h, lo)
+    if melting:
+        assert f == pytest.approx(float(np.clip(x, -1.0, 1.0)), rel=1e-9, abs=1e-12)
+        assert r * (delta - lo) <= 0.0
+    else:
+        assert f == 1.0
+    assert r == pytest.approx(r0 * f, rel=1e-12, abs=0.0)
 
 
 @pytest.mark.physics_invariant
