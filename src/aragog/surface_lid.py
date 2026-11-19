@@ -518,18 +518,20 @@ def stefan_rate(
 
     ``r = (q_b - F_b) / (rho max(dh, LID_DH_MIN))``. Growth stops linearly over
     ``[LID_CAP_FRAC - LID_CAP_WIDTH, LID_CAP_FRAC] h_top``; melt-back stops linearly over
-    ``[delta_lo, 2 delta_lo]``.
+    ``[delta_lo, 2 delta_lo]``, and below ``delta_lo`` the same line turns the rate of a melting
+    lid back towards ``delta_lo`` (factor down to -1 at ``delta = 0``). The exact solution never
+    passes the stop; this branch only returns a state that the integrator left below it.
 
     Returns
     -------
     tuple of float
-        ``(r, factor)``: the rate after the stop and the stop factor in [0, 1].
+        ``(r, factor)``: the rate after the stop and the stop factor in [-1, 1].
     """
     r = (q_b - F_b) / (rho * max(dh, LID_DH_MIN))
     if r > 0.0:
         f = float(np.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0))
     elif r < 0.0:
-        f = float(np.clip((delta - delta_lo) / delta_lo, 0.0, 1.0))
+        f = float(np.clip((delta - delta_lo) / delta_lo, -1.0, 1.0))
     else:
         f = 1.0
     return r * f, f
@@ -605,7 +607,7 @@ class LidRates:
     w : float
         Lid weight [0, 1].
     stop : float
-        Factor of the growth or melt-back stop [0, 1].
+        Factor of the growth or melt-back stop [-1, 1]; below 0 only under the melt-back stop.
     H_lid : float
         Internal heating of the lid [W/m^2].
     """

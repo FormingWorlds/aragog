@@ -330,7 +330,7 @@ def stefan_rate(q_b, F_b, rho, dh, delta, h_top, delta_lo):
     """Base growth rate [m/s] and stop factor, as :func:`aragog.surface_lid.stefan_rate`."""
     r = (q_b - F_b) / (rho * jnp.maximum(dh, LID_DH_MIN))
     grow = jnp.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0)
-    melt = jnp.clip((delta - delta_lo) / delta_lo, 0.0, 1.0)
+    melt = jnp.clip((delta - delta_lo) / delta_lo, -1.0, 1.0)
     f = jnp.where(r > 0.0, grow, jnp.where(r < 0.0, melt, 1.0))
     return r * f, f
 
