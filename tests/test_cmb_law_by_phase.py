@@ -24,7 +24,11 @@ from hypothesis import given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from aragog.core import check_ra_crit, cmb_boundary_layer_flux, liquid_weight  # noqa: E402
-from aragog.core.boundary_layer import RA_CRIT_PHASE, RA_CRIT_UPPER_LAYER  # noqa: E402
+from aragog.core.boundary_layer import (  # noqa: E402
+    RA_CRIT_PHASE,
+    RA_CRIT_UPPER_LAYER,
+    _concrete_scalar,
+)
 
 pytestmark = [pytest.mark.timeout(300)]
 
@@ -144,6 +148,45 @@ def test_a_nan_ra_crit_with_a_band_is_the_law_by_phase():
     kw = dict(melt_fraction=0.4, liquid_band=(LOC, WID), **LAYER)
     got = cmb_boundary_layer_flux(T_CORE, T_M, ra_crit=float('nan'), **kw)
     assert float(got) == float(cmb_boundary_layer_flux(T_CORE, T_M, ra_crit=None, **kw))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('ra_crit', 'loc'), [(None, LOC), (float('nan'), LOC), (450.0, None), (450.0, float('nan'))]
+)
+def test_a_fixed_number_or_a_band_alone_is_accepted(ra_crit, loc):
+    """A call with a fixed ra_crit and no live band, or a live band and no fixed number, runs."""
+    band = None if loc is None else (loc, WID)
+    try:
+        got = cmb_boundary_layer_flux(
+            T_CORE, T_M, ra_crit=ra_crit, melt_fraction=0.4, liquid_band=band, **LAYER
+        )
+    except (TypeError, ValueError) as exc:
+        pytest.fail(f'refused: {exc!r}')
+    assert math.isfinite(float(got))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('x', 'want'),
+    [
+        (None, None),
+        (True, None),
+        ('450', None),
+        (np.array([1.0, 2.0]), None),
+        (object(), None),
+        (450, 450.0),
+        (np.float64(3.0), 3.0),
+        (jnp.asarray(3.0), 3.0),
+    ],
+)
+def test_only_a_real_scalar_of_rank_0_is_a_fixed_number(x, want):
+    """A bool, a string, an array of rank 1 and any other object are not a fixed number."""
+    got = _concrete_scalar(x)
+    if want is None:
+        assert got is None
+    else:
+        assert type(got) is float and got == want
 
 
 @pytest.mark.unit
