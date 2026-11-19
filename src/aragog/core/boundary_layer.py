@@ -165,6 +165,10 @@ def cmb_boundary_layer_flux(
         capacity [J/kg/K], thermal expansivity [1/K] and dynamic viscosity
         [Pa s]. The thermal diffusivity is ``k / (rho c_p)``; ``c_p`` and the
         expansivity are the material values, without a phase-change contribution.
+        The buoyant law needs an expansivity above 0; at 0 or below the layer conducts
+        (``q_cond``), a step in the flux. The solver's material expansivity
+        ``rho c_p |dT/dP|_S / T`` is at least 1.5e-6 1/K from 50 GPa to the end of the MgSiO3
+        tables of the 1 Earth-mass runs (350 GPa) and of the tests (150 GPa).
     gravity : float
         Gravitational acceleration at the CMB [m/s^2].
     dr_half : float
