@@ -177,10 +177,9 @@ def test_eq16_rayleigh_number_takes_the_interior_viscosity():
     )
 
 
-# Six states of a 1 Earth-mass coupled run (CMB cell 1500 m): time [Myr], T_core, T_m, the top
-# cell T [K], mantle thickness [m], the layer's k, rho, cp, alpha, g at the mean temperature,
-# the layer and the interior viscosity [Pa s], and Ra_i, Ra_crit and q [W/m^2] as the run log
-# prints them (4 decimals for Ra_crit, 5 significant digits otherwise).
+# 6 states of a 1 M_E coupled run (CMB cell 1500 m): time [Myr], T_core, T_m, top cell T [K],
+# mantle thickness [m], layer k, rho, cp, alpha, g at the mean temperature, layer and interior
+# viscosity [Pa s], Ra_i, Ra_crit, q [W/m^2] as logged (Ra_crit 4 decimals, else 5 sig. digits).
 _RUN_STATES = [
     (0.0983, 5118.811704813429, 5083.533916503925, 2381.400790730236, 3670481.5816515163, 4.0, 4332.787038192286, 5644.44744909633, 5.3480562222107306e-05, 11.012233868575926, 5880.986890556698, 10215.40949939358, 2.0674e+26, 94058.1465, 140.88),
     (0.4996, 4939.818551378954, 4664.90397794359, 1904.2924786796275, 3670481.5816515163, 4.0, 4551.9367805792235, 4042.34997843334, 4.0571510416005524e-05, 11.012233868575926, 2009662022598.5461, 2.888313099508526e+17, 4.8621e+12, 129.2381, 23.614),
