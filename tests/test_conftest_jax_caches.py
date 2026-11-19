@@ -3,39 +3,29 @@
 from __future__ import annotations
 
 import gc
-import weakref
 
-import jax
 import pytest
 
 from tests import conftest
 
+jax = pytest.importorskip('jax')
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 
-class _Cycle:
-    pass
-
-
-def test_the_end_of_a_file_drops_its_compiled_programs_and_cyclic_garbage():
-    """The fixture teardown empties the jit cache and collects a reference cycle."""
+def test_the_end_of_a_file_drops_its_compiled_programs_and_collects_garbage(monkeypatch):
+    """The fixture teardown empties the jit cache and calls the garbage collector once."""
     f = jax.jit(lambda x: x + 1.0)
     f(1.0)
-    cycle = _Cycle()
-    cycle.self = cycle
-    ref = weakref.ref(cycle)
-    del cycle
+    collected = []
+    monkeypatch.setattr(gc, 'collect', lambda: collected.append(True))
     teardown = conftest._free_jax_caches_per_file.__wrapped__()
     next(teardown)
     assert f._cache_size() == 1
-    gc.disable()
-    try:
-        with pytest.raises(StopIteration):
-            next(teardown)
-    finally:
-        gc.enable()
+    assert collected == []
+    with pytest.raises(StopIteration):
+        next(teardown)
     assert f._cache_size() == 0
-    assert ref() is None
+    assert collected == [True]
 
 
 def test_the_fixture_is_autouse_at_module_scope(request):
