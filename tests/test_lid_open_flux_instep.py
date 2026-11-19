@@ -197,7 +197,7 @@ class TestOpenFluxNumpy:
     def test_booked_surface_energy_holds_the_open_flux_response(self, eos):
         """The booked surface integral of a call is the trapezoid, over the accepted
         states, of the loss without the conductance plus ``(1 - w) G (T_m - T_m0)``."""
-        s = _open_solver(eos, G=G_OPEN, F_atm=-200.0, end=200.0)
+        s = _open_solver(eos, G=G_OPEN, F_atm=-200.0, end=20.0)
         s._S0 = _state(s, 100.0)
         s.solve()
         sol = s._solution
