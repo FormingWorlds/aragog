@@ -354,10 +354,10 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 **Why it matters.** This response keeps the surface temperature of a coupled run from swinging while a lid forms; PROTEUS sets $G_\mathrm{eff}$ from the slope of the atmosphere flux ([the lid coupling of PROTEUS](https://proteus-framework.org/PROTEUS/Explanations/lid_coupling.html#the-open-part-within-a-step)).
 
-![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff, and its difference from the expected value](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="70%" }
-![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff, and its difference from the expected value](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="70%" }
+![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="70%" }
+![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The top panel shows the change of the loss divided by the open fraction $1 - w$, against $T_m - T_{m0}$ in K. The line is $G_\mathrm{eff} (T_m - T_{m0})$; the circles are the states near the lid base, and the squares, which all sit at 0, the 7 states far below it, which keep the start value. States with $1 - w$ below $10^{-6}$ are not drawn there, since the division is not defined to round-off. The bottom panel shows the difference from the expected change divided by the tolerance, for every state; a pass keeps every point below 1.
+**How to read the plot.** The plot shows the change of the loss divided by the open fraction $1 - w$, against $T_m - T_{m0}$ in K. The line is $G_\mathrm{eff} (T_m - T_{m0})$; the circles are the states near the lid base, and the squares, which all sit at 0, the 7 states far below it, which keep the start value. States with $1 - w$ below $10^{-6}$ are not drawn there, since the division is not defined to round-off. The text on the left gives the largest difference from the expected change divided by the tolerance, over every state; a pass keeps it below 1.
 
 ??? info "Test details"
     - Reference: the response term $(1 - w)\, G_\mathrm{eff}\, (\max(T_\mathrm{node}, T_b) - T_{m0})$ (exact identity of the boundary flux).

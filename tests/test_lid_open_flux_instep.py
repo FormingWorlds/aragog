@@ -556,18 +556,26 @@ def test_the_open_part_follows_the_open_node_across_the_lid_base(validation_plot
     def figure():
         import matplotlib.pyplot as plt
 
-        fig, (top_ax, bottom) = plt.subplots(2, 1, sharex=True, figsize=(6.4, 5.6))
+        fig, ax = plt.subplots(figsize=(6.4, 4.2))
         x = np.linspace(near[:, 0].min(), near[:, 0].max(), 2)
-        top_ax.plot(x, G_OPEN * x, color='C0', label='G (T_m - T_m0)')
+        ax.plot(x, G_OPEN * x, color='C0', label='G (T_m - T_m0)')
         for (name, d), mk in zip(series.items(), ('o', 's'), strict=True):
             m = d[:, 3] > 1e-6
-            top_ax.plot(d[m, 0], d[m, 1] / d[m, 3], mk, ms=4, mfc='none', label=name)
-        top_ax.set(ylabel='dF / (1 - w) [W/m2]')
-        top_ax.legend(fontsize=8)
-        for d, mk in zip(series.values(), ('o', 's'), strict=True):
-            err = np.abs(d[:, 1] - d[:, 2]) / (1e-12 + 1e-9 * np.abs(d[:, 2]))
-            bottom.plot(d[:, 0], err, mk, ms=4, mfc='none')
-        bottom.set(xlabel='T_m - T_m0 [K]', ylabel='Diff. / tol.', ylim=(0.0, 1.0))
+            ax.plot(d[m, 0], d[m, 1] / d[m, 3], mk, ms=4, mfc='none', label=name)
+        ax.set(xlabel='T_m - T_m0 [K]', ylabel='dF / (1 - w) [W/m2]')
+        ax.legend(fontsize=8)
+        # the round-off difference is text: its value depends on the platform
+        err = max(
+            np.max(np.abs(d[:, 1] - d[:, 2]) / (1e-12 + 1e-9 * np.abs(d[:, 2])))
+            for d in series.values()
+        )
+        ax.text(
+            0.03,
+            0.55,
+            f'max difference / tolerance\n= {err:.1e}',
+            transform=ax.transAxes,
+            fontsize=8,
+        )
         fig.tight_layout()
         return fig
 
