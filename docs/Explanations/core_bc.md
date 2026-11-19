@@ -74,7 +74,7 @@ $$
 \Delta T = T_\text{cmb} - T_m,
 $$
 
-where $T_m$ is the bottom mantle cell's entropy evaluated at the CMB pressure (the cell carried adiabatically to the boundary). Following the parameterised-convection closure of Foley and Driscoll (2016)[^cite-foley2016], eq. 20, with the boundary-layer thickness set by a critical Rayleigh number (Thiriet et al., 2019[^cite-thiriet2019], eqs. 13 and 14 with exponent 1/3),
+where $T_m$ is the bottom mantle cell's entropy evaluated at the CMB pressure (the cell carried adiabatically to the boundary). Following the parameterised-convection closure of Foley & Driscoll (2016)[^cite-foley2016], eq. 20, with the boundary-layer thickness set by a critical Rayleigh number (Thiriet et al. (2019) eqs. 13 and 14, with exponent 1/3),
 
 $$
 q_\text{conv} = \frac{k\,\Delta T}{\delta}, \qquad \delta = \left(\frac{\mathrm{Ra}_\text{crit}\, \kappa\, \eta}{\alpha \rho g\, \Delta T}\right)^{1/3}, \qquad \kappa = \frac{k}{\rho c_p},
@@ -132,7 +132,7 @@ $$
 \bar{T} = \frac{T_\text{cmb} + T_m}{2},
 $$
 
-the temperature at which Thiriet et al. (2019)[^cite-thiriet2019], p. 140, take the viscosity of the lower boundary layer; Foley and Driscoll (2016)[^cite-foley2016] leave that temperature to the model. With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
+the temperature at which Thiriet et al. (2019), p. 140, take the viscosity of the lower boundary layer; Foley & Driscoll (2016) leave that temperature to the model. With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
 
 When solid mantle rheology is enabled (`[phase_solid.rheology]`), temperature-dependent and stress-dependent solid viscosity laws govern the mantle above the core-mantle boundary layer, and the bottom mixing-length slope factor $s_\mathrm{bottom}$ scales the lower convective boundary. See [Solid-state convection](solid_state_convection.md) for solid rheology formulations and boundary layer dynamics.
 
@@ -440,4 +440,4 @@ The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along t
 [^cite-miyazaki2019b]: Y. Miyazaki, J. Korenaga, *[On the timescale of magma ocean solidification and its chemical consequences: 2. Compositional differentiation under crystal accumulation and matrix compaction](https://doi.org/10.1029/2018JB016928)*, Journal of Geophysical Research: Solid Earth, 124, 3399-3419, 2019. [SciX](https://scixplorer.org/abs/2019JGRB..124.3399M/abstract).
 [^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
 [^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
-[^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
+[^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C., Plesa, A.-C., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
