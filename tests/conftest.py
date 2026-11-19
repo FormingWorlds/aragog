@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import importlib.resources
 import logging
 import os
+import sys
 import warnings
 from contextlib import AbstractContextManager, contextmanager
 from functools import partial
@@ -304,6 +306,20 @@ def _isolated_package_logger():
     """
     with package_logger_isolation():
         yield
+
+
+def free_jax_caches() -> None:
+    """Drop the compiled JAX programs of the process, if JAX is loaded, and collect garbage."""
+    if 'jax' in sys.modules:
+        sys.modules['jax'].clear_caches()
+    gc.collect()
+
+
+@pytest.fixture(autouse=True, scope='module')
+def _free_jax_caches_per_file():
+    """Free the compiled JAX programs after each test file, so an xdist worker does not keep them."""
+    yield
+    free_jax_caches()
 
 
 class Helper:
