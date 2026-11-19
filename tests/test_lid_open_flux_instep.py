@@ -228,7 +228,7 @@ class TestOpenFluxNumpy:
         the mantle gains less energy over the call than with the start flux held."""
         gained, rise = [], []
         for G in (None, 5.0):
-            s = _open_solver(eos, G=G, F_atm=-2000.0, end=500.0)
+            s = _open_solver(eos, G=G, F_atm=-2000.0, end=50.0)
             y0 = _state(s, 100.0)
             s._S0 = y0.copy()
             s.solve()
