@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import importlib.resources
 import logging
 import os
+import sys
 import warnings
 from contextlib import AbstractContextManager, contextmanager
 from functools import partial
@@ -304,6 +306,15 @@ def _isolated_package_logger():
     """
     with package_logger_isolation():
         yield
+
+
+@pytest.fixture(autouse=True, scope='module')
+def _free_jax_caches_per_file():
+    """Free the compiled JAX programs each time a process leaves a test file."""
+    yield
+    if 'jax' in sys.modules:
+        sys.modules['jax'].clear_caches()
+    gc.collect()
 
 
 class Helper:

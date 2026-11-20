@@ -95,6 +95,9 @@ jobs:
           python -c 'import os; from aragog.eos.entropy import EntropyEOS; EntropyEOS(os.environ["ARAGOG_TEST_EOS_DIR"])'
           D="$ARAGOG_TEST_EOS_DIR"; test "$(ls "$D"/*.cache.npz | wc -l)" -eq "$(ls "$D"/*.dat | wc -l)"
 
+      - name: Print the memory before the tests
+        run: free -m
+
       - name: Run unit + smoke + slow tests with coverage
         if: matrix.part == 'main'
         run: |
@@ -140,6 +143,7 @@ jobs:
         if: ${{ always() }}
         continue-on-error: true
         run: |
+          free -m
           # read the log first: a failed dmesg must not read as a run without an OOM kill
           log="$(sudo dmesg -T)"
           test -n "$log" || { echo 'kernel log empty: OOM state unknown'; exit 1; }
