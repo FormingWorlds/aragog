@@ -582,3 +582,34 @@ class TestOpenTotalSolver:
         (J1, fd1), (J0, _) = (instep.TestOpenFluxJax()._top_column(x, y) for x in (s, ref))
         assert J1[top] == pytest.approx(fd1[top], rel=1e-6)
         assert abs(J1[top] - J0[top]) > 1e-3 * abs(J0[top])
+
+
+def _open_flux_stub(T_node, part=(150.0, 1.0, 1000.0, 2.0), T_m0=1490.0):
+    """A solver stand-in with the open-part fields, the top basic node and the start reference."""
+    from types import SimpleNamespace
+
+    basic = SimpleNamespace(temperature=lambda: np.array([T_node + 30.0, T_node]))
+    return SimpleNamespace(
+        _lid_open_part=lambda: part,
+        _lid_open_T_m0=lambda: T_m0,
+        state=SimpleNamespace(phase_basic=basic),
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('T_node', 'dT_m'), [(1540.0, 50.0), (1400.0, -50.0)])
+def test_the_call_site_passes_the_fields_in_order_and_holds_the_node(T_node, dT_m):
+    """The solver passes (L, F', G, G_l) to open_part_total in that order, with
+    dT_m = max(T_node, T_b) - T_m0; at w = 0.9 with F' = 1 and G = 1000 W/m^2/K a swap of F' and G
+    moves the open part by tens of W/m^2."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    w, F_atm, T_b = 0.9, -200.0, 1440.0
+    got = EntropySolver._lid_open_flux(_open_flux_stub(T_node), w, F_atm, T_b)
+    want = sl.open_part_total(w, F_atm, 150.0, 1.0, 1000.0, 2.0, dT_m)
+    swapped = sl.open_part_total(w, F_atm, 150.0, 1000.0, 1.0, 2.0, dT_m)
+    assert got == pytest.approx(want, rel=1e-12)
+    assert abs(want - swapped) > 10.0  # the order is told apart by a wide margin
+    assert (
+        EntropySolver._lid_open_flux(_open_flux_stub(T_node, part=None), w, F_atm, T_b) is None
+    )
