@@ -2718,16 +2718,6 @@ class EntropySolver:
             return None
         return tuple(float(v) for v in values)
 
-    def _lid_open_total(self, w: float, F_atm: float, dT_m: float) -> float | None:
-        """Open part per total area [W/m^2] at the lid weight ``w`` of this evaluation,
-        :func:`aragog.surface_lid.open_part_total` with the flux value ``F_atm`` [W/m^2] and
-        ``dT_m = T_m - T_m0`` [K]; None without the open-part fields."""
-        part = self._lid_open_part()
-        if part is None:
-            return None
-        L, Fp, G, Gl = part
-        return _lid.open_part_total(w, F_atm, L, Fp, G, Gl, dT_m)
-
     def _lid_open_T_m(self, S_f: float) -> float:
         """``T_m = max(T_node, T_b)`` [K] of the current state: the top basic node of the
         last state update, held at least at the lid base of the top cell at ``S_f``."""
@@ -4011,11 +4001,11 @@ class EntropySolver:
                 surf = _lid.fixed_surface_state(delta, E, T_b, k, T_surf, floor, self._lid_hv)
         if self._lid_mush:
             w = 1.0 - g * (1.0 - w)
-        F_open = None
-        if self._lid_open_part() is not None:  # the open part at the weight of this state
+        F_open, part = None, self._lid_open_part()
+        if part is not None:  # the open part per total area at the weight of this state
             T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
             dT_m = max(T_node, base['T_b']) - self._lid_open_T_m0()
-            F_open = self._lid_open_total(w, F_grid, dT_m)
+            F_open = _lid.open_part_total(w, F_grid, *part, dT_m)
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
