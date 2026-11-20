@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from aragog import surface_lid as sl
@@ -373,15 +373,19 @@ def test_each_open_field_is_refused_out_of_range_by_name(data, i):
     G=st.floats(1e-300, 1e12),
     Gl=st.floats(0.0, 1e12),
 )
+@example(L=-5.0, Fp=0.0, G=1.0, Gl=0.0)  # each bound at its edge, and a lid flux below 0
 def test_finite_open_fields_in_range_are_taken(L, Fp, G, Gl):
     """Any finite ``L`` and ``F' >= 0``, ``G > 0``, ``G_l >= 0`` pass, also on the attrs layer,
-    which keeps the values."""
+    which keeps the values; a refusal of such a set fails the test."""
     from aragog.config.boundary import BoundaryConfig, check_open_part
 
-    assert check_open_part((L, Fp, G, Gl), 4, True) is None
-    bc = BoundaryConfig(
-        **_BASE, subgrid_lid=True, lid_mush_base=True, **dict(zip(FIELDS, (L, Fp, G, Gl)))
-    )
+    try:
+        assert check_open_part((L, Fp, G, Gl), 4, True) is None
+        bc = BoundaryConfig(
+            **_BASE, subgrid_lid=True, lid_mush_base=True, **dict(zip(FIELDS, (L, Fp, G, Gl)))
+        )
+    except ValueError as err:
+        pytest.fail(f'an in-range open-part set was refused: {err}')
     assert (bc.open_lid_flux, bc.open_surface_slope) == (L, Fp)
     assert (bc.open_skin_conductance, bc.open_lid_conductance) == (G, Gl)
 
@@ -613,3 +617,13 @@ def test_the_call_site_passes_the_fields_in_order_and_holds_the_node(T_node, dT_
     assert (
         EntropySolver._lid_open_flux(_open_flux_stub(T_node, part=None), w, F_atm, T_b) is None
     )
+
+
+@pytest.mark.unit
+def test_the_parser_leaves_the_open_part_unset():
+    """The 4 open-part fields of the parsed boundary default to None, so a config without them
+    has no open part and no partial set."""
+    from aragog.parser import _BoundaryConditionsParameters
+
+    defaults = {f.name: f.default for f in dataclasses.fields(_BoundaryConditionsParameters)}
+    assert [defaults[name] for name in FIELDS] == [None] * 4
