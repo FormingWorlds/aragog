@@ -346,25 +346,39 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 ## The open part of the surface within a call
 
-**Why this check exists.** In a coupled step the open part of the surface, the fraction $1 - w$ without a lid, starts at the flux of the atmosphere call. Inside the call the melt under it warms or cools, and the atmosphere would answer. If the open part kept its start value, a melt that warms would lose no more heat, and the surface temperature would swing from one coupled step to the next. If the response took the node temperature below the lid base, the open part would lose less heat than at its start, as if the melt under it were colder than the base, although that melt is held at the base. The test fails on both.
+**Why this check exists.** Under a crust that covers the fraction $w$ of the surface, the open part $1 - w$ has no crust. Its loss is set by the atmosphere at the start of a call and must follow the melt under it within the call. If the code formed this loss at a fixed weight, or left out a term, the planet would lose a different energy than the atmosphere took. The test fails on each of these faults:
 
-**What it tests.** The loss of the open part changes by $(1 - w)\, G_\mathrm{eff}\, (T_m - T_{m0})$ within a call ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $G_\mathrm{eff}$ is `open_surface_conductance` (0.5 W m$^{-2}$ K$^{-1}$ in the test), $T_m = \max(T_\mathrm{node}, T_b)$ is the top node held at least at the lid base $T_b$, and $T_{m0}$ its value at the call start. The test compares the surface loss with and without $G$ at 21 states where the top node moves from 13 K below $T_b$ to 24 K above it; in the states with the node below $T_b$ the lid covers the whole surface ($w = 1$), so these check only that the open part then adds nothing. At 7 more states the node lies 836 to 884 K below the base while the open part covers 98.5 to 100 % of the surface; these states check the floor. It also compares the JAX right-hand side of the top cell with NumPy at each state.
+- the open part carries $1 - w$ times the start flux;
+- its response is taken at a fixed weight of 0.7;
+- the lid term $w G_l$ is missing from $G_\mathrm{eff}$;
+- the factor $1 - w$ of the response is missing.
 
-**How we know the right answer.** The response is a linear term on top of the start value, so the difference of the two losses is the term itself. A node below the lid base gives $T_m = T_b$, and from a start state at the base the term is 0.
+A second test fails if the response uses the top node where it lies below the crust base.
 
-**Why it matters.** This response keeps the surface temperature of a coupled run from swinging while a lid forms; PROTEUS sets $G_\mathrm{eff}$ from the slope of the atmosphere flux ([the lid coupling of PROTEUS](https://proteus-framework.org/PROTEUS/Explanations/lid_coupling.html#the-open-part-within-a-step)).
+**What it tests.** The open part per total area is $A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$ ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $F_\mathrm{atm}$ is the flux of the atmosphere call, $L$ the lid flux of that call, and $\Delta T_m$ the rise of the melt temperature since the call start. The response factor is $G_\mathrm{eff}(w) = G F' / (F' + w G_l + (1 - w) G)$. $F'$ is the slope of the atmosphere flux with surface temperature, $G$ the skin conductance and $G_l$ the lid conductance. The test runs the lid rates of a 1 m crust held at 500 K, which loses $F_s$ = 3156 W/m². It takes $F_\mathrm{atm} = -200$ W/m² (heat flowing in), $L$ = 150 W/m², $F'$ = 30, $G$ = 200 and $G_l$ = 2 W/m²/K, and $\Delta T_m$ = 7.5 K. At 11 weights from 0 to 1 it checks 2 things:
 
-![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="70%" }
-![Change of the open-part loss per open area against the open node temperature, on the line of slope G_eff](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="70%" }
+- the surface loss $F_\mathrm{top}$ equals the energy sum $F_\mathrm{atm} + w (F_s - L) + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$;
+- the slope of $F_\mathrm{top}$ with $\Delta T_m$, from a central difference with a step of 0.001 K, equals the slope of the call balance.
 
-**How to read the plot.** The plot shows the change of the loss divided by the open fraction $1 - w$, against $T_m - T_{m0}$ in K. The line is $G_\mathrm{eff} (T_m - T_{m0})$; the circles are the states near the lid base, and the squares, which all sit at 0, the 7 states far below it, which keep the start value. States with $1 - w$ below $10^{-6}$ are not drawn there, since the division is not defined to round-off. The text on the left gives the largest difference from the expected change divided by the tolerance, over every state; a pass keeps it below 1.
+A second test runs the full solver on the test tables. It moves the top node from below the crust base to above it, and checks that the response then uses $T_m = \max(T_\mathrm{node}, T_b)$. It also compares the JAX right-hand side of the top cell with NumPy.
+
+**How we know the right answer.** The energy sum is written out in the test, apart from the code. The call balance is the heat balance of the shared surface, linear in its warming $\Delta T_s$. The atmosphere takes $F' \Delta T_s$ more. The crust area gives $w G_l \Delta T_s$ less, and the open skin gives $(1 - w) G (\Delta T_m - \Delta T_s)$ more. The test solves this as a 2 by 2 linear system with NumPy, without the closed form of $G_\mathrm{eff}$.
+
+**Why it matters.** PROTEUS books the energy the planet loses in a call from this surface loss. The response keeps the surface temperature of a coupled run from swinging while a crust forms. PROTEUS sets the 4 inputs from its atmosphere balance ([the lid coupling of PROTEUS](https://proteus-framework.org/PROTEUS/Explanations/lid_coupling.html#the-open-part-within-a-step)).
+
+![Surface loss and its slope with the melt temperature against the lid weight: the code on the energy sum and on the call balance, with two wrong forms dashed](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="90%" }
+![Surface loss and its slope with the melt temperature against the lid weight: the code on the energy sum and on the call balance, with two wrong forms dashed](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="90%" }
+
+**How to read the plot.** Both panels have the lid weight $w$ on the horizontal axis. The left panel shows $F_\mathrm{top}$ in W/m²: the line is the energy sum, the circles the code. The dashed line is $w F_s + (1 - w) F_\mathrm{atm}$, which misses the sum by 3.2 to 350 W/m². The right panel shows the slope in W/m²/K: the line is the call balance, the circles the code, and the dashed line the response at a fixed weight of 0.7. A pass puts every circle on its line; the text gives the largest miss over the tolerance, which must stay below 1.
+
+**Known limit.** The reference is the linear balance. It checks the code to first order in the surface warming, not against a full atmosphere solve.
 
 ??? info "Test details"
-    - Reference: the response term $(1 - w)\, G_\mathrm{eff}\, (\max(T_\mathrm{node}, T_b) - T_{m0})$ (exact identity of the boundary flux).
-    - Tolerance: relative $10^{-9}$, plus absolute $10^{-12}$ W m$^{-2}$ where $1 - w$ rounds near $w = 1$; JAX top-cell rate against NumPy to relative $10^{-9}$.
-    - Discrimination: a response on $T_\mathrm{node}$ in place of $T_m$ in the current state, with the start value still floored, fails by 435 W m$^{-2}$ at the first state far below the base.
-    - Test id: `tests/test_lid_open_flux_instep.py::test_the_open_part_follows_the_open_node_across_the_lid_base`
-    - Command: `pytest tests/test_lid_open_flux_instep.py -k across_the_lid_base` (add `--validation-plots` to write the plot pair)
+    - Reference: the energy sum $F_\mathrm{atm} + w (F_s - L) + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$ (identity), and the slope of the linear call balance of the shared surface (2 by 2 solve). Second test: the response term $(1 - w)\, G_\mathrm{eff}\, (\max(T_\mathrm{node}, T_b) - T_{m0})$ of the solver, with $G_\mathrm{eff}$ = 0.5 W/m²/K at every weight.
+    - Tolerance: energy sum absolute $10^{-12}\,|F_\mathrm{atm}|$ ($2 \times 10^{-10}$ W/m²); slope relative $10^{-6}$ (absolute $10^{-9}$ W/m²/K at $w = 1$). Second test: relative $10^{-9}$, plus absolute $10^{-12}$ W/m² where $1 - w$ rounds near $w = 1$; JAX top-cell rate against NumPy to relative $10^{-9}$.
+    - Discrimination: at each weight in (0, 1) other than 0.7, a response at the fixed weight 0.7 misses the energy sum by 27 to 250 W/m² and the slope by 22 to 130 %. Without $w G_l$ the energy sum misses by 0.18 to 3.1 W/m² (weights in (0, 1)); without the factor $1 - w$, by 21 to 1406 W/m² (weights above 0). In the second test, a response on $T_\mathrm{node}$ in place of $T_m$ fails by 435 W/m² at the first state far below the base.
+    - Test id: `tests/test_lid_open_total.py::test_the_open_part_closes_the_energy_sum_and_follows_the_call_balance`; second test `tests/test_lid_open_flux_instep.py::test_the_open_part_follows_the_open_node_across_the_lid_base`
+    - Command: `pytest tests/test_lid_open_total.py -k follows_the_call_balance` (add `--validation-plots` to write the plot pair); `pytest tests/test_lid_open_flux_instep.py -k across_the_lid_base` (needs the test tables)
 
 ## Where the lid is not validated
 

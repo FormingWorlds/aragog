@@ -504,7 +504,7 @@ class TestAcceptedRange:
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 @needs_eos
-def test_the_open_part_follows_the_open_node_across_the_lid_base(validation_plot):
+def test_the_open_part_follows_the_open_node_across_the_lid_base():
     """Across states from the node below the lid base to 9 K above the start, the
     change of the surface loss with the conductance is ``(1 - w) G (T_m - T_m0)``, with
     ``T_m = max(T_node, T_b)``: relative 1e-9 (absolute 1e-12 W/m^2 where ``1 - w`` rounds); a
@@ -535,31 +535,3 @@ def test_the_open_part_follows_the_open_node_across_the_lid_base(validation_plot
     assert np.any(near[:, 4] < 0.0) and np.any(near[:, 4] > 1.0)  # both sides of the base
     assert np.all(far[:, 4] < 0.0) and np.all(far[:, 1] == 0.0)  # flat below the base
     assert np.max(np.abs(near[:, 1])) > 1.0  # the response is not vacuously 0
-
-    def figure():
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(6.4, 4.2))
-        x = np.linspace(near[:, 0].min(), near[:, 0].max(), 2)
-        ax.plot(x, G_OPEN * x, color='C0', label='G (T_m - T_m0)')
-        for (name, d), mk in zip(series.items(), ('o', 's'), strict=True):
-            m = d[:, 3] > 1e-6
-            ax.plot(d[m, 0], d[m, 1] / d[m, 3], mk, ms=4, mfc='none', label=name)
-        ax.set(xlabel='T_m - T_m0 [K]', ylabel='dF / (1 - w) [W/m2]')
-        ax.legend(fontsize=8)
-        # the round-off difference is text: its value depends on the platform
-        err = max(
-            np.max(np.abs(d[:, 1] - d[:, 2]) / (1e-12 + 1e-9 * np.abs(d[:, 2])))
-            for d in series.values()
-        )
-        ax.text(
-            0.03,
-            0.55,
-            f'max difference / tolerance\n= {err:.1e}',
-            transform=ax.transAxes,
-            fontsize=8,
-        )
-        fig.tight_layout()
-        return fig
-
-    validation_plot(figure, 'surface_lid_open_part_in_step')

@@ -166,6 +166,71 @@ def test_the_surface_warming_of_the_balance_is_the_response_over_the_slope():
         assert F == pytest.approx(-200.0 + FP * dT_s, rel=1e-12)
 
 
+@pytest.mark.unit
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+def test_the_open_part_closes_the_energy_sum_and_follows_the_call_balance(validation_plot):
+    """Across the lid weight, ``F_top`` of ``lid_rates`` with ``open_part_total`` is the energy
+    sum ``F_atm + w (F_s - L) + (1 - w) G_eff(w) dT_m`` (rel 1e-12), and its slope in ``dT_m``
+    is the slope of the linear call balance (rel 1e-6). The row form ``w F_s + (1 - w) F_atm``
+    and the response at the row weight ``(1 - w) G_eff(w_r)`` fall outside."""
+    F_atm, L, dT_m, h = -200.0, 150.0, 7.5, 1e-3
+    ws = np.linspace(0.0, 1.0, 11)
+    sums = []
+    for w in ws:
+        rates, F_s = _lid_call(w, sl.open_part_total(w, F_atm, L, FP, G_SKIN, G_LID, dT_m))
+        want = F_atm + w * (F_s - L) + (1.0 - w) * _g_eff(w) * dT_m
+        assert abs(rates.F_top - want) <= 1e-12 * abs(F_atm)
+        row = _lid_call(w, None)[0].F_top
+        if w < 1.0:
+            assert abs(row - want) > 1e-6 * abs(want)
+        sums.append((rates.F_top, want, row))
+    sums = np.array(sums)
+
+    def F_top(w, d):
+        return _lid_call(w, sl.open_part_total(w, F_atm, L, FP, G_SKIN, G_LID, d))[0].F_top
+
+    resp = []
+    for w in ws:
+        oracle = (_call_balance(w, dT_m + h)[1] - _call_balance(w, dT_m - h)[1]) / (2.0 * h)
+        code = (F_top(w, dT_m + h) - F_top(w, dT_m - h)) / (2.0 * h)
+        assert code == pytest.approx(oracle, rel=1e-6, abs=1e-9)
+        row = (1.0 - w) * _g_eff(W_ROW)
+        if 0.0 < w < 1.0 and abs(w - W_ROW) > 1e-12:
+            assert abs(row - oracle) > 1e-6 * abs(oracle)
+        resp.append((code, oracle, row))
+    resp = np.array(resp)
+    err = np.max(np.abs(sums[:, 0] - sums[:, 1])) / (1e-12 * abs(F_atm))
+    assert err <= 1.0
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=(9.0, 3.8))
+        a1.plot(ws, sums[:, 1], color='C0', label='energy sum')
+        a1.plot(ws, sums[:, 0], 'o', ms=4, mfc='none', color='C1', label='code')
+        a1.plot(ws, sums[:, 2], '--', color='C2', label='w F_s + (1 - w) F_atm')
+        a1.set(xlabel='lid weight w', ylabel='F_top [W/m2]')
+        # the round-off difference is text: its value depends on the platform
+        a1.text(
+            0.97,
+            0.06,
+            f'largest miss / tol = {err:.1e}',
+            ha='right',
+            transform=a1.transAxes,
+        )
+        a1.legend(fontsize=8)
+        a2.plot(ws, resp[:, 1], color='C0', label='call balance')
+        a2.plot(ws, resp[:, 0], 'o', ms=4, mfc='none', color='C1', label='code')
+        a2.plot(ws, resp[:, 2], '--', color='C2', label=f'G_eff at w = {W_ROW}')
+        a2.set(xlabel='lid weight w', ylabel='dF_top / dT_m [W/m2/K]')
+        a2.legend(fontsize=8)
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'surface_lid_open_part_in_step')
+
+
 # --- 3. limits and bounds ------------------------------------------------------------------
 
 
