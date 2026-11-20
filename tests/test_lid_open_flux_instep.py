@@ -1,22 +1,21 @@
 """Tests of the in-step open-part flux of the sub-grid lid under the prescribed flux boundary.
 
-With ``open_surface_conductance`` ``G`` the open part of the surface carries
-``F_open(S) = F_open0 + G (T_m(S) - T_m0)``: ``F_open0`` the boundary value of the call,
-``T_m = max(T_node, T_b)`` the top basic node held at least at the lid base, and ``T_m0`` its
-value at the call start. The held lid surface is ``surface_temperature``.
+The open part carries, per total area, ``F_atm - w L + (1 - w) G_eff(w) (T_m - T_m0)``
+(``aragog.surface_lid.open_part_total``): ``T_m = max(T_node, T_b)`` the top basic node held at
+least at the lid base, and ``T_m0`` its value at the call start. These tests set ``L = F_atm``
+and ``F' = G = G_l = 2 G_eff``, so that the open part is ``(1 - w) (F_atm + G_eff dT_m)`` with
+a constant ``G_eff``; ``tests/test_lid_open_total.py`` tests the general form. The held lid
+surface is ``surface_temperature``.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import logging
-import math
 
 import attrs
 import numpy as np
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from aragog.solver.entropy_solver import SECS_PER_YEAR
 from tests.conftest import entropy_eos_copy
@@ -29,73 +28,58 @@ G_OPEN = 0.5  # open-part conductance of the tests [W/m^2/K]
 
 
 @pytest.mark.unit
-@settings(max_examples=80, deadline=None)
-@given(
-    st.one_of(
-        st.floats(max_value=0.0, exclude_max=True),
-        st.just(math.nan),
-        st.just(math.inf),
-        st.just(-math.inf),
-        st.booleans(),
-        st.text(max_size=3),
-    )
-)
-def test_open_surface_conductance_refuses_every_other_value(value):
-    """A conductance that is not None or a finite number of 0 or above is refused by name."""
-    from aragog.config.boundary import check_open_surface_conductance
-
-    with pytest.raises(ValueError, match='open_surface_conductance'):
-        check_open_surface_conductance(value, 4, True)
-
-
-@pytest.mark.unit
-@settings(max_examples=60, deadline=None)
-@given(st.one_of(st.none(), st.floats(min_value=0.0, allow_infinity=False), st.integers(0, 10)))
-def test_open_surface_conductance_takes_none_and_finite_values_of_0_and_above(value):
-    from aragog.config.boundary import check_open_surface_conductance
-
-    assert check_open_surface_conductance(value, 4, True) is None
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize('bc, mush', [(1, True), (4, False), (1, False), (5, True)])
-def test_open_surface_conductance_needs_the_flux_boundary_and_the_mush_base(bc, mush):
-    from aragog.config.boundary import check_open_surface_conductance
-
-    assert check_open_surface_conductance(None, bc, mush) is None
-    with pytest.raises(ValueError, match='open_surface_conductance'):
-        check_open_surface_conductance(1.0, bc, mush)
-
-
-@pytest.mark.unit
 def test_the_held_lid_surface_is_the_surface_temperature_field():
-    """One surface temperature field: the lid field is gone, the open conductance is new."""
-    from aragog.config.boundary import BoundaryConfig
+    """One surface temperature field: the lid field is gone; the 4 open-part fields replace
+    the single open conductance."""
+    from aragog.config.boundary import OPEN_PART_FIELDS, BoundaryConfig
     from aragog.parser import _BoundaryConditionsParameters
 
     names = {f.name for f in dataclasses.fields(_BoundaryConditionsParameters)}
     config = {a.name: a for a in attrs.fields(BoundaryConfig)}
     for fields in (names, set(config)):
         assert 'lid_surface_temperature' not in fields
-        assert 'open_surface_conductance' in fields
+        assert 'open_surface_conductance' not in fields
+        assert set(OPEN_PART_FIELDS) <= fields
         assert 'surface_temperature' in fields
-    assert config['open_surface_conductance'].default is None
+    assert all(config[n].default is None for n in OPEN_PART_FIELDS)
 
 
 @pytest.mark.unit
-def test_normalize_runs_the_open_conductance_check():
+def test_normalize_runs_the_open_part_check():
+    """``normalize`` refuses an open-part field out of range and a partial set, by name."""
     from tests.test_entropy_solver_bc_dispatch_smoke import _build
 
     p = _build(core_bc='quasi_steady', outer_bc=4, inner_bc=2, n_nodes=10, outer_bc_value=1.0)
     p.boundary_conditions.subgrid_lid = True
     p.boundary_conditions.lid_mush_base = True
-    p.boundary_conditions.open_surface_conductance = -1.0
-    with pytest.raises(ValueError, match='open_surface_conductance'):
+    for name, value in _open_fields(1.0, 0.5).items():
+        setattr(p.boundary_conditions, name, value)
+    p.boundary_conditions.normalize()
+    p.boundary_conditions.open_skin_conductance = 0.0
+    with pytest.raises(ValueError, match='open_skin_conductance'):
+        p.boundary_conditions.normalize()
+    p.boundary_conditions.open_skin_conductance = None
+    with pytest.raises(ValueError, match='missing open_skin_conductance'):
         p.boundary_conditions.normalize()
 
 
+def _open_fields(F_atm, G):
+    """The 4 open-part fields that make the open part ``(1 - w) (F_atm + G dT_m)``: ``L =
+    F_atm`` and ``F' = G_skin = G_l = 2 G``, so ``G_eff = G`` at every weight; None for None."""
+    if G is None:
+        return {}
+    two = 2.0 * G if G > 0.0 else 1.0  # G = 0: F' = 0 and any skin conductance above 0
+    return dict(
+        open_lid_flux=F_atm,
+        open_surface_slope=2.0 * G,
+        open_skin_conductance=two,
+        open_lid_conductance=two,
+    )
+
+
 def _open_solver(eos, G=None, F_atm=-1.0, T_s=500.0, delta_on=1.0, end=1.0):
-    """A thin-shell lid solver on the flux boundary, held at ``T_s``, with conductance ``G``."""
+    """A thin-shell lid solver on the flux boundary, held at ``T_s``, with the open part of
+    response ``G`` (:func:`_open_fields`)."""
     return _solver(
         eos,
         end=end,
@@ -103,8 +87,8 @@ def _open_solver(eos, G=None, F_atm=-1.0, T_s=500.0, delta_on=1.0, end=1.0):
         F_atm=F_atm,
         thin=True,
         surface_temperature=T_s,
-        open_surface_conductance=G,
         lid_delta_on=delta_on,
+        **_open_fields(F_atm, G),
     )
 
 
@@ -284,14 +268,17 @@ class TestOpenFluxJax:
         assert info['lid']
         return rhs_fn, jac_fn, _physical(rhs_fn, s._build_nondim_scales())
 
-    def test_lid_params_carry_the_conductance_and_the_reference(self, eos):
+    def test_lid_params_carry_the_open_part_and_the_reference(self, eos):
+        """The JAX lid parameters carry the 4 open-part fields, the flag and ``T_m0``; zeros
+        without the fields."""
         s = _open_solver(eos, G=G_OPEN)
         s._set_lid_open_reference(_state(s, 100.0))
         lp = s.jax_lid_params()
-        assert lp.open_G == G_OPEN
+        assert (lp.open_on, lp.open_L) == (1.0, -1.0)
+        assert lp.open_Fp == lp.open_G == lp.open_Gl == 2.0 * G_OPEN
         assert lp.open_T_m0 == s._lid_T_m0
         lp0 = _open_solver(eos).jax_lid_params()
-        assert lp0.open_G == 0.0
+        assert (lp0.open_on, lp0.open_L, lp0.open_Fp, lp0.open_G, lp0.open_Gl) == (0.0,) * 5
 
     def test_start_of_step_and_response_match_numpy(self, eos):
         """D1 on the JAX right-hand side (rel 1e-12 against itself without the conductance), and
@@ -354,7 +341,7 @@ class TestOpenFluxJax:
         with pytest.raises(RuntimeError, match='no start reference'):
             s._dSdt_single(0.0, _state(s, 100.0))
         lp0 = _open_solver(eos).jax_lid_params()
-        assert lp0.open_G == 0.0 and lp0.open_T_m0 == 0.0
+        assert lp0.open_on == 0.0 and lp0.open_T_m0 == 0.0
 
     def test_the_lid_weight_batch_matches_numpy_and_falls_back(self, eos, caplog):
         """The JAX batch of lid weights equals the NumPy weight at each node (rel 1e-9); when the
@@ -412,7 +399,8 @@ class TestOpenFluxJax:
             p.boundary_conditions.subgrid_lid = True
             p.boundary_conditions.lid_mush_base = True
             p.boundary_conditions.lid_delta_on = 1.0
-            p.boundary_conditions.open_surface_conductance = G
+            for name, value in _open_fields(-1.0, G).items():
+                setattr(p.boundary_conditions, name, value)
             p.boundary_conditions.normalize()
             p.phase_solid.rheology = SolidRheologyParams(
                 enabled=True, stress_closure_mode='local', lid_base_mode='fixed'
@@ -422,7 +410,7 @@ class TestOpenFluxJax:
             s.set_initial_entropy(3050.0)
             return s
 
-        s0, s1 = _cm_open(0.0), _cm_open(G_OPEN)
+        s0, s1 = _cm_open(None), _cm_open(G_OPEN)
         n = s1._n_stag
         y0 = s1._S0.copy()
         y0[n - 4 : n] = s1._lid_S_sol + 100.0
