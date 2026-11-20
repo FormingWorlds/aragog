@@ -92,7 +92,7 @@ How much heat does the open part of the surface lose while the melt under it war
 
 The atmosphere sets the surface flux at the start of a call. Within the call, the open part follows the melt under it, as the atmosphere would. The lid area and the open part share one surface, so the response depends on the lid weight.
 
-**The start value.** The atmosphere call gives the flux $F_\mathrm{atm}$ per total area, in W/m², the flux value of the boundary. The lid part carries $w L$ of it, with $L$ the lid flux of the call per lid area, in W/m². The open part starts at $F_\mathrm{atm} - w L$ per total area.
+**The start value.** The atmosphere call gives the flux $F_\mathrm{atm}$ per total area, in W/m², the boundary value of the interior. The lid part carries $w L$ of it, with $L$ the lid flux of the call per lid area, in W/m². The open part starts at $F_\mathrm{atm} - w L$ per total area.
 
 **The response.** The melt temperature is $T_m = \max(T_\mathrm{node}, T_b)$, with $T_\mathrm{node}$ the top basic node and $T_b$ the lid base. The open part is melt, held at least at the base. Let $T_m$ rise by $\Delta T_m$, in K, from its call-start value, set by the solver. The open skin conducts $G$ per K from melt to surface, and the lid conducts $G_l$ per K less as the surface warms. The surface warms until the atmosphere, which takes $F'$ more per K, balances them. Per total area the open part is then
 
@@ -104,7 +104,7 @@ $G_\mathrm{eff}(w)$ is the response per open area. The surface loses $w F_s + A_
 
 **Bounds.**
 
-- Set all 4 or none, with `outer_boundary_condition = 4` and `lid_mush_base`; [ranges](../How-to/configuration.md#boundary_conditions). Anything else is refused by name.
+- The 4 settings are set together or not at all; [configuration](../How-to/configuration.md#boundary_conditions) gives the ranges and what is refused.
 - With none set, the open part carries $1 - w$ times the flux value; with $F' = 0$, its start value.
 - $G_\mathrm{eff}$ lies between 0 and $G$. At $w = 1$, $A_\mathrm{open} = F_\mathrm{atm} - L$: nothing is divided by $1 - w$.
 

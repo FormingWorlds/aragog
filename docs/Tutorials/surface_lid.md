@@ -210,7 +210,7 @@ The miss falls as the solver tolerance falls, to 5.47 × 10⁻⁶, 2.39 × 10⁻
 
 ## 5. The open part follows the atmosphere
 
-With a prescribed flux, `outer_boundary_condition = 4`, the boundary value is the flux $F_\mathrm{atm}$ (W/m²) that the atmosphere takes from the surface in one call. A lid of weight $w$ covers the part $w$ of the surface. In the rest, the open part, the melt meets the atmosphere. By default the open part carries $(1 - w) F_\mathrm{atm}$ for the whole call. Four settings make it follow the melt below it, as the atmosphere would (see [The open part within a call](../Explanations/surface_lid.md#the-open-part-within-a-call)). Set all 4 or none; a partial set is refused:
+With a prescribed flux, `outer_boundary_condition = 4`, the boundary value is the flux $F_\mathrm{atm}$ (W/m²) that the atmosphere takes from the surface in one call. A lid of weight $w$ covers the part $w$ of the surface. In the rest, the open part, the melt meets the atmosphere. By default the open part carries $(1 - w) F_\mathrm{atm}$ for the whole call. Four settings make it follow the melt below it, as the atmosphere would (see [The open part within a call](../Explanations/surface_lid.md#the-open-part-within-a-call)). Set all 4 or none; a partial set is refused. The settings are:
 
 - `open_lid_flux`, $L$ (W/m²): the lid flux of the last atmosphere balance.
 - `open_surface_slope`, $F'$ (W/m²/K): the extra atmosphere flux per K of surface warming.
