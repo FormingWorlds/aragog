@@ -355,7 +355,14 @@ From 10⁶ years, the first stored state, to the last stored state with the lid 
 
 A second test fails if the response uses the top node where it lies below the crust base.
 
-**What it tests.** The open part per total area is $A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$ ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $F_\mathrm{atm}$ is the flux of the atmosphere call, $L$ the lid flux of that call, and $\Delta T_m$ the rise of the melt temperature since the call start. The response factor is $G_\mathrm{eff}(w) = G F' / (F' + w G_l + (1 - w) G)$. $F'$ is the slope of the atmosphere flux with surface temperature, $G$ the skin conductance and $G_l$ the lid conductance. The test runs the lid rates of a 1 m crust held at 500 K, which loses $F_s$ = 3156 W/m². It takes $F_\mathrm{atm} = -200$ W/m² (heat flowing in), $L$ = 150 W/m², $F'$ = 30, $G$ = 200 and $G_l$ = 2 W/m²/K, and $\Delta T_m$ = 7.5 K. At 11 weights from 0 to 1 it checks 2 things:
+**What it tests.** The open part per total area is $A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$ ([explanation](../Explanations/surface_lid.md#the-open-part-within-a-call)). Here $F_\mathrm{atm}$ is the flux of the atmosphere call, $L$ the lid flux of that call, and $\Delta T_m$ the rise of the melt temperature since the call start. The response factor is $G_\mathrm{eff}(w) = G F' / (F' + w G_l + (1 - w) G)$. $F'$ is the slope of the atmosphere flux with surface temperature, $G$ the skin conductance and $G_l$ the lid conductance. The test runs the lid rates of a 1 m crust held at 500 K, which loses $F_s$ = 3156 W/m², with these inputs:
+
+- $F_\mathrm{atm} = -200$ W/m², the flux of the atmosphere call (heat flowing in);
+- $L$ = 150 W/m², the lid flux of that call;
+- $F'$ = 30, $G$ = 200 and $G_l$ = 2 W/m²/K;
+- $\Delta T_m$ = 7.5 K.
+
+At 11 weights from 0 to 1 it checks 2 things:
 
 - the surface loss $F_\mathrm{top}$ equals the energy sum $F_\mathrm{atm} + w (F_s - L) + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$;
 - the slope of $F_\mathrm{top}$ with $\Delta T_m$, from a central difference with a step of 0.001 K, equals the slope of the call balance.
@@ -364,7 +371,7 @@ A second test runs the full solver on the test tables. It moves the top node fro
 
 **How we know the right answer.** The energy sum is written out in the test, apart from the code. The call balance is the heat balance of the shared surface, linear in its warming $\Delta T_s$. The atmosphere takes $F' \Delta T_s$ more. The crust area gives $w G_l \Delta T_s$ less, and the open skin gives $(1 - w) G (\Delta T_m - \Delta T_s)$ more. The test solves this as a 2 by 2 linear system with NumPy, without the closed form of $G_\mathrm{eff}$.
 
-**Why it matters.** PROTEUS books the energy the planet loses in a call from this surface loss. The response keeps the surface temperature of a coupled run from swinging while a crust forms. PROTEUS sets the 4 inputs from its atmosphere balance ([the lid coupling of PROTEUS](https://proteus-framework.org/PROTEUS/Explanations/lid_coupling.html#the-open-part-within-a-step)).
+**Why it matters.** PROTEUS books the energy the planet loses in a call from this surface loss. In the stored coupled runs of PROTEUS, the response cuts the change of the surface temperature in the step after the first live-lid row to 0.59 and 0.61 of the change without it ([coupled runs through the lid onset](https://proteus-framework.org/PROTEUS/Validation/atmos_clim/common.html#coupled-runs-through-the-lid-onset)). PROTEUS sets the 4 inputs from its atmosphere balance ([the lid coupling of PROTEUS](https://proteus-framework.org/PROTEUS/Explanations/lid_coupling.html#the-open-part-within-a-step)).
 
 ![Surface loss and its slope with the melt temperature against the lid weight: the code on the energy sum and on the call balance, with two wrong forms dashed](../assets/validation/surface_lid_open_part_in_step.svg#only-light){ width="90%" }
 ![Surface loss and its slope with the melt temperature against the lid weight: the code on the energy sum and on the call balance, with two wrong forms dashed](../assets/validation/surface_lid_open_part_in_step_dark.svg#only-dark){ width="90%" }

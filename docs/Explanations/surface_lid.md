@@ -92,13 +92,13 @@ How much heat does the open part of the surface lose while the melt under it war
 
 The atmosphere sets the surface flux at the start of a call. Within the call, the open part follows the melt under it, as the atmosphere would. The lid area and the open part share one surface, so the response depends on the lid weight.
 
-**The start value.** The atmosphere call gives the total flux $F_\mathrm{atm}$; the lid area carries $L$ of it per lid area, both in W/m². The open part starts at $F_\mathrm{atm} - w L$ per total area.
+**The start value.** The atmosphere call gives the flux $F_\mathrm{atm}$ per total area, in W/m², the flux value of the boundary. The lid part carries $w L$ of it, with $L$ the lid flux of the call per lid area, in W/m². The open part starts at $F_\mathrm{atm} - w L$ per total area.
 
 **The response.** The melt temperature is $T_m = \max(T_\mathrm{node}, T_b)$, with $T_\mathrm{node}$ the top basic node and $T_b$ the lid base. The open part is melt, held at least at the base. Let $T_m$ rise by $\Delta T_m$, in K, from its call-start value, set by the solver. The open skin conducts $G$ per K from melt to surface, and the lid conducts $G_l$ per K less as the surface warms. The surface warms until the atmosphere, which takes $F'$ more per K, balances them. Per total area the open part is then
 
-$$A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m,\qquad G_\mathrm{eff}(w) = \frac{G F'}{F' + w G_l + (1 - w) G},$$
+$$A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m, \qquad G_\mathrm{eff}(w) = \frac{G F'}{F' + w G_l + (1 - w) G}.$$
 
-The surface loses $w F_s + A_\mathrm{open}$, with $F_s$ the lid surface loss, at the weight $w$ of each evaluation. The caller sets $L$ (`open_lid_flux`) and, in W/m²/K, $F'$ (`open_surface_slope`), $G$ (`open_skin_conductance`) and $G_l$ (`open_lid_conductance`) between calls.
+$G_\mathrm{eff}(w)$ is the response per open area. The surface loses $w F_s + A_\mathrm{open}$, with $F_s$ the lid surface loss, at the weight $w$ of each evaluation. The caller sets $L$ (`open_lid_flux`) and, in W/m²/K, $F'$ (`open_surface_slope`), $G$ (`open_skin_conductance`) and $G_l$ (`open_lid_conductance`) between calls.
 
 **Worked example.** Take $F' = 30$, $G = 200$, $G_l = 2$ W/m²/K, $w = 0.7$, $F_\mathrm{atm} = 400$ and $L = 150$ W/m². The open part starts at 295 W/m² per total area, and $G_\mathrm{eff} = 65.6$ W/m²/K. A melt 10 K warmer adds 197 W/m², and the surface warms by 6.6 K.
 
