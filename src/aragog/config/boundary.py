@@ -55,26 +55,65 @@ def check_lid_mush_base(lid_mush_base, subgrid_lid) -> None:
         raise ValueError('lid_mush_base needs subgrid_lid = true')
 
 
-def check_open_surface_conductance(value, outer_boundary_condition, lid_mush_base) -> None:
-    """Refuse an ``open_surface_conductance`` that is not None or a finite number of 0 or above,
-    or one without the prescribed flux boundary and the mush base.
+OPEN_PART_FIELDS = (
+    'open_lid_flux',
+    'open_surface_slope',
+    'open_skin_conductance',
+    'open_lid_conductance',
+)
+# the bound of each field: None any sign, '>= 0' or '> 0'
+_OPEN_PART_BOUNDS = (None, '>= 0', '> 0', '>= 0')
+
+
+def check_open_part(open_part, outer_boundary_condition, lid_mush_base) -> None:
+    """Refuse the open-part fields of a live lid unless they are all None, or all finite in
+    their range and on the prescribed flux boundary with the mush base.
+
+    Parameters
+    ----------
+    open_part : tuple
+        ``(open_lid_flux, open_surface_slope, open_skin_conductance, open_lid_conductance)``:
+        the lid flux ``L`` of the call balance [W/m^2] (any sign), the slope ``F'`` of the
+        atmosphere flux with the surface temperature [W/m^2/K] (0 or above), the skin
+        conductance ``G`` of the open surface [W/m^2/K] (above 0) and the lid conductance
+        ``G_l`` [W/m^2/K] (0 or above).
+    outer_boundary_condition : int
+        The outer boundary mode; the fields need 4.
+    lid_mush_base : bool
+        The fields need the mush base.
 
     Raises
     ------
     ValueError
-        Naming the field and the value.
+        Naming the field and its value, the missing fields of a partial set, or the boundary.
     """
-    if value is None:
+    for name, bound, value in zip(OPEN_PART_FIELDS, _OPEN_PART_BOUNDS, open_part, strict=True):
+        if value is None:
+            continue
+        ok = _is_real(value) and math.isfinite(value)
+        ok = ok and (bound is None or (value >= 0 if bound == '>= 0' else value > 0))
+        if not ok:
+            rule = 'a finite number' + ('' if bound is None else f' {bound}')
+            raise ValueError(f'{name} must be {rule}, got {value!r}')
+    unset = [n for n, v in zip(OPEN_PART_FIELDS, open_part, strict=True) if v is None]
+    if len(unset) == len(OPEN_PART_FIELDS):
         return
-    if not _is_real(value) or not math.isfinite(value) or value < 0:
+    if unset:
         raise ValueError(
-            f'open_surface_conductance must be a finite number >= 0, got {value!r}'
+            f'the open-part fields {", ".join(OPEN_PART_FIELDS)} are set together; '
+            f'missing {", ".join(unset)}'
         )
     if outer_boundary_condition != 4 or not lid_mush_base:
         raise ValueError(
-            'open_surface_conductance needs outer_boundary_condition = 4 and lid_mush_base = '
-            f'true, got {outer_boundary_condition} and {lid_mush_base}'
+            f'{", ".join(OPEN_PART_FIELDS)} need outer_boundary_condition = 4 and '
+            f'lid_mush_base = true, got {outer_boundary_condition} and {lid_mush_base}'
         )
+
+
+def open_part_of(settings) -> tuple:
+    """The open-part fields ``(L, F', G, G_l)`` of a boundary settings object, in the order
+    of ``OPEN_PART_FIELDS``; a field the object lacks reads None."""
+    return tuple(getattr(settings, name, None) for name in OPEN_PART_FIELDS)
 
 
 def held_lid_surface(outer_boundary_condition, lid_mush_base, surface_temperature):
@@ -139,14 +178,19 @@ def check_surface_temperature(value) -> None:
 
 
 def check_lid_surface(
-    outer_boundary_condition, lid_mush_base, surface_temperature, cap, slope, open_G=None
+    outer_boundary_condition,
+    lid_mush_base,
+    surface_temperature,
+    cap,
+    slope,
+    open_part=(None, None, None, None),
 ) -> None:
     """Run the checks of the held lid surface (flux cap and flux slope) and of the open-part
-    conductance; the held surface is :func:`held_lid_surface`."""
+    fields (:func:`check_open_part`); the held surface is :func:`held_lid_surface`."""
     T_held = held_lid_surface(outer_boundary_condition, lid_mush_base, surface_temperature)
     check_lid_surface_flux_cap(cap, outer_boundary_condition, lid_mush_base, T_held)
     check_lid_surface_flux_slope(slope, cap)
-    check_open_surface_conductance(open_G, outer_boundary_condition, lid_mush_base)
+    check_open_part(open_part, outer_boundary_condition, lid_mush_base)
 
 
 def check_subgrid_lid(
@@ -314,12 +358,17 @@ class BoundaryConfig:
         With ``lid_surface_flux_cap``: the slope ``F'`` [W/m^2/K] of the atmosphere flux with the
         surface temperature. Above the cap the lid then carries ``C + F' (T_s - T_held)``, the flux
         the atmosphere gives at the warmer surface to first order. None or 0: the cap alone.
-    open_surface_conductance : float or None
-        With ``outer_boundary_condition = 4``, ``lid_mush_base`` and a live lid: the response
-        ``G_eff`` [W/m^2/K] of the open part ``1 - w`` of the surface, per open area. Inside a
-        call the open part carries ``F_open0 + G_eff (T_m - T_m0)``, with ``F_open0`` the flux
-        value, ``T_m = max(T_node, T_b)`` the top basic node held at least at the lid base and
-        ``T_m0`` its value at the call start. None or 0: the open part keeps the flux value.
+    open_lid_flux, open_surface_slope, open_skin_conductance, open_lid_conductance : float or None
+        With ``outer_boundary_condition = 4``, ``lid_mush_base`` and a live lid, set together:
+        the lid flux ``L`` of the call balance [W/m^2] (any sign), the slope ``F'`` of the
+        atmosphere flux with the surface temperature [W/m^2/K] (>= 0), the skin conductance
+        ``G`` [W/m^2/K] (> 0) and the lid conductance ``G_l`` [W/m^2/K] (>= 0). At the lid
+        weight ``w`` of each evaluation the open part, per total area, is
+        ``F_atm - w L + (1 - w) G_eff(w) (T_m - T_m0)`` with
+        ``G_eff(w) = G F' / (F' + w G_l + (1 - w) G)``, ``F_atm`` the flux value,
+        ``T_m = max(T_node, T_b)`` the top basic node held at least at the lid base and
+        ``T_m0`` its value at the call start (``aragog.surface_lid.open_part_total``). All
+        None: the open part carries ``(1 - w)`` times the flux value.
     surface_temperature : float or None
         Surface temperature [K] of the planet, held through a call; the caller sets it between
         calls. With ``outer_boundary_condition = 4`` and ``lid_mush_base`` the lid is held at
@@ -354,7 +403,10 @@ class BoundaryConfig:
     lid_surface_flux_cap: float | None = None
     lid_surface_flux_slope: float | None = None
     surface_temperature: float | None = None
-    open_surface_conductance: float | None = None
+    open_lid_flux: float | None = None
+    open_surface_slope: float | None = None
+    open_skin_conductance: float | None = None
+    open_lid_conductance: float | None = None
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
@@ -366,7 +418,7 @@ class BoundaryConfig:
             self.surface_temperature,
             self.lid_surface_flux_cap,
             self.lid_surface_flux_slope,
-            self.open_surface_conductance,
+            open_part_of(self),
         )
         check_subgrid_lid(
             self.subgrid_lid,

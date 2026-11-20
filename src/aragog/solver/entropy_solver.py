@@ -44,6 +44,7 @@ from aragog.config.boundary import (
     check_subgrid_lid,
     check_surface_temperature,
     held_lid_surface,
+    open_part_of,
 )
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
@@ -2709,10 +2710,23 @@ class EntropySolver:
         bc = self.evaluator.boundary_conditions._settings
         return held_lid_surface(self._outer_bc_kind, self._lid_mush, bc.surface_temperature)
 
-    def _lid_open_G(self) -> float:
-        """Response ``G_eff`` [W/m^2/K] of the open part of the lid surface; 0 without it."""
-        G = self.evaluator.boundary_conditions._settings.open_surface_conductance
-        return float(G) if G else 0.0
+    def _lid_open_part(self) -> tuple | None:
+        """The open-part fields ``(L, F', G, G_l)`` as floats [W/m^2, W/m^2/K x 3], or None
+        when they are unset (the open part then carries ``(1 - w)`` times the flux value)."""
+        values = open_part_of(self.evaluator.boundary_conditions._settings)
+        if values[0] is None:
+            return None
+        return tuple(float(v) for v in values)
+
+    def _lid_open_total(self, w: float, F_atm: float, dT_m: float) -> float | None:
+        """Open part per total area [W/m^2] at the lid weight ``w`` of this evaluation,
+        :func:`aragog.surface_lid.open_part_total` with the flux value ``F_atm`` [W/m^2] and
+        ``dT_m = T_m - T_m0`` [K]; None without the open-part fields."""
+        part = self._lid_open_part()
+        if part is None:
+            return None
+        L, Fp, G, Gl = part
+        return _lid.open_part_total(w, F_atm, L, Fp, G, Gl, dT_m)
 
     def _lid_open_T_m(self, S_f: float) -> float:
         """``T_m = max(T_node, T_b)`` [K] of the current state: the top basic node of the
@@ -3585,18 +3599,27 @@ class EntropySolver:
             H_arr=self._lid_H if self._lid_H is not None else 1.0,
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
-            open_G=self._lid_open_G(),
-            open_T_m0=self._lid_open_T_m0(),
+            **self._jax_open_part(),
         )
+
+    def _jax_open_part(self) -> dict:
+        """The open-part fields of :class:`aragog.jax.surface_lid.LidParams`: the flag
+        ``open_on``, ``(L, F', G, G_l)`` and the start reference ``T_m0``; zeros without them."""
+        part = self._lid_open_part()
+        T_m0 = self._lid_open_T_m0()
+        if part is None:
+            return {}
+        L, Fp, G, Gl = part
+        return dict(open_on=1.0, open_L=L, open_Fp=Fp, open_G=G, open_Gl=Gl, open_T_m0=T_m0)
 
     def _lid_open_T_m0(self) -> float:
         """The start reference ``T_m0`` of the open part, for the NumPy right-hand side and the JAX
-        parameters; 0 without a conductance. A conductance without a reference raises."""
+        parameters; 0 without the open-part fields. The fields without a reference raise."""
         T_m0 = getattr(self, '_lid_T_m0', None)
         if T_m0 is None:
-            if self._lid_open_G() > 0.0:
+            if self._lid_open_part() is not None:
                 raise RuntimeError(
-                    'open_surface_conductance is set but the open part has no start reference '
+                    'the open-part fields are set but the open part has no start reference '
                     'T_m0: solve() sets it from the start state'
                 )
             return 0.0
@@ -3955,10 +3978,6 @@ class EntropySolver:
             self._lid_ra_crit,
         )
         F_in, F_grid = float(self.state._heat_flux[-2]), float(self.state._heat_flux[-1])
-        G_open = self._lid_open_G()
-        if G_open > 0.0:  # the open part follows its node from the call start
-            T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
-            F_grid += G_open * (max(T_node, base['T_b']) - self._lid_open_T_m0())
         eps, T_eq, T_surf = self._outer_bc_emiss, self._outer_bc_T_eq, self._lid_T_surf()
         if self._lid_mush:
             g = _lid.floor_weight(float(entropy[-1]), self._lid_S_sol)
@@ -3992,6 +4011,11 @@ class EntropySolver:
                 surf = _lid.fixed_surface_state(delta, E, T_b, k, T_surf, floor, self._lid_hv)
         if self._lid_mush:
             w = 1.0 - g * (1.0 - w)
+        F_open = None
+        if self._lid_open_part() is not None:  # the open part at the weight of this state
+            T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
+            dT_m = max(T_node, base['T_b']) - self._lid_open_T_m0()
+            F_open = self._lid_open_total(w, F_grid, dT_m)
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
@@ -4008,6 +4032,7 @@ class EntropySolver:
             h_top=self._lid_h_top,
             delta_lo=self._lid_delta_lo,
             heating=heating,
+            F_open_total=F_open,
         )
         self.state._heat_flux[-1] = rates.F_top
         ev = _LidEval(
@@ -5584,11 +5609,11 @@ class EntropySolver:
             bc_s.surface_temperature,
             bc_s.lid_surface_flux_cap,
             bc_s.lid_surface_flux_slope,
-            bc_s.open_surface_conductance,
+            open_part_of(bc_s),
         )
         check_surface_temperature(bc_s.surface_temperature)
         self._lid_T_m0 = None
-        if _lid_slots(self) and self._lid_open_G() > 0.0:
+        if _lid_slots(self) and self._lid_open_part() is not None:
             self._set_lid_open_reference(self._S0)
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time

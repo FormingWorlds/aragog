@@ -30,6 +30,7 @@ from aragog.config.boundary import (
     check_subgrid_lid,
     check_surface_temperature,
     check_top_node,
+    open_part_of,
 )
 from aragog.config.energy import (
     CONVECTIVE_THRESHOLD_DEFAULT,
@@ -129,8 +130,11 @@ class _BoundaryConditionsParameters:
     lid_surface_flux_slope: float | None = None
     # Surface temperature [K]: core_module shell contrast, and the held lid (BoundaryConfig).
     surface_temperature: float | None = None
-    # Open-part response of the lid on the flux boundary [W/m^2/K] (BoundaryConfig).
-    open_surface_conductance: float | None = None
+    # Open part of the lid on the flux boundary, set together (units in BoundaryConfig).
+    open_lid_flux: float | None = None
+    open_surface_slope: float | None = None
+    open_skin_conductance: float | None = None
+    open_lid_conductance: float | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -166,7 +170,7 @@ class _BoundaryConditionsParameters:
             self.surface_temperature,
             self.lid_surface_flux_cap,
             self.lid_surface_flux_slope,
-            self.open_surface_conductance,
+            open_part_of(self),
         )
         check_subgrid_lid(
             self.subgrid_lid,

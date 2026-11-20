@@ -590,6 +590,33 @@ def flux_weight(
     return existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on, T_surf=T_s)
 
 
+def open_conductance(w: float, Fp: float, G: float, Gl: float) -> float:
+    """Response ``G_eff(w) = G F' / (F' + w G_l + (1 - w) G)`` [W/m^2/K] of the open surface,
+    per open area, at the lid weight ``w``; 0 for ``F' = 0``.
+
+    It is the slope of the call balance of the open surface: the atmosphere flux grows by
+    ``F'`` per K of surface warming, the lid area (``w``) loses ``G_l`` and the open skin
+    (``1 - w``) loses ``G`` of conduction per K. ``Fp``, ``G`` and ``Gl`` in W/m^2/K.
+    """
+    if Fp == 0.0:
+        return 0.0
+    return G * Fp / (Fp + w * Gl + (1.0 - w) * G)
+
+
+def open_part_total(
+    w: float, F_atm: float, L: float, Fp: float, G: float, Gl: float, dT_m: float
+) -> float:
+    """Open part of the surface loss per total area [W/m^2] at the lid weight ``w``.
+
+    ``A_open = F_atm - w L + (1 - w) G_eff(w) dT_m``, with ``F_atm`` the atmosphere flux of
+    the call [W/m^2] (total area), ``L`` the lid flux of the call balance [W/m^2], ``G_eff``
+    :func:`open_conductance` and ``dT_m = T_m - T_m0`` [K] the rise of
+    ``T_m = max(T_node, T_b)`` since the call start. The product form has no division by
+    ``1 - w``, so ``A_open`` is finite and continuous at ``w = 1``, where it is ``F_atm - L``.
+    """
+    return F_atm - w * L + (1.0 - w) * open_conductance(w, Fp, G, Gl) * dT_m
+
+
 @dataclass(frozen=True)
 class LidRates:
     """Rates and fluxes of the lid at one state.
@@ -637,6 +664,7 @@ def lid_rates(
     h_top: float,
     delta_lo: float,
     heating: float,
+    F_open_total: float | None = None,
 ) -> LidRates:
     """Assemble the lid rates and the fluid flux at one state.
 
@@ -652,6 +680,9 @@ def lid_rates(
     ----------
     heating : float
         Internal heating per mass [W/kg] of the top cell, applied to the lid mass.
+    F_open_total : float or None
+        Open part of the surface loss per total area [W/m^2] (:func:`open_part_total`):
+        ``F_top = w F_s + F_open_total``. None: ``F_top = w F_s + (1 - w) F_grid``.
     """
     r, stop = stefan_rate(surf.q_b, F_b, rho, (H_f - H_b) / rho, delta, h_top, delta_lo)
     E_ph = delta_lo * hv.profile_heat(0.0, surf.T_s, T_b)
@@ -659,7 +690,8 @@ def lid_rates(
     ddelta = w * r - relax * (delta - delta_lo)
     H_lid = heating * delta * hv.profile_density(surf.s, surf.T_s, T_b)
     dE = w * (surf.q_b - surf.F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
-    F_top = w * surf.F_s + (1.0 - w) * F_grid
+    F_open = (1.0 - w) * F_grid if F_open_total is None else F_open_total
+    F_top = w * surf.F_s + F_open
     F_fluid = F_top + dE - H_lid - H_f * ddelta
     return LidRates(
         ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop, H_lid=H_lid
