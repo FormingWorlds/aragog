@@ -8,6 +8,7 @@ In this tutorial you switch on the sub-grid surface lid, run a short cooling ste
 - How the lid changes the heat the planet loses.
 - How to read the crust thickness and its temperatures from `SolverOutput`.
 - How the lid runs on a constant-property column under a fixed surface temperature, and how to check its energy.
+- How the open part of the surface follows the atmosphere in a call.
 
 ## What you need
 
@@ -206,6 +207,89 @@ relative miss -1.3e-05, solver residual below 1e-12: True
 What to look at. The crust grows under the cold surface until the isotherm of the stagnant lid has moved below the top cell; then, at 2.4 × 10⁵ years, the lid hands its crust to the mesh, and its thickness is 0. The energy of the shell and the lid together changes by the heat that leaves through the surface: the change of the heat content and the time integral of the surface power agree to 1.3 × 10⁻⁵, and the solver residual is at round-off.
 
 The miss falls as the solver tolerance falls, to 5.47 × 10⁻⁶, 2.39 × 10⁻⁶ and 1.08 × 10⁻⁶ at 10⁻⁹, 10⁻¹⁰ and 10⁻¹¹ against 10⁻⁸ here, which fits an error of the time integration over the steps. The check of the heat of the lid alone, its sub-ledger, is part of the [validation of the lid on the stagnant-lid benchmarks](../Validation/surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks).
+
+## 5. The open part follows the atmosphere
+
+With a prescribed flux, `outer_boundary_condition = 4`, the boundary value is the flux $F_\mathrm{atm}$ (W/m²) that the atmosphere takes from the surface in one call. A lid of weight $w$ covers the part $w$ of the surface. In the rest, the open part, the melt meets the atmosphere. By default the open part carries $(1 - w) F_\mathrm{atm}$ for the whole call. Four settings make it follow the melt below it, as the atmosphere would (see [The open part within a call](../Explanations/surface_lid.md#the-open-part-within-a-call)):
+
+- `open_lid_flux`, $L$ (W/m²): the lid flux of the last atmosphere balance.
+- `open_surface_slope`, $F'$ (W/m²/K): the extra atmosphere flux per K of surface warming.
+- `open_skin_conductance`, $G$ (W/m²/K): the conduction from the melt to the open surface.
+- `open_lid_conductance`, $G_l$ (W/m²/K): the conduction of the lid.
+
+The open part per total area is then $A_\mathrm{open} = F_\mathrm{atm} - w L + (1 - w)\, G_\mathrm{eff}(w)\, \Delta T_m$, with $G_\mathrm{eff}(w) = G F' / (F' + w G_l + (1 - w) G)$. $\Delta T_m$ (K) is the rise since the call start of $T_m$, the top-node temperature but at least the lid base temperature.
+
+These settings need `lid_mush_base = true`, and with it the solid rheology. `surface_temperature` holds the lid surface at 500 K. `run_open` turns the configuration of step 1 into a shell 25 km thick and starts it just above the solidus, at 559.5 J/kg/K. A call of length 0 gives the start state, and from it $G_l$ and $L = F_s$, the heat the lid conducts to its surface. $G$ = 200 W/m²/K is a skin of conductivity 2 W/m/K and thickness 1 cm, and $F' = 4 \sigma T^3$ = 28.4 W/m²/K is the slope of a black surface at the held 500 K, with $\sigma$ the Stefan-Boltzmann constant.
+
+```python
+from aragog import surface_lid
+
+F_atm = 5000.0  # W/m^2: the flux the atmosphere takes from the surface in this call
+S_start = 559.5  # J/kg/K: the whole shell, just above the solidus of the top cell
+G = 200.0  # W/m^2/K: a skin of 2 W/m/K over 1 cm
+Fp = 4 * 5.670374419e-8 * 500.0**3  # W/m^2/K: the slope of a black surface at 500 K
+
+
+def run_open(end_yr, fields=None):
+    lines = 'lid_mush_base = true\nsurface_temperature = 500.0\n'
+    lines += ''.join(f'{name} = {value!r}\n' for name, value in (fields or {}).items())
+    text = (
+        config.replace('= 1        # grey-body surface', '= 4        # prescribed flux')
+        .replace('outer_boundary_value = 0\n', f'outer_boundary_value = {F_atm}\n')
+        .replace('inner_radius = 3480000', 'inner_radius = 6346000')  # a shell 25 km thick
+        .replace('[boundary_conditions]\n', '[boundary_conditions]\n' + lines)
+    )
+    Path('open_part.toml').write_text(text + '\n[phase_solid.rheology]\nenabled = true\n')
+    solver = EntropySolver.from_file(filename='open_part.toml', eos_dir=eos_dir)
+    solver.parameters.solver.end_time = end_yr
+    solver.initialize()
+    solver.set_initial_entropy(S_start)
+    solver.solve()
+    return solver.get_state()
+
+
+def lid_loss(out):
+    """F_s [W/m^2]: the lid conducts from its base to its held surface."""
+    return out.lid_conductance * (out.lid_T_base - out.lid_T_surface)
+
+
+start = run_open(0.0)  # a call of length 0: the start state
+L, G_lid = lid_loss(start), start.lid_conductance
+T_m0 = max(start.T_basic[-1], start.lid_T_base)
+fields = dict(
+    open_lid_flux=L, open_surface_slope=Fp, open_skin_conductance=G, open_lid_conductance=G_lid
+)
+print(f'start: w = {start.lid_weight:.3f}, L = {L:.1f} W/m^2, G_l = {G_lid:.2f} W/m^2/K')
+print(f'loss at the start: {run_open(0.0, fields).heat_flux[-1]:.1f} W/m^2 with the fields, '
+      f'{start.heat_flux[-1]:.1f} W/m^2 without')
+for t in (0.1, 0.3):
+    on, off = run_open(t, fields), run_open(t)
+    w, dT_m = on.lid_weight, max(on.T_basic[-1], on.lid_T_base) - T_m0
+    A_open = on.heat_flux[-1] - w * lid_loss(on)
+    want = surface_lid.open_part_total(w, F_atm, L, Fp, G, G_lid, dT_m)
+    response = (1 - w) * surface_lid.open_conductance(w, Fp, G, G_lid) * dT_m
+    print(f't = {t} yr: w = {w:.3f}, dT_m = {dT_m:.3f} K')
+    print(f'  open part {A_open:.1f}, formula {want:.1f}, response {response:.1f} W/m^2')
+    A_off = off.heat_flux[-1] - off.lid_weight * lid_loss(off)
+    A_row = (1 - off.lid_weight) * F_atm
+    print(f'  without the fields: open part {A_off:.1f}, (1 - w) F_atm {A_row:.1f} W/m^2')
+    assert abs(A_open - want) < 1e-6 * abs(want)
+```
+
+The output:
+
+```text
+start: w = 0.129, L = 7522.9 W/m^2, G_l = 8.00 W/m^2/K
+loss at the start: 5000.0 W/m^2 with the fields, 5325.7 W/m^2 without
+t = 0.1 yr: w = 0.156, dT_m = -0.267 K
+  open part 3818.6, formula 3818.6, response -6.4 W/m^2
+  without the fields: open part 4207.4, (1 - w) F_atm 4207.4 W/m^2
+t = 0.3 yr: w = 0.221, dT_m = -0.768 K
+  open part 3318.8, formula 3318.8, response -18.2 W/m^2
+  without the fields: open part 3837.6, (1 - w) F_atm 3837.6 W/m^2
+```
+
+What to look at. With the fields, the planet starts the call at $F_\mathrm{atm}$, 5000 W/m². Without them it loses more, because the thin lid conducts 7523 W/m² over its part. The melt at the top then cools by 0.27 K and 0.77 K. The open part of the run equals the formula at both states. Its response is negative and small, -6.4 and -18.2 W/m²: a cooler melt warms the surface less, so the atmosphere takes less. Most of the drop of the open part comes from the term $w L$, which grows as $w$ rises. Without the fields the open part stays at $(1 - w) F_\mathrm{atm}$ and does not see the melt; that run reaches other states, so its weights differ.
 
 ## What next
 
