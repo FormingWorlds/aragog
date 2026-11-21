@@ -106,9 +106,11 @@ _LID_SURFACE_RENAMED = (
 def _old_lid_surface(old, new):
     """``surface_temperature`` of a boundary section that sets the old key
     ``lid_surface_temperature`` to ``old``, with ``new`` the value of ``surface_temperature`` in
-    the section or None. It warns with a FutureWarning, which Python shows to a config-file user
-    by default, and refuses the 2 names at 2 values."""
+    the section or None; an old key of None counts as unset. It warns with a FutureWarning, which
+    Python shows by default once per process, and refuses the 2 names at 2 values."""
     warnings.warn(_LID_SURFACE_RENAMED, FutureWarning, stacklevel=2)
+    if old is None:
+        return new
     if new is not None and float(new) != float(old):
         raise ValueError(
             f'boundary_conditions sets lid_surface_temperature {old} and surface_temperature '
