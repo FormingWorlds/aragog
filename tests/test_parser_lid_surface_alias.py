@@ -185,3 +185,36 @@ def test_a_dict_config_with_the_old_key_holds_one_surface(old, new, same):
             want = new if old is None else old
             assert held.boundary_conditions.surface_temperature == want
     assert data == given_data
+
+
+@pytest.mark.parametrize('none', ['none', 'None', 'null'])
+def test_an_ini_value_of_none_counts_as_unset(tmp_path, none):
+    """In an INI config a text None of either name counts as unset, as it does for the field
+    itself: the other name sets the held surface."""
+    for lines, want in (
+        (f'lid_surface_temperature = {none}\nsurface_temperature = 1300.0\n', 1300.0),
+        (f'lid_surface_temperature = 1200.0\nsurface_temperature = {none}\n', 1200.0),
+    ):
+        with pytest.warns(FutureWarning, match='surface_temperature'):
+            try:
+                p = _load('Parameters.from_file', _config(tmp_path, 'abe_mixed.cfg', lines))
+            except (TypeError, ValueError) as exc:
+                pytest.fail(f'a text None does not load: {exc}')
+        assert p.boundary_conditions.surface_temperature == pytest.approx(want)
+
+
+def test_the_ini_none_strings_are_those_of_the_field_parser():
+    """The INI branch reads the same None strings as the parser of the fields."""
+    from typed_configparser.parser import NONE_VALUES
+
+    from aragog.parser import _INI_NONE
+
+    assert set(_INI_NONE) == set(NONE_VALUES)
+
+
+def test_the_ini_refusal_names_the_section_and_the_file(tmp_path):
+    """The INI loader names ``[boundary_conditions]`` and the file when it refuses 2 values."""
+    both = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1300.0\n'
+    with pytest.warns(FutureWarning), pytest.raises(ValueError) as err:
+        _load('Parameters.from_file', _config(tmp_path, 'abe_mixed.cfg', both))
+    assert 'Configuration error in [boundary_conditions] of abe_mixed.cfg' in str(err.value)
