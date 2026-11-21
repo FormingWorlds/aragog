@@ -4,6 +4,8 @@ parameters: a caller or a config file that still sets it holds the lid at that s
 from __future__ import annotations
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from aragog.config.boundary import held_lid_surface
 from aragog.parser import _BoundaryConditionsParameters
@@ -87,7 +89,7 @@ LOADERS = [
 @pytest.mark.parametrize(('how', 'name'), LOADERS)
 def test_the_old_name_in_a_config_file_sets_the_surface_temperature(tmp_path, how, name):
     """A config (TOML, INI or a dict) that still sets ``lid_surface_temperature`` loads with a
-    FutureWarning, which a config-file user sees by default, and with that value as
+    FutureWarning, shown once per process under the default filters, and with that value as
     ``surface_temperature``."""
     cfg = _config(tmp_path, name, 'lid_surface_temperature = 1200.0\n')
     with pytest.warns(FutureWarning, match='surface_temperature'):
@@ -149,3 +151,37 @@ def test_an_old_key_of_none_in_a_dict_config_counts_as_unset(tmp_path):
     with pytest.warns(FutureWarning):
         p = Config.from_dict(data, config_dir=cfg.parent)
     assert p.boundary_conditions.surface_temperature is None
+
+
+_TEMPERATURE = st.one_of(st.none(), st.floats(300.0, 4000.0))
+
+
+@settings(max_examples=60, deadline=None)
+@given(old=_TEMPERATURE, new=_TEMPERATURE, same=st.booleans())
+def test_a_dict_config_with_the_old_key_holds_one_surface(old, new, same):
+    """For any old and new value (None included), ``Config.from_dict`` warns, holds the old value
+    when only it is set or both agree, the new value when the old is None, refuses 2 values,
+    and leaves the caller's dict as it was."""
+    import copy
+    import tomllib
+    from pathlib import Path
+
+    from aragog import CFG_DATA
+    from aragog.config import Config
+
+    if same and old is not None:
+        new = old
+    data = tomllib.loads(Path(str(CFG_DATA.joinpath('abe_solid.toml'))).read_text('utf-8'))
+    data['boundary_conditions']['lid_surface_temperature'] = old
+    if new is not None:
+        data['boundary_conditions']['surface_temperature'] = new
+    given_data = copy.deepcopy(data)
+    with pytest.warns(FutureWarning, match='surface_temperature'):
+        if old is not None and new is not None and new != old:
+            with pytest.raises(ValueError, match='set surface_temperature only'):
+                Config.from_dict(data, config_dir=Path(str(CFG_DATA)))
+        else:
+            held = Config.from_dict(data, config_dir=Path(str(CFG_DATA)))
+            want = new if old is None else old
+            assert held.boundary_conditions.surface_temperature == want
+    assert data == given_data
