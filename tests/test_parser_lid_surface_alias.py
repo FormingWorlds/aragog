@@ -119,9 +119,30 @@ def test_a_config_file_with_both_names_at_two_values_is_refused(tmp_path, how, n
 def test_the_toml_refusal_names_the_section_and_the_file(tmp_path):
     """The TOML loader wraps the refusal like every other error of a section: it names
     ``[boundary_conditions]`` and the file."""
-    from aragog.parser import Parameters
-
     both = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1300.0\n'
     with pytest.warns(FutureWarning), pytest.raises(ValueError) as err:
-        Parameters.from_file(_config(tmp_path, 'abe_solid.toml', both))
+        _load('Parameters.from_file', _config(tmp_path, 'abe_solid.toml', both))
     assert 'Configuration error in [boundary_conditions] of abe_solid.toml' in str(err.value)
+
+
+def test_an_old_key_of_none_in_a_dict_config_counts_as_unset(tmp_path):
+    """A dict config with ``lid_surface_temperature = None`` takes ``surface_temperature`` and
+    still warns; without ``surface_temperature`` the held surface stays None."""
+    import tomllib
+
+    from aragog.config import Config
+
+    cfg = _config(tmp_path, 'abe_solid.toml', '')
+    with cfg.open('rb') as f:
+        data = tomllib.load(f)
+    data['boundary_conditions'] |= {
+        'lid_surface_temperature': None,
+        'surface_temperature': 1300.0,
+    }
+    with pytest.warns(FutureWarning, match='surface_temperature'):
+        p = Config.from_dict(data, config_dir=cfg.parent)
+    assert p.boundary_conditions.surface_temperature == pytest.approx(1300.0)
+    data['boundary_conditions'].pop('surface_temperature')
+    with pytest.warns(FutureWarning):
+        p = Config.from_dict(data, config_dir=cfg.parent)
+    assert p.boundary_conditions.surface_temperature is None
