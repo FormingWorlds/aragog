@@ -150,6 +150,13 @@ def test_the_convective_flux_column_takes_the_critical_rayleigh_number_of_the_la
         assert law != pytest.approx(_q_conv(450.0), rel=1e-3)
 
 
+def test_a_layer_that_is_not_buoyant_has_no_convective_flux(tmp_path):
+    rec = _recorder(tmp_path)
+    assert rec.flux(2500.0, 2000.0, **{**KW, 'expansivity': 0.0}) == 4.0 * 500.0 / 1500.0 + 1.0
+    rec.close()
+    assert next(csv.DictReader(open(tmp_path / 'r.cmb.csv')))['q_conv'] == 'nan'
+
+
 def test_the_accepted_states_are_stored_once_per_interval(tmp_path):
     """States of the solve are written in physical units when the time has advanced by the
     interval since the last written state; a call from the energy pass is a trace call."""
