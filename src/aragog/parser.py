@@ -103,11 +103,21 @@ _LID_SURFACE_RENAMED = (
 )
 
 
+# the text None values of the INI field parser (typed_configparser), in any case
+_INI_NONE = ('none', 'null')
+
+
+def _ini_none(value):
+    """An INI value, or None for a missing value or a text None (:data:`_INI_NONE`)."""
+    return None if value is None or value.strip().lower() in _INI_NONE else value
+
+
 def _old_lid_surface(old, new):
     """``surface_temperature`` of a boundary section that sets the old key
     ``lid_surface_temperature`` to ``old``, with ``new`` the value of ``surface_temperature`` in
     the section or None; an old key of None counts as unset. It warns with a FutureWarning, which
-    Python shows by default once per process, and refuses the 2 names at 2 values."""
+    the default warning filters show once per call site (once for TOML and dict configs, once
+    for INI configs), and refuses the 2 names at 2 values."""
     warnings.warn(_LID_SURFACE_RENAMED, FutureWarning, stacklevel=2)
     if old is None:
         return new
@@ -943,9 +953,18 @@ class Parameters:
             if dataclass_ is _BoundaryConditionsParameters and parser.has_option(
                 section_name, 'lid_surface_temperature'
             ):
-                new = parser.get(section_name, 'surface_temperature', fallback=None)
-                old = parser.get(section_name, 'lid_surface_temperature')
-                parser.set(section_name, 'surface_temperature', _old_lid_surface(old, new))
+                new = _ini_none(parser.get(section_name, 'surface_temperature', fallback=None))
+                old = _ini_none(parser.get(section_name, 'lid_surface_temperature'))
+                try:
+                    held = _old_lid_surface(old, new)
+                except ValueError as exc:
+                    raise ValueError(
+                        f'Configuration error in [{section_name}] of '
+                        f'{Path(filenames[0]).name}: {exc}'
+                    ) from exc
+                parser.set(
+                    section_name, 'surface_temperature', 'none' if held is None else held
+                )
                 parser.remove_option(section_name, 'lid_surface_temperature')
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
