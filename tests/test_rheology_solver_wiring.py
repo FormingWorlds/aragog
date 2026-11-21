@@ -1570,6 +1570,9 @@ def test_check_rheology_eos_range_const_properties_bypasses_bounds() -> None:
 
     with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
         solver_normal._check_rheology_eos_range(s_below)
+    solver_normal.parameters.solver.strict_accepted_range = True
+    with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
+        solver_normal._check_rheology_eos_range(s_below)
 
     # When const_properties is True, the check is bypassed and returns None:
     params_const = replace(
