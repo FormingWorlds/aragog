@@ -594,9 +594,11 @@ def open_conductance(w: float, Fp: float, G: float, Gl: float) -> float:
     """Response ``G_eff(w) = G F' / (F' + w G_l + (1 - w) G)`` [W/m^2/K] of the open surface,
     per open area, at the lid weight ``w``; 0 for ``F' = 0``.
 
-    It is the slope of the call balance of the open surface: the atmosphere flux grows by
-    ``F'`` per K of surface warming, the lid area (``w``) loses ``G_l`` and the open skin
-    (``1 - w``) loses ``G`` of conduction per K. ``Fp``, ``G`` and ``Gl`` in W/m^2/K.
+    In the linear call balance ``F_atm(T_s) = w G_l (T_b - T_s) + (1 - w) G (T_m - T_s)``,
+    with ``F'`` the growth of the atmosphere flux per K of surface warming, a rise ``dT_m``
+    of the melt temperature changes ``F_atm`` by ``(1 - w) G_eff dT_m``. The lid part is
+    held at its start flux ``L`` through the call, so the open part takes all of that change:
+    the split between lid and fluid rests on this premise. ``Fp``, ``G`` and ``Gl`` in W/m^2/K.
     """
     if Fp == 0.0:
         return 0.0
