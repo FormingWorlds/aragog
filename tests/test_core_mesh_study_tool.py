@@ -92,13 +92,62 @@ def test_a_flux_call_records_its_caller_and_the_two_fluxes(tmp_path):
         ('other', 'nan', '-1'),
     ]
     q_cond = 4.0 * 500.0 / 1500.0
-    kappa = 4.0 / (4000.0 * 1000.0)
-    q_conv = 4.0 * 500.0 ** (4 / 3) * (3e-5 * 4000.0 * 10.0 / (660.0 * kappa * 1e20)) ** (1 / 3)
     assert float(rows[0]['q_cond']) == q_cond and float(rows[0]['q']) == q_cond + 1.0
-    assert float(rows[0]['q_conv']) == pytest.approx(q_conv, rel=1e-14)
     assert rows[1]['q_conv'] == 'nan'
     meta = json.loads((tmp_path / 'r.nodes.json').read_text())
     assert meta == {'n_y': None, 'n_written': 0, 'node_dt_yr': 10.0, 'calls': 2}
+
+
+# the eq. 16 inputs of the law: mantle thickness [m], shell contrast [K], interior viscosity
+EQ16 = dict(shell_thickness=2.9e6, shell_contrast=1000.0, interior_viscosity=1e21)
+
+
+def _q_conv(ra_crit):
+    """Convective CMB flux of KW at 2500 K over 2000 K for a critical Rayleigh number."""
+    kappa = 4.0 / (4000.0 * 1000.0)
+    return 4.0 * 500.0 ** (4 / 3) * (3e-5 * 4000.0 * 10.0 / (ra_crit * kappa * 1e20)) ** (1 / 3)
+
+
+PHASE = {'melt_fraction': 0.5, 'liquid_band': (0.5, 0.2)}
+
+
+@pytest.mark.parametrize(
+    ('law_case', 'extra'),
+    [('fixed', {}), ('eq16', {'ra_crit': None, **EQ16}),
+     ('phase', {'ra_crit': None, **EQ16, **PHASE})],
+)  # fmt: skip
+def test_the_convective_flux_column_takes_the_critical_rayleigh_number_of_the_law(
+    tmp_path, law_case, extra
+):
+    """q_conv is the convective flux of aragog's CMB law at the critical Rayleigh number the
+    law uses: the fixed value, eq. 16 for None, the blend by phase. A floor put in front of
+    the law sets the flux the solver uses (q), not q_conv."""
+    from aragog.core.boundary_layer import cmb_boundary_layer_flux, critical_rayleigh_eq16
+
+    kw = {**KW, **extra}
+    rec = case._Recorder(str(tmp_path / 'r'), 10.0)
+    rec.law = lambda t_hot, t_m, **k: max(
+        k['conductivity'] * (t_hot - t_m) / k['dr_half'],
+        float(cmb_boundary_layer_flux(t_hot, t_m, **k)),
+    )
+    q = rec.flux(2500.0, 2000.0, **kw)
+    rec.close()
+    row = next(csv.DictReader(open(tmp_path / 'r.cmb.csv')))
+    ra16 = float(critical_rayleigh_eq16(
+        conductivity=4.0, density=4000.0, heat_capacity=1000.0, expansivity=3e-5,
+        viscosity=1e21, gravity=10.0, shell_thickness=2.9e6, shell_contrast=1000.0,
+    ))  # fmt: skip
+    law = float(cmb_boundary_layer_flux(2500.0, 2000.0, **kw))
+    expected = {'fixed': _q_conv(660.0), 'eq16': _q_conv(ra16), 'phase': law}[law_case]
+    assert float(row['q_conv']) == pytest.approx(expected, rel=1e-12)
+    assert float(row['q_conv']) == pytest.approx(law, rel=1e-12)
+    # the floor q_cond = 1.33 W/m^2 is above the convective flux in all 3 cases
+    assert q == float(row['q']) == pytest.approx(4.0 * 500.0 / 1500.0, rel=1e-15)
+    assert float(row['q_conv']) < 0.5 * q
+    assert ra16 != pytest.approx(660.0, rel=0.1)
+    if law_case == 'phase':
+        assert law != pytest.approx(_q_conv(ra16), rel=1e-3)
+        assert law != pytest.approx(_q_conv(450.0), rel=1e-3)
 
 
 def test_the_accepted_states_are_stored_once_per_interval(tmp_path):
