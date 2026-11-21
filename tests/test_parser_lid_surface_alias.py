@@ -69,7 +69,10 @@ def test_the_old_name_in_a_config_file_sets_the_surface_temperature(tmp_path, na
 
     cfg = _config(tmp_path, name, 'lid_surface_temperature = 1200.0\n')
     with pytest.warns(DeprecationWarning, match='surface_temperature'):
-        p = Parameters.from_file(cfg)
+        try:
+            p = Parameters.from_file(cfg)
+        except (TypeError, ValueError) as exc:
+            pytest.fail(f'the old key does not load: {exc}')
     assert p.boundary_conditions.surface_temperature == pytest.approx(1200.0)
 
 
