@@ -1,5 +1,5 @@
-"""The name ``lid_surface_temperature`` of the boundary parameters, kept for one release as an
-alias of ``surface_temperature``: a caller that still sets it holds the lid at that surface."""
+"""The deprecated name ``lid_surface_temperature`` of ``surface_temperature`` in the boundary
+parameters: a caller or a config file that still sets it holds the lid at that surface."""
 
 from __future__ import annotations
 
@@ -61,35 +61,67 @@ def _config(tmp_path, name: str, lines: str):
     return cfg
 
 
-@pytest.mark.parametrize('name', ['abe_solid.toml', 'abe_mixed.cfg'])
-def test_the_old_name_in_a_config_file_sets_the_surface_temperature(tmp_path, name):
-    """A config file (TOML or INI) that still sets ``lid_surface_temperature`` loads with the
-    warning and with that value as ``surface_temperature``."""
+def _load(how: str, cfg):
+    """Parameters from ``cfg`` by one of the loaders a run uses."""
+    import tomllib
+
+    from aragog.config import Config
     from aragog.parser import Parameters
 
+    if how == 'Parameters.from_file':
+        return Parameters.from_file(cfg)
+    if how == 'Config.from_file':
+        return Config.from_file(str(cfg))
+    with cfg.open('rb') as f:
+        return Config.from_dict(tomllib.load(f), config_dir=cfg.parent)
+
+
+LOADERS = [
+    ('Parameters.from_file', 'abe_solid.toml'),
+    ('Parameters.from_file', 'abe_mixed.cfg'),
+    ('Config.from_file', 'abe_solid.toml'),
+    ('Config.from_dict', 'abe_solid.toml'),
+]
+
+
+@pytest.mark.parametrize(('how', 'name'), LOADERS)
+def test_the_old_name_in_a_config_file_sets_the_surface_temperature(tmp_path, how, name):
+    """A config (TOML, INI or a dict) that still sets ``lid_surface_temperature`` loads with a
+    FutureWarning, which a config-file user sees by default, and with that value as
+    ``surface_temperature``."""
     cfg = _config(tmp_path, name, 'lid_surface_temperature = 1200.0\n')
-    with pytest.warns(DeprecationWarning, match='surface_temperature'):
+    with pytest.warns(FutureWarning, match='surface_temperature'):
         try:
-            p = Parameters.from_file(cfg)
+            p = _load(how, cfg)
         except (TypeError, ValueError) as exc:
             pytest.fail(f'the old key does not load: {exc}')
     assert p.boundary_conditions.surface_temperature == pytest.approx(1200.0)
 
 
-@pytest.mark.parametrize('name', ['abe_solid.toml', 'abe_mixed.cfg'])
-def test_a_config_file_with_both_names_at_two_values_is_refused(tmp_path, name):
-    """Both names at 2 values leave the held surface unclear: the load stops and names both;
-    at one value it loads."""
+@pytest.mark.parametrize(('how', 'name'), LOADERS)
+def test_a_config_file_with_both_names_at_two_values_is_refused(tmp_path, how, name):
+    """Both names at 2 values leave the held surface unclear: the load stops and names the
+    section and both values; at one value it loads."""
+    both = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1300.0\n'
+    with (
+        pytest.warns(FutureWarning),
+        pytest.raises(ValueError, match='surface_temperature 1300') as err,
+    ):
+        _load(how, _config(tmp_path, name, both))
+    assert 'lid_surface_temperature 1200' in str(err.value)
+    assert 'boundary_conditions' in str(err.value)
+    same = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1200.0\n'
+    with pytest.warns(FutureWarning):
+        p = _load(how, _config(tmp_path, name, same))
+    assert p.boundary_conditions.surface_temperature == pytest.approx(1200.0)
+
+
+def test_the_toml_refusal_names_the_section_and_the_file(tmp_path):
+    """The TOML loader wraps the refusal like every other error of a section: it names
+    ``[boundary_conditions]`` and the file."""
     from aragog.parser import Parameters
 
     both = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1300.0\n'
-    with (
-        pytest.warns(DeprecationWarning),
-        pytest.raises(ValueError, match='surface_temperature 1300') as err,
-    ):
-        Parameters.from_file(_config(tmp_path, name, both))
-    assert 'lid_surface_temperature 1200' in str(err.value)
-    same = 'lid_surface_temperature = 1200.0\nsurface_temperature = 1200.0\n'
-    with pytest.warns(DeprecationWarning):
-        p = Parameters.from_file(_config(tmp_path, name, same))
-    assert p.boundary_conditions.surface_temperature == pytest.approx(1200.0)
+    with pytest.warns(FutureWarning), pytest.raises(ValueError) as err:
+        Parameters.from_file(_config(tmp_path, 'abe_solid.toml', both))
+    assert 'Configuration error in [boundary_conditions] of abe_solid.toml' in str(err.value)
