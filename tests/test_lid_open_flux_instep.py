@@ -109,13 +109,15 @@ def _eval(s, y):
     return dS, float(s.state._heat_flux[-1]), float(ev.rates.w), T_node, float(ev.T_b)
 
 
+@pytest.fixture(scope='class')
+def eos():
+    """An EOS copy per test class."""
+    return entropy_eos_copy(EOS_DIR)
+
+
 @pytest.mark.smoke
 @needs_eos
 class TestOpenFluxNumpy:
-    @pytest.fixture(scope='class')
-    def eos(self):
-        return entropy_eos_copy(EOS_DIR)
-
     def test_the_held_lid_takes_the_surface_temperature(self, eos):
         """The lid surface sits at ``surface_temperature`` and its loss is the conduction to it."""
         s = _open_solver(eos)
@@ -256,10 +258,6 @@ class TestOpenFluxNumpy:
 @pytest.mark.smoke
 @needs_eos
 class TestOpenFluxJax:
-    @pytest.fixture(scope='class')
-    def eos(self):
-        return entropy_eos_copy(EOS_DIR)
-
     @staticmethod
     def _rhs(s):
         from tests.test_subgrid_lid_jax_rhs import _factory_rhs, _physical
@@ -429,10 +427,6 @@ class TestOpenFluxJax:
 @pytest.mark.smoke
 @needs_eos
 class TestAcceptedRange:
-    @pytest.fixture(scope='class')
-    def eos(self):
-        return entropy_eos_copy(EOS_DIR)
-
     @staticmethod
     def _sol(s, bad):
         from scipy.optimize import OptimizeResult

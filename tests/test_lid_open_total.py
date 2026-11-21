@@ -474,13 +474,15 @@ def _identity(w, F_s, dT_m):
     return F_ATM + w * (F_s - L_CALL) + (1.0 - w) * _g_eff(w) * dT_m
 
 
+@pytest.fixture(scope='class')
+def eos():
+    """An EOS copy per test class."""
+    return entropy_eos_copy(EOS_DIR)
+
+
 @pytest.mark.smoke
 @needs_eos
 class TestOpenTotalSolver:
-    @pytest.fixture(scope='class')
-    def eos(self):
-        return entropy_eos_copy(EOS_DIR)
-
     @pytest.mark.physics_invariant
     def test_the_right_hand_side_loses_the_energy_sum(self, eos):
         """At states of lid weight 1, near 1 and in (0, 1), the surface loss of the right-hand
