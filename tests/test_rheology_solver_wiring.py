@@ -1562,8 +1562,11 @@ def test_check_rheology_eos_range_const_properties_bypasses_bounds() -> None:
     s_min = float(solver_normal.entropy_eos.S_min)
     s_below = np.full(solver_normal._n_stag, s_min - 500.0, dtype=float)
 
-    # When const_properties is False, entropy below S_min raises the range error:
+    # When const_properties is False, entropy below S_min raises the range error, the class
+    # that a coupled caller stops on, also with strict_accepted_range off:
     from aragog.solver.entropy_solver import AcceptedStateRangeError
+
+    assert solver_normal.parameters.solver.strict_accepted_range is False
 
     with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
         solver_normal._check_rheology_eos_range(s_below)
