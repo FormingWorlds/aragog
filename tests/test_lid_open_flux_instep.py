@@ -141,6 +141,33 @@ class TestOpenFluxNumpy:
         got = _eval(s1, y0)[0]
         np.testing.assert_array_equal(got, want)
 
+    @pytest.mark.parametrize('L', [150.0, -30.0])
+    def test_the_start_gap_is_the_lid_weight_times_the_lid_flux_gap(self, eos, L):
+        """At the call start ``F_top - F_atm = w (F_s0 - L)``, with ``F_s0`` the loss of the held
+        lid at the start state, for a lid flux ``L`` of either sign (-30: a surface above the
+        lid base); the gap is the measured start term of the coupling, not 0."""
+        F_atm = 200.0
+        s = _solver(
+            eos,
+            end=1.0,
+            outer=4,
+            F_atm=F_atm,
+            thin=True,
+            surface_temperature=500.0,
+            lid_delta_on=1.0,
+            open_lid_flux=L,
+            open_surface_slope=40.0,
+            open_skin_conductance=200.0,
+            open_lid_conductance=4.0,
+        )
+        y0 = _state(s, 100.0)
+        s._set_lid_open_reference(y0)
+        _, F_top, w, _, _ = _eval(s, y0)
+        F_s0 = float(s._lid_last.surf.F_s)
+        assert 0.0 < w < 1.0
+        assert F_top - F_atm == pytest.approx(w * (F_s0 - L), rel=1e-9, abs=1e-9 * F_atm)
+        assert abs(w * (F_s0 - L)) > 1.0
+
     def test_open_flux_follows_the_node_above_the_lid_base(self, eos):
         """Away from the start the open part adds ``(1 - w) G (T_m - T_m0)`` to the loss."""
         s0, s1 = _open_solver(eos), _open_solver(eos, G=G_OPEN)
