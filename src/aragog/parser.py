@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -97,6 +98,11 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
     return mapping
 
 
+_LID_SURFACE_RENAMED = (
+    'lid_surface_temperature is now surface_temperature; the old name goes in the next release'
+)
+
+
 @dataclass
 class _BoundaryConditionsParameters:
     """Stores parameters in the boundary_conditions section in the configuration data."""
@@ -135,6 +141,17 @@ class _BoundaryConditionsParameters:
     open_surface_slope: float | None = None
     open_skin_conductance: float | None = None
     open_lid_conductance: float | None = None
+
+    @property
+    def lid_surface_temperature(self) -> float | None:
+        """Old name of ``surface_temperature``, kept for one release; it warns."""
+        warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
+        return self.surface_temperature
+
+    @lid_surface_temperature.setter
+    def lid_surface_temperature(self, value: float | None) -> None:
+        warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
+        self.surface_temperature = value
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
