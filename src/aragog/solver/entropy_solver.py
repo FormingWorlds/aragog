@@ -2220,7 +2220,9 @@ class EntropySolver:
         step_idx: int = 0,
         time_yr: float | None = None,
     ) -> None:
-        """Raise ``RuntimeError`` if an accepted state's staggered entropy leaves ``[S_min, S_max]``."""
+        """Raise :class:`AcceptedStateRangeError` (a ``RuntimeError``) if an accepted state's
+        staggered entropy leaves ``[S_min, S_max]``, with ``strict_accepted_range`` on or off;
+        return at once without an EOS table or with ``const_properties``."""
         eos = getattr(self, 'entropy_eos', None)
         if eos is None or getattr(self.parameters.phase_mixed, 'const_properties', False):
             return
