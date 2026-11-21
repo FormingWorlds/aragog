@@ -109,6 +109,41 @@ def _eval(s, y):
     return dS, float(s.state._heat_flux[-1]), float(ev.rates.w), T_node, float(ev.T_b)
 
 
+GAP_F_ATM, GAP_G_L = 200.0, 4.0  # atmosphere flux and lid conductance of the start-gap tests
+
+
+def _gap_solver(eos, L, T_s=500.0):
+    """A thin-shell lid solver held at ``T_s`` with the open part of lid flux ``L``; the start
+    gap ``w (F_s0 - L)`` of its call is not 0."""
+    return _solver(
+        eos,
+        end=1.0,
+        outer=4,
+        F_atm=GAP_F_ATM,
+        thin=True,
+        surface_temperature=T_s,
+        lid_delta_on=1.0,
+        open_lid_flux=L,
+        open_surface_slope=40.0,
+        open_skin_conductance=200.0,
+        open_lid_conductance=GAP_G_L,
+    )
+
+
+def _clamped_gap(eos, T_s=1450.0):
+    """The start-gap solver of the stored live-lid rows: a 2 cm lid with the held surface ``T_s``
+    above the lid base ``T_b`` and the top cell 2 J/kg/K above the solidus (``w`` about 0.94),
+    and ``L = G_l (T_b - T_s)`` as PROTEUS computes it; with its start state and ``T_b``."""
+    from aragog.surface_lid import LID_DT_MIN
+
+    probe = _gap_solver(eos, 0.0, T_s)
+    y = _state(probe, 2.0, d=0.02)
+    probe._set_lid_open_reference(y)
+    y0 = _state(probe, 2.0, d=0.02, T_s=_eval(probe, y)[4] - LID_DT_MIN)
+    T_b = _eval(probe, y0)[4]
+    return _gap_solver(eos, GAP_G_L * (T_b - T_s), T_s), y0, T_b
+
+
 @pytest.fixture(scope='class')
 def eos():
     """An EOS copy per test class."""
@@ -141,32 +176,43 @@ class TestOpenFluxNumpy:
         got = _eval(s1, y0)[0]
         np.testing.assert_array_equal(got, want)
 
+    @pytest.mark.physics_invariant
     @pytest.mark.parametrize('L', [150.0, -30.0])
     def test_the_start_gap_is_the_lid_weight_times_the_lid_flux_gap(self, eos, L):
         """At the call start ``F_top - F_atm = w (F_s0 - L)``, with ``F_s0`` the loss of the held
-        lid at the start state, for a lid flux ``L`` of either sign (-30: a surface above the
-        lid base); the gap is the measured start term of the coupling, not 0."""
-        F_atm = 200.0
-        s = _solver(
-            eos,
-            end=1.0,
-            outer=4,
-            F_atm=F_atm,
-            thin=True,
-            surface_temperature=500.0,
-            lid_delta_on=1.0,
-            open_lid_flux=L,
-            open_surface_slope=40.0,
-            open_skin_conductance=200.0,
-            open_lid_conductance=4.0,
-        )
+        lid at the start state: the algebraic identity for a hand-set lid flux ``L`` of either
+        sign, at a held surface 500 K far below the lid base; the gap is not 0."""
+        s = _gap_solver(eos, L)
         y0 = _state(s, 100.0)
         s._set_lid_open_reference(y0)
         _, F_top, w, _, _ = _eval(s, y0)
         F_s0 = float(s._lid_last.surf.F_s)
         assert 0.0 < w < 1.0
-        assert F_top - F_atm == pytest.approx(w * (F_s0 - L), rel=1e-9, abs=1e-9 * F_atm)
+        assert F_top - GAP_F_ATM == pytest.approx(
+            w * (F_s0 - L), rel=1e-9, abs=1e-9 * GAP_F_ATM
+        )
         assert abs(w * (F_s0 - L)) > 1.0
+
+    @pytest.mark.physics_invariant
+    def test_the_start_gap_holds_with_the_held_surface_above_the_lid_base(self, eos):
+        """The case of the stored live-lid rows: the held surface sits above ``T_b``, so aragog
+        holds the lid surface at ``T_b - LID_DT_MIN`` and the lid loses ``F_s0 > 0``, while
+        the PROTEUS lid flux ``L = G_l (T_b - T_s)`` is below 0; the start gap is still
+        ``w (F_s0 - L)``."""
+        from aragog.surface_lid import LID_DT_MIN
+
+        s, y0, T_b = _clamped_gap(eos)
+        L = s.parameters.boundary_conditions.open_lid_flux
+        s._set_lid_open_reference(y0)
+        _, F_top, w, _, T_b1 = _eval(s, y0)
+        surf = s._lid_last.surf
+        F_s0 = float(surf.F_s)
+        assert T_b1 == T_b < 1450.0
+        assert float(surf.T_s) == T_b - LID_DT_MIN
+        assert 0.0 < w < 1.0 and F_s0 > 0.0 > L
+        assert F_top - GAP_F_ATM == pytest.approx(
+            w * (F_s0 - L), rel=1e-9, abs=1e-9 * GAP_F_ATM
+        )
 
     def test_open_flux_follows_the_node_above_the_lid_base(self, eos):
         """Away from the start the open part adds ``(1 - w) G (T_m - T_m0)`` to the loss."""
@@ -304,6 +350,31 @@ class TestOpenFluxJax:
         assert lp.open_T_m0 == s._lid_T_m0
         lp0 = _open_solver(eos).jax_lid_params()
         assert (lp0.open_on, lp0.open_L, lp0.open_Fp, lp0.open_G, lp0.open_Gl) == (0.0,) * 5
+
+    @pytest.mark.physics_invariant
+    @pytest.mark.parametrize('case', ['hand-set', 'clamped'])
+    def test_the_start_gap_holds_on_the_jax_right_hand_side(self, eos, case):
+        """The top-cell rate of the JAX right-hand side (the cvode_jax path) at the call start
+        equals the NumPy rate (rel 1e-9), whose ``F_top`` is ``F_atm + w (F_s0 - L)``; the
+        rate depends on ``L``, so the JAX top flux carries the same start gap."""
+        if case == 'clamped':
+            s, y0, _ = _clamped_gap(eos)
+        else:
+            s = _gap_solver(eos, 150.0)
+            y0 = _state(s, 100.0)
+        s._set_lid_open_reference(y0)
+        dS, F_top, w, _, _ = _eval(s, y0)
+        F_s0 = float(s._lid_last.surf.F_s)
+        L = s.parameters.boundary_conditions.open_lid_flux
+        assert F_top - GAP_F_ATM == pytest.approx(
+            w * (F_s0 - L), rel=1e-9, abs=1e-9 * GAP_F_ATM
+        )
+        top = s._n_stag - 1
+        got = self._rhs(s)[2](y0)
+        np.testing.assert_allclose(got[top], dS[top], rtol=1e-9)
+        s2 = _gap_solver(eos, L + 50.0, s.parameters.boundary_conditions.surface_temperature)
+        s2._set_lid_open_reference(y0)
+        assert self._rhs(s2)[2](y0)[top] != pytest.approx(got[top], rel=1e-6)
 
     def test_start_of_step_and_response_match_numpy(self, eos):
         """D1 on the JAX right-hand side (rel 1e-12 against itself without the conductance), and
