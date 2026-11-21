@@ -103,6 +103,19 @@ _LID_SURFACE_RENAMED = (
 )
 
 
+def _old_lid_surface(old, new):
+    """``surface_temperature`` of a boundary section that sets the old key
+    ``lid_surface_temperature`` to ``old``, with ``new`` the value of ``surface_temperature`` in
+    the section or None; it warns, and refuses the 2 names at 2 values."""
+    warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=4)
+    if new is not None and float(new) != float(old):
+        raise ValueError(
+            f'boundary_conditions sets lid_surface_temperature {old} and surface_temperature '
+            f'{new}: set surface_temperature only'
+        )
+    return old
+
+
 @dataclass
 class _BoundaryConditionsParameters:
     """Stores parameters in the boundary_conditions section in the configuration data."""
@@ -144,7 +157,8 @@ class _BoundaryConditionsParameters:
 
     @property
     def lid_surface_temperature(self) -> float | None:
-        """Old name of ``surface_temperature``, kept for one release; it warns."""
+        """Deprecated name of ``surface_temperature``; it warns. It covers the attribute and the
+        config-file key (:func:`_old_lid_surface`), not a constructor keyword."""
         warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
         return self.surface_temperature
 
@@ -852,6 +866,15 @@ class Parameters:
                 )
             if dataclass_ is _PhaseParameters:
                 _reject_flat_rheology(section_name, section, f' of {path.name}')
+            if (
+                dataclass_ is _BoundaryConditionsParameters
+                and 'lid_surface_temperature' in section
+            ):
+                section = dict(section)
+                old = section.pop('lid_surface_temperature')
+                section['surface_temperature'] = _old_lid_surface(
+                    old, section.get('surface_temperature')
+                )
             try:
                 init_dict[section_name] = dataclass_(**section)
             except (TypeError, ValueError) as exc:
@@ -909,6 +932,17 @@ class Parameters:
                     (k for k, _ in parser.items(section_name)),
                     f' of {Path(filenames[0]).name}',
                 )
+            if dataclass_ is _BoundaryConditionsParameters and parser.has_option(
+                section_name, 'lid_surface_temperature'
+            ):
+                new = (
+                    parser.get(section_name, 'surface_temperature')
+                    if parser.has_option(section_name, 'surface_temperature')
+                    else None
+                )
+                old = parser.get(section_name, 'lid_surface_temperature')
+                parser.set(section_name, 'surface_temperature', _old_lid_surface(old, new))
+                parser.remove_option(section_name, 'lid_surface_temperature')
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )
