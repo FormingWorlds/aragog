@@ -3566,8 +3566,9 @@ class EntropySolver:
         part = self._lid_open_part()
         open_kw = {}
         if part is not None:
-            names = ('open_L', 'open_Fp', 'open_G', 'open_Gl')
-            open_kw = dict(zip(names, part), open_on=1.0, open_T_m0=self._lid_open_T_m0())
+            L, Fp, G, Gl = part
+            open_kw = dict(open_on=1.0, open_L=L, open_Fp=Fp, open_G=G, open_Gl=Gl)
+            open_kw['open_T_m0'] = self._lid_open_T_m0()
         return jl.LidParams(
             e=jl.enthalpy(self._lid_hv),
             hs=jl.enthalpy(hs),
