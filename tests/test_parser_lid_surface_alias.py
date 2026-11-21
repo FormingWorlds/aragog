@@ -140,7 +140,10 @@ def test_an_old_key_of_none_in_a_dict_config_counts_as_unset(tmp_path):
         'surface_temperature': 1300.0,
     }
     with pytest.warns(FutureWarning, match='surface_temperature'):
-        p = Config.from_dict(data, config_dir=cfg.parent)
+        try:
+            p = Config.from_dict(data, config_dir=cfg.parent)
+        except (TypeError, ValueError) as exc:
+            pytest.fail(f'an old key of None does not load: {exc}')
     assert p.boundary_conditions.surface_temperature == pytest.approx(1300.0)
     data['boundary_conditions'].pop('surface_temperature')
     with pytest.warns(FutureWarning):
