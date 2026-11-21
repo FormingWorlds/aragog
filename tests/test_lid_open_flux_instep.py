@@ -132,8 +132,9 @@ def _gap_solver(eos, L, T_s=500.0):
 
 
 def _clamped_gap(eos, T_s=1450.0):
-    """The start-gap solver of the stored live-lid rows: a 2 cm lid with the held surface ``T_s``
-    above the lid base ``T_b`` and the top cell 2 J/kg/K above the solidus (``w`` about 0.94),
+    """A start-gap solver in the clamp branch of the stored live-lid rows: a 2 cm lid with the
+    held surface ``T_s`` above the lid base ``T_b`` (about 9.6 K at 1450 K; the stored rows
+    0.14 and 0.005 K) and the top cell 2 J/kg/K above the solidus (``w`` about 0.94),
     and ``L = G_l (T_b - T_s)`` as PROTEUS computes it; with its start state and ``T_b``."""
     probe = _gap_solver(eos, 0.0, T_s)
     y = _state(probe, 2.0, d=0.02)
@@ -180,7 +181,8 @@ class TestOpenFluxNumpy:
     def test_the_start_gap_is_the_lid_weight_times_the_lid_flux_gap(self, eos, L):
         """At the call start ``F_top - F_atm = w (F_s0 - L)``, with ``F_s0`` the loss of the held
         lid at the start state: the algebraic identity for a hand-set lid flux ``L`` of either
-        sign, at a held surface 500 K far below the lid base; the gap is not 0."""
+        sign, at a held surface of 500 K, far below the lid base (about 1440 K); the gap is
+        not 0."""
         s = _gap_solver(eos, L)
         y0 = _state(s, 100.0)
         s._set_lid_open_reference(y0)
@@ -194,23 +196,27 @@ class TestOpenFluxNumpy:
 
     @pytest.mark.physics_invariant
     def test_the_start_gap_holds_with_the_held_surface_above_the_lid_base(self, eos):
-        """The case of the stored live-lid rows: the held surface sits above ``T_b``, so aragog
+        """The clamp branch of the stored live-lid rows, with the held surface about 9.6 K above
+        ``T_b`` (the stored rows 0.14 and 0.005 K): the surface sits above ``T_b``, so aragog
         holds the lid surface at ``T_b - LID_DT_MIN`` and the lid loses ``F_s0 > 0``, while
         the PROTEUS lid flux ``L = G_l (T_b - T_s)`` is below 0; the start gap is still
-        ``w (F_s0 - L)``; ``F_s0`` is the conduction ``k_lid 1 K / delta`` of the 2 cm lid."""
+        ``w (F_s0 - L)``, not 0; ``F_s0`` is the conduction ``k_lid 1 K / delta`` of the 2 cm
+        lid."""
         s, y0, T_b = _clamped_gap(eos)
         L = s.parameters.boundary_conditions.open_lid_flux
         s._set_lid_open_reference(y0)
         _, F_top, w, _, T_b1 = _eval(s, y0)
         surf = s._lid_last.surf
         F_s0 = float(surf.F_s)
-        assert T_b1 == T_b < 1450.0
+        assert T_b1 == pytest.approx(T_b, rel=1e-12)
+        assert T_b < float(s.parameters.boundary_conditions.surface_temperature)
         assert float(surf.T_s) == pytest.approx(T_b - 1.0, rel=1e-12)
         assert F_s0 == pytest.approx(s._lid_k * 1.0 / 0.02, rel=1e-6)
         assert 0.0 < w < 1.0 and F_s0 > 0.0 > L
         assert F_top - GAP_F_ATM == pytest.approx(
             w * (F_s0 - L), rel=1e-9, abs=1e-9 * GAP_F_ATM
         )
+        assert abs(w * (F_s0 - L)) > 1.0
 
     def test_open_flux_follows_the_node_above_the_lid_base(self, eos):
         """Away from the start the open part adds ``(1 - w) G (T_m - T_m0)`` to the loss."""

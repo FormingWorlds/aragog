@@ -3,12 +3,19 @@ parameters: a caller or a config file that still sets it holds the lid at that s
 
 from __future__ import annotations
 
-import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
+import copy
+import tomllib
+from pathlib import Path
 
+import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
+from typed_configparser.parser import NONE_VALUES
+
+from aragog import CFG_DATA
+from aragog.config import Config
 from aragog.config.boundary import held_lid_surface
-from aragog.parser import _BoundaryConditionsParameters
+from aragog.parser import _INI_NONE, Parameters, _BoundaryConditionsParameters
 
 pytestmark = pytest.mark.unit
 
@@ -52,10 +59,6 @@ def test_the_old_name_reads_the_surface_temperature():
 def _config(tmp_path, name: str, lines: str):
     """The bundled ``abe_solid.toml`` or ``abe_mixed.cfg`` with ``lines`` added to its
     ``[boundary_conditions]`` section."""
-    from pathlib import Path
-
-    from aragog import CFG_DATA
-
     src = Path(str(CFG_DATA.joinpath(name))).read_text(encoding='utf-8')
     assert src.count('[boundary_conditions]\n') == 1
     cfg = tmp_path / name
@@ -65,11 +68,6 @@ def _config(tmp_path, name: str, lines: str):
 
 def _load(how: str, cfg):
     """Parameters from ``cfg`` by one of the loaders a run uses."""
-    import tomllib
-
-    from aragog.config import Config
-    from aragog.parser import Parameters
-
     if how == 'Parameters.from_file':
         return Parameters.from_file(cfg)
     if how == 'Config.from_file':
@@ -89,7 +87,7 @@ LOADERS = [
 @pytest.mark.parametrize(('how', 'name'), LOADERS)
 def test_the_old_name_in_a_config_file_sets_the_surface_temperature(tmp_path, how, name):
     """A config (TOML, INI or a dict) that still sets ``lid_surface_temperature`` loads with a
-    FutureWarning, shown once per process under the default filters, and with that value as
+    FutureWarning (once per call site under the default filters), and with that value as
     ``surface_temperature``."""
     cfg = _config(tmp_path, name, 'lid_surface_temperature = 1200.0\n')
     with pytest.warns(FutureWarning, match='surface_temperature'):
@@ -127,48 +125,17 @@ def test_the_toml_refusal_names_the_section_and_the_file(tmp_path):
     assert 'Configuration error in [boundary_conditions] of abe_solid.toml' in str(err.value)
 
 
-def test_an_old_key_of_none_in_a_dict_config_counts_as_unset(tmp_path):
-    """A dict config with ``lid_surface_temperature = None`` takes ``surface_temperature`` and
-    still warns; without ``surface_temperature`` the held surface stays None."""
-    import tomllib
-
-    from aragog.config import Config
-
-    cfg = _config(tmp_path, 'abe_solid.toml', '')
-    with cfg.open('rb') as f:
-        data = tomllib.load(f)
-    data['boundary_conditions'] |= {
-        'lid_surface_temperature': None,
-        'surface_temperature': 1300.0,
-    }
-    with pytest.warns(FutureWarning, match='surface_temperature'):
-        try:
-            p = Config.from_dict(data, config_dir=cfg.parent)
-        except (TypeError, ValueError) as exc:
-            pytest.fail(f'an old key of None does not load: {exc}')
-    assert p.boundary_conditions.surface_temperature == pytest.approx(1300.0)
-    data['boundary_conditions'].pop('surface_temperature')
-    with pytest.warns(FutureWarning):
-        p = Config.from_dict(data, config_dir=cfg.parent)
-    assert p.boundary_conditions.surface_temperature is None
-
-
 _TEMPERATURE = st.one_of(st.none(), st.floats(300.0, 4000.0))
 
 
 @settings(max_examples=60, deadline=None)
+@example(old=None, new=1300.0, same=False)
+@example(old=None, new=None, same=False)
 @given(old=_TEMPERATURE, new=_TEMPERATURE, same=st.booleans())
 def test_a_dict_config_with_the_old_key_holds_one_surface(old, new, same):
     """For any old and new value (None included), ``Config.from_dict`` warns, holds the old value
     when only it is set or both agree, the new value when the old is None, refuses 2 values,
     and leaves the caller's dict as it was."""
-    import copy
-    import tomllib
-    from pathlib import Path
-
-    from aragog import CFG_DATA
-    from aragog.config import Config
-
     if same and old is not None:
         new = old
     data = tomllib.loads(Path(str(CFG_DATA.joinpath('abe_solid.toml'))).read_text('utf-8'))
@@ -190,25 +157,24 @@ def test_a_dict_config_with_the_old_key_holds_one_surface(old, new, same):
 @pytest.mark.parametrize('none', ['none', 'None', 'null'])
 def test_an_ini_value_of_none_counts_as_unset(tmp_path, none):
     """In an INI config a text None of either name counts as unset, as it does for the field
-    itself: the other name sets the held surface."""
+    itself: the other name sets the held surface, and the old name alone sets none."""
     for lines, want in (
         (f'lid_surface_temperature = {none}\nsurface_temperature = 1300.0\n', 1300.0),
         (f'lid_surface_temperature = 1200.0\nsurface_temperature = {none}\n', 1200.0),
+        (f'lid_surface_temperature = {none}\n', None),
     ):
         with pytest.warns(FutureWarning, match='surface_temperature'):
             try:
                 p = _load('Parameters.from_file', _config(tmp_path, 'abe_mixed.cfg', lines))
             except (TypeError, ValueError) as exc:
                 pytest.fail(f'a text None does not load: {exc}')
-        assert p.boundary_conditions.surface_temperature == pytest.approx(want)
+        assert p.boundary_conditions.surface_temperature == (
+            None if want is None else pytest.approx(want)
+        )
 
 
 def test_the_ini_none_strings_are_those_of_the_field_parser():
     """The INI branch reads the same None strings as the parser of the fields."""
-    from typed_configparser.parser import NONE_VALUES
-
-    from aragog.parser import _INI_NONE
-
     assert set(_INI_NONE) == set(NONE_VALUES)
 
 

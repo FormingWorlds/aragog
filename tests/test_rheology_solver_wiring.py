@@ -1568,11 +1568,10 @@ def test_check_rheology_eos_range_const_properties_bypasses_bounds() -> None:
 
     assert solver_normal.parameters.solver.strict_accepted_range is False
 
-    with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
-        solver_normal._check_rheology_eos_range(s_below)
-    solver_normal.parameters.solver.strict_accepted_range = True
-    with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
-        solver_normal._check_rheology_eos_range(s_below)
+    for strict in (False, True):
+        solver_normal.parameters.solver.strict_accepted_range = strict
+        with pytest.raises(AcceptedStateRangeError, match='outside EOS table'):
+            solver_normal._check_rheology_eos_range(s_below)
 
     # When const_properties is True, the check is bypassed and returns None:
     params_const = replace(
@@ -1596,16 +1595,28 @@ def test_check_viscosity_ceiling_handles_boolean() -> None:
 
 
 def test_check_rheology_eos_range_returns_when_s_bounds_none() -> None:
-    """_check_rheology_eos_range returns cleanly on out-of-bounds input when S_min or S_max is None."""
+    """_check_rheology_eos_range refuses a non-finite entropy inside the bounds, and returns
+    cleanly on out-of-bounds input when S_min or S_max is None."""
     rheo = SolidRheologyParams(enabled=True)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
+    eos = solver.entropy_eos
     out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
     with pytest.raises(RuntimeError, match='outside EOS table'):
         solver._check_rheology_eos_range(out_of_bounds_s)
-    solver.entropy_eos.S_min = None
-    res = solver._check_rheology_eos_range(out_of_bounds_s)
-    assert res is None
+    nan_s = np.full(solver._n_stag, 0.5 * (float(eos.S_min) + float(eos.S_max)))
+    solver._check_rheology_eos_range(nan_s)
+    nan_s[3] = np.nan
+    with pytest.raises(RuntimeError, match='node 3: entropy S=nan'):
+        solver._check_rheology_eos_range(nan_s)
+    s_min = eos.S_min
+    for bounds in ((None, eos.S_max), (s_min, None)):
+        eos.S_min, eos.S_max = bounds
+        try:
+            res = solver._check_rheology_eos_range(out_of_bounds_s)
+        except (TypeError, RuntimeError) as exc:
+            pytest.fail(f'bounds {bounds}: the check does not return: {exc}')
+        assert res is None
 
 
 def test_check_rheology_eos_trace_returns_when_const_properties() -> None:
