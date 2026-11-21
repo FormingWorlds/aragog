@@ -2729,21 +2729,17 @@ class EntropySolver:
         T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
         return _lid.open_part_total(w, F_atm, *part, max(T_node, T_b) - self._lid_open_T_m0())
 
-    def _lid_open_T_m(self, S_f: float) -> float:
-        """``T_m = max(T_node, T_b)`` [K] of the current state: the top basic node of the
-        last state update, held at least at the lid base of the top cell at ``S_f``."""
-        ph = self.state.phase_staggered
-        T_f = float(np.asarray(ph.temperature()).ravel()[-1])
-        phi_f = float(np.asarray(ph.melt_fraction()).ravel()[-1])
-        T_b = self._lid_base_state(T_f, phi_f, float(S_f))['T_b']
-        return max(float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1]), T_b)
-
     def _set_lid_open_reference(self, y: npt.ArrayLike) -> None:
         """Set ``T_m0``, the ``T_m`` of the call start state ``y``, through the state update of
         the right-hand side, so that the open part starts the call at its flux value."""
         S = self._stag_entropy(np.asarray(y, dtype=float))
         self.state.update(S, float(self.parameters.solver.start_time))
-        self._lid_T_m0 = self._lid_open_T_m(float(S[-1]))
+        ph = self.state.phase_staggered
+        T_f = float(np.asarray(ph.temperature()).ravel()[-1])
+        phi_f = float(np.asarray(ph.melt_fraction()).ravel()[-1])
+        T_b = self._lid_base_state(T_f, phi_f, float(S[-1]))['T_b']
+        T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
+        self._lid_T_m0 = max(T_node, T_b)
 
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and after a change of
@@ -3567,6 +3563,11 @@ class EntropySolver:
         S_knots = self._lid_W_of_S.x
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
+        part = self._lid_open_part()
+        open_kw = {}
+        if part is not None:
+            names = ('open_L', 'open_Fp', 'open_G', 'open_Gl')
+            open_kw = dict(zip(names, part), open_on=1.0, open_T_m0=self._lid_open_T_m0())
         return jl.LidParams(
             e=jl.enthalpy(self._lid_hv),
             hs=jl.enthalpy(hs),
@@ -3600,18 +3601,8 @@ class EntropySolver:
             H_arr=self._lid_H if self._lid_H is not None else 1.0,
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
-            **self._jax_open_part(),
+            **open_kw,
         )
-
-    def _jax_open_part(self) -> dict:
-        """The open-part fields of :class:`aragog.jax.surface_lid.LidParams`: the flag
-        ``open_on``, ``(L, F', G, G_l)`` and the start reference ``T_m0``; zeros without them."""
-        part = self._lid_open_part()
-        T_m0 = self._lid_open_T_m0()
-        if part is None:
-            return {}
-        L, Fp, G, Gl = part
-        return dict(open_on=1.0, open_L=L, open_Fp=Fp, open_G=G, open_Gl=Gl, open_T_m0=T_m0)
 
     def _lid_open_T_m0(self) -> float:
         """The start reference ``T_m0`` of the open part, for the NumPy right-hand side and the JAX
