@@ -110,6 +110,7 @@ class Config:
         """
         from aragog.parser import (
             Parameters,
+            _boundary_section,
             _BoundaryConditionsParameters,
             _check_parsed_radionuclides,
             _EnergyParameters,
@@ -136,7 +137,9 @@ class Config:
             )
 
         solver = _SolverParameters(**data['solver'])
-        boundary_conditions = _BoundaryConditionsParameters(**data['boundary_conditions'])
+        boundary_conditions = _BoundaryConditionsParameters(
+            **_boundary_section(data['boundary_conditions'])
+        )
         mesh = _MeshParameters(**data['mesh'])
         energy = _EnergyParameters(**data['energy'])
         initial_condition = _InitialConditionParameters(**data.get('initial_condition', {}))

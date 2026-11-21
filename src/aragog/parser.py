@@ -106,14 +106,26 @@ _LID_SURFACE_RENAMED = (
 def _old_lid_surface(old, new):
     """``surface_temperature`` of a boundary section that sets the old key
     ``lid_surface_temperature`` to ``old``, with ``new`` the value of ``surface_temperature`` in
-    the section or None; it warns, and refuses the 2 names at 2 values."""
-    warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=4)
+    the section or None. It warns with a FutureWarning, which Python shows to a config-file user
+    by default, and refuses the 2 names at 2 values."""
+    warnings.warn(_LID_SURFACE_RENAMED, FutureWarning, stacklevel=2)
     if new is not None and float(new) != float(old):
         raise ValueError(
             f'boundary_conditions sets lid_surface_temperature {old} and surface_temperature '
             f'{new}: set surface_temperature only'
         )
     return old
+
+
+def _boundary_section(section: dict[str, Any]) -> dict[str, Any]:
+    """The boundary section of a TOML file or a dict config, with the old key
+    ``lid_surface_temperature`` given as ``surface_temperature`` (:func:`_old_lid_surface`)."""
+    if 'lid_surface_temperature' not in section:
+        return section
+    section = dict(section)
+    old = section.pop('lid_surface_temperature')
+    section['surface_temperature'] = _old_lid_surface(old, section.get('surface_temperature'))
+    return section
 
 
 @dataclass
@@ -158,7 +170,8 @@ class _BoundaryConditionsParameters:
     @property
     def lid_surface_temperature(self) -> float | None:
         """Deprecated name of ``surface_temperature``; it warns. It covers the attribute and the
-        config-file key (:func:`_old_lid_surface`), not a constructor keyword."""
+        key of a config file or a dict config (:func:`_boundary_section`), not a constructor
+        keyword."""
         warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
         return self.surface_temperature
 
@@ -866,16 +879,9 @@ class Parameters:
                 )
             if dataclass_ is _PhaseParameters:
                 _reject_flat_rheology(section_name, section, f' of {path.name}')
-            if (
-                dataclass_ is _BoundaryConditionsParameters
-                and 'lid_surface_temperature' in section
-            ):
-                section = dict(section)
-                old = section.pop('lid_surface_temperature')
-                section['surface_temperature'] = _old_lid_surface(
-                    old, section.get('surface_temperature')
-                )
             try:
+                if dataclass_ is _BoundaryConditionsParameters:
+                    section = _boundary_section(section)
                 init_dict[section_name] = dataclass_(**section)
             except (TypeError, ValueError) as exc:
                 is_rheo_err = (
@@ -935,11 +941,7 @@ class Parameters:
             if dataclass_ is _BoundaryConditionsParameters and parser.has_option(
                 section_name, 'lid_surface_temperature'
             ):
-                new = (
-                    parser.get(section_name, 'surface_temperature')
-                    if parser.has_option(section_name, 'surface_temperature')
-                    else None
-                )
+                new = parser.get(section_name, 'surface_temperature', fallback=None)
                 old = parser.get(section_name, 'lid_surface_temperature')
                 parser.set(section_name, 'surface_temperature', _old_lid_surface(old, new))
                 parser.remove_option(section_name, 'lid_surface_temperature')
