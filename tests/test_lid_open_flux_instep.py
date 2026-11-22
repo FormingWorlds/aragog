@@ -46,6 +46,26 @@ def test_the_held_lid_surface_is_the_surface_temperature_field():
 
 
 @pytest.mark.unit
+def test_lid_weight_refuses_an_unknown_mode_and_a_right_hand_side_without_the_lid(monkeypatch):
+    """``lid_weight`` names the mode it has no parts function for, and refuses parts without
+    the lid."""
+    import types
+
+    from aragog.jax import solver as js
+
+    stub = {'no_lid': lambda t, y, args: types.SimpleNamespace(lid=None)}
+    cases = (
+        ('no_such_mode', "mode='no_such_mode' is not supported by lid_weight"),
+        ('no_lid', 'lid_weight needs a right-hand side with the lid'),
+    )
+    for mode, message in cases:
+        with pytest.raises(Exception) as err:
+            js.lid_weight(0.0, np.zeros(3), (), mode)
+        assert err.type is ValueError and str(err.value) == message
+        monkeypatch.setattr(js, '_PARTS_REGISTRY', stub)
+
+
+@pytest.mark.unit
 def test_normalize_runs_the_open_part_check():
     """``normalize`` refuses an open-part field out of range and a partial set, by name."""
     from tests.test_entropy_solver_bc_dispatch_smoke import _build
@@ -354,6 +374,7 @@ class TestOpenFluxJax:
         assert lp.open_T_m0 == s._lid_T_m0
         lp0 = _open_solver(eos).jax_lid_params()
         assert (lp0.open_on, lp0.open_L, lp0.open_Fp, lp0.open_G, lp0.open_Gl) == (0.0,) * 5
+        assert _open_solver(eos)._lid_open_T_m0() == 0.0
 
     @pytest.mark.physics_invariant
     @pytest.mark.parametrize('case', ['hand-set', 'clamped'])
@@ -458,8 +479,16 @@ class TestOpenFluxJax:
         want = np.array(want)
         assert np.ptp(want) > 0.5  # the nodes span the onset
         np.testing.assert_allclose(rhs_fn.lid_weights(t, Y), want, rtol=1e-9, atol=1e-15)
+        empty = rhs_fn.lid_weights(t[:0], Y[:, :0])
+        assert empty.shape == (0,) and empty.dtype == np.float64
+        with pytest.raises(ValueError, match=r'Y_nodes shape \('):
+            rhs_fn.lid_weights(t[:2], Y)
         s._cvode_lid_weights_batch = rhs_fn.lid_weights
         np.testing.assert_allclose(s._lid_weights_of(t, Y), want, rtol=1e-9, atol=1e-15)
+        s._cvode_lid_weights_batch = None
+        with caplog.at_level(logging.WARNING):
+            np.testing.assert_array_equal(s._lid_weights_of(t, Y), want)
+        assert 'batch lid weights failed' not in caplog.text
 
         def broken(t_pts, y_pts):
             raise RuntimeError('batch failed')
