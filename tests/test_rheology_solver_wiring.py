@@ -1621,48 +1621,6 @@ def test_check_rheology_eos_range_returns_when_s_bounds_none() -> None:
         assert res is None
 
 
-def test_check_rheology_eos_trace_returns_when_const_properties() -> None:
-    """_check_rheology_eos_trace returns cleanly on out-of-bounds input when const_properties is True."""
-    rheo = SolidRheologyParams(enabled=True)
-    params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    solver = _make_solver(params)
-    out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
-    with pytest.raises(RuntimeError, match='outside EOS table'):
-        solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
-    solver.parameters.phase_mixed.const_properties = True
-    res = solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
-    assert res is None
-
-
-def test_check_rheology_eos_trace_returns_when_s_min_is_none() -> None:
-    """_check_rheology_eos_trace returns cleanly on out-of-bounds input when EOS has no S_min."""
-    rheo = SolidRheologyParams(enabled=True)
-    params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    solver = _make_solver(params)
-    out_of_bounds_s = np.full(solver._n_stag, -9999.0, dtype=float)
-    with pytest.raises(RuntimeError, match='outside EOS table'):
-        solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
-    solver.entropy_eos.S_min = None
-    res = solver._check_rheology_eos_trace(np.array([0.0]), out_of_bounds_s)
-    assert res is None
-
-
-def test_check_rheology_eos_trace_reshapes_1d_y_arr() -> None:
-    """_check_rheology_eos_trace reshapes 1-D y_arr and validates each element against EOS bounds."""
-    rheo = SolidRheologyParams(enabled=True)
-    params = _make_abe_solid_params(rheo, number_of_nodes=20)
-    solver = _make_solver(params)
-    s_profile = _make_solid_profile(solver)
-    assert s_profile.ndim == 1
-    assert solver._check_rheology_eos_trace(np.array([0.0]), s_profile) is None
-    bad_profile = s_profile.copy()
-    bad_profile[3] = -9999.0
-    with pytest.raises(
-        RuntimeError, match=r'node 3: entropy S=-9999\.000000 .*outside EOS table'
-    ):
-        solver._check_rheology_eos_trace(np.array([0.0]), bad_profile)
-
-
 def test_solve_core_module_refuses_unmodelled_regime_on_trace_y(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

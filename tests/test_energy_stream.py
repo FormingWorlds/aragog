@@ -4,6 +4,7 @@ Checks that the node filter of a CVODE call equals the stored-list filter across
 tail boundaries, including a root step whose end lies past the call end; that the joined nodes
 of a solve are deduplicated and converted as the stored trace was; that the chunked trapezoid
 equals the analytic integral of a linear power and does not drop the interval between chunks;
+that a batch failure in a later chunk falls back to the per-node powers from that chunk on;
 that a failed check is raised after the solve, not inside a callback; and that the memory of
 the recording does not grow with the node count.
 """
@@ -135,7 +136,7 @@ def test_solve_nodes_deduplicate_convert_and_chunk_as_the_stored_trace(monkeypat
     scale, offset = np.array([10.0, 3.0, 2.0, 5.0]), np.array([0.0, 0.0, 0.0, 7.0])
     sink = _Collect()
     nodes = st.SolveNodes([sink], t_ref, scale, offset, change_from=3, lid=True, keep=True)
-    for tn, yn in zip(t_nd, y_nd.T):
+    for tn, yn in zip(t_nd, y_nd.T, strict=True):
         nodes.add(float(tn), yn)
     nodes.close()
     t = np.concatenate([c[0] for c in sink.chunks])
@@ -263,3 +264,36 @@ def test_streamed_recording_memory_does_not_grow_with_the_node_count():
         tracemalloc.stop()
     assert counter.n == n + 1  # every step, the start and the end
     assert peak < 12e6
+
+
+def test_a_batch_that_fails_in_a_later_chunk_falls_back_from_that_chunk_on(monkeypatch, caplog):
+    """The JAX batch raises on the second of three 8-node chunks: that chunk and the third use
+    ``_step_powers`` at each node, the first keeps its batch powers, the fallback is logged once,
+    and the integral of a power linear in time is still exact."""
+    monkeypatch.setattr(st, 'CHUNK', 8)
+    rate = np.array([2.0, -1.0, 0.5, 0.25, 3.0, -2.0, 0.0])
+    numpy_nodes, batch_calls = [], []
+
+    def powers(t, y):
+        numpy_nodes.append(t)
+        return rate * (1.0 + t)
+
+    def batch(t, y):
+        batch_calls.append(t.size)
+        if len(batch_calls) == 2:
+            raise RuntimeError('simulated batch failure')
+        return np.outer(1.0 + t, rate)
+
+    t = np.linspace(0.0, 10.0, 20)
+    s = _ledger_solver(powers)
+    s._cvode_step_powers_batch, s._step_powers_batch = object(), batch
+    s._batch_powers_calls = 0
+    s._solution = OptimizeResult(t=t, y=np.vstack([t, t]))
+    with caplog.at_level('WARNING', logger=es.logger.name):
+        out = s._compute_step_energy_integrals()
+    assert batch_calls == [8, 8]  # the third chunk does not try the batch again
+    np.testing.assert_array_equal(numpy_nodes, t[8:])
+    assert sum('batch step powers evaluation failed' in r.message for r in caplog.records) == 1
+    assert s._batch_powers_calls == 1
+    exact = rate[0] * (10.0 + 0.5 * 10.0**2) * st.SECS_PER_YEAR
+    assert out['F_int'] == pytest.approx(exact, rel=1e-13)

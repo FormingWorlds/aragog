@@ -27,6 +27,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.constants import Julian_year as SECS_PER_YEAR
 
+from aragog import surface_lid as _lid
+
 if TYPE_CHECKING:
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -94,7 +96,7 @@ class CallNodes:
             self._pass(self._i_max, math.inf)
 
     def _pass(self, n: int, t_end: float) -> None:
-        for t, y in zip(self._t[:n], self._y[:n]):
+        for t, y in zip(self._t[:n], self._y[:n], strict=True):
             if self.last < t <= t_end:
                 self._emit(t, y)
         del self._t[:n], self._y[:n]
@@ -189,7 +191,7 @@ class SolveNodes:
         if not self._kept:
             w = self.scale.shape[0]
             return (np.empty(0), np.empty((w, 0))), np.empty((w, 0))
-        t, y, c = zip(*self._kept)
+        t, y, c = zip(*self._kept, strict=True)
         return (np.concatenate(t), np.concatenate(y, axis=1)), np.concatenate(c, axis=1)
 
 
@@ -278,10 +280,16 @@ class EnergyQuadrature:
     """Per-call energy integrals [J] and the per-node invariant checks, chunk by chunk.
 
     The running form of ``EntropySolver._compute_step_energy_integrals``: per chunk the
-    powers come from the JAX batch (or, without it or after it fails, from ``_step_powers``
-    at each node), the trapezoid sums carry the last node of the previous chunk, and the core
-    heat change and its tolerance scale are summed the same way. The checks keep the first
-    failure, with the node index in the whole call.
+    powers come from the JAX batch (or, without it, from ``_step_powers`` at each node), the
+    trapezoid sums carry the last node of the previous chunk, and the core heat change and its
+    tolerance scale are summed the same way.
+
+    When the batch fails on a chunk, that chunk and all later ones use ``_step_powers``, with
+    its per-node checks; the earlier chunks keep their batch powers and batch checks, since
+    their nodes are gone. A check keeps its first failure, with the node index in the whole
+    call: the failure raised is the first one in the first chunk that has one, and within a
+    chunk the checks run in the order of a stored trace, so a call of one chunk raises what
+    the stored trace raised.
     """
 
     def __init__(self, solver: EntropySolver):
@@ -309,8 +317,6 @@ class EnergyQuadrature:
         self.first = (float(t[0]), y[:, 0].copy(), None if change is None else change[:, 0])
         self.n_lid = bool(s._n_lid)
         if self.n_lid:
-            from aragog import surface_lid as _lid
-
             self.cap = _lid.LID_CAP_FRAC * s._lid_h_top
             self.lid_lo = min(s._lid_delta_lo, float(y[-2, 0]))
         self.budget = getattr(s, '_core_module_budget', None)
@@ -394,7 +400,6 @@ class EnergyQuadrature:
                 )
         if not self.n_lid:
             return
-        from aragog import surface_lid as _lid
         from aragog.solver.entropy_solver import _LID_CAP_SLACK
 
         d = y[-2]

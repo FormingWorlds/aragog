@@ -588,7 +588,8 @@ def test_a_core_that_freezes_from_the_top_is_refused(shared_eos, monkeypatch):
 
 
 @needs_cvode
-def test_the_regime_guard_sees_every_accepted_step(keep_energy_trace, shared_eos, monkeypatch):
+@pytest.mark.usefixtures('keep_energy_trace')
+def test_the_regime_guard_sees_every_accepted_step(shared_eos, monkeypatch):
     """The regime guard receives T_core at every accepted CVODE step of the call, not only at
     the output points, so a refused regime entered between two outputs is caught."""
     import aragog.core.regime as regime
@@ -730,8 +731,10 @@ def test_a_stratified_call_books_the_core_heat_from_the_temperature_changes():
     solver.solve()
     out = solver.get_state()
     assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-8 * abs(out.step_dE_F_cmb_J)
-    y = np.asarray(solver._solution.y)[:, [0, -1]]
-    old = solver._core_heat_change(solver._core_module_budget, y, y - y[:, :1])[0]
+    sol = solver._solution
+    sol.energy_trace = (sol.t[[0, -1]], np.asarray(sol.y)[:, [0, -1]])
+    sol.pop('energy_change')  # booked from the stored (absolute) temperatures instead
+    old = solver._compute_step_energy_integrals()['core']
     assert abs(old + out.step_dE_F_cmb_J) > 1e-8 * abs(out.step_dE_F_cmb_J)
 
 

@@ -162,9 +162,8 @@ def test_cmb_energy_matches_the_core_energy_change():
 
 
 @pytest.mark.smoke
-def test_integral_up_to_a_fired_cap_matches_a_dense_reference(
-    keep_energy_trace,
-):
+@pytest.mark.usefixtures('keep_energy_trace')
+def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     """A temperature cap ends the call at a root after a steep grey-body flux decay.
 
     The kept nodes increase in time and give the surface integral of a dense-output

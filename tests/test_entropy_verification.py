@@ -900,7 +900,8 @@ class TestCvodeEnergyOutputGrid:
         s.set_initial_entropy(S_liq * 1.01)
         return s
 
-    def test_dense_output_recovers_flux_integral(self, keep_energy_trace, caplog):
+    @pytest.mark.usefixtures('keep_energy_trace')
+    def test_dense_output_recovers_flux_integral(self, caplog):
         """F_int over the internal steps matches a high-resolution scipy reference
         with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
         ref = self._build_greybody_solver('bdf')

@@ -618,8 +618,9 @@ def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos, validati
 @pytest.mark.smoke
 @pytest.mark.reference_pinned
 @pytest.mark.timeout(240, method='signal')
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus(
-    keep_energy_trace, shared_eos, validation_plot
+    shared_eos, validation_plot
 ):
     """With the whole column heated slowly from inside, CVODE takes steps above 1000 yr before
     the top cell reaches its solidus (the 100 yr ceiling of a heating cell would forbid them);
@@ -762,9 +763,8 @@ def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
-def test_rate_mode_segments_reanchor_state_at_each_segment_start(
-    keep_energy_trace, shared_eos, monkeypatch
-):
+@pytest.mark.usefixtures('keep_energy_trace')
+def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
     """Each CVODE segment must re-anchor its root function to the segment start state."""
     s = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
     anchored_roots = []

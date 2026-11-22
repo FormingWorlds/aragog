@@ -1372,28 +1372,23 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
         def effective_capacity(t):
             return 2.0e27 + 1.0e24 * (t - 4000.0)
 
-        @staticmethod
-        def heat_change(t0, dt):
-            return (2.0e27 + 1.0e24 * (t0 - 4000.0 + 0.5 * dt)) * dt
-
     s = SimpleNamespace(_n_stag=0)
     t_core = 4000.0 - np.arange(n_nodes) ** 1.5
-    change = t_core - t_core[0] + 1e-9 * np.arange(n_nodes)
     y = np.vstack([np.zeros(n_nodes), t_core])
-    d = np.vstack([np.zeros(n_nodes), change])
-    heat, c_eff = es.EntropySolver._core_heat_change(s, Budget(), y, d)
+    c_eff = es.EntropySolver._core_capacity(s, Budget(), y)
     loop = [Budget.effective_capacity(t) for t in t_core]
+    assert c_eff.shape == (n_nodes,)  # the padding to a power of 2 is cut off
     np.testing.assert_allclose(c_eff, loop, rtol=1e-13)
-    exact = Budget.heat_change(t_core[0], change[-1])
-    assert heat == pytest.approx(exact, rel=1e-13, abs=0.0)
 
 
 def test_a_stratified_call_below_onset_books_the_trapezoid_of_a_varying_capacity():
     """Below onset with an inner core inside the shell base, C_eff of a stratified core changes
     by about 60 % over 5 K; the core heat is the trapezoid of C_eff over the temperature changes
-    plus c_p sum m dT of the shell, which a one-sided rule misses."""
-    import functools
+    plus c_p sum m dT of the shell, which a one-sided rule misses. The call books it from the
+    changes of its states (shifted by a constant here, which cancels)."""
     from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
 
     from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
     from aragog.solver import entropy_solver as es
@@ -1420,9 +1415,16 @@ def test_a_stratified_call_below_onset_books_the_trapezoid_of_a_varying_capacity
     t_core = budget.t_onset - np.array([2.0, 4.5, 7.0])
     t_shell = np.column_stack([shell.adiabatic_profile(t) for t in t_core])
     y = np.vstack([np.zeros(3), t_core, t_shell])
-    s = SimpleNamespace(_n_stag=0)
-    s._check_shell_base = functools.partial(es.EntropySolver._check_shell_base, s)
-    heat, c_eff = es.EntropySolver._core_heat_change(s, budget, y, y - y[:, :1])
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution = OptimizeResult(t=np.arange(3.0), y=y, energy_change=y - 1.0)
+    s.entropy_eos, s._r_basic_flat = object(), np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy, s._warned = (lambda y: y[:0]), set()
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.zeros(7)
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+    heat = s._compute_step_energy_integrals()['core']
+    c_eff = es.EntropySolver._core_capacity(s, budget, y)
     cap = np.array(
         [
             float(

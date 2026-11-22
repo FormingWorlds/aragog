@@ -2273,24 +2273,6 @@ class EntropySolver:
                 f'outside EOS table [{s_min:.6f}, {s_max:.6f}] J/(kg K)'
             )
 
-    def _check_rheology_eos_trace(self, t_pts: npt.ArrayLike, y_pts: npt.ArrayLike) -> None:
-        """Check ``_check_rheology_eos_range`` across every accepted state in ``(t_pts, y_pts)``."""
-        y_arr = np.asarray(y_pts, dtype=float)
-        if y_arr.ndim == 1:
-            y_arr = y_arr.reshape(-1, 1)
-        t_arr = np.atleast_1d(np.asarray(t_pts, dtype=float)).ravel()
-        for step_idx in range(y_arr.shape[1]):
-            t_i = (
-                float(t_arr[step_idx])
-                if step_idx < t_arr.size
-                else float(getattr(self.state, '_time', 0.0))
-            )
-            self._check_rheology_eos_range(
-                self._stag_entropy(y_arr[:, step_idx]),
-                step_idx=step_idx,
-                time_yr=t_i,
-            )
-
     def _check_rheology_step_invariants(
         self, rheo, step_idx: int = 0, time_yr: float | None = None
     ) -> None:
@@ -6732,42 +6714,6 @@ class EntropySolver:
                 t_pts[-1],
                 counts['missed'],
             )
-
-    def _core_heat_change(self, budget, y_arr, d_arr) -> tuple[float, npt.NDArray]:
-        """Heat change [J] of the core over a call and C_eff [J/K] at its nodes.
-
-        Unstratified: the closed form :meth:`CoreEnergyBudget.heat_change` of the integrated
-        change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
-        c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
-        start as the solver integrates them: an absolute temperature holds a change only to its
-        float spacing, 4.5e-13 K below 4096 K and 9.1e-13 K above. C_eff of the test cores is
-        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset), 9.0e26 to
-        1.84e27 J/K for the exoplanet profile and 1.5e26 J/K for the convecting volume of the
-        stratified core with the default layer base above onset, so the spacing is about 1.4e14
-        to 8e15 J.
-
-        Parameters
-        ----------
-        budget : CoreEnergyBudget
-            Core energy budget of the call.
-        y_arr : ndarray, shape (n_state, n_nodes)
-            Node states in physical units.
-        d_arr : ndarray, shape (n_state, n_nodes)
-            Node state changes from the call start.
-
-        Returns
-        -------
-        tuple of (float, ndarray)
-            Heat change [J] and C_eff [J/K] at the nodes.
-        """
-        n = self._n_stag
-        c_eff_vals = EntropySolver._core_capacity(self, budget, y_arr)
-        if budget.stratification:
-            shell = budget.shell
-            shell_heat = float(shell.heat_change(d_arr[n + 2 : n + 2 + shell.n_cells, -1]))
-            heat = np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * np.diff(d_arr[n + 1]))
-            return float(heat) + shell_heat, c_eff_vals
-        return budget.heat_change(float(y_arr[n + 1, 0]), d_arr[n + 1, -1]), c_eff_vals
 
     def _core_capacity(self, budget, y_arr) -> npt.NDArray:
         """C_eff [J/K] of the core at the node states ``y_arr`` (n_state, n_nodes).
