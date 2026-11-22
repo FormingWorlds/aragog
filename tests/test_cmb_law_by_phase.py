@@ -500,7 +500,7 @@ def test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws(validation_plot)
         ax.plot(grid, ref / f16, color='C0', lw=3, alpha=0.4, label='expected')
         ax.plot(grid, q / f16, '.', ms=3, color='C0', label="'phase'")
         ax.set(xlabel='Melt fraction of the bottom cell', ylabel='Flux / eq. 16 flux')
-        ax.legend(fontsize=8, loc='lower right')
+        ax.legend(fontsize=8, loc='center right')
         # the round-off difference is text: its value depends on the platform
         ax.text(
             0.03,

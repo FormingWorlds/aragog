@@ -1288,28 +1288,28 @@ z
    </g>
    <g id="legend_1">
     <g id="line2d_27">
-     <path d="M 372.274688 190.356364 
-L 380.274688 190.356364 
-L 388.274688 190.356364 
+     <path d="M 372.274688 103.858182 
+L 380.274688 103.858182 
+L 388.274688 103.858182 
 " style="fill: none; stroke-dasharray: 8.14,3.52; stroke-dashoffset: 0; stroke: #e23d28; stroke-width: 2.2"/>
     </g>
     <g id="text_15">
      <!-- 450 -->
-     <g style="fill: #10151b" transform="translate(394.674688 193.156364) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(394.674688 106.658182) scale(0.08 -0.08)">
       <use xlink:href="#InstrumentSans-Regular-34"/>
       <use xlink:href="#InstrumentSans-Regular-35" transform="translate(59.999985 0)"/>
       <use xlink:href="#InstrumentSans-Regular-30" transform="translate(117.399979 0)"/>
      </g>
     </g>
     <g id="line2d_28">
-     <path d="M 372.274688 201.836364 
-L 380.274688 201.836364 
-L 388.274688 201.836364 
+     <path d="M 372.274688 115.338182 
+L 380.274688 115.338182 
+L 388.274688 115.338182 
 " style="fill: none; stroke-dasharray: 2.2,3.63; stroke-dashoffset: 0; stroke: #e0a32e; stroke-width: 2.2"/>
     </g>
     <g id="text_16">
      <!-- eq. 16 -->
-     <g style="fill: #10151b" transform="translate(394.674688 204.636364) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(394.674688 118.138182) scale(0.08 -0.08)">
       <use xlink:href="#InstrumentSans-Regular-65"/>
       <use xlink:href="#InstrumentSans-Regular-71" transform="translate(56.399994 0)"/>
       <use xlink:href="#InstrumentSans-Regular-2e" transform="translate(116.999985 0)"/>
@@ -1319,14 +1319,14 @@ L 388.274688 201.836364
      </g>
     </g>
     <g id="line2d_29">
-     <path d="M 372.274688 213.236364 
-L 380.274688 213.236364 
-L 388.274688 213.236364 
+     <path d="M 372.274688 126.738182 
+L 380.274688 126.738182 
+L 388.274688 126.738182 
 " style="fill: none; stroke: #10151b; stroke-opacity: 0.4; stroke-width: 3; stroke-linecap: square"/>
     </g>
     <g id="text_17">
      <!-- expected -->
-     <g style="fill: #10151b" transform="translate(394.674688 216.036364) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(394.674688 129.538182) scale(0.08 -0.08)">
       <use xlink:href="#InstrumentSans-Regular-65"/>
       <use xlink:href="#InstrumentSans-Regular-78" transform="translate(56.399994 0)"/>
       <use xlink:href="#InstrumentSans-Regular-70" transform="translate(111.499985 0)"/>
@@ -1339,12 +1339,12 @@ L 388.274688 213.236364
     </g>
     <g id="line2d_30">
      <g>
-      <use xlink:href="#m3ff0ea11e7" x="380.274688" y="224.876364" style="fill: #10151b; stroke: #10151b"/>
+      <use xlink:href="#m3ff0ea11e7" x="380.274688" y="138.378182" style="fill: #10151b; stroke: #10151b"/>
      </g>
     </g>
     <g id="text_18">
      <!-- 'phase' -->
-     <g style="fill: #10151b" transform="translate(394.674688 227.676364) scale(0.08 -0.08)">
+     <g style="fill: #10151b" transform="translate(394.674688 141.178182) scale(0.08 -0.08)">
       <defs>
        <path id="InstrumentSans-Regular-27" d="M 634 3168 
 L 474 4013 
