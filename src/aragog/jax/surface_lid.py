@@ -330,7 +330,7 @@ def stefan_rate(q_b, F_b, rho, dh, delta, h_top, delta_lo):
     """Base growth rate [m/s] and stop factor, as :func:`aragog.surface_lid.stefan_rate`."""
     r = (q_b - F_b) / (rho * jnp.maximum(dh, LID_DH_MIN))
     grow = jnp.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0)
-    melt = jnp.clip((delta - delta_lo) / delta_lo, 0.0, 1.0)
+    melt = jnp.clip((delta - delta_lo) / delta_lo, -1.0, 1.0)
     f = jnp.where(r > 0.0, grow, jnp.where(r < 0.0, melt, 1.0))
     return r * f, f
 
@@ -349,11 +349,43 @@ def existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on):
     return jnp.where(F_b <= 0.0, 1.0, jnp.where(inside, w, 0.0))
 
 
+def open_conductance(w, Fp, G, Gl):
+    """``G_eff(w)`` [W/m^2/K] of :func:`aragog.surface_lid.open_conductance`; 0 for ``F' = 0``.
+
+    The guard puts 1 in the denominator where ``F' = 0`` (``F' + w G_l + (1 - w) G`` is at
+    least ``F'`` for ``w`` in [0, 1]), so neither branch divides by 0 and the gradient is finite.
+    """
+    on = Fp > 0.0
+    return jnp.where(on, G * Fp / jnp.where(on, Fp + w * Gl + (1.0 - w) * G, 1.0), 0.0)
+
+
+def open_part_total(w, F_atm, L, Fp, G, Gl, dT_m):
+    """``A_open = F_atm - w L + (1 - w) G_eff(w) dT_m`` [W/m^2] per total area, as
+    :func:`aragog.surface_lid.open_part_total`; no division by ``1 - w``."""
+    return F_atm - w * L + (1.0 - w) * open_conductance(w, Fp, G, Gl) * dT_m
+
+
 def lid_rates(
-    *, delta, E_lid, surf, F_b, F_grid, w, rho, H_f, T_b, H_b, e, h_top, delta_lo, heating
+    *,
+    delta,
+    E_lid,
+    surf,
+    F_b,
+    F_grid,
+    w,
+    rho,
+    H_f,
+    T_b,
+    H_b,
+    e,
+    h_top,
+    delta_lo,
+    heating,
+    F_open_total=None,
 ):
     """Lid rates and the fluid flux, as :func:`aragog.surface_lid.lid_rates`; ``surf`` is the
-    tuple of :func:`surface_state`.
+    tuple of :func:`surface_state`. With ``F_open_total`` [W/m^2] the surface loses
+    ``w F_s + F_open_total``, else ``w F_s + (1 - w) F_grid``.
 
     Returns
     -------
@@ -367,7 +399,8 @@ def lid_rates(
     ddelta = w * r - relax * (delta - delta_lo)
     H_lid = heating * delta * profile_density(e, s, T_s, T_b)
     dE = w * (q_b - F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
-    F_top = w * F_s + (1.0 - w) * F_grid
+    F_open = (1.0 - w) * F_grid if F_open_total is None else F_open_total
+    F_top = w * F_s + F_open
     F_fluid = F_top + dE - H_lid - H_f * ddelta
     return ddelta, dE, F_top, F_fluid, w, stop, H_lid
 
@@ -413,6 +446,12 @@ class LidParams(NamedTuple):
     H_arr: float
     phi_rheo: float
     phi_width: float
+    open_on: float = 0.0
+    open_L: float = 0.0
+    open_Fp: float = 0.0
+    open_G: float = 0.0
+    open_Gl: float = 0.0
+    open_T_m0: float = 0.0
 
 
 def floor_weight(S_f, S_sol):
@@ -465,20 +504,25 @@ def lid_base(lp: LidParams, eos, S_f, T_f, phi_f, T_lid_iso):
     )
 
 
-def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, heating):
+def lid_top(
+    lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, heating, T_node=None
+):
     """The lid at the top cell of one RHS evaluation, as the NumPy ``_lid_evaluate``.
 
     ``top`` holds the top-cell temperature, density, heat capacity, conductivity, expansivity,
     gravity, viscosity and melt fraction. ``F_in`` is the flux into the top cell from below and
-    ``F_grid`` the surface flux of the mesh [W/m^2].
+    ``F_grid`` the surface flux of the mesh [W/m^2]. With ``open_on`` above 0.5 the open part
+    is :func:`open_part_total` per total area at the weight ``w`` of this evaluation, with
+    ``dT_m = max(T_node, T_b) - open_T_m0`` (0 without ``T_node``, the top basic node [K]), as
+    the NumPy RHS; else it is ``(1 - w) F_grid``.
 
     Returns
     -------
     tuple
-        ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger)``: the surface loss and the fluid flux
-        [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], and the
+        ``(F_top, F_fluid, V_fluid, ddelta, dE, ledger, w)``: the surface loss and the fluid flux
+        [W/m^2], the fluid volume of the top cell [m^3], the lid rates [m/s, W/m^2], the
         ledger terms ``(H_f, m_lid)``: the fluid heat content per volume [J/m^3] and the lid
-        mass per area [kg/m^2].
+        mass per area [kg/m^2], and the lid weight.
     """
     delta, E = y_lid[0], y_lid[1]
     base = lid_base(lp, eos, S_f, top['T'], top['phi'], T_lid_iso)
@@ -530,6 +574,8 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         existence_weight(F_b, base['T_b'], lp.k, lp.emissivity, lp.T_eq, lp.delta_on),
     )
     w = jnp.where(mush, 1.0 - floor_weight(S_f, lp.S_sol) * (1.0 - w), w)
+    dT_m = 0.0 if T_node is None else jnp.maximum(T_node, base['T_b']) - lp.open_T_m0
+    A_open = open_part_total(w, F_grid, lp.open_L, lp.open_Fp, lp.open_G, lp.open_Gl, dT_m)
     ddelta, dE, F_top, F_fluid, *_ = lid_rates(
         delta=delta,
         E_lid=E,
@@ -545,7 +591,8 @@ def lid_top(lp: LidParams, eos, y_lid, S_f, top: dict, F_in, F_grid, T_lid_iso, 
         h_top=lp.h_top,
         delta_lo=lp.delta_lo,
         heating=heating,
+        F_open_total=jnp.where(lp.open_on > 0.5, A_open, (1.0 - w) * F_grid),
     )
     m_lid = delta * profile_density(lp.e, surf[3], surf[0], base['T_b'])
     ledger = (H_f, m_lid)
-    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger
+    return F_top, F_fluid, lp.volume_top - lp.area * delta, ddelta, dE, ledger, w

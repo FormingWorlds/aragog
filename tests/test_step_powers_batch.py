@@ -1439,7 +1439,7 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
             radio_isotope_params=_make_radio_tuple(solver.parameters.radionuclides),
             core_module_budget=args[6],
             core_module_q_radio=args[7],
-            core_module_ra_crit_cmb=args[8],
+            core_module_ra_crit_cmb=None if np.isnan(float(args[8])) else float(args[8]),
         )
         return rhs_fn, jac_fn
 

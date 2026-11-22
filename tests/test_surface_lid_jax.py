@@ -193,6 +193,19 @@ def test_surface_state_derivatives_match_differences(name):
     assert n_checked > 20
 
 
+@pytest.mark.parametrize(('frac', 'want'), [(0.1, -0.9), (1e-9, -(1.0 - 1e-9)), (0.0, -1.0)])
+def test_the_jax_melt_back_stop_factor_falls_to_minus_1_at_zero_thickness(frac, want):
+    """The JAX stop factor of a melting lid of thickness frac * delta_lo is frac - 1, -1 at
+    zero thickness, with the rate -r0 there."""
+    from aragog.jax import surface_lid as jl
+
+    lo, q = 0.5, 10.0
+    r0 = -q / (3000.0 * 4e5)
+    r, f = jl.stefan_rate(0.0, q, 3000.0, 4e5, frac * lo, 1e4, lo)
+    assert float(f) == pytest.approx(want, rel=1e-12, abs=0.0)
+    assert float(r) == pytest.approx(r0 * want, rel=1e-12, abs=0.0)
+
+
 def test_rate_functions_match_numpy():
     """The JAX boundary-layer flux, Stefan rate with its stops and existence weight equal the
     NumPy ones on random states that cover each branch (no flux, growth, both stops, melt-back,
@@ -218,6 +231,8 @@ def test_rate_functions_match_numpy():
     )
     q_b, F_b = rng.uniform(0, 200, n), rng.uniform(0, 200, n)
     F_b[:5] = q_b[:5]
+    q_b[-6], F_b[-6] = 10.0, 100.0  # a melting lid below the stop, delta 0.3 < d_lo
+    delta[0], q_b[0], F_b[0] = 0.1, 10.0, 100.0  # one far below it, factor -0.8
     dh = rng.uniform(-1e4, 5e5, n)
     got = jax.vmap(lambda *v: jl.stefan_rate(*v, h_top, d_lo))(
         q_b, F_b, np.full(n, 3e3), dh, delta
@@ -229,6 +244,7 @@ def test_rate_functions_match_numpy():
     assert len({round(f, 3) for f in want[:, 1]} & {0.0, 1.0}) == 2 and np.any(
         (want[:, 1] > 0) & (want[:, 1] < 1)
     )
+    assert np.any(want[:, 1] < 0.0)  # the branch below the melt-back stop
 
     F_b = np.concatenate([[0.0, -1.0, 1e9], 10.0 ** rng.uniform(-2, 6, n - 3)])
     T_b = rng.uniform(1200, 1800, n)

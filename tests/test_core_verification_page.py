@@ -187,6 +187,17 @@ def _reproduces(script, item):
 
 @pytest.mark.slow
 @pytest.mark.physics_invariant
+def test_the_cmb_flux_law_of_section_3_reproduces(script):
+    """A hot core takes the boundary-layer flux over either base (below conduction over the
+    solid one), a cold core conducts across the half cell, and the slope is 4/3."""
+    got = _reproduces(script, 3)
+    assert abs(got['convective_slope'] - 4.0 / 3.0) < 1e-9
+    assert got['q_solid_100K'] < 0.1 * 100.0 * got['conduction_slope']
+    assert got['cold_core_flux_equals_conduction'] < 1e-8
+
+
+@pytest.mark.slow
+@pytest.mark.physics_invariant
 def test_inner_core_radius_grows_as_the_square_root_of_undercooling(script):
     got = _reproduces(script, 4)
     assert abs(got['sqrt_slope'] - 0.5) < 1e-3 and got['jvp_vs_fd_max_rel'] < 1e-5
@@ -228,7 +239,8 @@ def test_budget_terms_match_the_thermal_history_table(script):
 @pytest.mark.physics_invariant
 def test_a_cvode_solve_across_the_onset_closes_its_heat(script):
     got = _reproduces(script, 9)
-    assert 0 < got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8']
+    # The bound holds at the rtol of the check; the page states the default rtol just above it.
+    assert 0 < got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8'] < 1.1e-6
 
 
 @pytest.mark.slow

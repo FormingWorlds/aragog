@@ -50,7 +50,7 @@ def test_the_stored_runs_and_their_mesh():
     head, runs = study['header'], study['runs']
     assert set(runs) == {'U80', 'U160', 'U320', 'U640', 'D80', 'D160'}
     assert list(head['left_out']) == ['U80']
-    # In every call of Aragog's CMB law the conductive flux is the larger one, except on U80.
+    # In every call of the stored runs the conductive flux is the larger one, except on U80.
     assert all(v['max_q_conv_minus_q_cond'] < 0.0 for k, v in runs.items() if k != 'U80')
     assert runs['U80']['max_q_conv_minus_q_cond'] > 0.0
     assert f'{head["left_out"]["U80"]["share_conv_above_cond"]:.0%}' == '59%'

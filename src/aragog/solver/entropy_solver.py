@@ -42,6 +42,9 @@ from aragog.config.boundary import (
     check_lid_mush_base,
     check_lid_surface,
     check_subgrid_lid,
+    check_surface_temperature,
+    held_lid_surface,
+    open_part_of,
 )
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import (
@@ -146,6 +149,11 @@ _LID_OUTPUT_FIELDS = (
     ('lid_F_base', 'W m-2', 'Flux into the base of the sub-grid lid'),
     ('lid_handover_time', 'yr', 'Time of the hand-over of the sub-grid lid to the mesh'),
 )
+
+
+class AcceptedStateRangeError(RuntimeError):
+    """An accepted state of a call has a cell entropy outside the EOS tables."""
+
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
@@ -1108,7 +1116,7 @@ class SolverOutput:
     g_b: npt.NDArray  # gravitational acceleration at basic nodes [m/s^2]
 
     # Scalar quantities
-    T_magma: float  # surface temperature [K]; with the mush base and a live lid, the melt side w T_b + (1 - w) T_node
+    T_magma: float  # surface temperature [K]; mush base and live lid: w T_b + (1 - w) T_m
     T_core: float  # CMB temperature [K]
     Phi_global: float  # mass-weighted melt fraction (= M_mantle_liquid / M_mantle)
     Phi_global_vol: float  # porosity-based volumetric melt fraction
@@ -1246,6 +1254,8 @@ class SolverOutput:
     # Time [yr] of the hand-over of the lid to the mesh; NaN before it, without it, or on a
     # resume of a handed-over lid that does not give the time.
     lid_handover_time: float = float('nan')
+    # Largest lid weight [-] over the accepted states of the call; NaN with the lid off.
+    lid_weight_max: float = float('nan')
 
     # ── NetCDF output ──────────────────────────────────────────────
     @property
@@ -1357,7 +1367,7 @@ class SolverOutput:
                 'T_magma',
                 self.T_magma,
                 'K',
-                'Surface (magma) temperature; with the mush base and a live lid w T_b + (1 - w) T_node',
+                'Surface (magma) temperature; with the mush base and a live lid w T_b + (1 - w) max(T_node, T_b)',
             )
             _scalar('T_core', self.T_core, 'K', 'Core-mantle boundary temperature')
             _scalar(
@@ -2040,13 +2050,14 @@ class EntropySolver:
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
-        # The core_module CMB boundary layer, one point at the CMB pressure.
+        # The core_module CMB boundary layer at the CMB pressure: the bottom cell's state and
+        # the layer's state, updated together.
         self._bl_phase = EntropyPhaseEvaluator(
-            gravitational_acceleration=g_basic[:1],
+            gravitational_acceleration=np.repeat(g_basic[:1], 2),
             defer_rheology_viscosity=True,
             **phase_kwargs,
         )
-        self._bl_phase.set_pressure(P_basic[:1])
+        self._bl_phase.set_pressure(np.repeat(P_basic[:1], 2))
 
         # Energy settings
         energy = self.parameters.energy
@@ -2210,7 +2221,10 @@ class EntropySolver:
         step_idx: int = 0,
         time_yr: float | None = None,
     ) -> None:
-        """Raise ``RuntimeError`` if an accepted state's staggered entropy leaves ``[S_min, S_max]``."""
+        """Raise :class:`AcceptedStateRangeError` (a ``RuntimeError``) if an accepted state's
+        staggered entropy is not finite or leaves ``[S_min, S_max]``, with
+        ``strict_accepted_range`` on or off; return at once without an EOS table, without one of
+        its bounds or with ``const_properties``."""
         eos = getattr(self, 'entropy_eos', None)
         if eos is None or getattr(self.parameters.phase_mixed, 'const_properties', False):
             return
@@ -2227,7 +2241,7 @@ class EntropySolver:
             t_val = (
                 float(getattr(self.state, '_time', 0.0)) if time_yr is None else float(time_yr)
             )
-            raise RuntimeError(
+            raise AcceptedStateRangeError(
                 f'rheology invariant violated at step {step_idx}, t={t_val:.6e} yr, '
                 f'node {bad_node}: entropy S={s_arr[bad_node]:.6f} J/(kg K) '
                 f'outside EOS table [{s_min:.6f}, {s_max:.6f}] J/(kg K)'
@@ -2472,6 +2486,7 @@ class EntropySolver:
                     "pip install 'fwl-aragog[jax]'"
                 ) from err
 
+            from aragog.core import RA_CRIT_PHASE, check_liquid_band
             from aragog.core.module import (
                 build_core_module_budget,
                 core_module_cache_key,
@@ -2505,6 +2520,11 @@ class EntropySolver:
                         float(budget.profiles.rho_cen),
                         float(budget.profiles.length_scale) / 1e3,
                     )
+            if ra_crit == RA_CRIT_PHASE:
+                pm = self.parameters.phase_mixed
+                check_liquid_band(
+                    pm.rheological_transition_melt_fraction, pm.rheological_transition_width
+                )
             self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
             self._warn_once(
                 'core_fields_unused',
@@ -2677,6 +2697,53 @@ class EntropySolver:
         and an invalid one raises ``ValueError``."""
         self._refresh_surface_temperature()
         return self.state._surface_temperature_bc
+
+    def cmb_shell_surface_temperature(self) -> float:
+        """Surface temperature [K] of the shell contrast of the core_module CMB law: the BC 5
+        surface temperature, else the ``surface_temperature`` setting, else NaN (the top cell
+        stands in). A setting changed between calls is checked here."""
+        if self._outer_bc_kind == 5:
+            self._refresh_surface_temperature()
+            return float(self.state._surface_temperature_bc[1])
+        value = self.evaluator.boundary_conditions._settings.surface_temperature
+        check_surface_temperature(value)
+        return math.nan if value is None else float(value)
+
+    def _lid_held_surface(self) -> float | None:
+        """Surface temperature [K] at which the lid is held through a call, or None."""
+        bc = self.evaluator.boundary_conditions._settings
+        return held_lid_surface(self._outer_bc_kind, self._lid_mush, bc.surface_temperature)
+
+    def _lid_open_part(self) -> tuple | None:
+        """The open-part fields ``(L, F', G, G_l)`` as floats [W/m^2, W/m^2/K x 3], or None
+        when they are unset (the open part then carries ``(1 - w)`` times the flux value)."""
+        values = open_part_of(self.evaluator.boundary_conditions._settings)
+        if values[0] is None:
+            return None
+        return tuple(float(v) for v in values)
+
+    def _lid_open_flux(self, w: float, F_atm: float, T_b: float) -> float | None:
+        """Open part per total area [W/m^2] at the lid weight ``w`` of this state, from the
+        open-part fields, the flux value ``F_atm`` [W/m^2] and the top basic node held at least
+        at the lid base ``T_b`` [K] (:func:`aragog.surface_lid.open_part_total`); None without
+        the fields."""
+        part = self._lid_open_part()
+        if part is None:
+            return None
+        T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
+        return _lid.open_part_total(w, F_atm, *part, max(T_node, T_b) - self._lid_open_T_m0())
+
+    def _set_lid_open_reference(self, y: npt.ArrayLike) -> None:
+        """Set ``T_m0``, the ``T_m`` of the call start state ``y``, through the state update of
+        the right-hand side, so that the open part starts the call at its flux value."""
+        S = self._stag_entropy(np.asarray(y, dtype=float))
+        self.state.update(S, float(self.parameters.solver.start_time))
+        ph = self.state.phase_staggered
+        T_f = float(np.asarray(ph.temperature()).ravel()[-1])
+        phi_f = float(np.asarray(ph.melt_fraction()).ravel()[-1])
+        T_b = self._lid_base_state(T_f, phi_f, float(S[-1]))['T_b']
+        T_node = float(np.asarray(self.state.phase_basic.temperature()).ravel()[-1])
+        self._lid_T_m0 = max(T_node, T_b)
 
     def _refresh_surface_temperature(self) -> None:
         """Invert the BC 5 surface entropy at setup and after a change of
@@ -3397,7 +3464,7 @@ class EntropySolver:
         base = self._lid_base_state(T_f, phi_f, S_top)
         d, T_s = self._lid_delta_lo, self._lid_T_surf()
         if self._outer_bc_kind == 4:
-            T_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
+            T_held = self._lid_held_surface()
             T_s = (
                 min(
                     max(base['T_b'] - self._outer_bc_value * d / self._lid_k, _lid.LID_T_S_MIN),
@@ -3484,7 +3551,7 @@ class EntropySolver:
         from aragog.jax import surface_lid as jl
 
         rheo, ph = self._lid_rheo, self.state.phase_staggered
-        bc_held = self.evaluator.boundary_conditions._settings.lid_surface_temperature
+        bc_held = self._lid_held_surface()
         bc_cap = self.evaluator.boundary_conditions._settings.lid_surface_flux_cap
         bc_slope = self.evaluator.boundary_conditions._settings.lid_surface_flux_slope
         if self._lid_const:
@@ -3500,6 +3567,12 @@ class EntropySolver:
         S_knots = self._lid_W_of_S.x
         hs = _lid.LidEnthalpy.table(S_knots, self._lid_W_of_S(S_knots), np.zeros(S_knots.size))
         on = rheo is not None
+        part = self._lid_open_part()
+        open_kw = {}
+        if part is not None:
+            L, Fp, G, Gl = part
+            open_kw = dict(open_on=1.0, open_L=L, open_Fp=Fp, open_G=G, open_Gl=Gl)
+            open_kw['open_T_m0'] = self._lid_open_T_m0()
         return jl.LidParams(
             e=jl.enthalpy(self._lid_hv),
             hs=jl.enthalpy(hs),
@@ -3533,7 +3606,21 @@ class EntropySolver:
             H_arr=self._lid_H if self._lid_H is not None else 1.0,
             phi_rheo=float(ph._phi_rheo),
             phi_width=float(ph._phi_width),
+            **open_kw,
         )
+
+    def _lid_open_T_m0(self) -> float:
+        """The start reference ``T_m0`` of the open part, for the NumPy right-hand side and the JAX
+        parameters; 0 without the open-part fields. The fields without a reference raise."""
+        T_m0 = getattr(self, '_lid_T_m0', None)
+        if T_m0 is None:
+            if self._lid_open_part() is not None:
+                raise RuntimeError(
+                    'the open-part fields are set but the open part has no start reference '
+                    'T_m0: solve() sets it from the start state'
+                )
+            return 0.0
+        return float(T_m0)
 
     def _lid_floor_integral(self) -> tuple:
         """The Kirchhoff integral ``Phi(S)`` [W/m] of the eddy-diffusivity floor at the
@@ -3899,7 +3986,7 @@ class EntropySolver:
         floor, k, T_b = _lid.LID_DELTA_FLOOR, self._lid_k, base['T_b']
         if self._outer_bc_kind == 4:
             bc = self.evaluator.boundary_conditions._settings
-            T_held, cap = bc.lid_surface_temperature, bc.lid_surface_flux_cap
+            T_held, cap = self._lid_held_surface(), bc.lid_surface_flux_cap
             if T_held is None:
                 surf = _lid.flux_surface_state(delta, E, T_b, k, F_grid, floor, self._lid_hv)
             else:
@@ -3921,6 +4008,7 @@ class EntropySolver:
                 surf = _lid.fixed_surface_state(delta, E, T_b, k, T_surf, floor, self._lid_hv)
         if self._lid_mush:
             w = 1.0 - g * (1.0 - w)
+        F_open = self._lid_open_flux(w, F_grid, base['T_b'])
         heating = top(self.state.heating)
         rates = _lid.lid_rates(
             delta=delta,
@@ -3937,6 +4025,7 @@ class EntropySolver:
             h_top=self._lid_h_top,
             delta_lo=self._lid_delta_lo,
             heating=heating,
+            F_open_total=F_open,
         )
         self.state._heat_flux[-1] = rates.F_top
         ev = _LidEval(
@@ -4251,7 +4340,9 @@ class EntropySolver:
                 pass
             elif core_mod:
                 t_top = t_core if t_shell is None else float(t_shell[-1])  # the top shell cell
-                self.state._heat_flux[0] = self._core_module_cmb_flux(t_top, entropy[0])
+                self.state._heat_flux[0] = self._core_module_cmb_flux(
+                    t_top, entropy[0], entropy[-1]
+                )
             elif bower:
                 # bower2018: F_cmb from molecular conduction across the bottom half cell,
                 # orders of magnitude below convective transport; parity testing only.
@@ -4402,16 +4493,22 @@ class EntropySolver:
 
         return np.concatenate([dSdt, [dT_core_dt]])
 
-    def _core_module_cmb_flux(self, t_core: float, s_bottom: float) -> float:
+    def _core_module_cmb_flux(self, t_core: float, s_bottom: float, s_top: float) -> float:
         """CMB heat flux [W/m^2] of the core_module boundary layer.
 
         ``aragog.core.cmb_boundary_layer_flux`` of the core temperature (floored at 1 K)
         against the bottom cell's entropy ``s_bottom`` at the CMB pressure, with the layer's
         properties at the CMB pressure and the mean of the two temperatures (Thiriet et al.
         2019; the heat capacity and the expansivity of the phases, without the phase-change
-        terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``.
+        terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``. The internal
+        Rayleigh number of eq. 16 takes the mantle thickness of the mesh, the contrast
+        across the shell from the core to ``cmb_shell_surface_temperature`` (the top cell's
+        temperature, entropy ``s_top`` at its pressure, without one) and the viscosity of the
+        bottom cell's own state at the CMB pressure (the interior at ``T_m``). Under
+        ``ra_crit_cmb = 'phase'`` the melt fraction of that same state sets the weight of the
+        liquid law across the rheological transition of ``phase_mixed``.
         """
-        from aragog.core import cmb_boundary_layer_flux
+        from aragog.core import RA_CRIT_PHASE, cmb_boundary_layer_flux
 
         if self.entropy_eos is None:
             raise ValueError(
@@ -4422,25 +4519,46 @@ class EntropySolver:
         def first(values) -> float:
             return float(np.asarray(values).flat[0])
 
+        def layer(values) -> float:
+            return float(np.asarray(values).flat[1])
+
         eos, p_cmb = self.entropy_eos, float(self._P_basic_flat[0])
         t_hot = max(float(t_core), 1.0)
         t_m = first(eos.temperature(p_cmb, s_bottom))
+        t_surf = self.cmb_shell_surface_temperature()
+        if math.isnan(t_surf):
+            t_surf = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
         s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
         bl = self._bl_phase
-        bl.set_entropy(np.array([s_bl]))
+        bl.set_entropy(np.array([s_bottom, s_bl]))
         bl.update()
+        eta_interior = first(bl.viscosity())
+        phase_law = {}
+        if self._core_module_ra_crit_cmb == RA_CRIT_PHASE:
+            pm = self.parameters.phase_mixed
+            phase_law = dict(
+                melt_fraction=first(bl.melt_fraction()),
+                liquid_band=(
+                    float(pm.rheological_transition_melt_fraction),
+                    float(pm.rheological_transition_width),
+                ),
+            )
         return float(
             cmb_boundary_layer_flux(
                 t_hot,
                 t_m,
-                conductivity=first(bl.thermal_conductivity()),
-                density=first(bl.density()),
+                conductivity=layer(bl.thermal_conductivity()),
+                density=layer(bl.density()),
                 heat_capacity=first(eos.heat_capacity(p_cmb, s_bl)),
                 expansivity=first(eos.material_expansivity(p_cmb, s_bl)),
-                viscosity=first(bl.viscosity()),
+                viscosity=layer(bl.viscosity()),
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,
-                ra_crit=self._core_module_ra_crit_cmb,
+                ra_crit=None if phase_law else self._core_module_ra_crit_cmb,
+                shell_thickness=float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
+                shell_contrast=t_hot - t_surf,
+                interior_viscosity=eta_interior,
+                **phase_law,
             )
         )
 
@@ -5460,7 +5578,8 @@ class EntropySolver:
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. With the rheology off, a call that leaves the EOS tables fails with status -1
-        (see ``_eos_table_failure``). ``_floor_discard`` (internal) refuses the call with that
+        (see ``_eos_table_failure``), or raises ``AcceptedStateRangeError`` with
+        ``strict_accepted_range`` on. ``_floor_discard`` (internal) refuses the call with that
         warning: a call whose floor root returns a state below the EOS table, or stops at the
         call start, is solved again this way, so it returns its start state; a lid trigger
         already passed at the call start still merges, so that state then holds the merged lid.
@@ -5481,10 +5600,15 @@ class EntropySolver:
         check_lid_surface(
             self._outer_bc_kind,
             self._lid_mush,
-            bc_s.lid_surface_temperature,
+            bc_s.surface_temperature,
             bc_s.lid_surface_flux_cap,
             bc_s.lid_surface_flux_slope,
+            open_part_of(bc_s),
         )
+        check_surface_temperature(bc_s.surface_temperature)
+        self._lid_T_m0 = None
+        if _lid_slots(self) and self._lid_open_part() is not None:
+            self._set_lid_open_reference(self._S0)
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -5895,7 +6019,7 @@ class EntropySolver:
                 'CVODE path (same solver SPIDER uses).'
             )
         use_cvode = solver_method == 'cvode' and _CVODE_AVAILABLE
-        self._cvode_step_powers_batch = None
+        self._cvode_step_powers_batch = self._cvode_lid_weights_batch = None
         if use_cvode:
             # Build JAX-derived CVODE callbacks when the factory is registered
             # and use_jax_jacobian is active. Callbacks reuse cached functions.
@@ -5915,6 +6039,9 @@ class EntropySolver:
                     )
                     self._cvode_step_powers_batch = getattr(
                         cvode_rhs_override, 'step_powers', None
+                    )
+                    self._cvode_lid_weights_batch = getattr(
+                        cvode_rhs_override, 'lid_weights', None
                     )
                     logger.info(
                         'EntropySolver: option Z active '
@@ -6273,6 +6400,7 @@ class EntropySolver:
                 self._lid_handover_time = self._lid_start_handover_time
         self._log_solution_outcome(self.parameters.solver.end_time)
         sol.lid_cap_excess = math.nan  # the energy replay sets it from the trace
+        sol.lid_weight_max = math.nan  # the energy replay sets it with a lid
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
@@ -6334,10 +6462,13 @@ class EntropySolver:
                 where = (
                     'at the call start, a shorter step does not help' if t == t_pts[0] else ''
                 )
-                return float(t), (
+                msg = (
                     f'EOS table guard: cell {node} entropy {s[node]:.6g} J/kg/K outside the EOS '
                     f'tables [{s_min:.3f}, {s_max:.3f}] J/kg/K at t={float(t):.6e} yr {where}'
                 ).rstrip()
+                if self.parameters.solver.strict_accepted_range:
+                    raise AcceptedStateRangeError(msg)
+                return float(t), msg
         return None
 
     def _log_solution_outcome(self, end_time: float) -> None:
@@ -6428,7 +6559,7 @@ class EntropySolver:
             sol.lid_cap_excess = float(grown.max() / cap - 1.0) if grown.size else math.nan
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
-        P = None
+        P = weights = None
         batch_fn = self._cvode_step_powers_batch
         if batch_fn is not None:
             try:
@@ -6500,13 +6631,14 @@ class EntropySolver:
                     'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
                     t_pts.size,
                 )
-                rows = []
+                rows, weights = [], []
                 for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
                     if check_rheo:
                         self._check_rheology_eos_range(
                             self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
                         )
                     rows.append(self._step_powers(float(t), y))
+                    weights.append(self._lid_weight_now())
                     if self._n_lid and self._lid_active:
                         self._check_lid_step(lid_lo, step_idx, float(t))
                     if check_rheo:
@@ -6514,6 +6646,10 @@ class EntropySolver:
                             rheo, step_idx=step_idx, time_yr=float(t)
                         )
                 P = np.array(rows)
+            if self._n_lid:
+                if weights is None:
+                    weights = self._lid_weights_of(t_pts, y_pts)
+                sol.lid_weight_max = float(np.max(weights))
         finally:
             self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
@@ -6711,6 +6847,30 @@ class EntropySolver:
             P_stag=self._P_stag_flat,
         )
         return np.asarray(batch_fn(t_pts, y_pts, aux=aux))
+
+    def _lid_weight_now(self) -> float:
+        """Lid weight of the last RHS evaluation: 0 without a lid or with a handed-over one."""
+        if not (self._n_lid and self._lid_active):
+            return 0.0
+        return float(self._lid_last.rates.w)
+
+    def _lid_weights_of(self, t_pts: npt.NDArray, y_pts: npt.NDArray) -> npt.NDArray:
+        """Lid weight at each quadrature node, from the JAX batch callable when the factory
+        gives one, else from the NumPy right-hand side at each node."""
+        batch_fn = getattr(self, '_cvode_lid_weights_batch', None)
+        if batch_fn is not None:
+            try:
+                return np.asarray(batch_fn(t_pts, y_pts), dtype=float)
+            except Exception as exc:  # noqa: BLE001 - the NumPy loop below is the reference path
+                self._warn_once(
+                    'batch_lid_weights_failed',
+                    f'EntropySolver: batch lid weights failed ({exc}); falling back to numpy loop',
+                )
+        weights = []
+        for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
+            self._dSdt_single(float(t), y)
+            weights.append(self._lid_weight_now())
+        return np.asarray(weights)
 
     def _heated_mass(self, mass: npt.NDArray) -> npt.NDArray:
         """``mass`` [kg] per cell as the RHS just evaluated heats it: with a live lid the top
@@ -7132,6 +7292,7 @@ class EntropySolver:
         lid_out = {}
         if self._n_lid:
             lid_out['lid_handover_time'] = getattr(self, '_lid_handover_time', float('nan'))
+            lid_out['lid_weight_max'] = float(getattr(sol, 'lid_weight_max', float('nan')))
         if self._n_lid and not self._lid_active:
             lid_out['lid_delta'] = lid_out['lid_E'] = 0.0
         elif self._n_lid:
@@ -7149,6 +7310,7 @@ class EntropySolver:
                 / ev.delta,
                 lid_F_base=ev.F_b,
                 lid_handover_time=lid_out['lid_handover_time'],
+                lid_weight_max=lid_out['lid_weight_max'],
             )
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()
@@ -7195,14 +7357,14 @@ class EntropySolver:
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         # T_magma = top basic-node temperature at the outer boundary (SPIDER's
         # atmosphere/temperature_surface); with the mush base and a live lid, the blend
-        # w T_b + (1 - w) T_node below, the melt side of the crust that outgassing reads.
+        # w T_b + (1 - w) max(T_node, T_b), the melt side of the crust that outgassing reads.
         T_basic_final = np.asarray(self.state.phase_basic.temperature()).ravel()
         T_magma = float(T_basic_final[-1])
         if self._n_lid and self._lid_active and self._lid_mush:
             # melt side of the crust for outgassing; lid_T_surface reports the crust surface
             T_melt = self._lid_last.T_b
             w_lid = self._lid_last.rates.w
-            T_magma = w_lid * T_melt + (1.0 - w_lid) * T_magma
+            T_magma = w_lid * T_melt + (1.0 - w_lid) * max(T_magma, T_melt)
         # Core temperature: bottom staggered cell (T_stag[0]).
         # SPIDER reports T_core = interior_o.temp[-1], the last
         # staggered node in its surface-to-CMB ordering. Aragog

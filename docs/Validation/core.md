@@ -86,10 +86,10 @@ the solver books the core heat change from it, so this identity is what ties the
 **What is tested.** For a core hotter than the mantle side of the CMB, the CMB heat flux is
 
 $$
-q = \frac{k\, \Delta T}{\min(\Delta r_{1/2},\, \delta)}, \qquad \delta = \left(\frac{\kappa\, \eta\, Ra_\mathrm{crit}}{\rho\, g\, \alpha\, \Delta T}\right)^{1/3},
+q = \frac{k\, \Delta T}{\delta}, \qquad \delta = \left(\frac{\kappa\, \eta\, Ra_\mathrm{crit}}{\rho\, g\, \alpha\, \Delta T}\right)^{1/3},
 $$
 
-where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to the bottom mantle cell and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016[^cite-foley2016], eq. 20 and the text below it; Thiriet et al. 2019[^cite-thiriet2019], eqs. 13 and 14). On the convective branch $q \propto \Delta T^{4/3}$; a core colder than the mantle gains heat by conduction across the half cell only, so the flux always has the sign of $\Delta T$.
+where $\Delta T = T_\mathrm{core} - T_m$ and $\delta$ is the boundary-layer thickness at the critical Rayleigh number (Foley & Driscoll 2016[^cite-foley2016], eq. 20 and the text below it; Thiriet et al. 2019[^cite-thiriet2019], eqs. 13 and 14). So $q \propto \Delta T^{4/3}$ at any $\delta$. A core colder than the mantle gains heat by conduction across the half cell only, $k\,\Delta T/\Delta r_{1/2}$, with $\Delta r_{1/2}$ the distance to the bottom mantle cell, so the flux always has the sign of $\Delta T$.
 
 **Reference.** The law is evaluated for a bottom cell with constant properties, over a liquid and a solid base:
 
@@ -104,19 +104,19 @@ where $\Delta T = T_\mathrm{core} - T_m$, $\Delta r_{1/2}$ is the distance to th
 | Viscosity $\eta$ of the liquid base | 0.1 Pa s |
 | Viscosity $\eta$ of the solid base | $10^{21}$ Pa s |
 
-The default $Ra_\mathrm{crit} = 450$ is the critical value Thiriet et al. (2019[^cite-thiriet2019], Table 2) use for the upper boundary layer of their mantle; for the lower boundary layer they scale it with the internal Rayleigh number (their eq. 16), so here it is a parameter, `ra_crit_cmb`.
+This check fixes $Ra_\mathrm{crit}$ at 450, the value Thiriet et al. (2019[^cite-thiriet2019], Table 2) use for the upper boundary layer of their mantle, and at 1800. By default the solver takes their lower-layer law instead, eq. 16, which sets $Ra_\mathrm{crit}$ from the internal Rayleigh number of the mantle ([core_bc.md](../Explanations/core_bc.md#critical-rayleigh-number-of-the-layer)); `test_eq16_critical_rayleigh_number_by_hand` checks that law against a hand calculation.
 
-**Result.** The convective branch has the slope 1.333<!--k:3.convective_slope--> in log-log and $Ra_\mathrm{crit} = 1800$ lowers the flux by the factor 0.630<!--k:3.ra_crit_ratio_1800_450--> $= (450/1800)^{1/3}$. At a 100 K contrast the flux is 5.55e+04<!--k:3.q_liquid_100K--> W m$^{-2}$ over the liquid base and 0.04<!--k:3.q_solid_100K--> W m$^{-2}$ over a solid base, where conduction across the half cell sets it; a colder core conducts at the same rate over either base, to 4.2e-15<!--k:3.cold_core_flux_equals_solid_base-->.
+**Result.** The convective branch has the slope 1.333<!--k:3.convective_slope--> in log-log and $Ra_\mathrm{crit} = 1800$ lowers the flux by the factor 0.630<!--k:3.ra_crit_ratio_1800_450--> $= (450/1800)^{1/3}$. At a 100 K contrast the flux is 5.55e+04<!--k:3.q_liquid_100K--> W m$^{-2}$ over the liquid base and 2.6e-03<!--k:3.q_solid_100K--> W m$^{-2}$ over a solid base, below the conduction across the half cell (0.04 W m$^{-2}$); a colder core conducts across the half cell over either base, to 2.0e-10<!--k:3.cold_core_flux_equals_conduction-->, the round-off of a contrast of $10^{-3}$ K at 4000 K.
 
 ![CMB boundary-layer flux](../figures/vv/fig_10_cmb_boundary_layer_flux.png)
 
-**Figure 3.** Magnitude of the CMB heat flux against the core-mantle temperature contrast, for a liquid and a solid bottom cell with the properties of section 3, at $Ra_\mathrm{crit} = 450$ (solid) and 1800 (dashed); the dotted line is a core colder than the mantle, which conducts across the half cell over either base.
+**Figure 3.** Magnitude of the CMB heat flux against the core-mantle temperature contrast, for a liquid and a solid bottom cell with the properties of section 3, at $Ra_\mathrm{crit} = 450$ (solid lines) and 1800 (dashed lines); the dotted line is a core colder than the mantle, which conducts across the half cell over either base.
 
-**What the figure shows.** The two lines of the liquid base are straight and parallel on the logarithmic axes, with the slope of the convective branch, and the dashed line lies below the solid one by the factor of the result above. The line of the solid base and the dotted line of the colder core lie on each other with the slope 1 of conduction. A wrong exponent in $\delta$ would change the slope of the liquid-base lines, and a law without the conduction floor would put the solid-base line below the dotted one. This flux sets the cooling rate of the core in a `core_module` run.
+**What the figure shows.** The two lines of the liquid base are straight and parallel on the logarithmic axes, with the slope of the convective branch, and the dashed line lies below the solid one by the factor of the result above. The lines of the solid base have the same slope and lie below the dotted line of the colder core, which has the slope 1 of conduction: a hot core under a viscous layer loses less heat than conduction across the bottom cell would carry, and the flux does not depend on that cell. A wrong exponent in $\delta$ would change the slope of the convective lines, and a conduction floor would put the solid-base line on the dotted one. This flux sets the cooling rate of the core in a `core_module` run.
 
 **Limits.** The properties of this check are constants; in the solver they come from the mantle phase model at the layer's mean temperature ([core_bc.md](../Explanations/core_bc.md)), and sections 9, 11 and 12 test the flux in the solver. The figure plots magnitudes, so it does not show the sign of the flux; the tests below hold the sign.
 
-**Pinned by** `tests/test_core_boundary_layer.py` (sign, hand-computed convective value, conduction branch, $Ra_\mathrm{crit}$ scaling, continuity and slopes through zero contrast).
+**Pinned by** `tests/test_core_boundary_layer.py` (sign, hand-computed convective value, conduction of a colder core, the boundary-layer flux under a solid base and its independence of the cell, eq. 16 by hand, $Ra_\mathrm{crit}$ scaling, continuity and slopes through zero contrast).
 
 ## 4. Inner-core nucleation
 
@@ -293,17 +293,17 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **Why this check exists.** Where the inner core starts to grow, the latent heat capacity of the core rises as a square root of the undercooling. A solver that steps badly over this onset books a core heat change that does not match the heat through the core-mantle boundary (CMB).
 
-**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 4 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
+**What it tests.** The coupled right-hand side carries the core temperature as a state, so CVODE integrates the core through the onset. The quadratic melting curve of section 5 at 1.5 times its $T_{m0}$ (4015.5 K) puts the onset above the mantle base. The call starts with a core 2 K above the onset over a partly molten mantle base and lasts 16 yr. The check compares the core heat change that the solver books with the CMB heat that it books.
 
 **How we know the right answer.** Energy conservation: the core heat change of the call must equal its CMB heat ([core closure](../Explanations/core_bc.md#energy-conservation-and-core-closure)). The bound is $10^{-6}$ for a core without a layer solved alone.
 
-The core cools from 6414.4<!--k:9.t_core_start--> K to 6409.5<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 244<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 5.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
+The core cools from 6414.4<!--k:9.t_core_start--> K to 6411.9<!--k:9.t_core_end--> K, through the onset at 6412.4<!--k:9.t_onset--> K. It grows an inner core of 105<!--k:9.r_icb_end_km--> km. The solver runs at an rtol of $10^{-10}$, with atol at its floor of $10^{-8}$. It books the core heat change as the integral of the effective capacity over the integrated change of the core temperature (`CoreEnergyBudget.heat_change`). That change matches the CMB heat that the solver books to 4.6e-07<!--k:9.core_vs_cmb_rel-->, within the bound.
 
-The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 7.9e-04<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.5 and then 2.0, the order of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
+The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the trapezoid rule matches to 3.5e-03<!--k:9.reconstructed_cmb_max_rel-->. This is the error of that sampling. It falls with order 1.9, 1.6 and 2.0, close to the order 2 of the trapezoid rule (`item9_cvode_onset(output_points=...)`):
 
-| Output intervals | 65 | 130 | 260 |
-|---|---|---|---|
-| Error of the reconstructed CMB heat | 2.3e-3 | 7.9e-4 | 1.9e-4 |
+| Output intervals | 65 | 130 | 260 | 520 |
+|---|---|---|---|---|
+| Error of the reconstructed CMB heat | 1.3e-2 | 3.5e-3 | 1.2e-3 | 2.9e-4 |
 
 **Why it matters.** The core energy ledger of a `core_module` run rests on this closure.
 
@@ -311,7 +311,7 @@ The CMB heat reconstructed from the 131<!--k:9.n_outputs--> output times by the 
 
 **How to read the plot.** Figure 9 is a CVODE solve through the inner-core onset. Panel (a) shows the core temperature against time, which crosses the onset temperature during the call. Panel (b) shows the core heat lost, from the heat-content difference and from the time integral of the CMB heat flow. The 2 curves lie on each other. Panel (c) shows their relative difference, the sampling error of the trapezoid rule over the output times, largest at the first outputs. A core temperature that did not follow the CMB heat flow through the onset would separate the curves in (b).
 
-**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.3e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, so a call across the onset needs the tighter tolerance to meet that bound. Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
+**Known limit.** At the default rtol of $10^{-8}$ the CMB heat matches to 1.0e-06<!--k:9.core_vs_cmb_rel_rtol1e-8-->, just above the bound, which holds from an rtol of $10^{-9}$ (5.4e-7). With atol at its floor the closure stops near $4 \times 10^{-7}$ for any rtol (4.2e-7 at $10^{-12}$); with atol 1000 times tighter it falls to 3.6e-8 at an rtol of $10^{-10}$, so it is integration error set by atol, not round-off (the float spacing of the core heat content is $5 \times 10^{-13}$ of the CMB heat). Panel (c) does not show the closure of the booked ledger, only the sampled reconstruction.
 
 ??? info "Test details"
     - Reference: energy conservation of the core ledger; the quadratic melting curve of section 5 at 1.5 times its $T_{m0}$.
@@ -620,6 +620,34 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 - Test id: `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`
 - Command: `pytest tests/test_core_layer.py -k erfc` (add `--validation-plots` to write the plot pairs)
 
+## 15. Critical Rayleigh number by phase
+
+<!-- The numbers of this section come from its test and from the weight formula, so the page test has no number of it to check. -->
+
+**Why this check exists.** With `ra_crit_cmb = "phase"` the CMB flux blends the 2 laws of the boundary layer by the melt fraction of the bottom mantle cell ([explanation](../Explanations/core_bc.md#critical-rayleigh-number-by-phase)). A wrong weight (a wrong sign, or a wrong width such as that of the viscosity blend) would move the core cooling while the mantle freezes; this test fails on each of them.
+
+**What it tests.** A core 600 K hotter than the bottom cell, under a layer with fixed properties, has the flux $q_{450}$ at $\mathrm{Ra}_\text{crit} = 450$ and $q_{16}$ under eq. 16. The test moves the melt fraction $\phi_0$ of the bottom cell from 0 to 1 at 41 points. At each point the flux under `"phase"` must equal $q_{450}^{\,s}\, q_{16}^{\,1-s}$, where $s = [1 + \tanh((\phi_0 - 0.4)/w_s)]/2$ with $w_s = 0.1/\operatorname{artanh} 0.9$ is the weight of the liquid law: 0.05 and 0.95 at the band edges 0.3 and 0.5. It must also lie between the 2 laws.
+
+**How we know the right answer.** The flux goes as $\mathrm{Ra}_\text{crit}^{-1/3}$, so a blend of $\ln \mathrm{Ra}_\text{crit}$ with weight $s$ gives exactly this weighted geometric mean of the 2 fluxes. The test computes the weight from this formula with NumPy, apart from the code.
+
+**Why it matters.** This flux sets how fast the core cools from the magma ocean to the solid mantle. In a 1 Earth-mass run the bottom cell passes the band between about 0.19 and 0.48 Myr.
+
+![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase.svg#only-light){ width="80%" }
+![CMB heat flux under the law by phase against the melt fraction of the bottom cell](../assets/validation/core_cmb_law_by_phase_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The plot shows the CMB heat flux divided by the eq. 16 flux, against the melt fraction of the bottom cell. The dashed and dotted lines are the 2 laws; the thick line is the expected weighted mean, and the dots are the code. The text on the left gives the largest relative difference of the code from the expected value, against the tolerance. A pass puts every dot on the thick line and that difference below $10^{-12}$.
+
+**Known limit.** The test checks the law at one state; in a coupled run its effect is smaller than the stored states suggest. In a 1 Earth-mass segment from 150.4 to 500 kyr the law by phase leaves the core 3.0 K warmer at 500 kyr than a fixed 450, against 8.2 K estimated from the stored states of the run with 450. In that segment the run with the law by phase takes 2.4 times the CVODE steps and 35 % more wall time while the bottom cell crosses the transition.
+
+The weight never reaches 0 or 1: with the default transition the formula gives $s = 7.7 \times 10^{-6}$ at $\phi_0 = 0$ and $1 - 2.1 \times 10^{-8}$ at $\phi_0 = 1$. A solid bottom cell where eq. 16 gives $\mathrm{Ra}_\text{crit} = 8.5$ then has the flux of eq. 16 to a relative $10^{-5}$, and a liquid cell where eq. 16 gives $2.7 \times 10^5$ has that of 450 to a relative $10^{-7}$. The test does not check these 2 states.
+
+??? info "Test details"
+    - Reference: the weighted geometric mean $q_{450}^{\,s}\, q_{16}^{\,1-s}$, with $s$ from the formula above (exact identity of the law).
+    - Tolerance: relative $10^{-12}$; the flux lies strictly between the 2 laws.
+    - Discrimination: a weight with the opposite sign, one with $\operatorname{artanh} 0.8$ in place of $\operatorname{artanh} 0.9$, and one with the width of the viscosity blend each fail tests of `tests/test_cmb_law_by_phase.py` (10, 6 and 6 of them).
+    - Test id: `tests/test_cmb_law_by_phase.py::test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws`
+    - Command: `pytest tests/test_cmb_law_by_phase.py -k weighted_mean` (add `--validation-plots` to write the plot pair)
+
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
 [^cite-christensen2009]: Christensen, U.R., Holzwarth, V. & Reiners, A., *[Energy flux determines magnetic field strength of planets and stars](https://doi.org/10.1038/nature07626)*, Nature, 457, 167-169, 2009. [SciX](https://scixplorer.org/abs/2009Natur.457..167C/abstract).
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
@@ -627,5 +655,5 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 [^cite-labrosse2001]: Labrosse, S., Poirier, J.-P. & Le Mouël, J.-L., *[The age of the inner core](https://doi.org/10.1016/s0012-821x(01)00387-9)*, Earth and Planetary Science Letters, 190, 111-123, 2001. [SciX](https://scixplorer.org/abs/2001E%26PSL.190..111L/abstract).
 [^cite-nimmo2015a]: Nimmo, F., *[Energetics of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00139-1)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 8, ch. 8.02, 27-55, 2015.
 [^cite-nimmo2015b]: Nimmo, F., *[Thermal and Compositional Evolution of the Core](https://doi.org/10.1016/b978-0-444-53802-4.00160-3)*, in Schubert, G. (ed.), Treatise on Geophysics, 2nd edition, Elsevier, 9, ch. 9.08, 201-219, 2015.
-[^cite-thiriet2019]: Thiriet, M., Breuer, D., Michaut, C. et al., *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
+[^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
 [^cite-wolf2018]: Wolf, A.S. & Bower, D.J., *[An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO$_3$ melt](https://doi.org/10.1016/j.pepi.2018.02.004)*, Physics of the Earth and Planetary Interiors, 278, 59-74, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..278...59W/abstract).

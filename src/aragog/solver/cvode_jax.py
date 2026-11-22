@@ -72,6 +72,7 @@ class _JitCacheEntry:
     eos_jax: Any
     budget: Any = None
     powers_jit: Any = None
+    weights_jit: Any = None
 
 
 _JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
@@ -168,6 +169,28 @@ def _make_jitted_powers(
     return jax.jit(_eval_chunk)
 
 
+def _make_jitted_lid_weights(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+    budget: Any = None,
+):
+    """Build the JIT-compiled vmapped lid weight over chunks of size C."""
+    import jax
+
+    from aragog.jax import solver as js
+
+    def _eval_node(t_phys, y_phys, data):
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
+        return js.lid_weight(t_phys, y_phys, args_tuple, core_bc_mode)
+
+    def _eval_chunk(t_chunk, Y_chunk, data):
+        return jax.vmap(_eval_node, in_axes=(0, 1, None))(t_chunk, Y_chunk, data)
+
+    return jax.jit(_eval_chunk)
+
+
 def _get_or_create_jitted(
     core_bc_mode: str,
     use_radio: bool,
@@ -217,10 +240,11 @@ def build_jax_rhs_and_jacobian(
     radio_isotope_params: tuple = (),
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
-    core_module_ra_crit_cmb: float | None = None,
+    core_module_ra_crit_cmb: float | str | None = None,
     start_time: float | None = None,
     *,
     lid_params=None,
+    core_module_surface_temperature: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -265,11 +289,16 @@ def build_jax_rhs_and_jacobian(
     core_module_q_radio : float, default 0.0
         Constant core internal source power [W] for the core_module
         closure.
-    core_module_ra_crit_cmb : float
+    core_module_ra_crit_cmb : float, 'phase' or None
         Critical Rayleigh number of the CMB boundary layer for the
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
-        the solver's ``_core_module_ra_crit_cmb``; required for
-        core_module and checked with ``aragog.core.check_ra_crit``.
+        the solver's ``_core_module_ra_crit_cmb``; None selects Thiriet
+        et al. (2019) eq. 16; 'phase' blends 450 and eq. 16 by the bottom-cell melt fraction
+        across the rheological transition of ``phase_params``; checked with
+        ``aragog.core.check_ra_crit``.
+    core_module_surface_temperature : float or None
+        Surface temperature [K] of the shell contrast of eq. 16, the solver's
+        ``cmb_shell_surface_temperature()``; None or NaN: the top cell's temperature.
     lid_params : aragog.jax.surface_lid.LidParams, optional
         The sub-grid lid of the solver (``EntropySolver.jax_lid_params()``). With it the state
         ends with the lid thickness and energy, and ``rhs_fn.lid`` and ``info['lid']`` are
@@ -421,10 +450,22 @@ def build_jax_rhs_and_jacobian(
         jnp.asarray(scales.state_offset),
     )
     if core_bc_mode == 'core_module':
-        from aragog.core import check_ra_crit
+        from aragog.core import RA_CRIT_PHASE, check_ra_crit
 
         q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
-        data = data + (jnp.float64(q_radio), jnp.float64(ra_crit))
+        phase_law = ra_crit == RA_CRIT_PHASE
+        # NaN carries 'eq. 16' (ra_crit None, also the base of the law by phase) through the
+        # traced arguments; the last entry switches the law by phase on.
+        data = data + (
+            jnp.float64(q_radio),
+            jnp.float64(jnp.nan if ra_crit is None or phase_law else ra_crit),
+            jnp.float64(
+                jnp.nan
+                if core_module_surface_temperature is None
+                else core_module_surface_temperature
+            ),
+            jnp.float64(1.0 if phase_law else 0.0),
+        )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
     entry, is_cache_hit = _get_or_create_jitted(
@@ -541,6 +582,33 @@ def build_jax_rhs_and_jacobian(
             return np.concatenate(chunks)[:n]
 
         rhs_fn.step_powers = step_powers
+
+        if lid_params is not None:
+
+            def lid_weights(t_nodes, Y_nodes):
+                """Lid weight at each accepted node, shape (n,), states in physical units."""
+                t_arr = np.asarray(t_nodes, dtype=np.float64).ravel()
+                Y_arr = np.asarray(Y_nodes, dtype=np.float64)
+                if Y_arr.shape != (expected_size, t_arr.size):
+                    raise ValueError(
+                        f'Y_nodes shape {Y_arr.shape}, expected ({expected_size}, {t_arr.size})'
+                    )
+                if t_arr.size == 0:
+                    return np.empty(0, dtype=np.float64)
+                if entry.weights_jit is None:
+                    entry.weights_jit = _make_jitted_lid_weights(
+                        core_bc_mode, use_radio, phase_params, eos_jax, budget
+                    )
+                pad_len = -t_arr.size % C
+                t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
+                Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
+                chunks = [
+                    np.asarray(entry.weights_jit(t_pad[k : k + C], Y_pad[:, k : k + C], data))
+                    for k in range(0, t_pad.size, C)
+                ]
+                return np.concatenate(chunks)[: t_arr.size]
+
+            rhs_fn.lid_weights = lid_weights
 
     if getattr(getattr(phase_params, 'rheology', None), 'enabled', False) and hasattr(
         mesh_arrays, 'validate_for_rheology'

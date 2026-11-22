@@ -500,9 +500,9 @@ def test_a_handed_over_lid_skips_the_lid_and_equals_the_rhs_without_it(monkeypat
 
     calls, top = [0], jl.lid_top
 
-    def counted(*a):
+    def counted(*a, **kw):
         calls[0] += 1
-        return top(*a)
+        return top(*a, **kw)
 
     monkeypatch.setattr(jl, 'lid_top', counted)
     out = np.empty(y.size)

@@ -105,9 +105,10 @@ def test_factory_shape_contract_core_module():
     rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
     assert callable(rhs_fn) and callable(jac_fn)
     assert info['rhs_calls'] == 0
-    # The critical Rayleigh number must come from the caller (the solver's value), and be
-    # positive and finite.
-    for bad in (None, 0.0, -450.0, float('nan'), float('inf')):
+    # The critical Rayleigh number comes from the caller (the solver's value): None selects
+    # Thiriet eq. 16; a number must be positive and finite.
+    build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=None)
+    for bad in (0.0, -450.0, float('nan'), float('inf')):
         with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
             build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=bad)
     # A stratified budget builds: its shell temperatures are state after T_core.
@@ -196,7 +197,9 @@ def _build_jax_pieces(solver):
         else _no_radio,
         solver._core_module_budget,
         float(solver._core_module_q_radio),
-        float(solver._core_module_ra_crit_cmb),
+        float('nan')
+        if solver._core_module_ra_crit_cmb is None
+        else float(solver._core_module_ra_crit_cmb),
     )
     return args
 
@@ -341,9 +344,11 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
     )
 
     # ra_crit_cmb reaches both RHS: with a core 1000 K above the base the flux is on the
-    # boundary-layer branch, so a 4x larger Ra_crit thickens the layer and slows the cooling.
+    # boundary-layer branch, so a 4x larger fixed Ra_crit thickens the layer and slows the
+    # cooling (the eq. 16 default here is larger than both).
     y_hot = y0.copy()
     y_hot[n_stag + 1] += 1000.0
+    monkeypatch.setattr(solver, '_core_module_ra_crit_cmb', 450.0)
     f_hot = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
     monkeypatch.setattr(solver, '_core_module_ra_crit_cmb', 1800.0)
     f_np_c = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
@@ -531,7 +536,8 @@ def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax(
 def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boundaries():
     """Where the layer's mean temperature crosses the solidus or the liquidus by 1e-7 K (5e-7
     J/kg/K in the mush; the tables' pure-phase T(S) is flat next to both edges), the NumPy and
-    the JAX CMB fluxes step only by the cube root of the step of the mantle-model viscosity."""
+    the JAX CMB fluxes step only with the layer viscosity: Ra_crit of Thiriet eq. 16 takes the
+    interior viscosity of the solid bottom cell, which stays fixed, so q ~ eta^(-1/3)."""
     solver = _build_numpy_solver(entropy_eos_copy())
     eos, bl, n = solver.entropy_eos, solver._bl_phase, solver._n_stag
     P = float(solver._P_basic_flat[0])
@@ -542,7 +548,7 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
         t_edge, flux, eta = eos.temperature_scalar(P, s_edge), [], []
         for t_mean in (t_edge - 1e-7, t_edge + 1e-7):
             y[n + 1] = 2.0 * t_mean - t_m
-            f_np = solver._core_module_cmb_flux(y[n + 1], y[0])
+            f_np = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
             f_jax = float(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).heat_flux[0])
             assert f_jax == pytest.approx(f_np, rel=1e-5)
             bl.set_entropy(np.array([eos.entropy_at_temperature(P, t_mean)]))
@@ -569,13 +575,13 @@ def test_an_unconverged_inversion_gives_nan_and_stops_the_layer_flux(monkeypatch
     t_m = eos.temperature_scalar(P, 1100.0)
     t_mean = t_m + 300.0
     assert np.isfinite(eos.entropy_at_temperature(P, t_mean))
-    assert solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0) > 0.0
+    assert solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0, 1100.0) > 0.0
     monkeypatch.setattr(
         entropy_module, 'brentq', lambda *a, **k: brentq(*a, **(k | {'maxiter': 2}))
     )
     assert np.isnan(eos.entropy_at_temperature(P, t_mean))
     with pytest.raises(RuntimeError, match='EOS table domain'):
-        solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0)
+        solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0, 1100.0)
 
 
 @pytest.mark.slow
@@ -645,7 +651,11 @@ def test_jacobian_core_column_matches_central_differences(state):
         scales = NonDimScales(state_scale=np.ones(y.size), t_ref=1.0)
         kw = dict(core_module_budget=budget, core_module_q_radio=args[7])
         rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
-            *args[:5], scales, 'core_module', core_module_ra_crit_cmb=args[8], **kw
+            *args[:5],
+            scales,
+            'core_module',
+            core_module_ra_crit_cmb=None if np.isnan(float(args[8])) else float(args[8]),
+            **kw,
         )
         out, J_cvode = np.empty(y.size), np.empty((y.size, y.size))
         assert rhs_fn(0.0, y, out) == 0 and jac_fn(0.0, y, out, J_cvode) == 0
@@ -661,6 +671,8 @@ def test_jacobian_core_column_matches_central_differences(state):
     # The mixing flux curves strongly in the mixed region: there a central difference needs a
     # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
     h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
+    if state == 'boundary_layer':  # the gradient-slot entry is 8e-9: a 0.1 K step is round-off
+        h = 1.0  # noisy at 3.7e-5, a 1 K step agrees to 6e-7 in both rows
     up, down = y.copy(), y.copy()
     up[n + 1] += h
     down[n + 1] -= h

@@ -85,7 +85,7 @@ The guard is a safety net. It does not set the step and does not remove the caus
 **What to do.**
 
 - Retry the call with a shorter step. This does not help for a start outside, and the message says so.
-- In PROTEUS the retry ladder halves the step and keeps the previous interior state when the ladder fails. It stops the run at the third such failure in a row.
+- A caller can run the call with `strict_accepted_range = True`: an accepted state outside the tables then raises `AcceptedStateRangeError`, and a retry ladder of the caller can count it as a failed attempt and halve the step. When the retry ladder of PROTEUS fails, PROTEUS keeps the previous interior state for that step and stops the run at the third such failure in a row.
 - Look at the coupling step: a flux fixed over a step is what drains the top cell.
 
 **What it does not judge.**

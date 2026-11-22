@@ -518,18 +518,20 @@ def stefan_rate(
 
     ``r = (q_b - F_b) / (rho max(dh, LID_DH_MIN))``. Growth stops linearly over
     ``[LID_CAP_FRAC - LID_CAP_WIDTH, LID_CAP_FRAC] h_top``; melt-back stops linearly over
-    ``[delta_lo, 2 delta_lo]``.
+    ``[delta_lo, 2 delta_lo]``, and below ``delta_lo`` the same line turns the rate of a melting
+    lid back towards ``delta_lo`` (factor down to -1 at ``delta = 0``). The exact solution never
+    passes the stop; this branch only returns a state that the integrator left below it.
 
     Returns
     -------
     tuple of float
-        ``(r, factor)``: the rate after the stop and the stop factor in [0, 1].
+        ``(r, factor)``: the rate after the stop and the stop factor in [-1, 1].
     """
     r = (q_b - F_b) / (rho * max(dh, LID_DH_MIN))
     if r > 0.0:
         f = float(np.clip((LID_CAP_FRAC - delta / h_top) / LID_CAP_WIDTH, 0.0, 1.0))
     elif r < 0.0:
-        f = float(np.clip((delta - delta_lo) / delta_lo, 0.0, 1.0))
+        f = float(np.clip((delta - delta_lo) / delta_lo, -1.0, 1.0))
     else:
         f = 1.0
     return r * f, f
@@ -588,6 +590,35 @@ def flux_weight(
     return existence_weight(F_b, T_b, k, emissivity, T_eq, delta_on, T_surf=T_s)
 
 
+def open_conductance(w: float, Fp: float, G: float, Gl: float) -> float:
+    """Response ``G_eff(w) = G F' / (F' + w G_l + (1 - w) G)`` [W/m^2/K] of the open surface,
+    per open area, at the lid weight ``w``; 0 for ``F' = 0``.
+
+    In the linear call balance ``F_atm(T_s) = w G_l (T_b - T_s) + (1 - w) G (T_m - T_s)``,
+    with ``F'`` the growth of the atmosphere flux per K of surface warming, a rise ``dT_m``
+    of the melt temperature changes ``F_atm`` by ``(1 - w) G_eff dT_m``. The lid part is
+    held at its start flux ``L`` through the call, so the open part takes all of that change:
+    the split between lid and fluid rests on this premise. ``Fp``, ``G`` and ``Gl`` in W/m^2/K.
+    """
+    if Fp == 0.0:
+        return 0.0
+    return G * Fp / (Fp + w * Gl + (1.0 - w) * G)
+
+
+def open_part_total(
+    w: float, F_atm: float, L: float, Fp: float, G: float, Gl: float, dT_m: float
+) -> float:
+    """Open part of the surface loss per total area [W/m^2] at the lid weight ``w``.
+
+    ``A_open = F_atm - w L + (1 - w) G_eff(w) dT_m``, with ``F_atm`` the atmosphere flux of
+    the call [W/m^2] (total area), ``L`` the lid flux of the call balance [W/m^2], ``G_eff``
+    :func:`open_conductance` and ``dT_m = T_m - T_m0`` [K] the rise of
+    ``T_m = max(T_node, T_b)`` since the call start. The product form has no division by
+    ``1 - w``, so ``A_open`` is finite and continuous at ``w = 1``, where it is ``F_atm - L``.
+    """
+    return F_atm - w * L + (1.0 - w) * open_conductance(w, Fp, G, Gl) * dT_m
+
+
 @dataclass(frozen=True)
 class LidRates:
     """Rates and fluxes of the lid at one state.
@@ -605,7 +636,7 @@ class LidRates:
     w : float
         Lid weight [0, 1].
     stop : float
-        Factor of the growth or melt-back stop [0, 1].
+        Factor of the growth or melt-back stop [-1, 1]; below 0 only under the melt-back stop.
     H_lid : float
         Internal heating of the lid [W/m^2].
     """
@@ -635,6 +666,7 @@ def lid_rates(
     h_top: float,
     delta_lo: float,
     heating: float,
+    F_open_total: float | None = None,
 ) -> LidRates:
     """Assemble the lid rates and the fluid flux at one state.
 
@@ -650,6 +682,9 @@ def lid_rates(
     ----------
     heating : float
         Internal heating per mass [W/kg] of the top cell, applied to the lid mass.
+    F_open_total : float or None
+        Open part of the surface loss per total area [W/m^2] (:func:`open_part_total`):
+        ``F_top = w F_s + F_open_total``. None: ``F_top = w F_s + (1 - w) F_grid``.
     """
     r, stop = stefan_rate(surf.q_b, F_b, rho, (H_f - H_b) / rho, delta, h_top, delta_lo)
     E_ph = delta_lo * hv.profile_heat(0.0, surf.T_s, T_b)
@@ -657,7 +692,8 @@ def lid_rates(
     ddelta = w * r - relax * (delta - delta_lo)
     H_lid = heating * delta * hv.profile_density(surf.s, surf.T_s, T_b)
     dE = w * (surf.q_b - surf.F_s + H_b * r) - relax * (E_lid - E_ph) + H_lid
-    F_top = w * surf.F_s + (1.0 - w) * F_grid
+    F_open = (1.0 - w) * F_grid if F_open_total is None else F_open_total
+    F_top = w * surf.F_s + F_open
     F_fluid = F_top + dE - H_lid - H_f * ddelta
     return LidRates(
         ddelta=ddelta, dE=dE, F_top=F_top, F_fluid=F_fluid, w=w, stop=stop, H_lid=H_lid

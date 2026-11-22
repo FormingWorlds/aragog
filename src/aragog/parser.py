@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -28,7 +29,9 @@ from aragog.config.boundary import (
     check_lid_mush_base,
     check_lid_surface,
     check_subgrid_lid,
+    check_surface_temperature,
     check_top_node,
+    open_part_of,
 )
 from aragog.config.energy import (
     CONVECTIVE_THRESHOLD_DEFAULT,
@@ -95,6 +98,48 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
     return mapping
 
 
+_LID_SURFACE_RENAMED = (
+    'lid_surface_temperature is now surface_temperature; the old name goes in the next release'
+)
+
+
+# the text None values of the INI field parser (typed_configparser), in any case
+_INI_NONE = ('none', 'null')
+
+
+def _ini_none(value):
+    """An INI value, or None for a missing value or a text None (:data:`_INI_NONE`)."""
+    return None if value is None or value.strip().lower() in _INI_NONE else value
+
+
+def _old_lid_surface(old, new):
+    """``surface_temperature`` of a boundary section that sets the old key
+    ``lid_surface_temperature`` to ``old``, with ``new`` the value of ``surface_temperature`` in
+    the section or None; an old key of None counts as unset. It warns with a FutureWarning, which
+    the default warning filters show once per call site (once for TOML and dict configs, once
+    for INI configs), and refuses the 2 names at 2 values."""
+    warnings.warn(_LID_SURFACE_RENAMED, FutureWarning, stacklevel=2)
+    if old is None:
+        return new
+    if new is not None and float(new) != float(old):
+        raise ValueError(
+            f'boundary_conditions sets lid_surface_temperature {old} and surface_temperature '
+            f'{new}: set surface_temperature only'
+        )
+    return old
+
+
+def _boundary_section(section: dict[str, Any]) -> dict[str, Any]:
+    """The boundary section of a TOML file or a dict config, with the old key
+    ``lid_surface_temperature`` given as ``surface_temperature`` (:func:`_old_lid_surface`)."""
+    if 'lid_surface_temperature' not in section:
+        return section
+    section = dict(section)
+    old = section.pop('lid_surface_temperature')
+    section['surface_temperature'] = _old_lid_surface(old, section.get('surface_temperature'))
+    return section
+
+
 @dataclass
 class _BoundaryConditionsParameters:
     """Stores parameters in the boundary_conditions section in the configuration data."""
@@ -124,9 +169,28 @@ class _BoundaryConditionsParameters:
     lid_handover_cells: int = 3
     lid_ra_crit: float = 450.0
     lid_mush_base: bool = False
-    lid_surface_temperature: float | None = None
     lid_surface_flux_cap: float | None = None
     lid_surface_flux_slope: float | None = None
+    # Surface temperature [K]: core_module shell contrast, and the held lid (BoundaryConfig).
+    surface_temperature: float | None = None
+    # Open part of the lid on the flux boundary, set together (units in BoundaryConfig).
+    open_lid_flux: float | None = None
+    open_surface_slope: float | None = None
+    open_skin_conductance: float | None = None
+    open_lid_conductance: float | None = None
+
+    @property
+    def lid_surface_temperature(self) -> float | None:
+        """Deprecated name of ``surface_temperature``; it warns. It covers the attribute and the
+        key of a config file or a dict config (:func:`_boundary_section`), not a constructor
+        keyword."""
+        warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
+        return self.surface_temperature
+
+    @lid_surface_temperature.setter
+    def lid_surface_temperature(self, value: float | None) -> None:
+        warnings.warn(_LID_SURFACE_RENAMED, DeprecationWarning, stacklevel=2)
+        self.surface_temperature = value
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -155,12 +219,14 @@ class _BoundaryConditionsParameters:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
         check_top_node(self.top_node, self.core_bc)
         check_lid_mush_base(self.lid_mush_base, self.subgrid_lid)
+        check_surface_temperature(self.surface_temperature)
         check_lid_surface(
             self.outer_boundary_condition,
             self.lid_mush_base,
-            self.lid_surface_temperature,
+            self.surface_temperature,
             self.lid_surface_flux_cap,
             self.lid_surface_flux_slope,
+            open_part_of(self),
         )
         check_subgrid_lid(
             self.subgrid_lid,
@@ -629,8 +695,15 @@ class _SolverParameters:
     # flag is also set, independent of this limit, whenever any sampled
     # core temperature is non-finite; the measured change is always reported.
     tcore_change_limit: float | None = None
+    # Raise AcceptedStateRangeError, in place of a failed call, when an accepted state of a
+    # call leaves the entropy range of the EOS tables (rheology off; on, it always raises).
+    strict_accepted_range: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.strict_accepted_range, bool):
+            raise TypeError(
+                f'strict_accepted_range must be true or false, got {self.strict_accepted_range!r}'
+            )
         if not isinstance(self.cvode_output_points, int):
             raise TypeError(
                 f'cvode_output_points must be an integer, '
@@ -819,6 +892,8 @@ class Parameters:
             if dataclass_ is _PhaseParameters:
                 _reject_flat_rheology(section_name, section, f' of {path.name}')
             try:
+                if dataclass_ is _BoundaryConditionsParameters:
+                    section = _boundary_section(section)
                 init_dict[section_name] = dataclass_(**section)
             except (TypeError, ValueError) as exc:
                 is_rheo_err = (
@@ -875,6 +950,22 @@ class Parameters:
                     (k for k, _ in parser.items(section_name)),
                     f' of {Path(filenames[0]).name}',
                 )
+            if dataclass_ is _BoundaryConditionsParameters and parser.has_option(
+                section_name, 'lid_surface_temperature'
+            ):
+                new = _ini_none(parser.get(section_name, 'surface_temperature', fallback=None))
+                old = _ini_none(parser.get(section_name, 'lid_surface_temperature'))
+                try:
+                    held = _old_lid_surface(old, new)
+                except ValueError as exc:
+                    raise ValueError(
+                        f'Configuration error in [{section_name}] of '
+                        f'{Path(filenames[0]).name}: {exc}'
+                    ) from exc
+                parser.set(
+                    section_name, 'surface_temperature', 'none' if held is None else held
+                )
+                parser.remove_option(section_name, 'lid_surface_temperature')
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )

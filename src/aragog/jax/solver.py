@@ -327,7 +327,7 @@ class RhsParts(NamedTuple):
     rate: jax.Array
     heat_flux: jax.Array
     phase_stag: PhaseProperties
-    lid: tuple | None = None  # (V_fluid, ddelta, dE, H_f, m_lid) with the lid [SI]
+    lid: tuple | None = None  # (V_fluid, ddelta, dE, H_f, m_lid, w) with the lid [SI]
 
 
 class StepPowersAux(NamedTuple):
@@ -501,10 +501,11 @@ def _lid_split(state: jax.Array, bc: BoundaryParams) -> tuple:
     return state[:-2], state[-2:]
 
 
-def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out):
+def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out, T_node):
     """The lid at the top cell, as the NumPy RHS: the surface loss in ``heat_flux[-1]``, and
     the top-face energy flux [W] and top-cell capacitance volume [m^3] of the fluid under the
-    lid. A handed-over lid (thickness 0) leaves the mesh as it is and has zero rates. For one column it
+    lid. ``T_node`` is the top basic node [K] of the open-part response. A handed-over lid
+    (thickness 0) leaves the mesh as it is and has zero rates. For one column it
     does not evaluate ``lid_top``; under ``vmap`` the cond is a select and both branches run.
 
     Returns ``(heat_flux, top_energy_flux, top_volume, lid_terms)``.
@@ -527,14 +528,23 @@ def _lid_apply(eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out)
         if params.rheology.enabled:  # the creep-law viscosity, as the NumPy staggered phase
             top['eta'] = evaluate_phase(eos, params, mesh.P_stag[-1:], S[-1:]).viscosity[0]
         T_iso = flux_out.T_lid_iso if flux_out.T_lid_iso is not None else jnp.nan
-        F_top, F_fluid, V, ddelta, dE, (H_f, m_lid) = jl.lid_top(
-            bc.lid, eos, y_lid, S[-1], top, heat_flux[-2], F_grid, T_iso, flux_out.heating[-1]
+        F_top, F_fluid, V, ddelta, dE, (H_f, m_lid), w = jl.lid_top(
+            bc.lid,
+            eos,
+            y_lid,
+            S[-1],
+            top,
+            heat_flux[-2],
+            F_grid,
+            T_iso,
+            flux_out.heating[-1],
+            T_node=T_node,
         )
-        return F_top, F_fluid, V, ddelta, dE, H_f, m_lid
+        return F_top, F_fluid, V, ddelta, dE, H_f, m_lid, w
 
     def handed_over():
         zero = jnp.zeros_like(F_grid)
-        return F_grid, F_grid, mesh.volume[-1], zero, zero, zero, zero
+        return F_grid, F_grid, mesh.volume[-1], zero, zero, zero, zero, zero
 
     F_top, F_fluid, V, *terms = jax.lax.cond(y_lid[0] != 0.0, live, handed_over)
     heat_flux = heat_flux.at[-1].set(F_top)
@@ -624,7 +634,7 @@ def _dSdt_parts(
     lid_fix = lid_terms = None
     if y_lid is not None:
         heat_flux, *lid_fix, lid_terms = _lid_apply(
-            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out, phase_basic_T[-1]
         )
 
     # Flux divergence at staggered nodes; capacitance rho * T * volume
@@ -767,7 +777,16 @@ def _dSdt_energy_balance_parts(
     lid_fix = lid_terms = None
     if y_lid is not None:
         heat_flux, *lid_fix, lid_terms = _lid_apply(
-            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+            eos,
+            params,
+            mesh,
+            bc,
+            y_lid,
+            S,
+            phase_stag,
+            heat_flux,
+            flux_out,
+            phase_basic.temperature[-1],
         )
 
     # Flux divergence (entropy derivatives, same as dSdt).
@@ -904,7 +923,7 @@ def step_powers(
     lid_power = lid_mass = 0.0
     if parts.lid is not None:
         # the fluid part of the top cell, the lid energy net of the fluid it takes, its mass
-        V, ddelta, dE, H_f, m_lid = parts.lid
+        V, ddelta, dE, H_f, m_lid, _ = parts.lid
         vol = vol.at[-1].set(V)
         lid_power = aux.A_int * (dE - H_f * ddelta)
         lid_mass = aux.A_int * m_lid
@@ -929,6 +948,23 @@ def step_powers(
             residual,
         ]
     )
+
+
+def lid_weight(t: float, y: jax.Array, args: tuple, mode: str) -> jax.Array:
+    """Lid weight at one solver state of a right-hand side with the lid; 0 for a handed-over lid.
+
+    Raises
+    ------
+    ValueError
+        For a mode without a parts function, or a right-hand side without the lid.
+    """
+    parts_fn = _PARTS_REGISTRY.get(mode)
+    if parts_fn is None:
+        raise ValueError(f'mode={mode!r} is not supported by lid_weight')
+    parts = parts_fn(t, y, args)
+    if parts.lid is None:
+        raise ValueError('lid_weight needs a right-hand side with the lid')
+    return parts.lid[5]
 
 
 # ---------------------------------------------------------------------------
@@ -967,11 +1003,17 @@ def dSdt_core_module(
         Extended state vector (entropy, dSdr_cmb, T_core, shell temperatures).
     args : tuple
         ``(eos, params, mesh, bc, heating_static, H_radio_fn,
-        core_budget, q_radio_core, ra_crit)``: the ``dSdt`` six
+        core_budget, q_radio_core, ra_crit[, t_surf[, phase_law]])``: the ``dSdt`` six
         plus the ``aragog.core.CoreEnergyBudget`` whose rates close the
-        boundary, the constant core internal source power [W] and the critical
-        Rayleigh number of the CMB boundary layer. A stratified budget's CMB flux
-        sees the top shell cell, and the CMB basic node rides on it.
+        boundary, the constant core internal source power [W], the critical
+        Rayleigh number of the CMB boundary layer (NaN selects Thiriet et al. 2019 eq. 16,
+        with the mantle thickness, the contrast across the shell and the bottom cell's
+        viscosity at the CMB pressure) and the surface temperature [K] of that contrast
+        (NaN or absent: the top cell's temperature). ``phase_law`` 1.0 blends ``ra_crit`` 450
+        and eq. 16 by the melt fraction of that bottom-cell state across the rheological
+        transition of ``params`` (``ra_crit_cmb = 'phase'``); 0.0 or absent keeps ``ra_crit``.
+        A stratified budget's CMB flux sees the top shell cell, and the CMB basic node rides
+        on it.
 
     Returns
     -------
@@ -989,6 +1031,9 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
 
     eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
     core_budget, q_radio_core, ra_crit = args[6:9]
+    t_surf = args[9] if len(args) > 9 else jnp.nan
+    # 1.0 selects the CMB law by phase (ra_crit_cmb = 'phase', ra_crit NaN as its eq. 16 base).
+    phase_law = args[10] if len(args) > 10 else 0.0
     shell = core_budget.stratification
     heating = heating_static + H_radio_fn(t)
     state_ext, y_lid = _lid_split(state_ext, bc)
@@ -1030,6 +1075,8 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     t_m = eos.temperature(mesh.P_basic[0], S[0])
     s_bl = eos.entropy_at_temperature(mesh.P_basic[0], 0.5 * (t_hot + t_m))
     bl = evaluate_phase(eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)))
+    # Ra_i of eq. 16 takes the interior viscosity: the bottom cell's own state, at T_m.
+    interior = evaluate_phase(eos, params, mesh.P_basic[:1], S[:1])
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
             t_hot,
@@ -1042,6 +1089,15 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             gravity=mesh.gravity[0],
             dr_half=r_stag_0 - r_basic[0],
             ra_crit=ra_crit,
+            shell_thickness=r_basic[-1] - r_basic[0],
+            shell_contrast=t_hot
+            - jnp.where(jnp.isnan(t_surf), eos.temperature(mesh.P_stag[-1], S[-1]), t_surf),
+            interior_viscosity=interior.viscosity[0],
+            melt_fraction=interior.melt_fraction[0],
+            liquid_band=(
+                jnp.where(phase_law > 0.0, params.phi_rheo, jnp.nan),
+                params.phi_width,
+            ),
         )
     )
 
@@ -1050,7 +1106,16 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     lid_fix = lid_terms = None
     if y_lid is not None:
         heat_flux, *lid_fix, lid_terms = _lid_apply(
-            eos, params, mesh, bc, y_lid, S, phase_stag, heat_flux, flux_out
+            eos,
+            params,
+            mesh,
+            bc,
+            y_lid,
+            S,
+            phase_stag,
+            heat_flux,
+            flux_out,
+            phase_basic.temperature[-1],
         )
 
     cap = phase_stag.capacitance

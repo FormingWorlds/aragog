@@ -11,7 +11,9 @@ Outputs, with ``<out>`` the path given:
 - ``<out>.cmb.csv``: one row per call of the CMB flux law: the caller (``cvode`` for the CVODE
   right-hand side, ``trace`` for the energy pass after a solve, ``other``), the time [yr], the
   core and mantle temperatures, the viscosity, the conductive and the convective flux and the
-  flux the solver used [W/m^2].
+  flux the solver used [W/m^2]. The convective flux is the law's own at the critical Rayleigh
+  number the law uses (eq. 16 for ``ra_crit_cmb`` None), NaN where the core is not hotter or
+  the layer is not buoyant.
 - ``<out>.nodes.bin``: float64 rows ``[t_yr, y...]`` of the accepted CVODE states, one each time
   the time has advanced by ``--node-dt-yr``; ``<out>.nodes.json`` holds the row length.
 - ``<out>.S.npy``: the end entropy of the last segment.
@@ -31,6 +33,7 @@ import argparse
 import csv
 import json
 import logging
+import math
 import re
 import sys
 import time
@@ -161,12 +164,17 @@ class _Recorder:
             )
         )  # fmt: skip
         dT = t_hot - t_m
-        kappa = conductivity / (density * heat_capacity)
         q_cond = conductivity * dT / dr_half
         q_conv = float('nan')
-        if dT > 0:
-            buoy = expansivity * density * gravity / (ra_crit * kappa * viscosity)
-            q_conv = conductivity * abs(dT) ** (4 / 3) * buoy ** (1 / 3)
+        if dT > 0 and expansivity * density * gravity > 0:
+            # the law's own convective branch: an infinite half cell sends q_cond to 0
+            q_conv = float(
+                self.law(
+                    t_hot, t_m, conductivity=conductivity, density=density,
+                    heat_capacity=heat_capacity, expansivity=expansivity, viscosity=viscosity,
+                    gravity=gravity, dr_half=math.inf, ra_crit=ra_crit, **kw,
+                )
+            )  # fmt: skip
         src, t_nd, nodes = self._caller()
         sc = self.scales
         t_yr = t_nd * sc.t_ref if (sc is not None and t_nd == t_nd) else float('nan')

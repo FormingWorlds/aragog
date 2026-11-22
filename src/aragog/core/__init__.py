@@ -19,8 +19,13 @@ from __future__ import annotations
 from aragog.core.alloy import AlloyLiquidus, eutectic
 from aragog.core.boundary_layer import (
     RA_CRIT_CMB_DEFAULT,
+    RA_CRIT_PHASE,
+    RA_CRIT_UPPER_LAYER,
+    check_liquid_band,
     check_ra_crit,
     cmb_boundary_layer_flux,
+    critical_rayleigh_eq16,
+    liquid_weight,
 )
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
@@ -45,9 +50,14 @@ __all__ = [
     'TabulatedCoreProfiles',
     'build_core_module_budget',
     'load_core_arrays',
+    'check_liquid_band',
     'check_ra_crit',
     'cmb_boundary_layer_flux',
+    'liquid_weight',
     'RA_CRIT_CMB_DEFAULT',
+    'RA_CRIT_PHASE',
+    'RA_CRIT_UPPER_LAYER',
+    'critical_rayleigh_eq16',
     'REGIME_NAMES',
     'crystallization_regime',
     'eutectic',

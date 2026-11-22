@@ -254,8 +254,11 @@ def item3_flux() -> None:
             color=col,
             fontsize='small',
         )
-    # A colder core conducts across the half cell over either base: one line for both.
-    qn = -np.asarray(cmb_boundary_layer_flux(4000.0 - dT, 4000.0, viscosity=0.1, **BL_PROPS))
+    # A colder core conducts across the half cell over either base: one line for both;
+    # a hotter core convects over either base, even where that is below conduction.
+    qn = -np.asarray(
+        cmb_boundary_layer_flux(4000.0 - dT, 4000.0, viscosity=0.1, ra_crit=450.0, **BL_PROPS)
+    )
     ax.loglog(dT, qn, ':', lw=2.4, color=colour('ocean', 'C0'))
     ax.annotate(
         'core colder (either base)',
@@ -266,11 +269,8 @@ def item3_flux() -> None:
         color=colour('ocean', 'C0'),
         fontsize='small',
     )
-    record(
-        3,
-        'cold_core_flux_equals_solid_base',
-        float(np.max(np.abs(qn / styles[('solid base', 450.0)] - 1))),
-    )
+    q_cond = BL_PROPS['conductivity'] * dT / BL_PROPS['dr_half']
+    record(3, 'cold_core_flux_equals_conduction', float(np.max(np.abs(qn / q_cond - 1))))
     q_liq = styles[('liquid base', 450.0)]
     hi = dT > 10
     slope = np.polyfit(np.log(dT[hi]), np.log(q_liq[hi]), 1)[0]
@@ -283,12 +283,16 @@ def item3_flux() -> None:
     record(
         3,
         'q_liquid_100K',
-        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=0.1, **BL_PROPS)),
+        float(
+            cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=0.1, ra_crit=450.0, **BL_PROPS)
+        ),
     )
     record(
         3,
         'q_solid_100K',
-        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=1e21, **BL_PROPS)),
+        float(
+            cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=1e21, ra_crit=450.0, **BL_PROPS)
+        ),
     )
     record(3, 'conduction_slope', BL_PROPS['conductivity'] / BL_PROPS['dr_half'])
     ax.set_xlabel(r'$|T_\mathrm{core} - T_m|$ (K)')
@@ -495,8 +499,8 @@ def _solver_helpers():
 
 def item9_cvode_onset(output_points: int = 130) -> None:
     """Core heat across the inner-core onset: solver ledger, heat content and CMB heat, on
-    ``output_points`` CVODE output intervals (the reconstruction error converges with order 2
-    from about 130)."""
+    ``output_points`` CVODE output intervals (the reconstruction error falls with order 1.9, 1.6
+    and 2.0 from 65 to 520 intervals)."""
     params0, build, eos_copy = _solver_helpers()
     params = {
         k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
@@ -508,7 +512,7 @@ def item9_cvode_onset(output_points: int = 130) -> None:
             'core_module',
             eos_copy(),
             params,
-            end_time=4.0,
+            end_time=16.0,
             solver_method='cvode',
             cvode_output_points=output_points,
         )
@@ -531,7 +535,8 @@ def item9_cvode_onset(output_points: int = 130) -> None:
     for i in range(t_yr.size):
         solver.dSdt(t_yr[i], sol.y[:, i])
         flux.append(
-            solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i])) * solver._cmb_area
+            solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i]), float(sol.y[n - 1, i]))
+            * solver._cmb_area
         )
     cmb_heat = cumulative_trapezoid(flux, t_yr, initial=0.0) * YEAR
     record(9, 't_onset', t_on)
@@ -548,10 +553,10 @@ def item9_cvode_onset(output_points: int = 130) -> None:
     ax.axhline(t_on, color=colour('fog', '0.6'), lw=0.8, ls='--')
     ax.annotate(
         'inner-core onset',
-        (t_yr[-1], t_on),
-        xytext=(-4, 4),
+        (t_yr[0], t_on),
+        xytext=(4, 4),
         textcoords='offset points',
-        ha='right',
+        ha='left',
         fontsize='small',
         color=colour('fog', '0.5'),
     )

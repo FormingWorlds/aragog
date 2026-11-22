@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [main, core-verification, core-solves, lid-grid]
+        part: [main, core-verification, core-solves, lid-grid, lid-jax]
     # Test time per part on the 4-vCPU runner in recent runs: main 43-85 min (2 runs), core solves
     # 22-55 min (5), core verification 17-36 min (5), lid grid 30-31 min (2); 150 min leaves
     # headroom for JAX warmup, conda cache misses, and runner-to-runner timing variance.
@@ -43,6 +43,13 @@ jobs:
         tests/test_entropy_solver_core_module_smoke.py::test_a_stratified_default_start_keeps_the_core_and_closes_its_heat
         tests/test_entropy_solver_core_module_smoke.py::test_a_core_heated_from_above_warms_its_top_and_closes_its_heat
         tests/test_entropy_solver_core_module_smoke.py::test_a_resume_restarts_the_shell_where_the_previous_solve_ended
+      # The JAX lid test files run on their own runner with 2 workers: their workers hold the
+      # most compiled JAX programs of the suite.
+      LID_JAX: >-
+        tests/test_subgrid_lid_jax_rhs.py
+        tests/test_lid_mush_base.py
+        tests/test_lid_open_flux_instep.py
+        tests/test_surface_lid_jax.py
     defaults:
       run:
         shell: bash -el {0}
@@ -106,7 +113,7 @@ jobs:
           # and skipped tests at the end, also for a cancelled run.
           pytest -m "unit or smoke or integration or slow" -n 3 -o "addopts=" -ra \
             --ignore=tests/test_core_verification_page.py --ignore=tests/test_surface_lid_v2_grid.py \
-            $(printf -- '--deselect=%s ' $CORE_SOLVES) \
+            $(printf -- '--deselect=%s ' $CORE_SOLVES) $(printf -- '--ignore=%s ' $LID_JAX) \
             --timeout=2700 --timeout-method=thread --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
 
@@ -137,6 +144,20 @@ jobs:
           # one process: beside the other JAX lid tests its C3 test runs close to the 900 s marker
           pytest tests/test_surface_lid_v2_grid.py -m "unit or smoke or integration or slow" \
             -p no:xdist -o "addopts=" -ra --timeout-method=thread --durations=10 \
+            --cov=aragog --cov-report=term-missing --cov-fail-under=0
+
+      - name: Run the JAX lid tests with 2 workers
+        if: matrix.part == 'lid-jax'
+        run: |
+          # the 5 parts together must collect every test of the marker selection exactly once
+          set -o pipefail
+          M=(-m "unit or smoke or integration or slow")
+          ids() { pytest "$@" "${M[@]}" --collect-only -q -p no:xdist -o "addopts=" | grep '::' | sort; }
+          main="$(ids tests --ignore=tests/test_core_verification_page.py --ignore=tests/test_surface_lid_v2_grid.py $(printf -- '--deselect=%s ' $CORE_SOLVES) $(printf -- '--ignore=%s ' $LID_JAX))"
+          parts="$(printf '%s\n' "$main" "$(ids tests/test_core_verification_page.py)" "$(ids $CORE_SOLVES)" "$(ids tests/test_surface_lid_v2_grid.py)" "$(ids $LID_JAX)" | sort)"
+          diff <(ids tests) <(echo "$parts") || { echo 'the parts do not collect every test exactly once'; exit 1; }
+          pytest $LID_JAX "${M[@]}" -n 2 -o "addopts=" -ra \
+            --timeout=2700 --timeout-method=thread --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
 
       - name: Print the kernel out-of-memory lines
@@ -188,7 +209,7 @@ jobs:
         run: |
           pip install "coverage[toml]>=7.6"
           pip install --no-deps -e .
-          coverage combine cov-main.dat cov-core-verification.dat cov-core-solves.dat cov-lid-grid.dat
+          coverage combine cov-main.dat cov-core-verification.dat cov-core-solves.dat cov-lid-grid.dat cov-lid-jax.dat
           # the vnv tests also measure modules they write to pytest tmp folders; the XML is
           # written before the gate, so Codecov gets it also on a night below 90 %
           coverage xml --include='*/src/aragog/*' --fail-under=0
