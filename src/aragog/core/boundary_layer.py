@@ -204,13 +204,15 @@ def cmb_boundary_layer_flux(
     ValueError
         When ``ra_crit`` is None and the shell thickness or contrast or the interior
         viscosity is missing, or when ``liquid_band`` is given without ``melt_fraction``
-        or without those inputs, or with a fixed ``ra_crit`` while the band is on.
+        or without those inputs, or with a fixed ``ra_crit`` and a band centre that is not
+        a concrete NaN (a traced centre is refused when the call is traced).
     """
     eq16_inputs = (shell_thickness, shell_contrast, interior_viscosity)
-    # a NaN ra_crit is the eq. 16 sentinel and a NaN band centre means the band is off
+    # a NaN ra_crit is the eq. 16 sentinel; only a concrete NaN band centre is known to be off
     fixed = _concrete_scalar(ra_crit)
     loc = None if liquid_band is None else _concrete_scalar(liquid_band[0])
-    if fixed is not None and not math.isnan(fixed) and loc is not None and not math.isnan(loc):
+    band_can_be_on = liquid_band is not None and (loc is None or not math.isnan(loc))
+    if fixed is not None and not math.isnan(fixed) and band_can_be_on:
         raise ValueError(
             f'ra_crit = {ra_crit!r} and liquid_band (the CMB law by phase) exclude each other: '
             'the law by phase blends 450 and eq. 16; give ra_crit=None'
