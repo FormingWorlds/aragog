@@ -24,6 +24,7 @@ from tools.verification._ssc_helpers import _parsed
 
 __all__ = [
     '_parsed',
+    'assert_figure_legend_below',
     'assert_legend_clear',
     'entropy_eos_copy',
     'entropy_eos_jax',
@@ -137,6 +138,22 @@ def opaque_legend(ax, **kwargs):
     return ax.legend(
         frameon=True, framealpha=1.0, facecolor=ax.get_facecolor(), edgecolor='none', **kwargs
     )
+
+
+def assert_figure_legend_below(fig) -> None:
+    """The figure legend sits below the axes: it overlaps neither the axes nor any text."""
+    import matplotlib.pyplot as plt
+    from matplotlib.text import Text
+
+    fig.canvas.draw()
+    (legend,) = fig.legends
+    box, own = legend.get_window_extent(), set(legend.findobj())
+    for ax in fig.axes:
+        assert not box.overlaps(ax.get_window_extent())
+    for text in fig.findobj(Text):
+        if text.get_visible() and text.get_text() and text not in own:
+            assert not box.overlaps(text.get_window_extent()), text.get_text()
+    plt.close(fig)
 
 
 def assert_legend_clear(fig) -> None:
