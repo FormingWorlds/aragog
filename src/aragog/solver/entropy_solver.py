@@ -6779,7 +6779,6 @@ class EntropySolver:
         if self._cmb_node_phase is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
             return
         atol, rtol = self._call_tol
-        off = abs(float(self._r_basic_flat[0] - self._r_stag_flat[0]))
         if self._core_bc == 'gradient':
             dr, g = np.diff(self._r_stag_flat), y_arr[: n + 1]
             S0 = y_arr[n + 1] - dr @ g[1:n]
@@ -6787,8 +6786,15 @@ class EntropySolver:
         else:
             S0, g = y_arr[0], y_arr[n : n + 1]
             w0 = rtol * np.abs(S0) + atol
-        S_node = S0 + g[0] * float(self._r_basic_flat[0] - self._r_stag_flat[0])
-        w = w0 + off * (rtol * np.abs(g[0]) + atol)
+        # the node offset of each RHS: the staggered radius in the gradient reconstruction, the
+        # basic-node midpoint in the energy_balance and core_module states
+        off = (
+            float(self._r_basic_flat[0] - self._r_stag_flat[0])
+            if self._core_bc == 'gradient'
+            else -0.5 * float(self._cmb_dr_cmb)
+        )
+        S_node = S0 + g[0] * off
+        w = w0 + abs(off) * (rtol * np.abs(g[0]) + atol)
         ev, h = self._cmb_node_phase, 1.0e-3
         ev.set_pressure(np.full(S_node.size, float(self._P_basic_flat[0])))
 
