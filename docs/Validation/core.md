@@ -648,7 +648,79 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
     - Test id: `tests/test_cmb_law_by_phase.py::test_the_flux_by_phase_is_the_weighted_mean_of_the_two_laws`
     - Command: `pytest tests/test_cmb_law_by_phase.py -k weighted_mean` (add `--validation-plots` to write the plot pair)
 
+## 16. The CMB closure ledger across the melt band
+
+<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
+
+**Why this check exists.** The `energy_balance` closure turns the core cooling rate into the entropy rate of the CMB node ([explanation](../Explanations/core_bc.md#the-entropy-slope-at-the-cmb-node)). With the wrong conversion factor the core loses more or less heat than crosses the core-mantle boundary (CMB). The heat capacity of the blend, $c_p/T$, is such a wrong factor in the mush: there it misses by $-0.20$ to $+0.11$ of the CMB heat. The test fails on it.
+
+**What it tests.** The solver runs one call of 2 yr from 15 uniform melt coordinates $g$ (0 at the solidus, 1 at the liquidus) between $-0.04$ and $1.03$. It runs each with the present closure and with $c_p/T$. For each call the ledger miss is $r = C\, \Delta T_\text{cmb} + q$, with $C$ the heat capacity of the core, $\Delta T_\text{cmb}$ the change of the node temperature and $q$ the CMB heat of the call. The test requires the miss of both closures to equal the closed form below within $10^{-3}$ of $q$. It also requires the present closure to close within $10^{-3}$ of $q$ in the mush, and within the [solver bound](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure).
+
+**How we know the right answer.** The core balance of Bower et al. (2018)[^cite-bower2018] Eqs. 19-21 gives $C\, dT_\text{cmb}/dt = -E$, with $E$ the CMB heat flow. A closure with the factor $k = c_{p,\text{used}} (\partial T/\partial S)_\text{tab}/T$ moves the node at $k$ times that rate. Here $(\partial T/\partial S)_\text{tab}$ is the slope of the tabulated temperature that the node follows. The miss of a call is therefore $\int (1 - k)\, E\, dt$, summed over the accepted steps. For the present closure $k = 1$ in the mush.
+
+**Why it matters.** The core temperature sets the CMB heat flow and the start of core freezing in every PROTEUS run with the default `core_bc`.
+
+![Ledger miss of one call against the melt coordinate of the CMB node, for both closures](../assets/validation/core_cmb_closure_ledger.svg#only-light){ width="80%" }
+![Ledger miss of one call against the melt coordinate of the CMB node, for both closures](../assets/validation/core_cmb_closure_ledger_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The x axis is the melt coordinate $g$ of the CMB node at the call start; the shaded band is the mush. The y axis is the miss $r/|q|$, linear below $10^{-4}$ and logarithmic above. Red is $c_p/T$, the other colour the present closure. Points are the solver, lines the closed form; a hollow point is a call through a padded table cell, which the check skips. A pass puts every point on its line and the present closure near 0 in the mush.
+
+**Known limit.** Below the solidus the present closure misses by the table consistency of the test tables: $6.2 \times 10^{-3}$ at $g = -0.04$, as the closed form predicts. Just above the liquidus the test tables are padded near the CMB pressure, so the call at $g = 1.03$ is not checked.
+
+??? info "Test details"
+    - Reference: the closed form $\int (1 - k)\, E\, dt$ along each trajectory, from Bower et al. (2018)[^cite-bower2018] Eqs. 19-21.
+    - Tolerance: $10^{-3}$ of $q$ between the solver and the closed form (largest found $5.2 \times 10^{-4}$); $10^{-3}$ of $q$ for the present closure in the mush (largest found $4.2 \times 10^{-4}$), and the solver bound; $c_p/T$ must miss by more than $0.05$ in the mush.
+    - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`
+    - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair)
+
+## 17. The CMB closure on the states of 2 coupled runs
+
+<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
+
+**Why this check exists.** Section 16 uses the test tables. This case uses the PALEOS:MgSiO3 tables and the CMB-node states of 2 coupled PROTEUS runs (1 Earth mass, `input/all_options.toml`). It fails if the closed form, evaluated with the code's blend on those tables, does not give the miss that the runs measured.
+
+**What it tests.** The 2 runs differ only in the closure: $c_p/T$ (base) and the present closure (fix). For each output row the test takes the node entropy at the row start and end, the CMB pressure, the CMB heat $q$ and the core heat change $\Delta E$. It evaluates the closure factor $k$ at both ends and predicts the miss $r/|\Delta E| = \text{sign}(q)\, (1/\bar{k} - 1)$, with $\bar{k}$ the mean of the 2 ends. It uses the rows in the mush with a CMB power above $10^{16}$ W and with $k$ that changes by less than 0.02 within the row: 17 rows of the base run and 12 of the fix run.
+
+**How we know the right answer.** The same balance as in section 16, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21. The test first checks that the blend gives the stored node temperature of every row within $10^{-6}$ K.
+
+**Why it matters.** It shows the size of the closure error in a real run: 1.9 % to 10.5 % of the core heat change in the base run between 4.2 and 42.3 kyr.
+
+![Ledger miss per output row of the 2 coupled runs against time](../assets/validation/core_cmb_closure_paleos.svg#only-light){ width="80%" }
+![Ledger miss per output row of the 2 coupled runs against time](../assets/validation/core_cmb_closure_paleos_dark.svg#only-dark){ width="80%" }
+
+**How to read the plot.** The x axis is the time of the row in years. The y axis is the miss $r/|\Delta E|$ of the row, linear below $10^{-4}$. Red is the base run, the other colour the fix run. Points are the runs, lines the closed form; hollow points are rows the test does not compare (outside the mush, a padded cell, or a fast change of $k$). A pass puts the filled points on their lines.
+
+**Known limit.** Rows with a CMB power below $10^{16}$ W are left out: there the solver tolerance dominates the row ([ledger check](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure)). The stored tables cover 104 to 131 GPa and the melt band with 500 J/kg/K on each side.
+
+??? info "Test details"
+    - Reference: the closed form $\text{sign}(q)\,(1/\bar{k} - 1)$, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21, on the run tables.
+    - Data: `tests/validation/data/cmb_closure_paleos_a115.npz`, provenance in `cmb_closure_paleos_a115_provenance.json`, built by `tests/reference/build_cmb_closure_paleos_a115.py`.
+    - Tolerance: $2 \times 10^{-3}$ (largest found $1.4 \times 10^{-3}$ base, $9.6 \times 10^{-4}$ fix); the base run must miss by more than 0.05 in some row.
+    - Test id: `tests/test_cmb_closure_validation_paleos.py::test_the_closed_form_gives_the_ledger_miss_of_both_runs`
+    - Command: `pytest tests/test_cmb_closure_validation_paleos.py` (add `--validation-plots` to write the plot pair)
+
+## 18. The CMB node rate of each closure
+
+<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
+
+**Why this check exists.** Sections 16 and 17 check a whole call. This case checks the closure at one state, where the solver tolerance plays no part. It fails if a closure moves the node at another rate than the core, as $c_p/T$ does in the mush. It also fails if the closure and the reconstruction of the node entropy use different node positions: a `gradient` closure with $\Delta r/2$ in place of $r_0 - r_\text{cmb}$ misses by up to $3.3 \times 10^{-4}$.
+
+**What it tests.** At one state with the CMB node in the solid ($g = -0.03$), the mush ($g = 0.3$ and $0.9$) or just above the liquidus ($g = 1.004$), it evaluates the right-hand side. In `energy_balance` (NumPy and JAX) and `gradient` it requires $C\, (\partial T/\partial S)_P\, dS_\text{node}/dt = -E$. In `core_module` it requires $(\partial T/\partial S)_P\, dS_\text{node}/dt = dT_\text{top}/dt$, the rate of the core top.
+
+**How we know the right answer.** It is the chain rule at fixed pressure, $dT = (\partial T/\partial S)_P\, dS$, with the core balance of Bower et al. (2018)[^cite-bower2018] Eqs. 19-21.
+
+**Why it matters.** The same factor sets the node rate in every step of every run with these closures.
+
+This case has no plot: it is an exact identity of the code at single states.
+
+??? info "Test details"
+    - Reference: the chain rule at fixed pressure and the core balance.
+    - Tolerance: relative $10^{-10}$; in `gradient` also 50 times the double-precision round-off of the summed rates that make up the node rate.
+    - Test id: `tests/test_cmb_closure_ledger.py::test_the_rhs_moves_the_node_temperature_at_the_core_rate`, `::test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate`
+    - Command: `pytest tests/test_cmb_closure_ledger.py -k rhs_moves`
+
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49-62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
 [^cite-christensen2009]: Christensen, U.R., Holzwarth, V. & Reiners, A., *[Energy flux determines magnetic field strength of planets and stars](https://doi.org/10.1038/nature07626)*, Nature, 457, 167-169, 2009. [SciX](https://scixplorer.org/abs/2009Natur.457..167C/abstract).
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
 [^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).
