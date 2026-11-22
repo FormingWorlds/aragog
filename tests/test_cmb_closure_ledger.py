@@ -134,3 +134,40 @@ def test_core_heat_change_equals_the_cmb_heat_flow(core_bc, method, jax_rhs, g0)
         f'core ledger misses by {miss:+.5f} of the CMB heat flow '
         f'(core change {d_e:+.4e} J, CMB heat {q:+.4e} J)'
     )
+
+
+@pytest.mark.parametrize(
+    ('stratified', 'method'),
+    [(False, 'radau'), pytest.param(True, 'cvode', marks=pytest.mark.slow)],
+)
+def test_core_module_node_follows_the_core_top_temperature(stratified, method):
+    """In core_module the CMB node rides on the core top: both change by the same amount."""
+    from tests.test_entropy_solver_core_module_smoke import (
+        CORE_MODULE_PARAMS,
+        STRATIFIED_PARAMS,
+        _build,
+    )
+
+    if method == 'cvode':
+        pytest.importorskip('scikits_odes_sundials')
+    eos = entropy_eos_copy(EOS_DIR)
+    params = STRATIFIED_PARAMS if stratified else CORE_MODULE_PARAMS
+    solver = _build('core_module', eos, params, end_time=2.0, solver_method=method)
+    P = np.asarray(solver._P_stag_flat, dtype=float)
+    S_sol, S_liq = np.ravel(eos.solidus_entropy(P)), np.ravel(eos.liquidus_entropy(P))
+    S = S_sol + 0.9 * (S_liq - S_sol)
+    solver.set_initial_entropy(S)
+    t_m = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], S[:1])).item())
+    solver.set_initial_core_temperature(t_m + 50.0)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    sol = solver._solution
+    top = -1 if stratified else solver._n_stag + 1
+    d_top = float(sol.y[top, -1] - sol.y[top, 0])
+    d_node = _node_temperature(solver, sol.t[-1], sol.y[:, -1]) - _node_temperature(
+        solver, sol.t[0], sol.y[:, 0]
+    )
+    assert d_top < 0.0, f'the fixture must cool the core top, dT_top = {d_top:+.4e} K'
+    assert d_node / d_top == pytest.approx(1.0, rel=LEDGER_TOL), (
+        f'the CMB node changes by {d_node:+.6e} K while the core top changes by {d_top:+.6e} K'
+    )
