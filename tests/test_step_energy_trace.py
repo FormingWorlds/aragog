@@ -1,4 +1,4 @@
-"""Per-call energy quadrature over CVODE's accepted internal steps (``EntropySolver._energy_trace``)."""
+"""Per-call energy quadrature over CVODE's accepted internal steps (``energy_stream``)."""
 
 from __future__ import annotations
 
@@ -48,7 +48,12 @@ def _trap(t, p):
 def test_trace_filters_nodes():
     t, y = np.array([0.0, 1.0]), np.array([[1.0, 5.0], [2.0, 6.0]])
     nodes = [(0.3, [1.1, 2.1]), (0.2, [9, 9]), (0.5, [1.2, 2.2]), (0.5, [9, 9]), (1.5, [9, 9])]
-    ts, ys = es.EntropySolver._energy_trace(nodes, t, y)
+    sink = es.ListSink()
+    call = es.CallNodes(sink, t[0], y[:, 0])
+    for tn, yn in nodes:
+        call.record(tn, yn)
+    call.end(t, y)
+    ts, ys = sink.arrays()
     np.testing.assert_array_equal(ts, [0.0, 0.3, 0.5, 1.0])
     np.testing.assert_array_equal(ys, [[1, 1.1, 1.2, 5], [2, 2.1, 2.2, 6]])
 
@@ -153,11 +158,13 @@ def test_cmb_energy_matches_the_core_energy_change():
     s.solve()
     core = -s._core_cap * float(s._solution.y[-1, -1] - s._solution.y[-1, 0])
     assert abs(core) > 1e24, 'the core must exchange a non-trivial amount of heat'
-    assert s._compute_step_energy_integrals()['F_cmb'] == pytest.approx(core, rel=1e-6)
+    assert s._solution.energy_integrals['F_cmb'] == pytest.approx(core, rel=1e-6)
 
 
 @pytest.mark.smoke
-def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
+def test_integral_up_to_a_fired_cap_matches_a_dense_reference(
+    keep_energy_trace,
+):
     """A temperature cap ends the call at a root after a steep grey-body flux decay.
 
     The kept nodes increase in time and give the surface integral of a dense-output
@@ -530,9 +537,7 @@ def test_integrals_sub_interval_below_onset_resolves_cusp():
 
 @pytest.mark.unit
 def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
-    monkeypatch.setattr(
-        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
-    )
+    monkeypatch.setattr(es.CallNodes, 'record', lambda self, t, y: None)  # start and end only
     with caplog.at_level('WARNING', logger=es.logger.name):
         res = _solve()
     assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
@@ -633,9 +638,7 @@ def test_a_one_node_trace_integrates_to_zero():
 
 @pytest.mark.unit
 def test_a_failed_call_does_not_warn_about_the_trace(monkeypatch, caplog):
-    monkeypatch.setattr(
-        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
-    )
+    monkeypatch.setattr(es.CallNodes, 'record', lambda self, t, y: None)  # start and end only
     s = es.EntropySolver.__new__(es.EntropySolver)
     s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', 2, 200
     with caplog.at_level('WARNING', logger=es.logger.name):
@@ -684,11 +687,12 @@ def test_get_state_reports_the_integrals_of_one_solve(monkeypatch):
     values = {key: float(i + 1) for i, key in enumerate(_FIELDS)}
     traces = []
 
-    def integrals(self):
+    def integrals(self, quad=None):
         traces.append(self._solution.energy_trace[0].copy())
         return dict(values)
 
     monkeypatch.setattr(es.EntropySolver, '_compute_step_energy_integrals', integrals)
+    monkeypatch.setattr(es.EntropySolver, 'keep_energy_trace', True)
     s = _const_properties_solver()
     s.solve()
     first, second = s.get_state(), s.get_state()
@@ -702,7 +706,9 @@ def test_get_state_reports_the_integrals_of_one_solve(monkeypatch):
 def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        es.EntropySolver, '_compute_step_energy_integrals', lambda self: calls.append(1) or {}
+        es.EntropySolver,
+        '_compute_step_energy_integrals',
+        lambda self, quad=None: calls.append(1) or {},
     )
     s = _const_properties_solver(max_steps=1)
     s.solve()
@@ -776,3 +782,38 @@ def test_a_complete_call_does_not_warn_about_the_trace(caplog, case):
         )
     assert res.cvode_flag == (2 if case == 'fired root' else 0)
     assert not any('CVODE steps' in r.message for r in caplog.records)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_chunked_integrals_of_a_real_call_equal_the_one_chunk_integrals(monkeypatch):
+    """A 500 yr grey-body bower2018 call (about 3000 nodes, numpy powers at each node) in
+    16-node chunks keeps the same nodes bit for bit, and its integrals equal those of 2048-node
+    chunks to 1e-13; only the order of the trapezoid sums differs. Without kept nodes (the
+    default) the call stores none and its integrals are the same bit for bit."""
+    from aragog.solver import energy_stream as st
+
+    from .test_entropy_verification import TestCvodeEnergyOutputGrid
+
+    runs = []
+    for chunk, keep in ((2048, True), (16, True), (2048, False)):
+        monkeypatch.setattr(st, 'CHUNK', chunk)
+        monkeypatch.setattr(es.EntropySolver, 'keep_energy_trace', keep)
+        s = TestCvodeEnergyOutputGrid._build_greybody_solver(
+            'cvode', n_out=2, core_bc='bower2018'
+        )
+        s.parameters.solver.end_time = 500.0
+        s.solve()
+        runs.append((s._solution.get('energy_trace'), s._solution.energy_integrals))
+    # the default keeps no node and computes the same integrals bit for bit
+    assert runs[2][0] is None
+    np.testing.assert_equal(runs[2][1], runs[0][1])  # NaN core_tol equals NaN
+    (t_a, y_a), ref = runs[0]
+    (t_b, y_b), got = runs[1]
+    assert t_a.size > 2048  # two chunks at the default size, 187 at 16
+    np.testing.assert_array_equal(t_b, t_a)
+    np.testing.assert_array_equal(y_b, y_a)
+    for key in ('F_int', 'F_cmb', 'Q_radio', 'Q_tidal', 'core', 'state_heat'):
+        assert got[key] == pytest.approx(ref[key], rel=1e-13, abs=1e-13 * abs(ref['F_int']))
+    # the budget still closes: the CMB and surface energies against the state heat change
+    assert ref['F_int'] + ref['F_cmb'] == pytest.approx(ref['state_heat'], rel=5e-3)

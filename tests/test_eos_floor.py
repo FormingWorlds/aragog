@@ -659,9 +659,8 @@ def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
             S_min = float(self.entropy_eos.S_min)
             if where == 'trace':
                 bad[: self._n_stag] = S_min - 1.0
-                tt, ty = res.energy_trace
-                col = ((bad - sc.state_offset) / sc.state_scale)[:, np.newaxis]
-                res.energy_trace = (np.append(tt, tt[-1]), np.hstack([ty, col]))
+                # one more node at the call end, only in the energy quadrature nodes
+                kwargs['nodes'].add(float(res.t[-1]), (bad - sc.state_offset) / sc.state_scale)
             else:
                 if where == 'cell':
                     bad[5] = S_min - 1.0

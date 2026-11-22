@@ -225,7 +225,7 @@ def _install_benchmark_patches() -> None:
     es_mod.EntropySolver._solve_cvode = _patched_solve_cvode
     estate_mod.EntropyState.update = _patched_state_update
     es_mod.EntropySolver._check_rheology_invariants = _fast_check_rheo_inv
-    es_mod.EntropySolver._compute_step_energy_integrals = lambda self: dict(
+    es_mod.EntropySolver._compute_step_energy_integrals = lambda self, quad=None: dict(
         es_mod._ZERO_ENERGY_INTEGRALS
     )
     rheo_mod._viscous_mixing_length_factor_core = _patched_vmlf_core

@@ -588,7 +588,7 @@ def test_a_core_that_freezes_from_the_top_is_refused(shared_eos, monkeypatch):
 
 
 @needs_cvode
-def test_the_regime_guard_sees_every_accepted_step(shared_eos, monkeypatch):
+def test_the_regime_guard_sees_every_accepted_step(keep_energy_trace, shared_eos, monkeypatch):
     """The regime guard receives T_core at every accepted CVODE step of the call, not only at
     the output points, so a refused regime entered between two outputs is caught."""
     import aragog.core.regime as regime

@@ -1288,7 +1288,7 @@ def test_a_guard_cut_between_the_start_and_the_hand_over_removes_its_time(eos, m
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('method', _methods())
-def test_handover_in_the_call(eos, method):
+def test_handover_in_the_call(keep_energy_trace, eos, method):
     """A hand-over at t* inside the call merges there and continues to the call end on every
     integrator path (scipy, plain CVODE, CVODE segments); the ledger closes across it.
 

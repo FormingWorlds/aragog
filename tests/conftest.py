@@ -337,6 +337,15 @@ def _isolated_package_logger():
         yield
 
 
+@pytest.fixture
+def keep_energy_trace(monkeypatch):
+    """Keep the quadrature nodes of each CVODE solve as ``energy_trace``, for a test that
+    reads the nodes; it adds a copy of them and changes nothing the solve computes."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    monkeypatch.setattr(EntropySolver, 'keep_energy_trace', True)
+
+
 @pytest.fixture(autouse=True, scope='module')
 def _free_jax_caches_per_file():
     """Free the compiled JAX programs each time a process leaves a test file."""

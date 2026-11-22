@@ -56,7 +56,7 @@ class _FlaggingCVODE:
 
         class _V:
             t = np.asarray(tspan, dtype=float)
-            y = np.tile(np.asarray(y0, dtype=float).reshape(-1, 1), (1, len(t)))
+            y = np.tile(np.asarray(y0, dtype=float), (len(t), 1))  # (n_time, n_state)
 
         class _Sol:
             def __init__(self):

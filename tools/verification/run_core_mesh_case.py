@@ -145,10 +145,10 @@ class _Recorder:
             name = f.f_code.co_name
             if name == 'rhs_fn' and src == 'other':
                 src, t_nd = 'cvode', float(f.f_locals['t'])
-            elif name == '_solve_cvode' and 'nodes' in f.f_locals:
-                nodes = f.f_locals['nodes']
+            elif name == '_solve_cvode' and 'call' in f.f_locals:
+                nodes = f.f_locals['call']
                 break
-            elif name == '_compute_step_energy_integrals':
+            elif name in ('_compute_step_energy_integrals', '_powers'):  # the energy replay
                 src = 'trace'
                 break
             f = f.f_back
@@ -178,8 +178,8 @@ class _Recorder:
         src, t_nd, nodes = self._caller()
         sc = self.scales
         t_yr = t_nd * sc.t_ref if (sc is not None and t_nd == t_nd) else float('nan')
-        if nodes and sc is not None:
-            t_last, y_last = nodes[-1]
+        if nodes is not None and nodes.latest is not None and sc is not None:
+            t_last, y_last = nodes.latest
             if t_last * sc.t_ref >= self.last_t + self.node_dt_yr:
                 y = np.asarray(y_last, dtype=float) * sc.state_scale + sc.state_offset
                 if self.n_y is None:
@@ -188,7 +188,7 @@ class _Recorder:
                 self.nodes.write(np.r_[t_last * sc.t_ref, y].astype('<f8').tobytes())
                 self.last_t = t_last * sc.t_ref
                 self.n_written += 1
-        n_nodes = len(nodes) if nodes is not None else -1
+        n_nodes = nodes.recorded if nodes is not None else -1
         row = (src, t_yr, n_nodes, float(t_hot), float(t_m), float(viscosity))
         self.w.writerow((*row, q_cond, q_conv, q))
         self.calls += 1

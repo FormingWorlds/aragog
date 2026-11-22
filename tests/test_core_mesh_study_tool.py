@@ -163,10 +163,12 @@ def test_the_accepted_states_are_stored_once_per_interval(tmp_path):
     rec = _recorder(tmp_path, node_dt=10.0)
 
     def _solve_cvode(nodes):
+        call = SimpleNamespace(latest=nodes[-1], recorded=len(nodes))  # as CallNodes keeps it
+
         def rhs_fn(t):
             return rec.flux(2500.0, 2000.0, **KW)
 
-        return rhs_fn(nodes[-1][0])
+        return rhs_fn(call.latest[0])
 
     def _compute_step_energy_integrals():
         return rec.flux(2500.0, 2000.0, **KW)
