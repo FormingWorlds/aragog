@@ -6783,10 +6783,11 @@ class EntropySolver:
         RuntimeError
             On a node slope that is not finite and positive, or a miss above 10 B.
         """
-        n = self._n_stag
-        if self._cmb_node_phase is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
+        n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
+        tol = getattr(self, '_call_tol', None)  # set by initialize() and solve()
+        if ev is None or tol is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
             return
-        atol, rtol = self._call_tol
+        atol, rtol = tol
         if self._core_bc == 'gradient':
             dr, g = np.diff(self._r_stag_flat), y_arr[: n + 1]
             S0 = y_arr[n + 1] - dr @ g[1:n]
@@ -6803,7 +6804,7 @@ class EntropySolver:
         )
         S_node = S0 + g[0] * off
         w = w0 + abs(off) * (rtol * np.abs(g[0]) + atol)
-        ev, h = self._cmb_node_phase, 1.0e-3
+        h = 1.0e-3
         ev.set_pressure(np.full(S_node.size, float(self._P_basic_flat[0])))
 
         def blend(S):
