@@ -285,3 +285,30 @@ def test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate(g0):
     E = float(parts.heat_flux[0]) * float(solver._cmb_area)
     C = float(solver._core_cp * solver._core_tfac * solver._core_M)
     assert C * slope * (f[0] + off * f[n]) == pytest.approx(-E, rel=1.0e-10)
+
+
+def test_a_call_through_a_padded_cell_is_left_out_of_the_check(caplog):
+    """Just above the liquidus near the CMB pressure the CI melt table is flat in S (a padded
+    cell): the table slope is 0, so the call is left out of the ledger check with a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
+        d_e, q, _, check = _ledger('energy_balance', 'radau', 1.0005, end_time=5.0)
+    assert check['excluded'] and check['rel'] == pytest.approx(1.0, rel=1.0e-6)
+    assert 'CMB closure check skipped' in caplog.text
+    # the padded cell holds the node temperature while the core loses heat
+    assert (d_e + q) / abs(q) > 1.0e-3
+
+
+def test_a_small_closure_miss_warns_and_is_counted(monkeypatch, caplog):
+    """A closure 3e-4 off misses the ledger by about 3 bounds: the run warns and goes on."""
+    import logging
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    exact = EntropySolver._cmb_closure_cp
+    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', lambda self: exact(self) * (1 + 3e-4))
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
+        _, _, _, check = _ledger('energy_balance', 'radau', 0.9)
+    assert check['bound'] < abs(check['r']) < 10.0 * check['bound'], check
+    assert 'CMB closure ledger miss' in caplog.text
