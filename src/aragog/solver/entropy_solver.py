@@ -4432,6 +4432,7 @@ class EntropySolver:
                 dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
                 T_cmb_basic=T_cmb,
                 cp_cmb_basic=cp_cmb,
+                dr_half=float(self._r_stag_flat[0] - self._r_basic_flat[0]),
             )
             rhs_cmb = rhs_cmb_per_s * SECS_PER_YEAR
 
@@ -4590,6 +4591,7 @@ class EntropySolver:
         dSdt_s_cmb_per_s: float,
         T_cmb_basic: float,
         cp_cmb_basic: float,
+        dr_half: float | None = None,
     ) -> float:
         """SPIDER bc.c:76-131 rhs for d(dSdr_cmb)/dt at the CMB.
 
@@ -4628,6 +4630,10 @@ class EntropySolver:
         cp_cmb_basic : float
             Effective heat capacity ``T (dS/dT)_P`` of the CMB basic node's phase
             blend [J/(kg*K)] (``_cmb_closure_cp``), so that ``cp/T`` is ``(dS/dT)_P``.
+        dr_half : float, optional
+            Distance [m] from the CMB basic node to the node its entropy is extrapolated
+            from: half the basic spacing (the default; energy_balance and core_module), or
+            the staggered radius minus the CMB radius for the gradient reconstruction.
 
         Returns
         -------
@@ -4673,7 +4679,9 @@ class EntropySolver:
         # denominator flips the sign to match the formula above.
         # Aragog's radii increase from CMB to surface, so dr > 0
         # and the numerator must be (stag - basic) explicitly.
-        return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
+        if dr_half is None:
+            dr_half = 0.5 * self._cmb_dr_cmb
+        return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) / dr_half
 
     def _core_module_rhs_per_s(
         self,
