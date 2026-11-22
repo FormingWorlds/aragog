@@ -24,10 +24,9 @@ RTOL = {'energy_balance': 1.0e-10, 'gradient': 1.0e-12}
 LEDGER_TOL = 1.0e-4
 
 
-def _jax_factory(solver):
-    """Option Z factory for an energy_balance solver (JAX RHS and Jacobian)."""
+def _jax_args(solver):
+    """JAX RHS arguments of an energy_balance solver: eos, phases, mesh, BC, heating, radio."""
     from aragog.jax.solver import BoundaryParams
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
     from tests.test_jax_dsdt_core_module import _build_jax_pieces
 
     for name, value in (
@@ -52,6 +51,14 @@ def _jax_factory(solver):
         core_M=float(solver._core_M),
         cmb_dr_cmb=float(solver._cmb_dr_cmb),
     )
+    return tuple(args[:6])
+
+
+def _jax_factory(solver):
+    """Option Z factory for an energy_balance solver (JAX RHS and Jacobian)."""
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    args = _jax_args(solver)
     calls = {'n': 0}
 
     def factory(scales, mode):
@@ -191,3 +198,89 @@ def test_core_module_node_follows_the_core_top_temperature(stratified, method):
     assert d_node / d_top == pytest.approx(1.0, rel=LEDGER_TOL), (
         f'the CMB node changes by {d_node:+.6e} K while the core top changes by {d_top:+.6e} K'
     )
+
+
+def _profile(solver, eos, g0):
+    """Entropy at melt coordinate ``g0`` on every staggered node."""
+    P = np.asarray(solver._P_stag_flat, dtype=float)
+    S_sol, S_liq = np.ravel(eos.solidus_entropy(P)), np.ravel(eos.liquidus_entropy(P))
+    return S_sol + g0 * (S_liq - S_sol)
+
+
+@pytest.mark.parametrize('g0', [-0.03, 0.3, 0.9, 1.004])
+@pytest.mark.parametrize(
+    'core_bc',
+    ['energy_balance', 'gradient', 'core_module'],
+)
+def test_the_rhs_moves_the_node_temperature_at_the_core_rate(core_bc, g0):
+    """At one state the NumPy RHS gives ``C (dT/dS)_P dS_node/dt = -E`` (energy_balance,
+    gradient) and ``(dT/dS)_P dS_node/dt = dT_top/dt`` (core_module), with node 0 in the solid,
+    the mush and the band above the liquidus."""
+    from scipy.constants import Julian_year
+
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    eos = entropy_eos_copy(EOS_DIR)
+    if core_bc == 'core_module':
+        solver = _build('core_module', eos, CORE_MODULE_PARAMS)
+        S = _profile(solver, eos, g0)
+        solver.set_initial_entropy(S)
+        t_m = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], S[:1])).item())
+        solver.set_initial_core_temperature(t_m + 50.0)
+        solver.set_initial_entropy(S)
+    else:
+        params = _build_parameters(core_bc=core_bc, n_nodes=15, inner_boundary_condition=1)
+        solver = EntropySolver(params, entropy_eos=eos)
+        solver.initialize()
+        solver.set_initial_entropy(_profile(solver, eos, g0))
+    n, y = solver._n_stag, np.asarray(solver._S0, dtype=float)
+    f = np.asarray(solver._dSdt_single(0.0, y), dtype=float) / Julian_year
+    slope = float(np.asarray(solver.state.phase_basic.temperature_slope()).flat[0])
+    off = -0.5 * float(
+        solver._cmb_dr_cmb
+    )  # the RHS node offset (gradient: the staggered radius)
+    if core_bc == 'gradient':
+        off = float(solver._r_basic_flat[0] - solver._r_stag_flat[0])
+        dS_stag0 = f[n + 1] - np.diff(solver._r_stag_flat) @ f[1:n]
+        dS_node = dS_stag0 + off * f[0]
+    else:
+        dS_node = f[0] + off * f[n]
+    if core_bc == 'core_module':
+        assert slope * dS_node == pytest.approx(f[n + 1], rel=1.0e-10)
+        return
+    E = float(solver.state._heat_flux[0]) * float(solver._cmb_area)
+    C = float(solver._core_cp * solver._core_tfac * solver._core_M)
+    assert abs(E) > 0.0
+    assert C * slope * dS_node == pytest.approx(-E, rel=1.0e-10)
+
+
+@pytest.mark.parametrize('g0', [-0.03, 0.9, 1.004])
+def test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate(g0):
+    """The JAX energy_balance RHS gives ``C (dT/dS)_P dS_node/dt = -E`` at one state."""
+    jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
+    from scipy.constants import Julian_year
+
+    from aragog.jax.phase import evaluate_phase
+    from aragog.jax.solver import _dSdt_energy_balance_parts
+    from aragog.solver.entropy_solver import EntropySolver
+
+    eos = entropy_eos_copy(EOS_DIR)
+    params = _build_parameters(
+        core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1, solver_method='cvode'
+    )
+    solver = EntropySolver(params, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(_profile(solver, eos, g0))
+    args = _jax_args(solver)
+    n, y = solver._n_stag, jnp.asarray(solver._S0, dtype=float)
+    parts = _dSdt_energy_balance_parts(0.0, y, args)
+    f = np.asarray(parts.rate) / Julian_year
+    off = -0.5 * float(solver._cmb_dr_cmb)
+    S_node = float(y[0]) + float(y[n]) * off
+    node = evaluate_phase(args[0], args[1], args[2].P_basic[:1], jnp.array([S_node]))
+    slope = float(node.temperature_slope[0])
+    E = float(parts.heat_flux[0]) * float(solver._cmb_area)
+    C = float(solver._core_cp * solver._core_tfac * solver._core_M)
+    assert C * slope * (f[0] + off * f[n]) == pytest.approx(-E, rel=1.0e-10)
