@@ -805,7 +805,7 @@ class EntropyEOS_JAX(eqx.Module):
         temperature = _blend(T_mixed, T_single)
         # (dT/dS)_P of that blend, with the pure-phase slope T/Cp in the single-phase term
         temperature_slope = (
-            smth * jnp.where(mushy, (T_liq - T_sol) / dS_phase, 0.0)
+            smth * jnp.where((gphi >= 0.0) & (gphi <= 1.0), (T_liq - T_sol) / dS_phase, 0.0)
             + (1.0 - smth) * jnp.where(mushy, 0.0, T_single / Cp_single)
             + (T_mixed - T_single) * dsmth_dg / dS_phase
         )
