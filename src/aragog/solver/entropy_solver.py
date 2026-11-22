@@ -2050,13 +2050,14 @@ class EntropySolver:
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
-        # The core_module CMB boundary layer, one point at the CMB pressure.
+        # The core_module CMB boundary layer at the CMB pressure: the bottom cell's state and
+        # the layer's state, updated together.
         self._bl_phase = EntropyPhaseEvaluator(
-            gravitational_acceleration=g_basic[:1],
+            gravitational_acceleration=np.repeat(g_basic[:1], 2),
             defer_rheology_viscosity=True,
             **phase_kwargs,
         )
-        self._bl_phase.set_pressure(P_basic[:1])
+        self._bl_phase.set_pressure(np.repeat(P_basic[:1], 2))
 
         # Energy settings
         energy = self.parameters.energy
@@ -4518,6 +4519,9 @@ class EntropySolver:
         def first(values) -> float:
             return float(np.asarray(values).flat[0])
 
+        def layer(values) -> float:
+            return float(np.asarray(values).flat[1])
+
         eos, p_cmb = self.entropy_eos, float(self._P_basic_flat[0])
         t_hot = max(float(t_core), 1.0)
         t_m = first(eos.temperature(p_cmb, s_bottom))
@@ -4526,7 +4530,7 @@ class EntropySolver:
             t_surf = first(eos.temperature(float(self._P_stag_flat[-1]), s_top))
         s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
         bl = self._bl_phase
-        bl.set_entropy(np.array([s_bottom]))
+        bl.set_entropy(np.array([s_bottom, s_bl]))
         bl.update()
         eta_interior = first(bl.viscosity())
         phase_law = {}
@@ -4539,17 +4543,15 @@ class EntropySolver:
                     float(pm.rheological_transition_width),
                 ),
             )
-        bl.set_entropy(np.array([s_bl]))
-        bl.update()
         return float(
             cmb_boundary_layer_flux(
                 t_hot,
                 t_m,
-                conductivity=first(bl.thermal_conductivity()),
-                density=first(bl.density()),
+                conductivity=layer(bl.thermal_conductivity()),
+                density=layer(bl.density()),
                 heat_capacity=first(eos.heat_capacity(p_cmb, s_bl)),
                 expansivity=first(eos.material_expansivity(p_cmb, s_bl)),
-                viscosity=first(bl.viscosity()),
+                viscosity=layer(bl.viscosity()),
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,
                 ra_crit=None if phase_law else self._core_module_ra_crit_cmb,

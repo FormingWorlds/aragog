@@ -236,7 +236,8 @@ def cmb_boundary_layer_flux(
     kappa = conductivity / (density * heat_capacity)
     buoyant = expansivity * density * gravity > 0.0
     buoyancy = jnp.where(buoyant, expansivity * density * gravity, 1.0)
-    if all(x is not None for x in eq16_inputs):
+    # a fixed critical Rayleigh number does not need eq. 16
+    if all(x is not None for x in eq16_inputs) and (fixed is None or math.isnan(fixed)):
         eq16 = critical_rayleigh_eq16(
             conductivity=conductivity,
             density=density,
