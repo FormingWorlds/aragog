@@ -75,6 +75,6 @@ In an Aragog configuration the law is a key of the core module:
     ra_crit_cmb = "phase"
 ```
 
-The transition comes from `rheological_transition_melt_fraction` and `rheological_transition_width` of the phase settings, the same pair as the viscosity blend. In PROTEUS `"phase"` is the default of `interior_energetics.aragog.core_module.ra_crit_cmb`, and the transition is `interior_energetics.rfront_loc` and `rfront_wid`. A transition band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ outside \[0, 1\] is refused.
+The transition comes from `rheological_transition_melt_fraction` and `rheological_transition_width` of the phase settings, the same pair as the viscosity blend. PROTEUS passes `interior_energetics.aragog.core_module.ra_crit_cmb` to this setting, and the transition from `interior_energetics.rfront_loc` and `rfront_wid`. A transition band $[\phi_\text{rheo} - w/2,\ \phi_\text{rheo} + w/2]$ outside \[0, 1\] is refused.
 
 [^cite-thiriet2019]: M. Thiriet, D. Breuer, C. Michaut, A.-C. Plesa, *[Scaling laws of convection for cooling planets in a stagnant lid regime](https://doi.org/10.1016/j.pepi.2018.11.003)*, Physics of the Earth and Planetary Interiors, 286, 138-153, 2019. [SciX](https://scixplorer.org/abs/2019PEPI..286..138T/abstract).
