@@ -18,8 +18,9 @@ from tests.test_entropy_solver_integration import _build_parameters
 
 pytestmark = [pytest.mark.smoke, needs_eos, pytest.mark.timeout(600)]
 
-# Tight tolerances, so the solver error floor sits far below the closure bias (about 0.1).
-RTOL = 1.0e-10
+# Tight tolerances, so the solver error floor sits far below the closure bias (about 0.1);
+# the gradient layout sums the node entropy over all gradient states and needs the tighter one.
+RTOL = {'energy_balance': 1.0e-10, 'gradient': 1.0e-12}
 LEDGER_TOL = 1.0e-4
 
 
@@ -87,7 +88,7 @@ def _ledger(core_bc, method, g0, jax_rhs=False, end_time=20.0):
         solver_method=method,
         use_jax_jacobian=jax_rhs,
     )
-    params.solver.rtol = params.solver.atol = RTOL
+    params.solver.rtol = params.solver.atol = RTOL[core_bc]
     eos = entropy_eos_copy(EOS_DIR)
     solver = EntropySolver(params, entropy_eos=eos)
     solver.initialize()
@@ -106,26 +107,32 @@ def _ledger(core_bc, method, g0, jax_rhs=False, end_time=20.0):
         solver, sol.t[0], sol.y[:, 0]
     )
     q = float(out.step_dE_F_cmb_J)
-    return c_core * d_t, q, calls
+    return c_core * d_t, q, calls, solver.cmb_ledger
 
 
-@pytest.mark.parametrize('g0', [0.9, 0.3])
-@pytest.mark.parametrize(
-    ('core_bc', 'method', 'jax_rhs'),
-    [
+# gradient at g = 0.3: its CMB heat is 5e25 J, and the 1e-8 atol floor on its 14 gradient
+# slots holds the node entropy only to about 0.03 J/kg/K per step, above that resolution.
+CASES = [
+    (bc, method, jax_rhs, g0)
+    for bc, method, jax_rhs in (
         ('energy_balance', 'radau', False),
         ('energy_balance', 'cvode', False),
         ('energy_balance', 'cvode', True),
         ('gradient', 'radau', False),
-    ],
-)
+    )
+    for g0 in (0.9, 0.3)
+    if not (bc == 'gradient' and g0 == 0.3)
+]
+
+
+@pytest.mark.parametrize(('core_bc', 'method', 'jax_rhs', 'g0'), CASES)
 def test_core_heat_change_equals_the_cmb_heat_flow(core_bc, method, jax_rhs, g0):
     """``c_core T_hat M_core dT_node + int E dt = 0`` over a call with the CMB node in the mush."""
     if method == 'cvode':
         pytest.importorskip('scikits_odes_sundials')
     if jax_rhs:
         pytest.importorskip('equinox')
-    d_e, q, calls = _ledger(core_bc, method, g0, jax_rhs=jax_rhs)
+    d_e, q, calls, check = _ledger(core_bc, method, g0, jax_rhs=jax_rhs)
     if jax_rhs:
         assert calls['n'] > 0, 'the JAX factory was not used'
     assert q > 0.0, f'the fixture must cool the core, q = {q:.4e} J'
@@ -134,6 +141,19 @@ def test_core_heat_change_equals_the_cmb_heat_flow(core_bc, method, jax_rhs, g0)
         f'core ledger misses by {miss:+.5f} of the CMB heat flow '
         f'(core change {d_e:+.4e} J, CMB heat {q:+.4e} J)'
     )
+    assert not check['excluded'] and abs(check['r']) <= check['bound'], check
+
+
+def test_the_cp_over_t_closure_raises_the_closure_fault(monkeypatch):
+    """The old closure (``c_p/T`` of the blend) misses the ledger by about 9 %, above 10x the bound."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    def cp_of_the_blend(self):
+        return float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
+
+    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', cp_of_the_blend)
+    with pytest.raises(RuntimeError, match='CMB closure fault'):
+        _ledger('energy_balance', 'radau', 0.9)
 
 
 @pytest.mark.parametrize(

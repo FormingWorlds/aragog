@@ -312,7 +312,8 @@ class BoundaryConfig:
         BC with the CMB entropy gradient as an extra state, integrated by
         SPIDER's ``bc.c:76-131`` formula
         d/dt(dSdr_cmb) = (2/dr) ((-F_cmb area_cmb) fac_cmb - dSdt_s[0]),
-        fac_cmb = cp_cmb / (cp_core T_cmb tfac M_core); state length N+1),
+        fac_cmb = cp_cmb / (cp_core T_cmb tfac M_core), cp_cmb = T_cmb (dS/dT)_P of the
+        node's phase blend; state length N+1),
         'gradient' (entropy gradient as the primary state, S rebuilt by
         integration from the surface; state length N+2),
         'bower2018' (T_core as a state with F_cmb from conduction across the
