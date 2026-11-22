@@ -237,13 +237,12 @@ def test_the_rhs_moves_the_node_temperature_at_the_core_rate(core_bc, g0):
     n, y = solver._n_stag, np.asarray(solver._S0, dtype=float)
     f = np.asarray(solver._dSdt_single(0.0, y), dtype=float) / Julian_year
     slope = float(np.asarray(solver.state.phase_basic.temperature_slope()).flat[0])
-    off = -0.5 * float(
-        solver._cmb_dr_cmb
-    )  # the RHS node offset (gradient: the staggered radius)
+    # the node offset of each RHS: half the basic spacing, the staggered radius in gradient
+    off, sum_abs = -0.5 * float(solver._cmb_dr_cmb), 0.0
     if core_bc == 'gradient':
         off = float(solver._r_basic_flat[0] - solver._r_stag_flat[0])
-        dS_stag0 = f[n + 1] - np.diff(solver._r_stag_flat) @ f[1:n]
-        dS_node = dS_stag0 + off * f[0]
+        terms = np.r_[f[n + 1], -np.diff(solver._r_stag_flat) * f[1:n], off * f[0]]
+        dS_node, sum_abs = float(np.sum(terms)), float(np.sum(np.abs(terms)))
     else:
         dS_node = f[0] + off * f[n]
     if core_bc == 'core_module':
@@ -252,7 +251,9 @@ def test_the_rhs_moves_the_node_temperature_at_the_core_rate(core_bc, g0):
     E = float(solver.state._heat_flux[0]) * float(solver._cmb_area)
     C = float(solver._core_cp * solver._core_tfac * solver._core_M)
     assert abs(E) > 0.0
-    assert C * slope * dS_node == pytest.approx(-E, rel=1.0e-10)
+    # the gradient node rate sums rates up to 8e9 times its size; 50 eps of that sum
+    cancel = 50.0 * np.finfo(float).eps * C * slope * sum_abs
+    assert C * slope * dS_node == pytest.approx(-E, rel=1.0e-10, abs=cancel)
 
 
 @pytest.mark.parametrize('g0', [-0.03, 0.9, 1.004])
