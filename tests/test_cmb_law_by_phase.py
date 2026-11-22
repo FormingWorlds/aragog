@@ -134,6 +134,24 @@ def test_a_fixed_ra_crit_and_a_band_are_refused_together(ra_crit, loc):
 
 
 @pytest.mark.unit
+def test_a_fixed_ra_crit_and_a_traced_band_centre_are_refused_at_trace_time():
+    """A traced band centre can be on, so a fixed ra_crit with it is refused when the call is
+    traced. A concrete NaN centre (off) gives the fixed law, and a traced ra_crit the blend."""
+
+    def flux(ra_crit, loc):
+        return cmb_boundary_layer_flux(
+            T_CORE, T_M, ra_crit=ra_crit, melt_fraction=0.4, liquid_band=(loc, WID), **LAYER
+        )
+
+    with pytest.raises(ValueError, match='exclude each other'):
+        jax.jit(lambda loc: flux(450.0, loc))(LOC)
+    assert float(flux(450.0, float('nan'))) == _flux(450.0)
+    blend = float(jax.jit(flux)(jnp.nan, LOC))
+    assert blend == pytest.approx(float(_phase_flux(0.4)), rel=1e-13)
+    assert blend != pytest.approx(_flux(450.0), rel=1e-3)
+
+
+@pytest.mark.unit
 def test_a_saturated_weight_gives_each_law_exactly():
     """In a band of width 1e-3 the tanh saturates in float64 at phi = 0 and 1: the flux is
     then the eq. 16 flux and the 450 flux, bit for bit."""

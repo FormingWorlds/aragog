@@ -9,6 +9,8 @@ none is set, and stay differentiable for the JAX Jacobian.
 
 from __future__ import annotations
 
+from unittest import mock
+
 import jax
 import numpy as np
 import pytest
@@ -18,6 +20,7 @@ from hypothesis import strategies as st
 from aragog.core import (
     RA_CRIT_CMB_DEFAULT,
     RA_CRIT_UPPER_LAYER,
+    boundary_layer,
     check_ra_crit,
     cmb_boundary_layer_flux,
     critical_rayleigh_eq16,
@@ -296,6 +299,17 @@ def test_flux_slope_on_each_side_of_zero_contrast():
     assert slopes[0] == pytest.approx(4.0e-4, rel=1e-9, abs=0.0)
     assert float(f(t_hot)) == pytest.approx(q_hot, rel=1e-9, abs=0.0)
     assert slopes[1] == pytest.approx(4.0 * q_hot / (3.0 * dT), rel=1e-9, abs=0.0)
+
+
+@pytest.mark.parametrize(('ra_crit', 'calls'), [(450.0, 0), (None, 1), (float('nan'), 1)])
+def test_eq16_is_evaluated_only_when_the_law_needs_it(ra_crit, calls):
+    """A fixed critical Rayleigh number does not evaluate eq. 16; None and the NaN sentinel
+    evaluate it once."""
+    eq16 = boundary_layer.critical_rayleigh_eq16
+    with mock.patch.object(boundary_layer, 'critical_rayleigh_eq16', side_effect=eq16) as spy:
+        q = float(cmb_boundary_layer_flux(4902.8, 4313.9, ra_crit=ra_crit, **_STATE))
+    assert np.isfinite(q) and q > 0.0
+    assert spy.call_count == calls
 
 
 @pytest.mark.parametrize('bad', [True, '450', [450.0], 0, -450.0, float('nan'), float('inf')])
