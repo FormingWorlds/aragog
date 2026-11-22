@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import math
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -79,28 +80,22 @@ def _one_update_per_state_flux(solver, t_core, s_bottom, s_top):
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.parametrize('law', LAWS)
-def test_one_layer_update_per_call_and_eq16_only_where_the_law_needs_it(law, monkeypatch):
+def test_one_layer_update_per_call_and_eq16_only_where_the_law_needs_it(law):
     """A CMB flux call updates the boundary-layer evaluator once, and evaluates eq. 16 once
     under eq. 16 and the law by phase and not at a fixed critical Rayleigh number."""
     solver = _phase_solver()
     solver._core_module_ra_crit_cmb = law
     n, y = solver._n_stag, _state(solver, 0.5)
-    calls = {'update': 0, 'eq16': 0}
     update, eq16 = EntropyPhaseEvaluator.update, boundary_layer.critical_rayleigh_eq16
-
-    def spy_update(self):
-        calls['update'] += 1
-        return update(self)
-
-    def spy_eq16(**kw):
-        calls['eq16'] += 1
-        return eq16(**kw)
-
-    monkeypatch.setattr(EntropyPhaseEvaluator, 'update', spy_update)
-    monkeypatch.setattr(boundary_layer, 'critical_rayleigh_eq16', spy_eq16)
-    q = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
+    with (
+        mock.patch.object(
+            EntropyPhaseEvaluator, 'update', autospec=True, side_effect=update
+        ) as up,
+        mock.patch.object(boundary_layer, 'critical_rayleigh_eq16', side_effect=eq16) as e16,
+    ):
+        q = solver._core_module_cmb_flux(y[n + 1], y[0], y[n - 1])
     assert math.isfinite(q) and q > 0.0
-    assert calls == {'update': 1, 'eq16': 0 if law == RA_CRIT_UPPER_LAYER else 1}
+    assert (up.call_count, e16.call_count) == (1, 0 if law == RA_CRIT_UPPER_LAYER else 1)
 
 
 @pytest.mark.smoke
