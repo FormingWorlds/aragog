@@ -1,9 +1,9 @@
-"""Validation of the CMB closure on the PALEOS:MgSiO3 states of two coupled PROTEUS runs.
+"""Validation of the CMB closure on stored PALEOS:MgSiO3 states of two coupled PROTEUS runs.
 
-The two a115 runs (``tests/validation/data/cmb_closure_paleos_a115_provenance.json``) share the
-configuration and the tables. One uses ``c_p/T`` of the blend at an aragog commit without #121 (the
-lid melt and the CMB law by phase), the other ``(dS/dT)_P`` (the slope closure) on this branch, so
-each run is compared with the closed form of its own closure. For each row the
+A check of stored runs: the 2 runs (``tests/validation/data/cmb_closure_paleos_runs_provenance.json``
+names their aragog commits) share the configuration and the tables. One run uses ``c_p/T`` of the
+blend and has neither the lid melt nor the CMB law by phase; the other uses ``(dS/dT)_P`` (the slope
+closure), so each run is compared with the closed form of its own closure. For each row the
 core ledger misses by ``r/|dE| = sign(q) (1/k - 1)`` with ``k = c_p,used (dT/dS)_tab / T``
 (Bower et al. 2018, Eqs. 19-21, https://doi.org/10.1016/j.pepi.2017.11.004): the case
 evaluates ``k`` with the code's blend on the run's own tables at the stored CMB-node states and
@@ -25,7 +25,7 @@ pytest.importorskip('equinox')
 
 pytestmark = [pytest.mark.reference_pinned, pytest.mark.unit]
 
-DATA = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_paleos_a115.npz'
+DATA = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_paleos_runs.npz'
 WIDTH = 0.01  # matprop_smooth_width of the runs
 MIN_POWER = 1.0e16  # [W] CMB power below which the solver floor dominates the row
 MAX_DK = 0.02  # rows whose closure factor changes less than this inside the row
@@ -39,7 +39,7 @@ def case(tmp_path_factory):
     from aragog.jax.eos import EntropyEOS_JAX
 
     d = dict(np.load(DATA))
-    tmp = tmp_path_factory.mktemp('paleos_a115')
+    tmp = tmp_path_factory.mktemp('paleos_runs')
     for ph in ('solid', 'melt'):
         for name in ('temperature', 'heat_capacity'):
             write_ps_table(

@@ -690,7 +690,7 @@ Every row also moves with round-off. A start changed by $10^{-14}$ to $10^{-11}$
 
 **Why this check exists.** Section 16 uses the test tables. This case uses the PALEOS:MgSiO3 tables and the CMB-node states of 2 coupled PROTEUS runs (1 Earth mass, `input/all_options.toml`). It fails if the closed form, evaluated with the code's blend on those tables, does not give the miss that the runs measured.
 
-**What it tests.** The 2 runs share the configuration and the tables. One uses $c_p/T$ at an aragog commit without [#121](https://github.com/FormingWorlds/aragog/pull/121) (the lid melt and the CMB law by phase), the other the slope closure, so the test compares each run with the closed form of its own closure, not the 2 runs with each other. For each output row the test takes the node entropy at the row start and end, the CMB pressure, the CMB heat $q$ of the row (J) and the core heat change $\Delta E$. It evaluates the closure factor $k$ at both ends and predicts the miss $r/|\Delta E| = \text{sign}(q)\, (1/\bar{k} - 1)$, with $\bar{k}$ the mean of the 2 ends. It uses the rows in the mush with a CMB power above $10^{16}$ W and with $k$ that changes by less than 0.02 in the row: 17 rows of the $c_p/T$ run and 13 of the slope run.
+**What it tests.** The 2 runs share the configuration and the tables. One uses $c_p/T$ and has neither the lid melt nor the CMB law by phase of [#121](https://github.com/FormingWorlds/aragog/pull/121); the other uses the slope closure. The test checks these stored runs and compares each run with the closed form of its own closure, not the 2 runs with each other. For each output row the test takes the node entropy at the row start and end, the CMB pressure, the CMB heat $q$ of the row (J) and the core heat change $\Delta E$. It evaluates the closure factor $k$ at both ends and predicts the miss $r/|\Delta E| = \text{sign}(q)\, (1/\bar{k} - 1)$, with $\bar{k}$ the mean of the 2 ends. It uses the rows in the mush with a CMB power above $10^{16}$ W and with $k$ that changes by less than 0.02 in the row: 17 rows of the $c_p/T$ run and 13 of the slope run.
 
 **How we know the right answer.** The same balance as in section 16, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21. The test first checks that the blend gives the stored node temperature of every row within $10^{-6}$ K.
 
@@ -705,7 +705,7 @@ Every row also moves with round-off. A start changed by $10^{-14}$ to $10^{-11}$
 
 ??? info "Test details"
     - Reference: the closed form $\text{sign}(q)\,(1/\bar{k} - 1)$, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21, on the run tables.
-    - Data: `tests/validation/data/cmb_closure_paleos_a115.npz`, provenance in `cmb_closure_paleos_a115_provenance.json`, built by `tests/reference/build_cmb_closure_paleos_a115.py`.
+    - Data: `tests/validation/data/cmb_closure_paleos_runs.npz`, provenance in `cmb_closure_paleos_runs_provenance.json`, built by `tests/reference/build_cmb_closure_paleos_runs.py`.
     - Tolerance: $2 \times 10^{-3}$ (largest found $1.4 \times 10^{-3}$ for $c_p/T$, $8.0 \times 10^{-4}$ for the slope closure); the $c_p/T$ run must miss by more than 0.05 in some row.
     - Test id: `tests/test_cmb_closure_validation_paleos.py::test_the_closed_form_gives_the_ledger_miss_of_both_runs`
     - Command: `pytest tests/test_cmb_closure_validation_paleos.py` (add `--validation-plots` to write the plot pair)

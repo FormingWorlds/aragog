@@ -1,4 +1,4 @@
-"""Build ``tests/validation/data/cmb_closure_paleos_a115.npz`` from the two a115 PROTEUS runs.
+"""Build ``tests/validation/data/cmb_closure_paleos_runs.npz`` from the stored states of 2 coupled PROTEUS runs, one per CMB closure.
 
 The runs couple aragog (energy_balance core, JAX right-hand side) to Zalmoxis with PALEOS:MgSiO3
 mantle and PALEOS:iron core tables, 1 Earth mass, from ``input/all_options.toml``:
@@ -7,7 +7,7 @@ tables cropped to the CMB pressure window and, per helpfile row, the CMB node en
 row start and end (``S_stag0 - dr_cmb/2 dSdr_cmb`` from the interior snapshots), the CMB
 pressure, the CMB heat of the row and the core heat change ``c_core M_core T_hat dT_node``.
 
-Usage: ``python tests/reference/build_cmb_closure_paleos_a115.py <c_p/T run> <its aragog commit>
+Usage: ``python tests/reference/build_cmb_closure_paleos_runs.py <c_p/T run> <its aragog commit>
 <slope run> <its aragog commit> <PROTEUS commit>``
 """
 
@@ -141,7 +141,7 @@ def main(cp_over_t, cp_commit, slope, slope_commit, proteus_commit):
             (run / 'runtime_helpfile.csv').read_bytes()
         ).hexdigest()
     OUT.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(OUT / 'cmb_closure_paleos_a115.npz', **out)
+    np.savez_compressed(OUT / 'cmb_closure_paleos_runs.npz', **out)
     provenance = {
         'runs': {
             'cp_over_t': _run_label(cp_over_t, cp_commit, 'c_p/T'),
@@ -153,10 +153,10 @@ def main(cp_over_t, cp_commit, slope, slope_commit, proteus_commit):
         's_margin': S_MARGIN,
         'tables': list(TABLES),
         'sha256': sha,
-        'builder': 'tests/reference/build_cmb_closure_paleos_a115.py',
+        'builder': 'tests/reference/build_cmb_closure_paleos_runs.py',
     }
     body = ',\n'.join(f'{json.dumps(k)}: {json.dumps(v)}' for k, v in provenance.items())
-    (OUT / 'cmb_closure_paleos_a115_provenance.json').write_text('{\n' + body + '\n}\n')
+    (OUT / 'cmb_closure_paleos_runs_provenance.json').write_text('{\n' + body + '\n}\n')
     print(
         {
             k: v.shape
