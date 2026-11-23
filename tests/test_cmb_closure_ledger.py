@@ -90,23 +90,32 @@ def _profile(solver, eos, g0):
     return S_sol + g0 * (S_liq - S_sol)
 
 
-def _ledger(core_bc, method, g0, jax_rhs=False, end_time=20.0):
-    """Run one call from a mush profile at melt coordinate ``g0``; return the ledger terms."""
+def _solver(g0, core_bc='energy_balance', tol=None, **options):
+    """Initialised 15-node solver holding the profile at melt coordinate ``g0``."""
     from aragog.solver.entropy_solver import EntropySolver
 
     params = _build_parameters(
-        core_bc=core_bc,
-        n_nodes=15,
-        end_time=end_time,
-        inner_boundary_condition=1,
-        solver_method=method,
-        use_jax_jacobian=jax_rhs,
+        core_bc=core_bc, n_nodes=15, inner_boundary_condition=1, **options
     )
-    params.solver.rtol = params.solver.atol = RTOL[core_bc]
+    if tol:
+        params.solver.rtol = params.solver.atol = tol
     eos = entropy_eos_copy(EOS_DIR)
     solver = EntropySolver(params, entropy_eos=eos)
     solver.initialize()
     solver.set_initial_entropy(_profile(solver, eos, g0))
+    return solver
+
+
+def _ledger(core_bc, method, g0, jax_rhs=False, end_time=20.0):
+    """Run one call from a mush profile at melt coordinate ``g0``; return the ledger terms."""
+    solver = _solver(
+        g0,
+        core_bc,
+        RTOL[core_bc],
+        end_time=end_time,
+        solver_method=method,
+        use_jax_jacobian=jax_rhs,
+    )
     calls = None
     if jax_rhs:
         factory, calls = _jax_factory(solver)
@@ -242,7 +251,6 @@ def _check_the_node_rate(core_bc, g0):
     """Assert the node-rate identity at one state, and in the mush the slope of the evaluated T."""
     from scipy.constants import Julian_year
 
-    from aragog.solver.entropy_solver import EntropySolver
     from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 
     eos = entropy_eos_copy(EOS_DIR)
@@ -254,10 +262,7 @@ def _check_the_node_rate(core_bc, g0):
         solver.set_initial_core_temperature(t_m + 50.0)
         solver.set_initial_entropy(S)
     else:
-        params = _build_parameters(core_bc=core_bc, n_nodes=15, inner_boundary_condition=1)
-        solver = EntropySolver(params, entropy_eos=eos)
-        solver.initialize()
-        solver.set_initial_entropy(_profile(solver, eos, g0))
+        solver = _solver(g0, core_bc)
     n, y = solver._n_stag, np.asarray(solver._S0, dtype=float)
     f = np.asarray(solver._dSdt_single(0.0, y), dtype=float) / Julian_year
     slope = float(np.asarray(solver.state.phase_basic.temperature_slope()).flat[0])
@@ -304,15 +309,8 @@ def test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate(g0):
 
     from aragog.jax.phase import evaluate_phase
     from aragog.jax.solver import _dSdt_energy_balance_parts
-    from aragog.solver.entropy_solver import EntropySolver
 
-    eos = entropy_eos_copy(EOS_DIR)
-    params = _build_parameters(
-        core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1, solver_method='cvode'
-    )
-    solver = EntropySolver(params, entropy_eos=eos)
-    solver.initialize()
-    solver.set_initial_entropy(_profile(solver, eos, g0))
+    solver = _solver(g0, solver_method='cvode')
     args = _jax_args(solver)
     n, y = solver._n_stag, jnp.asarray(solver._S0, dtype=float)
     parts = _dSdt_energy_balance_parts(0.0, y, args)
@@ -368,13 +366,9 @@ def test_a_small_closure_miss_warns_and_is_counted(monkeypatch, caplog, error, m
 def test_a_state_with_round_off_table_slope_is_left_out(g0):
     """In a flat (padded) cell the central difference of the table leaves round-off of either
     sign (about 4.5e-10 here); such a state is left out of the check, not compared."""
-    from aragog.solver.entropy_solver import EntropySolver
 
-    eos = entropy_eos_copy(EOS_DIR)
-    params = _build_parameters(core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1)
-    solver = EntropySolver(params, entropy_eos=eos)
-    solver.initialize()
-    solver.set_initial_entropy(_profile(solver, eos, 0.5))
+    solver = _solver(0.5)
+    eos = solver.entropy_eos
     P = np.asarray(solver._P_basic_flat[:1], dtype=float)
     S_sol, S_liq = (
         float(np.ravel(eos.solidus_entropy(P))[0]),
@@ -391,13 +385,9 @@ def test_a_non_positive_node_slope_stops_the_rhs_and_the_check(monkeypatch):
     """A node slope of 0 or below is refused with a message, in the RHS (before a division by 0)
     and in the ledger check over the accepted states."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-    from aragog.solver.entropy_solver import CMBClosureError, EntropySolver
+    from aragog.solver.entropy_solver import CMBClosureError
 
-    eos = entropy_eos_copy(EOS_DIR)
-    params = _build_parameters(core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1)
-    solver = EntropySolver(params, entropy_eos=eos)
-    solver.initialize()
-    solver.set_initial_entropy(_profile(solver, eos, 0.9))
+    solver = _solver(0.9)
     y = np.asarray(solver._S0, dtype=float)
     solver._call_tol = (1.0e-8, 1.0e-8)  # as solve() sets them
     for value in (0.0, -1.0, np.nan):
@@ -464,17 +454,6 @@ def test_a_slope_fault_in_the_cvode_rhs_reaches_the_caller(monkeypatch, n_calls)
         return exact(self)
 
     monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', faulty)
-    eos = entropy_eos_copy(EOS_DIR)
-    params = _build_parameters(
-        core_bc='energy_balance',
-        n_nodes=15,
-        end_time=20.0,
-        inner_boundary_condition=1,
-        solver_method='cvode',
-        use_jax_jacobian=False,
-    )
-    solver = EntropySolver(params, entropy_eos=eos)
-    solver.initialize()
-    solver.set_initial_entropy(_profile(solver, eos, 0.9))
+    solver = _solver(0.9, end_time=20.0, solver_method='cvode', use_jax_jacobian=False)
     with pytest.raises(CMBClosureError, match='at the probe'):
         solver.solve()
