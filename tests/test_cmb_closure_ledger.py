@@ -416,6 +416,7 @@ def test_a_closure_fault_keeps_the_last_accepted_state(monkeypatch):
         solver.solve()
     assert solver.get_current_dSdr_cmb() == accepted
     assert abs(solver.cmb_ledger['r']) > 10.0 * solver.cmb_ledger['bound']
+    assert solver._cmb_ledger_counts['missed'] == 1
 
 
 @pytest.mark.parametrize('n_calls', [3, 200])
