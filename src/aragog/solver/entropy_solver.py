@@ -5126,7 +5126,7 @@ class EntropySolver:
         # that scikits.odes CVODE expects. Count RHS calls for parity
         # with scipy's sol.nfev.
         _rhs = rhs if rhs is not None else self.dSdt
-        nfev_box = [0]
+        nfev_box, rhs_fault = [0], []
 
         if cvode_rhs_fn_override is not None:
             # Option Z: caller supplies a fully-formed CVODE RHS
@@ -5142,7 +5142,11 @@ class EntropySolver:
         else:
 
             def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
-                ydot[:] = _rhs(t, y)
+                try:
+                    ydot[:] = _rhs(t, y)
+                except CMBClosureError as err:  # CVODE can turn a raise into a failed step
+                    rhs_fault.append(err)
+                    return -1
                 nfev_box[0] += 1
                 return 0
 
@@ -5279,6 +5283,8 @@ class EntropySolver:
             tspan,
             np.asarray(y0, dtype=float).ravel(),
         )
+        if rhs_fault:
+            raise rhs_fault[0]
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
@@ -6444,7 +6450,7 @@ class EntropySolver:
         try:
             sol.energy_integrals = self._compute_step_energy_integrals()
         except CMBClosureError:
-            self._solution = last_accepted  # the next call starts from the last accepted state
+            self._solution = last_accepted  # back to the solution held at the call start
             raise
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
@@ -6780,8 +6786,8 @@ class EntropySolver:
         cell) leaves the call out of the check, with one warning. A miss warns once per call; a
         miss above 10 B raises ``CMBClosureError``. ``self.cmb_ledger`` holds the call's terms
         (None when the call is not checked). B is a worst case: at rtol 1e-8 a 2-yr core_module
-        call with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for a
-        core-top change of 0.032 K, so a closure error shows only in calls with a large change.
+        call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
+        a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
 
         Raises
         ------
@@ -6853,13 +6859,13 @@ class EntropySolver:
                 counts['excluded'],
             )
             return
+        counts['missed'] += int(abs(r) > bound)
         if abs(r) > 10.0 * bound:
             raise CMBClosureError(
                 f'CMB closure fault in the call to t = {t_pts[-1]:.6e} yr: ledger miss {r:.6g} '
                 f'is above 10x the solver bound {bound:.6g} ({"J" if d_top is None else "K"})'
             )
         if abs(r) > bound:
-            counts['missed'] += 1
             logger.warning(
                 'EntropySolver: CMB closure ledger miss %.6g above the bound %.6g in the call '
                 'to t = %.6e yr; %d call(s) missed so far',
