@@ -193,3 +193,41 @@ def test_clear_jit_cache_drops_the_traced_programs(eos):
     _evaluate('quasi_steady', eos, PhaseParams())
     assert _TRACE_COUNTERS['rhs'] == 1
     assert _TRACE_COUNTERS['jac'] == 1
+
+
+def _rhs_at(eos, n):
+    """RHS of a quasi_steady factory on an ``n``-node mesh (one input form per ``n``)."""
+    mesh = _make_mesh(N=n)
+    rhs, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=PhaseParams(),
+        mesh_arrays=mesh,
+        boundary_params=_make_bc(mesh, outer_type=4, inner_type=1, outer_val=10.0),
+        heating_array=np.zeros(n),
+        scales=NonDimScales(state_scale=np.full(n, 3.0e3), t_ref=1.0),
+        core_bc_mode='quasi_steady',
+    )
+    f = np.zeros(n)
+    assert rhs(0.0, np.linspace(3100.0, 2900.0, n) / 3.0e3, f) == 0
+    return f
+
+
+def test_the_program_caches_hold_at_most_max_forms_input_forms(eos, monkeypatch):
+    """A known form reuses its program; a new form past MAX_FORMS clears the programs first, so
+    the caches stay bounded, and the new form still gives the values of a build from empty
+    caches."""
+    from aragog.solver import cvode_jax
+
+    monkeypatch.setattr(cvode_jax, 'MAX_FORMS', 2)
+    clear_jit_cache()
+    _rhs_at(eos, 6)
+    _rhs_at(eos, 7)
+    traces = _TRACE_COUNTERS['rhs']
+    _rhs_at(eos, 6)
+    assert _TRACE_COUNTERS['rhs'] == traces
+    third = _rhs_at(eos, 8)
+    rhs_program = cvode_jax._programs()[0]
+    assert rhs_program._cache_size() == 1
+    assert len(cvode_jax._FORMS) == 1
+    clear_jit_cache()
+    np.testing.assert_array_equal(third, _rhs_at(eos, 8))
