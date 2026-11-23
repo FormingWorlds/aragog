@@ -237,9 +237,22 @@ class StaticArray:
     __slots__ = ('value', '_hash')
 
     def __init__(self, a) -> None:
-        self.value = np.array(a, dtype=float)
-        self.value.setflags(write=False)
+        a = np.asarray(a)
+        if np.iscomplexobj(a) or not np.all(np.isfinite(a)):
+            raise ValueError('a static grid must hold finite real values')
+        a = np.ascontiguousarray(a, dtype=float)
+        # backed by immutable bytes, so the write flag cannot be set back
+        self.value = np.frombuffer(a.tobytes(), dtype=float).reshape(a.shape)
         self._hash = hash((self.value.tobytes(), self.value.dtype.str, self.value.shape))
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+    def __reduce__(self):
+        return (StaticArray, (np.array(self.value),))
 
     def __hash__(self) -> int:
         return self._hash
