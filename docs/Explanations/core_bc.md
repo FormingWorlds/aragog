@@ -341,17 +341,17 @@ $$
 
 In `core_module` it compares the change of the node temperature with that of the core top, so $r$ and its bound are in K. This check tests that the CMB node follows the core; the [core ledger](#energy-conservation-and-core-closure) of `core_module` tests the energy balance of the core itself.
 
-The miss $r$ must stay within a bound $B$ that follows from the solver tolerances:
+The miss $r$ must stay within a bound $B$ set by the solver tolerances:
 
 $$
 B = \epsilon_\text{tab} \int |E|\, dt + E_\text{trap} + C\, \sqrt{n_y}\, n_\text{st} \max_k \left[\left(\frac{\partial T}{\partial S}\right)_P w\right]_k
 $$
 
-- $\epsilon_\text{tab}$ is the largest relative difference, over the accepted states of the call, of the slope of the tabulated $T$ from the closure slope. It is 0 in the mush. It multiplies the integral of $|E|$, because $E$ can change sign within a call.
-- $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$ over the energy trace of the call, the states the integrator records (with CVODE every accepted step, every output point and, on a fired root, the root-search points; see [diagnostic outputs](#diagnostic-outputs)). It is estimated from every other node of that trace.
+- $\epsilon_\text{tab}$ is the largest relative difference of the tabulated $T$ slope from the closure slope over the accepted states of the call; it is 0 in the mush. It multiplies the integral of $|E|$, because $E$ can change sign within a call.
+- $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$ over the energy trace of the call, the states the integrator records (listed in [diagnostic outputs](#diagnostic-outputs)). It is estimated from every other trace node.
 - $w$ is the error weight of the node entropy (J kg$^{-1}$ K$^{-1}$): the weights of the states it depends on, each times its coefficient. These states are the bottom-cell entropy and the gradient, and in `gradient` all gradient states and the surface entropy.
-- The integrator accepts a step when the root mean square of the $n_y$ weighted errors is at most 1, with $n_y$ the length of the state vector, so the error of one state is at most $\sqrt{n_y}$ times its weight. $n_\text{st}$ is the number of intervals of the energy trace; the maximum runs over its nodes $k$.
-- In `core_module` the bound has no $C$ and no $E_\text{trap}$. The integral of $|E|$ becomes the sum of the absolute changes of the core-top temperature between trace nodes, and a term for the error weight of that temperature is added.
+- The integrator accepts a step when the root mean square of the $n_y$ weighted errors ($n_y$ the length of the state vector) is at most 1, so one state errs by at most $\sqrt{n_y}$ times its weight. $n_\text{st}$ is the number of intervals of the energy trace; the maximum runs over its nodes $k$.
+- In `core_module` the bound has no $C$ and no $E_\text{trap}$. The integral of $|E|$ becomes the sum of the absolute core-top temperature changes between trace nodes, plus a term for the error weight of that temperature.
 
 ### What happens after a miss
 
