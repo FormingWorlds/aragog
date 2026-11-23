@@ -36,7 +36,9 @@ if __name__ == '__main__':
         ['git', '-C', str(src), 'rev-parse', 'HEAD'], capture_output=True, text=True
     )
     eos_dir = os.environ['ARAGOG_TEST_EOS_DIR']
-    flag = next((f for f in MODE_COMMITS if f in sys.argv[1:]), None)
+    flags = [f for f in MODE_COMMITS if f in sys.argv[1:]]
+    assert len(flags) <= 1, f'one mode flag at a time, not {flags}'
+    flag = flags[0] if flags else None
     if flag:
         mode, commit = MODE_COMMITS[flag]
         assert head.stdout.strip() == commit, f'aragog from {src} is at {head.stdout}'

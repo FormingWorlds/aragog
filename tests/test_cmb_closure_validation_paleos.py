@@ -1,7 +1,9 @@
 """Validation of the CMB closure on the PALEOS:MgSiO3 states of two coupled PROTEUS runs.
 
-The two a115 runs (``tests/validation/data/cmb_closure_paleos_a115_provenance.json``) differ
-only in the closure: ``c_p/T`` of the blend and ``(dS/dT)_P`` (the slope closure). For each row the
+The two a115 runs (``tests/validation/data/cmb_closure_paleos_a115_provenance.json``) share the
+configuration and the tables. One uses ``c_p/T`` of the blend at an aragog commit without #121 (the
+lid melt and the CMB law by phase), the other ``(dS/dT)_P`` (the slope closure) on this branch, so
+each run is compared with the closed form of its own closure. For each row the
 core ledger misses by ``r/|dE| = sign(q) (1/k - 1)`` with ``k = c_p,used (dT/dS)_tab / T``
 (Bower et al. 2018, Eqs. 19-21, https://doi.org/10.1016/j.pepi.2017.11.004): the case
 evaluates ``k`` with the code's blend on the run's own tables at the stored CMB-node states and
@@ -94,6 +96,7 @@ def _rows(case, run):
     return d[f'{run}_t_end'], meas, pred, strong, used
 
 
+@pytest.mark.physics_invariant
 def test_the_closed_form_gives_the_ledger_miss_of_both_runs(case, validation_plot):
     """Rows in the mush with a steady closure factor: the ``c_p/T`` run misses by the closed form
     (up to about 10 %) and the slope run by 0, both within 2e-3."""

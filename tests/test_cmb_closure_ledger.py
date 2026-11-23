@@ -284,12 +284,18 @@ def _check_the_node_rate(core_bc, g0):
     assert C * slope * dS_node == pytest.approx(-E, rel=1.0e-10, abs=cancel)
 
 
-@pytest.mark.physics_invariant
-@pytest.mark.reference_pinned
-@pytest.mark.parametrize('g0', [-0.03, 0.9, 1.004])
+@pytest.mark.parametrize(
+    'g0',
+    [
+        -0.03,
+        pytest.param(0.9, marks=[pytest.mark.physics_invariant, pytest.mark.reference_pinned]),
+        1.004,
+    ],
+)
 def test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate(g0):
     """The JAX energy_balance RHS gives ``C (dT/dS)_P dS_node/dt = -E`` at one state (chain rule
-    at fixed pressure, Bower et al. 2018, Eqs. 19-21)."""
+    at fixed pressure, Bower et al. 2018, Eqs. 19-21); in the mush its slope is that of the
+    evaluated NumPy temperature, outside it the identity is one of the code."""
     jnp = pytest.importorskip('jax.numpy')
     pytest.importorskip('equinox')
     from scipy.constants import Julian_year
@@ -313,6 +319,8 @@ def test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate(g0):
     S_node = float(y[0]) + float(y[n]) * off
     node = evaluate_phase(args[0], args[1], args[2].P_basic[:1], jnp.array([S_node]))
     slope = float(node.temperature_slope[0])
+    if 0.0 < g0 < 1.0:
+        assert slope == pytest.approx(_table_slope(solver, S_node), rel=1.0e-6)
     E = float(parts.heat_flux[0]) * float(solver._cmb_area)
     C = float(solver._core_cp * solver._core_tfac * solver._core_M)
     assert C * slope * (f[0] + off * f[n]) == pytest.approx(-E, rel=1.0e-10)

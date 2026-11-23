@@ -7,7 +7,8 @@ tables cropped to the CMB pressure window and, per helpfile row, the CMB node en
 row start and end (``S_stag0 - dr_cmb/2 dSdr_cmb`` from the interior snapshots), the CMB
 pressure, the CMB heat of the row and the core heat change ``c_core M_core T_hat dT_node``.
 
-Usage: ``python tests/reference/build_cmb_closure_paleos_a115.py <c_p/T run dir> <slope run dir>``
+Usage: ``python tests/reference/build_cmb_closure_paleos_a115.py <c_p/T run> <its aragog commit>
+<slope run> <its aragog commit> <PROTEUS commit>``
 """
 
 from __future__ import annotations
@@ -48,17 +49,14 @@ def _boundary(path):
 
 def _tfac(run):
     """``core_tfac_avg`` of the run's coupler configuration."""
+    config = tomllib.loads((run / 'init_coupler.toml').read_text())
+    return float(config['interior_energetics']['core_tfac_avg'])
 
-    def find(node):
-        if isinstance(node, dict):
-            if 'core_tfac_avg' in node:
-                return float(node['core_tfac_avg'])
-            return next((x for x in map(find, node.values()) if x is not None), None)
-        return None
 
-    value = find(tomllib.loads((run / 'init_coupler.toml').read_text()))
-    assert value is not None, run
-    return value
+def _run_label(run, commit, closure):
+    """The aragog commit of the run, its closure and its time span from the helpfile."""
+    t = np.loadtxt(run / 'runtime_helpfile.csv', skiprows=1, usecols=0)
+    return f'aragog {commit} ({closure} closure), {t[0] / 1e3:.3g} to {t[-1] / 1e3:.3g} kyr'
 
 
 def _rows(run):
@@ -106,8 +104,13 @@ def _rows(run):
     }
 
 
-def main(cp_over_t, slope):
+def main(cp_over_t, cp_commit, slope, slope_commit, proteus_commit):
     eos = cp_over_t / 'data' / 'spider_eos'
+    names = [f'{n}_{ph}.dat' for n in TABLES for ph in ('solid', 'melt')]
+    for name in (*names, 'solidus_P-S.dat', 'liquidus_P-S.dat'):  # both runs read one table set
+        assert (eos / name).read_bytes() == (
+            slope / 'data' / 'spider_eos' / name
+        ).read_bytes(), name
     out, sha = {}, {}
     P_sol, S_sol = _boundary(eos / 'solidus_P-S.dat')
     P_liq, S_liq = _boundary(eos / 'liquidus_P-S.dat')
@@ -141,11 +144,11 @@ def main(cp_over_t, slope):
     np.savez_compressed(OUT / 'cmb_closure_paleos_a115.npz', **out)
     provenance = {
         'runs': {
-            'cp_over_t': 'aragog 3a869bb1 (c_p/T closure), 0 to 166 kyr',
-            'slope': 'aragog fbf154789544 on tl/aragog-115-cmb-closure ((dS/dT)_P closure), 0 to 14.1 kyr',
+            'cp_over_t': _run_label(cp_over_t, cp_commit, 'c_p/T'),
+            'slope': _run_label(slope, slope_commit, '(dS/dT)_P'),
         },
         'config': 'PROTEUS input/all_options.toml, 1 M_earth, PALEOS:MgSiO3 mantle, PALEOS:iron core',
-        'proteus_commit': 'da07391db',
+        'proteus_commit': proteus_commit,
         'p_window_Pa': list(P_WINDOW),
         's_margin': S_MARGIN,
         'tables': list(TABLES),
@@ -163,4 +166,4 @@ def main(cp_over_t, slope):
 
 
 if __name__ == '__main__':
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    main(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), sys.argv[4], sys.argv[5])
