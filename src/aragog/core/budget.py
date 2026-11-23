@@ -654,7 +654,7 @@ class CoreEnergyBudget:
 # the budget is a pytree argument, so a new budget of the same form reuses them.
 @jax.jit
 def _r_icb_one(budget, t_cmb):
-    return budget.r_icb(t_cmb)
+    return budget._r_icb_root(t_cmb)
 
 
 @jax.jit
