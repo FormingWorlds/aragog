@@ -306,7 +306,7 @@ $$
 \text{fac}_\text{cmb} = \frac{1}{c_p^\text{core} \, \text{tfac} \, M_\text{core}\, (\partial T/\partial S)_P}
 $$
 
-Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flow out of the core. SPIDER writes the same balance in its own coordinate, which decreases towards the CMB, so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase away from the melting band, and differ inside it. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flow out of the core. SPIDER writes the same balance in its own coordinate, which decreases towards the CMB, so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase outside the melting band and its smoothing bands, and differ inside them. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
 
 ### The entropy slope at the CMB node
 
@@ -318,16 +318,16 @@ $$
 \left(\frac{\partial T}{\partial S}\right)_P = s_b\, \frac{T_\text{liq} - T_\text{sol}}{S_\text{liq} - S_\text{sol}} + (1 - s_b)\, \frac{T_\text{single}}{c_p^\text{single}} + (T_\text{mix} - T_\text{single})\, \frac{\partial s_b}{\partial S}
 $$
 
-The first term holds from the solidus to the liquidus, the second is the pure-phase slope $T/c_p$, and the last is the change of the weight in the smoothing bands.
+The first term acts only from the solidus to the liquidus and the second, the pure-phase slope $T/c_p$, only outside them. The last, the change of the weight, acts only in the smoothing bands, a few `matprop_smooth_width` wide on both sides of the solidus and the liquidus. On the test tables at the CMB pressure of 145.7 GPa with the default width 0.01, the slope is the mush slope from $g = 0.1$ to $0.9$ and $T/c_p$ at $g \le -0.1$ and $g \ge 1.1$ ($g$ the melt coordinate, 0 at the solidus and 1 at the liquidus).
 
 The heat capacity of the blend does not give this slope in the mush. There it is $c_p = T_\text{avg} (S_\text{liq} - S_\text{sol})/(T_\text{liq} - T_\text{sol})$, with $T_\text{avg}$ the mean of the solidus and liquidus temperatures. With $c_p/T$ the node would cool at $T_\text{avg}/T$ of the core rate. For $T_\text{sol} = 4000$ K, $T_\text{liq} = 5600$ K and a melt coordinate of 0.85 (0 at the solidus, 1 at the liquidus; the melt fraction in the mush), $T = 5360$ K, and the node cools at 0.90 of the core rate.
 
 ### Limits of the slope closure
 
-- A table cell where $T$ does not rise with $S$ (for example a padded cell next to the liquidus) holds the node temperature, while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
-- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 146 GPa, it reaches 6 % in the solid and 0.5 % in the melt up to one band width above the liquidus; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
+- A table cell where $T$ does not rise with $S$ holds the node temperature (on the test tables at 145.7 GPa: $g = 1$ to $1.0075$ next to the liquidus, $g = -0.009$ to $0$ next to the solidus, and $g \le -0.34$ in the solid), while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
+- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 145.7 GPa, it reaches 6.2 % in the solid at the flat cell next to the solidus ($g = -0.009$) and 4.1 % below $g = -0.05$, and in the melt 0.66 % up to $g = 1.1$ and 0.79 % up to $g = 2$; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
 - A slope that is not finite and positive stops the call with a `CMBClosureError` from the NumPy right-hand side, with CVODE and with Radau. The JAX right-hand side has no such guard; the ledger check refuses such a slope over the accepted states of a call that finishes.
-- With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
+- With the default `matprop_smooth_width` the slope jumps where the pure-phase term starts: by a factor 18.9 at the solidus and 4.1 at the liquidus on the test tables at 145.7 GPa. With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
 
 **Where this is checked.** [The CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band), [the CMB closure on the states of 2 coupled runs](../Validation/core.md#17-the-cmb-closure-on-the-states-of-2-coupled-runs) and [the CMB node rate of each closure](../Validation/core.md#18-the-cmb-node-rate-of-each-closure).
 
@@ -347,7 +347,7 @@ $$
 B = \epsilon_\text{tab} \int |E|\, dt + E_\text{trap} + C\, \sqrt{n_y}\, n_\text{st} \max_k \left[\left(\frac{\partial T}{\partial S}\right)_P w\right]_k
 $$
 
-- $\epsilon_\text{tab}$ is the largest relative difference of the tabulated $T$ slope from the closure slope over the accepted states of the call; it is 0 in the mush. It multiplies the integral of $|E|$, because $E$ can change sign within a call.
+- $\epsilon_\text{tab}$ is the largest relative difference of the tabulated $T$ slope from the closure slope over the accepted states; in the mush it is the round-off of the central difference. It multiplies the integral of $|E|$, as $E$ can change sign.
 - $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$ over the energy trace of the call, which with CVODE holds the nodes listed in [diagnostic outputs](#diagnostic-outputs). It is estimated from every other trace node.
 - $w$ is the error weight of the node entropy (J kg$^{-1}$ K$^{-1}$): the weights of the states it depends on, each times its coefficient. These states are the bottom-cell entropy and the gradient, and in `gradient` all gradient states and the surface entropy.
 - The integrator accepts a step when the root mean square of the $n_y$ weighted errors ($n_y$ the length of the state vector) is at most 1, so one state errs by at most $\sqrt{n_y}$ times its weight. $n_\text{st}$ is the number of intervals of the energy trace; the maximum runs over its nodes $k$.
@@ -365,7 +365,7 @@ $B$ is a worst case, so the check sees a closure error only where it is large ag
 - a 20-yr `energy_balance` call (CVODE) misses by 0.16 $B$ with the node at 0.3, and raises with the node at 0.9;
 - a 20-yr `gradient` call (Radau) warns with the node at 0.9 (2.8 $B$) and passes with the node at 0.3, where $B$ is 20 times the CMB heat.
 
-The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = 1e-8` the slope closure itself reaches 0.79 $B$ in the mush.
+The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = atol = 1e-8`, in 2-yr and 20-yr `energy_balance` calls with the node at 0.5 to 0.99 on the test tables, the slope closure itself reaches 0.77 to 0.82 $B$. That miss is the trapezoid error $E_\text{trap}$ of the CMB heat over the accepted steps, not an error of the closure: in a 2-yr call with the node at 0.7 and `rtol = 1e-10`, Simpson's rule on the same steps lowers it from $6.3 \times 10^{-5}$ to $8.6 \times 10^{-8}$ of the CMB heat.
 
 ## `gradient`
 
@@ -386,7 +386,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 | Need | Recommended `core_bc` |
 |------|----------------------|
 | Core evolution with inner-core growth, or a core temperature decoupled from basal-node phase snaps | `core_module` |
-| Production PROTEUS runs; SPIDER parity while the CMB node is in a single phase away from the melt band | `energy_balance` (default) |
+| Production PROTEUS runs; SPIDER parity while the CMB node is in a single phase outside the melt band and its smoothing bands | `energy_balance` (default) |
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Parity tests with a conduction-only CMB flux | `bower2018` (legacy) |
