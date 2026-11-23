@@ -155,7 +155,8 @@ def main(cp_over_t, cp_commit, slope, slope_commit, proteus_commit):
         'sha256': sha,
         'builder': 'tests/reference/build_cmb_closure_paleos_a115.py',
     }
-    (OUT / 'cmb_closure_paleos_a115_provenance.json').write_text(json.dumps(provenance) + '\n')
+    body = ',\n'.join(f'{json.dumps(k)}: {json.dumps(v)}' for k, v in provenance.items())
+    (OUT / 'cmb_closure_paleos_a115_provenance.json').write_text('{\n' + body + '\n}\n')
     print(
         {
             k: v.shape
