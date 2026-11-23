@@ -35,8 +35,12 @@ from tests.test_entropy_solver_integration import _build_parameters
 
 pytestmark = [pytest.mark.slow, needs_eos, pytest.mark.timeout(1800)]
 
-# the melt start stays above the flat (padded) table cell at g 1 to 1.0075, which has its own test
-G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.15]
+# the melt starts stay above the flat (padded) table cell at g 1 to 1.0075, which has its own test
+G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.1, 1.15]
+# the call from 1.1 crosses the smoothing tail of the blend above the liquidus: miss 1.1e-4, c_p/T
+# -1.2e-2; starts x(1 +- 1e-14 to 1e-11) move its row by up to 1.5e-4, tolerances x0.99 and x1.01
+# by up to 1.2e-4 (macOS), so TAIL_TOL is at least 3.7x the largest perturbed miss
+TAIL_G0, TAIL_TOL = 1.1, 1.0e-3
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 ROWS_FILE = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_ledger_rows.json'
@@ -54,7 +58,7 @@ PLOTTED = ('g', 'miss', 'pred', 'pred_cp')
 ROW_KEYS = ('g0', *PLOTTED)
 # 10x, rounded up, the largest shift of a row value over starts changed by 1e-14 to 1e-11 and
 # solver tolerances x0.99 and x1.01 (macOS); Validation core.md section 16 lists the weak keys
-ROWS_TOL = {'band': 2.0e-5, -0.04: 3.0e-3, -0.02: 3.0e-5, 1.15: 1.0e-3}
+ROWS_TOL = {'band': 2.0e-5, -0.04: 3.0e-3, -0.02: 3.0e-5, 1.1: 2.0e-3, 1.15: 1.0e-3}
 
 
 def _call(eos, g0, cp_over_t=False):
@@ -235,7 +239,9 @@ def _write_rows(rows, sha):
 def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
     """The slope closure misses by ``int (1 - k) E dt`` within 1e-3 of the CMB heat (Bower et al.
     2018, Eqs. 19-21), closes in the mush to 1e-3 and inside the solver bound, while ``c_p/T``
-    along the same trajectories would miss by more than 5 % in the mush. With
+    along the same trajectories would miss by more than 5 % in the mush. In the smoothing tail
+    above the liquidus (start 1.1) it closes to 1e-3, where ``c_p/T`` would miss by more than
+    5e-3. With
     ``ARAGOG_WRITE_LEDGER_ROWS=1`` (a tree without local changes in src, tests, tools and pyproject.toml)
     the run replaces the stored rows and warns with each shift above its tolerance."""
     write = os.environ.get(WRITE_ROWS) == '1'
@@ -259,6 +265,8 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
             abs(row['miss']) < MUSH_TOL and abs(row['check']['r']) <= row['check']['bound']
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
+    tail = next(row for row in rows if row['g0'] == TAIL_G0)
+    assert abs(tail['miss']) < TAIL_TOL and abs(tail['pred_cp']) > 5 * TAIL_TOL, tail
 
     data, bad = _stored_faults(sha, rows, write=write)
     if write:
