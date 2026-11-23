@@ -73,8 +73,9 @@ def clear_jit_cache() -> None:
 def _args_from_data(
     data, phase_params: Any, eos_jax: Any, use_radio: bool, budget: Any = None
 ) -> tuple:
-    """Build the physical RHS argument tuple from data and closure parameters; for
-    core_module it ends with the budget and the data entries after the state offset."""
+    """Build the physical RHS argument tuple from the program arguments ``data``, the phase
+    parameters and the EOS; for core_module it ends with the budget and the data entries after
+    the state offset."""
     from aragog.jax import solver as js
 
     mesh_arrays, boundary_params, heating_jax, radio_arrays = data[:4]
@@ -426,8 +427,14 @@ def build_jax_rhs_and_jacobian(
         """Run ``call`` and log whether it compiled a program or reused one."""
         before = _TRACE_COUNTERS[kind]
         out = call()
-        how = 'compiled for new inputs' if _TRACE_COUNTERS[kind] > before else 'reused'
-        logger.info('JAX %s first call: program %s', label, how)
+        compiled = _TRACE_COUNTERS[kind] > before
+        how = 'compiled for new inputs' if compiled else 'reused'
+        logger.log(
+            logging.INFO if compiled else logging.DEBUG,
+            'JAX %s first call: program %s',
+            label,
+            how,
+        )
         return out
 
     info = {

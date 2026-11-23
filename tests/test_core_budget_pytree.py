@@ -141,7 +141,7 @@ CHANGES = [
 @pytest.mark.parametrize(('name', 'value'), CHANGES, ids=[c[0] for c in CHANGES])
 def test_each_input_reaches_the_reused_program(name, value):
     """A budget that differs from the first in one input gives, through the programs compiled
-    for the first, the values of programs built for it alone (1e-12 relative), and at least one
+    for the first, the values of programs built for it alone (1e-10 relative), and at least one
     value differs from the first budget's."""
     base = _batched(_Form().budget())
     changed = _Form(**{name: value}).budget()
