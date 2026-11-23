@@ -375,6 +375,8 @@ Treats $dS/dr$ as the integrated quantity rather than $S$ itself, with two extra
 
 The CMB closure is that of `energy_balance`, with one difference: the reconstruction places the CMB node entropy at $S_0 + (r_\text{cmb} - r_0)\, dS/dr|_\text{cmb}$, with $r_0$ the radius of the first staggered node, and the closure divides by that same distance $r_0 - r_\text{cmb}$ in place of $\Delta r/2$.
 
+The [entropy slope](#the-entropy-slope-at-the-cmb-node) changes the results of `gradient` as it changes those of `energy_balance`: on the test tables at 145.7 GPa the CMB heat flux at the end of a 2 yr call differs from that with $c_p/T$ by up to 11 % (10 % and 11 % lower at $g = 0.99$ and $1.02$, 1.4 % higher at $g = 0.5$). In `core_module` the mantle entropy, the core temperature and the CMB heat flux of such a call agree with those of $c_p/T$ to $10^{-11}$ (relative); only the CMB entropy gradient in the solver state moves, by up to $2.3 \times 10^{-5}$.
+
 ## `bower2018`
 
 State vector length: $N + 1$ (with $T_\text{core}$ as the extra state).
