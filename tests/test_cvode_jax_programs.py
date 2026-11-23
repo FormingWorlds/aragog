@@ -230,8 +230,8 @@ def test_the_program_caches_hold_at_most_max_forms_input_forms(eos, monkeypatch)
     rhs_program = cvode_jax._programs()[0]
     assert rhs_program._cache_size() == 1
     assert len(cvode_jax._FORMS) == 1
-    clear_jit_cache()
-    np.testing.assert_array_equal(third, _rhs_at(eos, 8))
+    with jax.disable_jit():
+        np.testing.assert_allclose(third, _rhs_at(eos, 8), rtol=1e-10, atol=0.0)
 
 
 def test_each_part_of_the_input_form_counts():

@@ -78,7 +78,8 @@ def clear_jit_cache() -> None:
 
 def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
     """Record the input form of a factory build; a new form beyond ``MAX_FORMS`` first clears the
-    compiled programs, so the compile caches stay bounded over many meshes or table shapes."""
+    compiled programs, so the compile caches stay bounded over many meshes or table shapes. The
+    bound counts builds: a factory built before a clear and called again compiles once more."""
     import jax
 
     leaves, treedef = jax.tree_util.tree_flatten((data, consts))
