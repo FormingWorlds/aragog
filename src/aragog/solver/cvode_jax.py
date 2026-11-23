@@ -60,14 +60,40 @@ class UnsupportedCoreBCError(ValueError):
     """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
+# At most this many input forms keep compiled CVODE programs; a new form beyond it clears them.
+MAX_FORMS = 8
+_FORMS: set = set()
+
+
 def clear_jit_cache() -> None:
-    """Drop the compiled CVODE programs and reset the trace counters."""
+    """Drop the compiled CVODE programs, the record of their input forms and the trace counters."""
     if _programs.cache_info().currsize:
         for program in _programs():
             program.clear_cache()
     _programs.cache_clear()
+    _FORMS.clear()
     for key in _TRACE_COUNTERS:
         _TRACE_COUNTERS[key] = 0
+
+
+def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
+    """Record the input form of a factory build; a new form beyond ``MAX_FORMS`` first clears the
+    compiled programs, so the compile caches stay bounded over many meshes or table shapes."""
+    import jax
+
+    leaves, treedef = jax.tree_util.tree_flatten((data, consts))
+    form = (
+        core_bc_mode,
+        use_radio,
+        treedef,
+        tuple((np.shape(x), np.result_type(x)) for x in leaves),
+    )
+    if form in _FORMS:
+        return
+    if len(_FORMS) >= MAX_FORMS:
+        logger.debug('JAX CVODE programs: %d input forms held, clearing them', len(_FORMS))
+        clear_jit_cache()
+    _FORMS.add(form)
 
 
 def _args_from_data(
@@ -415,6 +441,7 @@ def build_jax_rhs_and_jacobian(
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
     data, consts = _strong(data), _strong((phase_params, eos_jax, budget))
+    _bound_forms(core_bc_mode, use_radio, data, consts)
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
     def rhs_jit(t_nd, y_nd, data):

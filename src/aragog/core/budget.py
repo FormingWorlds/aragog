@@ -651,7 +651,8 @@ class CoreEnergyBudget:
 
 
 # Programs of the budget functions, compiled once per budget form (classes, settings, shapes):
-# the budget is a pytree argument, so a new budget of the same form reuses them.
+# the budget is a pytree argument, so a new budget of the same form reuses them. Limit: a
+# tabulated core whose grid length follows r_cmb is a new form at each structure update.
 @jax.jit
 def _r_icb_one(budget, t_cmb):
     return budget._r_icb_root(t_cmb)
