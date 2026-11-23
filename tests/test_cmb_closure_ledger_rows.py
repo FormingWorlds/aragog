@@ -49,3 +49,56 @@ def test_the_stored_rows_match_the_case():
     band = [row for row in rows if 0.0 < row['g0'] < 1.0]
     assert all(abs(row['miss']) < MUSH_TOL for row in band)
     assert max(abs(row['pred_cp']) for row in band) > 0.05
+
+
+def test_a_changed_start_list_is_named_and_not_raised():
+    """Rows are matched by start: a start without a stored row and a stored row without a start
+    are both named, so a write can add or drop a start."""
+    from tests.test_cmb_closure_validation import _row_faults
+
+    row = {'g': 0.1, 'miss': 1e-4, 'pred': 0.0, 'pred_cp': 0.1, 'atol': 1e-8, 'rtol': 1e-10}
+    faults = _row_faults(
+        [dict(row, g0=0.1), dict(row, g0=0.5)], [dict(row, g0=0.1), dict(row, g0=0.7)]
+    )
+    assert faults == ['g0 0.5: no stored row', 'stored g0 0.7: no start']
+
+
+def test_write_mode_takes_a_missing_rows_file_as_no_stored_rows(tmp_path, monkeypatch):
+    """Without the rows file the write starts from no stored rows; the compare refuses it."""
+    import tests.test_cmb_closure_validation as V
+
+    monkeypatch.setattr(V, 'ROWS_FILE', tmp_path / 'rows.json')
+    assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
+    with pytest.raises(pytest.fail.Exception, match='rows.json'):
+        V._stored_rows(write=False)
+
+
+def test_the_write_guard_covers_tools_and_the_imported_aragog(monkeypatch):
+    """The write refuses local changes under tools/ too, and an aragog imported from outside the
+    repository's src."""
+    import aragog
+    import tests.test_cmb_closure_validation as V
+
+    calls = []
+    monkeypatch.setattr(V, '_git', lambda *a: calls.append(a) or '')
+    V._check_write_tree()
+    assert 'tools' in calls[0]
+    monkeypatch.setattr(aragog, '__file__', '/elsewhere/aragog/__init__.py')
+    with pytest.raises(pytest.fail.Exception, match='/elsewhere/aragog'):
+        V._check_write_tree()
+
+
+def test_the_tables_are_hashed_by_the_files_that_exist(tmp_path):
+    """The optional thermal_exp tables may be absent; a missing required table stops the case
+    before its solves, and a table missing against the stored hashes is named."""
+    from tests.test_cmb_closure_validation import REQUIRED_TABLES, _table_faults, _table_hashes
+
+    for f in REQUIRED_TABLES:
+        (tmp_path / f).write_text(f)
+    sha = _table_hashes(tmp_path)
+    assert set(sha) == set(REQUIRED_TABLES) < set(TABLES)
+    stored = dict(sha, **{'thermal_exp_melt.dat': '0' * 64})
+    assert _table_faults(sha, stored) == ['table thermal_exp_melt.dat missing']
+    (tmp_path / 'density_melt.dat').unlink()
+    with pytest.raises(pytest.fail.Exception, match='density_melt.dat'):
+        _table_hashes(tmp_path)
