@@ -35,7 +35,7 @@ from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 from aragog.solver.entropy_solver import (
     EntropySolver,
 )
-from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
 from tests.test_rheology_solver_wiring import (
     _build_jax_bundle,
     _make_abe_solid_params,
@@ -71,6 +71,7 @@ def _assert_matches_main_reference(
     )
 
 
+@needs_eos
 def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     """When rheology is disabled, zero rheology core functions are invoked,
     and RHS and solve outputs match the pinned main reference across all 54 arrays
@@ -408,6 +409,7 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
 # ============================================================================
 
 
+@needs_eos
 def test_solve_short_trajectory_rheology_on_lid_and_local() -> None:
     """Short solve() trajectory completes successfully with rheology in both
     'lid' and 'local' modes."""
@@ -532,6 +534,7 @@ def test_const_properties_with_rheology_enabled_sets_phi_zero_arrhenius_viscosit
     assert np.all(np.asarray(out_off.porosity_b) == 1.0)
 
 
+@needs_eos
 def test_solve_rheology_invariants_checked_inside_step_energy_integrals_without_double_replay(
     monkeypatch,
 ) -> None:
@@ -761,6 +764,7 @@ def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_ex
     assert 1.7e4 <= float(solver_cool._solution.t[-1]) <= 1.85e4
 
 
+@needs_eos
 def test_step_energy_integrals_checks_eos_entropy_range_on_every_step_both_branches(
     caplog,
 ) -> None:
