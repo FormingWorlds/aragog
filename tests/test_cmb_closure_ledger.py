@@ -217,15 +217,27 @@ def _table_slope(solver, S_node):
 
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
-@pytest.mark.parametrize('g0', [-0.03, 0.3, 0.9, 1.004])
+@pytest.mark.parametrize('g0', [0.3, 0.9])
 @pytest.mark.parametrize('core_bc', ['energy_balance', 'gradient', 'core_module'])
 def test_the_rhs_moves_the_node_temperature_at_the_core_rate(core_bc, g0):
-    """At one state the NumPy RHS gives ``C (dT/dS)_P dS_node/dt = -E`` (energy_balance,
-    gradient) and ``(dT/dS)_P dS_node/dt = dT_top/dt`` (core_module): the chain rule at fixed
-    pressure with the core balance of Bower et al. (2018), Eqs. 19-21. In the mush (g 0.3,
-    0.9) the slope is also the central difference of the evaluated node temperature, so there
-    the node moves at the core rate; in the solid and the band (g -0.03, 1.004) the identity
-    holds with the closure slope, which differs from the tabulated slope there."""
+    """In the mush the NumPy RHS moves the node temperature at the core rate: the closure slope
+    is the central difference of the evaluated node temperature, and ``C (dT/dS)_P
+    dS_node/dt = -E`` (energy_balance, gradient) or ``(dT/dS)_P dS_node/dt = dT_top/dt``
+    (core_module), the chain rule at fixed pressure with the core balance of Bower et al.
+    (2018), Eqs. 19-21."""
+    _check_the_node_rate(core_bc, g0)
+
+
+@pytest.mark.parametrize('g0', [-0.03, 1.004])
+@pytest.mark.parametrize('core_bc', ['energy_balance', 'gradient', 'core_module'])
+def test_the_rhs_divides_by_the_closure_slope_outside_the_mush(core_bc, g0):
+    """In the solid and just above the liquidus the RHS divides the core rate by the closure
+    slope (an identity of the code); the tabulated slope differs there."""
+    _check_the_node_rate(core_bc, g0)
+
+
+def _check_the_node_rate(core_bc, g0):
+    """Assert the node-rate identity at one state, and in the mush the slope of the evaluated T."""
     from scipy.constants import Julian_year
 
     from aragog.solver.entropy_solver import EntropySolver
@@ -358,3 +370,42 @@ def test_a_non_positive_node_slope_stops_the_rhs_and_the_check(monkeypatch):
             solver._dSdt_single(0.0, y)
         with pytest.raises(RuntimeError, match='node slope'):
             solver._check_cmb_ledger(np.array([0.0, 1.0]), np.c_[y, y], np.zeros(2), 0.0)
+
+
+def test_a_call_the_check_does_not_cover_leaves_no_ledger(monkeypatch):
+    """A stop-early call after a checked call leaves ``cmb_ledger`` at None, not the terms of
+    the call before."""
+    from scipy.optimize import OptimizeResult
+
+    from aragog.solver import entropy_solver as es
+
+    _, _, _, solver = _ledger('energy_balance', 'radau', 0.9, end_time=2.0)
+    assert solver.cmb_ledger is not None
+
+    def stopped(fun, t_span, y0, **kw):
+        y = np.asarray(y0, dtype=float).reshape(-1, 1)
+        return OptimizeResult(t=np.array(t_span[:1]), y=y, status=-1, message='stub', nfev=1)
+
+    monkeypatch.setattr(es, 'solve_ivp', stopped)
+    solver.solve()
+    assert solver.stop_early and solver.cmb_ledger is None
+
+
+def test_a_closure_fault_keeps_the_last_accepted_state(monkeypatch):
+    """After a closure fault the solver hands the CMB gradient of its last accepted call to the
+    next one, not that of the refused call."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    _, _, _, solver = _ledger('energy_balance', 'radau', 0.9, end_time=2.0)
+    accepted = solver.get_current_dSdr_cmb()
+
+    def cp_of_the_blend(self):
+        return float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
+
+    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', cp_of_the_blend)
+    solver.parameters.solver.end_time = 20.0
+    with pytest.raises(RuntimeError, match='CMB closure fault') as fault:
+        solver.solve()
+    assert solver.get_current_dSdr_cmb() == accepted
+    assert solver.cmb_ledger['r'] > 10.0 * solver.cmb_ledger['bound']
+    assert fault.type.__name__ == 'CMBClosureError'
