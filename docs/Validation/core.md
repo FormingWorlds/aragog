@@ -1,5 +1,9 @@
 # Core module verification
 
+## What this page checks
+
+This page checks how Aragog models the core and the heat that crosses the core-mantle boundary (CMB). Sections 1 to 15 cover the `core_module` boundary condition and the `aragog.core` model behind it: the core structure, its energy budget, the CMB heat flux, inner-core growth, the dynamo and a stable layer. Sections 16 to 18 check that the `energy_balance`, `gradient` and `core_module` closures make the CMB node follow the core. Validation here means that we run the code on a case where another source gives the answer (an analytic result, a published table, a second code or a stored coupled run) and compare. If these parts were wrong, the core temperature, the CMB heat flow and the start of core freezing of a PROTEUS run would be wrong. Sections 9 and 15 to 18 use the fixed lead-ins of each case and a collapsed box with the reference, the tolerance, the test id and the command; the other sections give the same facts in their prose.
+
 This page checks the `core_module` core boundary condition ([core_bc.md](../Explanations/core_bc.md)) and the `aragog.core` model behind it against analytic results, published values, an independent core evolution code and coupled runs. Each section states the physics a check tests, the reference and where it comes from, the value aragog gives, a figure and what it shows, the limits of the check where it has any, and the tests that pin it. A check shows that the code solves the stated equations to the stated accuracy; whether the equations describe a real core is a separate question, which the literature comparisons in sections 5 to 8 and the limits stated with each check address.
 
 Every number in sections 1 to 13 and every figure there is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about eight minutes on one core. Sections 9 and 12 and the solver tests use the aragog test tables that CI uses, `spider_eos_test_data.tar.gz` of release `test-data-v1` (sha256 `e3842bc494969571428d7f978d8f70972d40a3bc5d6ac2c09f6a96808f4079fb`), 500 pressures from 0 to 150 GPa by 200 entropies; their numbers hold for these tables. Other tables give other values. One kind of number comes from a separate measurement and says so where it appears: the closures of the stratified call heated from above (section 13), held by its smoke test. Nimmo (2015[^cite-nimmo2015a]) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
@@ -652,25 +656,25 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
 
 <!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
 
-**Why this check exists.** The `energy_balance` closure turns the core cooling rate into the entropy rate of the CMB node ([explanation](../Explanations/core_bc.md#the-entropy-slope-at-the-cmb-node)). With the wrong conversion factor the core loses more or less heat than crosses the core-mantle boundary (CMB). The heat capacity of the blend, $c_p/T$, is such a wrong factor in the mush: there it misses by $-0.20$ to $+0.11$ of the CMB heat. The test fails on it.
+**Why this check exists.** The `energy_balance` closure turns the core cooling rate into the entropy rate of the CMB node ([explanation](../Explanations/core_bc.md#the-entropy-slope-at-the-cmb-node)). With the wrong conversion factor the core loses more or less heat than crosses the core-mantle boundary (CMB). The factor $c_p/T$, made from the heat capacity of the blend, is such a wrong factor in the mush: along the same trajectories it would miss by up to 20 % of the CMB heat. The test fails if the slope closure misses by more than $10^{-3}$.
 
-**What it tests.** The solver runs one call of 2 yr from 15 uniform melt coordinates $g$ (0 at the solidus, 1 at the liquidus) between $-0.04$ and $1.03$. It runs each with the present closure and with $c_p/T$. For each call the ledger miss is $r = C\, \Delta T_\text{cmb} + q$, with $C$ the heat capacity of the core, $\Delta T_\text{cmb}$ the change of the node temperature and $q$ the CMB heat of the call. The test requires the miss of both closures to equal the closed form below within $10^{-3}$ of $q$. It also requires the present closure to close within $10^{-3}$ of $q$ in the mush, and within the [solver bound](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure).
+**What it tests.** The solver runs one call of 2 yr with the slope closure from 15 uniform melt coordinates $g$ (0 at the solidus, 1 at the liquidus) between $-0.04$ and $1.03$. For each call the ledger miss is $r = C\, \Delta T_\text{cmb} + q$, with $C$ the heat capacity of the core, $\Delta T_\text{cmb}$ the change of the node temperature and $q$ the CMB heat of the call. The test requires the miss to equal the closed form below within $10^{-3}$ of $q$, and in the mush to stay within $10^{-3}$ of $q$ and within the [solver bound](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure). It also evaluates the closed form of $c_p/T$ along the same trajectories, which must exceed 5 % in the mush.
 
-**How we know the right answer.** The core balance of Bower et al. (2018)[^cite-bower2018] Eqs. 19-21 gives $C\, dT_\text{cmb}/dt = -E$, with $E$ the CMB heat flow. A closure with the factor $k = c_{p,\text{used}} (\partial T/\partial S)_\text{tab}/T$ moves the node at $k$ times that rate. Here $(\partial T/\partial S)_\text{tab}$ is the slope of the tabulated temperature that the node follows. The miss of a call is therefore $\int (1 - k)\, E\, dt$, summed over the accepted steps. For the present closure $k = 1$ in the mush.
+**How we know the right answer.** The core balance of Bower et al. (2018)[^cite-bower2018] Eqs. 19-21 gives $C\, dT_\text{cmb}/dt = -E$, with $E$ the CMB heat flow. A closure with the factor $k = c_{p,\text{used}} (\partial T/\partial S)_\text{tab}/T$ moves the node at $k$ times that rate. Here $(\partial T/\partial S)_\text{tab}$ is the slope of the tabulated temperature that the node follows. The miss of a call is therefore $\int (1 - k)\, E\, dt$, summed over the accepted steps. For the slope closure $k = 1$ in the mush. A second test runs the $c_p/T$ closure itself at 4 states and finds its miss equal to its own closed form within $10^{-3}$.
 
 **Why it matters.** The core temperature sets the CMB heat flow and the start of core freezing in every PROTEUS run with the default `core_bc`.
 
-![Ledger miss of one call against the melt coordinate of the CMB node, for both closures](../assets/validation/core_cmb_closure_ledger.svg#only-light){ width="80%" }
-![Ledger miss of one call against the melt coordinate of the CMB node, for both closures](../assets/validation/core_cmb_closure_ledger_dark.svg#only-dark){ width="80%" }
+![Ledger miss of one call against the melt coordinate of the CMB node](../assets/validation/core_cmb_closure_ledger.svg#only-light){ width="80%" }
+![Ledger miss of one call against the melt coordinate of the CMB node](../assets/validation/core_cmb_closure_ledger_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The x axis is the melt coordinate $g$ of the CMB node at the call start; the shaded band is the mush. The y axis is the miss $r/|q|$, linear below $10^{-4}$ and logarithmic above. Red is $c_p/T$, the other colour the present closure. Points are the solver, lines the closed form; a hollow point is a call through a padded table cell, which the check skips. A pass puts every point on its line and the present closure near 0 in the mush.
+**How to read the plot.** The x axis is the melt coordinate $g$ of the CMB node at the call start; the shaded band is the mush. The y axis is the miss $r/|q|$, linear below $10^{-4}$ and logarithmic above. The points are the solver with the slope closure, its line the closed form; a hollow point is a call through a padded table cell, which the check skips. The red line is the closed form of $c_p/T$ along the same trajectories. A pass puts every point on its line and near 0 in the mush.
 
-**Known limit.** Below the solidus the present closure misses by the table consistency of the test tables: $6.2 \times 10^{-3}$ at $g = -0.04$, as the closed form predicts. Just above the liquidus the test tables are padded near the CMB pressure, so the call at $g = 1.03$ is not checked.
+**Known limit.** Below the solidus the slope closure misses by the table consistency of the test tables: $6.2 \times 10^{-3}$ at $g = -0.04$, as the closed form predicts. Just above the liquidus the test tables are padded near the CMB pressure, so the call at $g = 1.03$ is not checked.
 
 ??? info "Test details"
     - Reference: the closed form $\int (1 - k)\, E\, dt$ along each trajectory, from Bower et al. (2018)[^cite-bower2018] Eqs. 19-21.
-    - Tolerance: $10^{-3}$ of $q$ between the solver and the closed form (largest found $5.2 \times 10^{-4}$); $10^{-3}$ of $q$ for the present closure in the mush (largest found $4.2 \times 10^{-4}$), and the solver bound; $c_p/T$ must miss by more than $0.05$ in the mush.
-    - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`
+    - Tolerance: $10^{-3}$ of $q$ between the solver and the closed form, and $10^{-3}$ of $q$ in the mush (largest found $4.2 \times 10^{-4}$ for both), and the solver bound; the $c_p/T$ closed form must exceed $0.05$ in the mush (it reaches $-0.20$).
+    - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`, and `::test_the_cp_over_t_closure_misses_by_its_closed_form` for the run of the $c_p/T$ closure.
     - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair)
 
 ## 17. The CMB closure on the states of 2 coupled runs
@@ -679,23 +683,23 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
 
 **Why this check exists.** Section 16 uses the test tables. This case uses the PALEOS:MgSiO3 tables and the CMB-node states of 2 coupled PROTEUS runs (1 Earth mass, `input/all_options.toml`). It fails if the closed form, evaluated with the code's blend on those tables, does not give the miss that the runs measured.
 
-**What it tests.** The 2 runs differ only in the closure: $c_p/T$ (base) and the present closure (fix). For each output row the test takes the node entropy at the row start and end, the CMB pressure, the CMB heat $q$ and the core heat change $\Delta E$. It evaluates the closure factor $k$ at both ends and predicts the miss $r/|\Delta E| = \text{sign}(q)\, (1/\bar{k} - 1)$, with $\bar{k}$ the mean of the 2 ends. It uses the rows in the mush with a CMB power above $10^{16}$ W and with $k$ that changes by less than 0.02 within the row: 17 rows of the base run and 12 of the fix run.
+**What it tests.** The 2 runs differ only in the closure: one uses $c_p/T$, the other the slope closure. For each output row the test takes the node entropy at the row start and end, the CMB pressure, the CMB heat $q$ and the core heat change $\Delta E$. It evaluates the closure factor $k$ at both ends and predicts the miss $r/|\Delta E| = \text{sign}(q)\, (1/\bar{k} - 1)$, with $\bar{k}$ the mean of the 2 ends. It uses the rows in the mush with a CMB power above $10^{16}$ W and with $k$ that changes by less than 0.02 within the row: 17 rows of the $c_p/T$ run and 13 of the slope run.
 
 **How we know the right answer.** The same balance as in section 16, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21. The test first checks that the blend gives the stored node temperature of every row within $10^{-6}$ K.
 
-**Why it matters.** It shows the size of the closure error in a real run: 1.9 % to 10.5 % of the core heat change in the base run between 4.2 and 42.3 kyr.
+**Why it matters.** It shows the size of the closure error in a real run: 1.9 % to 10.5 % of the core heat change in the $c_p/T$ run between 4.2 and 42.3 kyr, and at most $8.0 \times 10^{-4}$ in the slope run between 1.8 and 14.1 kyr.
 
 ![Ledger miss per output row of the 2 coupled runs against time](../assets/validation/core_cmb_closure_paleos.svg#only-light){ width="80%" }
 ![Ledger miss per output row of the 2 coupled runs against time](../assets/validation/core_cmb_closure_paleos_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The x axis is the time of the row in years. The y axis is the miss $r/|\Delta E|$ of the row, linear below $10^{-4}$. Red is the base run, the other colour the fix run. Points are the runs, lines the closed form; hollow points are rows the test does not compare (outside the mush, a padded cell, or a fast change of $k$). A pass puts the filled points on their lines.
+**How to read the plot.** The x axis is the time of the row in years. The y axis is the miss $r/|\Delta E|$ of the row, linear below $10^{-4}$. Red is the $c_p/T$ run, the other colour the slope run. Points are the runs, lines the closed form; hollow points are rows the test does not compare (outside the mush, a padded cell, or a fast change of $k$). A pass puts the filled points on their lines.
 
 **Known limit.** Rows with a CMB power below $10^{16}$ W are left out: there the solver tolerance dominates the row ([ledger check](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure)). The stored tables cover 104 to 131 GPa and the melt band with 500 J/kg/K on each side.
 
 ??? info "Test details"
     - Reference: the closed form $\text{sign}(q)\,(1/\bar{k} - 1)$, Bower et al. (2018)[^cite-bower2018] Eqs. 19-21, on the run tables.
     - Data: `tests/validation/data/cmb_closure_paleos_a115.npz`, provenance in `cmb_closure_paleos_a115_provenance.json`, built by `tests/reference/build_cmb_closure_paleos_a115.py`.
-    - Tolerance: $2 \times 10^{-3}$ (largest found $1.4 \times 10^{-3}$ base, $9.6 \times 10^{-4}$ fix); the base run must miss by more than 0.05 in some row.
+    - Tolerance: $2 \times 10^{-3}$ (largest found $1.4 \times 10^{-3}$ for $c_p/T$, $8.0 \times 10^{-4}$ for the slope closure); the $c_p/T$ run must miss by more than 0.05 in some row.
     - Test id: `tests/test_cmb_closure_validation_paleos.py::test_the_closed_form_gives_the_ledger_miss_of_both_runs`
     - Command: `pytest tests/test_cmb_closure_validation_paleos.py` (add `--validation-plots` to write the plot pair)
 
@@ -705,17 +709,17 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
 
 **Why this check exists.** Sections 16 and 17 check a whole call. This case checks the closure at one state, where the solver tolerance plays no part. It fails if a closure moves the node at another rate than the core, as $c_p/T$ does in the mush. It also fails if the closure and the reconstruction of the node entropy use different node positions: a `gradient` closure with $\Delta r/2$ in place of $r_0 - r_\text{cmb}$ misses by up to $3.3 \times 10^{-4}$.
 
-**What it tests.** At one state with the CMB node in the solid ($g = -0.03$), the mush ($g = 0.3$ and $0.9$) or just above the liquidus ($g = 1.004$), it evaluates the right-hand side. In `energy_balance` (NumPy and JAX) and `gradient` it requires $C\, (\partial T/\partial S)_P\, dS_\text{node}/dt = -E$. In `core_module` it requires $(\partial T/\partial S)_P\, dS_\text{node}/dt = dT_\text{top}/dt$, the rate of the core top.
+**What it tests.** At one state with the CMB node in the solid ($g = -0.03$), the mush ($g = 0.3$ and $0.9$) or just above the liquidus ($g = 1.004$), it evaluates the right-hand side; the JAX check leaves out $g = 0.3$. In `energy_balance` (NumPy and JAX) and `gradient` it requires $C\, (\partial T/\partial S)_P\, dS_\text{node}/dt = -E$. In `core_module` it requires $(\partial T/\partial S)_P\, dS_\text{node}/dt = dT_\text{top}/dt$, the rate of the core top. In the mush it also requires the closure slope to equal the central difference of the evaluated node temperature within $10^{-6}$, so there the node moves at the core rate. In the solid and just above the liquidus the test checks the identity with the closure slope only: there the tabulated slope differs (by 1 % at $g = -0.03$, and it is 0 in the padded cell at $g = 1.004$).
 
 **How we know the right answer.** It is the chain rule at fixed pressure, $dT = (\partial T/\partial S)_P\, dS$, with the core balance of Bower et al. (2018)[^cite-bower2018] Eqs. 19-21.
 
 **Why it matters.** The same factor sets the node rate in every step of every run with these closures.
 
-This case has no plot: it is an exact identity of the code at single states.
+This case has no plot: it checks single states, with an identity of the code and, in the mush, the slope of the evaluated temperature.
 
 ??? info "Test details"
     - Reference: the chain rule at fixed pressure and the core balance.
-    - Tolerance: relative $10^{-10}$; in `gradient` also 50 times the double-precision round-off of the summed rates that make up the node rate.
+    - Tolerance: relative $10^{-10}$; in `gradient` also 50 times the double-precision round-off of the summed rates that make up the node rate; relative $10^{-6}$ between the closure slope and the central difference in the mush.
     - Test id: `tests/test_cmb_closure_ledger.py::test_the_rhs_moves_the_node_temperature_at_the_core_rate`, `::test_the_jax_rhs_moves_the_node_temperature_at_the_core_rate`
     - Command: `pytest tests/test_cmb_closure_ledger.py -k rhs_moves`
 

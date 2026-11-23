@@ -15,7 +15,7 @@ In this tutorial you see how Aragog turns the cooling of the core into the entro
 
 ## 1. Write the configuration
 
-The mantle has 14 cells (15 nodes), from 3480 km to 6371 km radius, with a grey-body surface. The core cools through the CMB (`inner_boundary_condition = 1`) with the default `core_bc = "energy_balance"`. The tight tolerances make the solver error small against the effect you look at.
+The mantle has 14 cells (15 nodes), from 3480 km to 6371 km radius, with a grey-body surface. The core cools through the CMB (`inner_boundary_condition = 1`) with the default `core_bc = "energy_balance"`. The tight tolerances make the solver error small against the effect you look at. The tutorial uses scipy Radau, which needs no CVODE install; the ledger check runs after every call of any integrator.
 
 ```python
 import os
@@ -130,7 +130,7 @@ Near the solidus $c_p/T$ would make the node cool 13 % too fast, and near the li
 
 ## 3. Run one call and read the ledger
 
-Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, and `rel`, the difference of the slope of the tabulated temperature from the closure slope.
+Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, `rel`, the largest relative difference of the slope of the tabulated temperature from the closure slope, and `excluded`, true when the call went through a padded table cell and the check was skipped.
 
 ```python
 P_stag = np.ravel(solver.evaluator.mesh.staggered_pressure)

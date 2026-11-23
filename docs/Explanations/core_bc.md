@@ -310,26 +310,60 @@ The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy 
 
 ### The entropy slope at the CMB node
 
-How does the closure make the node temperature follow the core? Between structure updates the node keeps its pressure, so its temperature changes only through its entropy: $dT = (\partial T/\partial S)_P\, dS$. The closure divides the core cooling rate by this slope of the code's own temperature $T(P, S)$. The core then loses exactly the heat that crosses the CMB.
+How does the closure make the node temperature follow the core? Between structure updates the node keeps its pressure, so $dT = (\partial T/\partial S)_P\, dS$. The closure divides the core cooling rate by this slope of the code's own $T(P, S)$, so the core loses exactly the heat that crosses the CMB.
 
-The node temperature is the blend $T = s\, T_\text{mix} + (1 - s)\, T_\text{single}$ of [the phase transitions](phase_transitions.md), with the blend weight $s$. Its slope is
+The node temperature is the blend $T = s_b\, T_\text{mix} + (1 - s_b)\, T_\text{single}$ of [the phase transitions](phase_transitions.md). Here $T_\text{mix}$ is the temperature of the mush, linear in $S$ from the solidus ($S_\text{sol}$, $T_\text{sol}$) to the liquidus ($S_\text{liq}$, $T_\text{liq}$) at the node pressure. $T_\text{single}$ is the temperature of a pure-phase table (melt above the middle of the band, solid below), with heat capacity $c_p^\text{single}$, and $s_b$ is the blend weight. The slope is
 
 $$
-\left(\frac{\partial T}{\partial S}\right)_P = s\, \frac{T_\text{liq} - T_\text{sol}}{S_\text{liq} - S_\text{sol}} + (1 - s)\, \frac{T_\text{single}}{c_p^\text{single}} + (T_\text{mix} - T_\text{single})\, \frac{\partial s}{\partial S}
+\left(\frac{\partial T}{\partial S}\right)_P = s_b\, \frac{T_\text{liq} - T_\text{sol}}{S_\text{liq} - S_\text{sol}} + (1 - s_b)\, \frac{T_\text{single}}{c_p^\text{single}} + (T_\text{mix} - T_\text{single})\, \frac{\partial s_b}{\partial S}
 $$
 
-The first term holds from the solidus to the liquidus. The second is the slope of a pure phase, $T/c_p$ of its tables. The last term is the change of the weight in the smoothing bands.
+The first term holds from the solidus to the liquidus, the second is the pure-phase slope $T/c_p$, and the last is the change of the weight in the smoothing bands.
 
-The heat capacity of the blend does not give this slope in the mush. There it is $c_p = T_\text{avg} (S_\text{liq} - S_\text{sol})/(T_\text{liq} - T_\text{sol})$, with $T_\text{avg}$ the mean of the solidus and liquidus temperatures. With $c_p/T$ the node would cool at $T_\text{avg}/T$ of the core rate. For $T_\text{sol} = 4000$ K, $T_\text{liq} = 5600$ K and a melt fraction of 0.85, $T = 5360$ K, and the node cools at 0.90 of the core rate.
+The heat capacity of the blend does not give this slope in the mush. There it is $c_p = T_\text{avg} (S_\text{liq} - S_\text{sol})/(T_\text{liq} - T_\text{sol})$, with $T_\text{avg}$ the mean of the solidus and liquidus temperatures. With $c_p/T$ the node would cool at $T_\text{avg}/T$ of the core rate. For $T_\text{sol} = 4000$ K, $T_\text{liq} = 5600$ K and a melt coordinate $g = 0.85$ (the melt fraction in the mush), $T = 5360$ K, and the node cools at 0.90 of the core rate.
 
-Limits:
+### Limits of the slope closure
 
 - A table cell where $T$ does not rise with $S$ (for example a padded cell next to the liquidus) holds the node temperature, while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
 - Where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus.
-- A slope that is not finite and positive stops the run with a `RuntimeError`.
+- A slope that is not finite and positive stops the call with a `RuntimeError`, from the NumPy right-hand side and from the ledger check over the accepted states.
 - With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
 
 **Where this is checked.** [The CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band), [the CMB closure on the states of 2 coupled runs](../Validation/core.md#17-the-cmb-closure-on-the-states-of-2-coupled-runs) and [the CMB node rate of each closure](../Validation/core.md#18-the-cmb-node-rate-of-each-closure).
+
+### Ledger check of the CMB closure
+
+How does a run notice a CMB closure that loses heat? After each call of `energy_balance`, `gradient` and `core_module`, the solver checks the CMB node over the accepted states of the call. In `energy_balance` and `gradient` it compares the core heat change with the CMB heat $q$ of the call (J):
+
+$$
+r = C\, \Delta T_\text{cmb} + q, \qquad C = M_\text{core}\, c_p^\text{core}\, \text{tfac}
+$$
+
+In `core_module` it compares the change of the node temperature with that of the core top, so $r$ and its bound are in K.
+
+The miss $r$ must stay within a bound $B$ that follows from the solver tolerances:
+
+$$
+B = \epsilon_\text{tab} \int |E|\, dt + E_\text{trap} + C\, \sqrt{N}\, n_\text{st} \max_k \left[\left(\frac{\partial T}{\partial S}\right)_P w\right]_k
+$$
+
+- $\epsilon_\text{tab}$ is the largest relative difference, over the accepted states of the call, of the slope of the tabulated $T$ from the closure slope. It is 0 in the mush. It multiplies the integral of $|E|$, because $E$ can change sign within a call.
+- $E_\text{trap}$ is the error of the trapezoid sum of $q$, estimated from every other step.
+- $w$ is the error weight of the node entropy (J kg$^{-1}$ K$^{-1}$): the weights of the states it depends on, each times its coefficient. These states are the bottom-cell entropy and the gradient, and in `gradient` all gradient states and the surface entropy.
+- The integrator accepts a step when the root mean square of the $N$ weighted errors is at most 1, so the error of one state is at most $\sqrt{N}$ times its weight. $n_\text{st}$ is the number of steps of the call; the maximum runs over its accepted states $k$.
+- In `core_module` the bound has no $C$ and no $E_\text{trap}$; the integral of $|E|$ becomes the summed change of the core-top temperature, and a term for the error weight of that temperature is added.
+
+### What the ledger check detects
+
+A miss above $B$ logs a warning and is counted; a miss above $10\,B$ raises a `RuntimeError`. A coupled PROTEUS run catches that error like other solver errors: the interior step counts as skipped, the run stops after 3 skipped steps in a row, and the next step can start from the state of the rejected call. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds the terms of the last call: `r`, `bound`, `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). It is `None` after a call that the check does not cover.
+
+$B$ is a worst case. The check finds an order-one fault, such as a frozen node or a wrong node position, but a closure error of 10 % only in some calls. At `rtol = atol = 1e-8`, with $c_p/T$ in place of the slope:
+
+- a 2-yr `core_module` call (CVODE, node at $g = 0.9$) misses by 0.0033 K, against a bound of 1.2 K for a core-top change of 0.032 K;
+- a 20-yr `energy_balance` call at $g = 0.3$ misses by 0.16 $B$, while at $g = 0.9$ it raises;
+- a 20-yr `gradient` call (Radau) warns at $g = 0.9$ (2.8 $B$) and passes at $g = 0.3$, where $B$ is 20 times the CMB heat.
+
+The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = 1e-8` the slope closure itself reaches 0.79 $B$ in the mush.
 
 ## `gradient`
 
@@ -350,7 +384,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 | Need | Recommended `core_bc` |
 |------|----------------------|
 | Core evolution with inner-core growth, or a core temperature decoupled from basal-node phase snaps | `core_module` |
-| Production PROTEUS runs and SPIDER-parity validation | `energy_balance` (default) |
+| Production PROTEUS runs; SPIDER parity while the CMB node is in a single phase away from the melt band | `energy_balance` (default) |
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Parity tests with a conduction-only CMB flux | `bower2018` (legacy) |
@@ -464,22 +498,6 @@ Two smoke tests hold the residual:
 The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along the entropy path of each cell. It uses a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, because $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes. The other modes use 16 points.
 
 **Where this is checked.** [Core ledger closure](../Validation/core.md#core-ledger-closure) and [a CVODE solve across the inner-core onset](../Validation/core.md#9-a-cvode-solve-across-the-inner-core-onset).
-
-### Ledger check of the CMB closure
-
-How does a run notice a CMB closure that loses heat? After each call of `energy_balance`, `gradient` and `core_module`, the solver checks the CMB node over the accepted states of the call. In `energy_balance` and `gradient` it compares the core heat change with the CMB heat $q$ of the call, $r = M_\text{core}\, c_p^\text{core}\, \text{tfac}\, \Delta T_\text{cmb} + q$. In `core_module` it compares the change of the node temperature with that of the core top.
-
-The miss $r$ must stay within a bound $B$ that follows from the solver tolerances:
-
-$$
-B = \epsilon_\text{tab} |q| + E_\text{trap} + C\, \sqrt{N}\, n_\text{st} \max_k \left[\left(\frac{\partial T}{\partial S}\right)_P w_k\right]
-$$
-
-- $\epsilon_\text{tab}$ is the largest difference of the slope of the tabulated $T$ from the closure slope in the call: 0 in the mush.
-- $E_\text{trap}$ is the error of the trapezoid sum of $q$, estimated from every other step.
-- CVODE accepts a step when the root mean square of the $N$ weighted errors is at most 1, so one state carries at most $\sqrt{N}$ weights $w_k$. The node entropy is linear in the states: in the bottom-cell entropy and the gradient, and in `gradient` in all gradient states and the surface entropy. $n_\text{st}$ is the number of steps of the call, and $C = M_\text{core}\, c_p^\text{core}\, \text{tfac}$.
-
-A miss above $B$ logs a warning and is counted; a miss above $10\,B$ stops the run with a `RuntimeError`. Production does not stop a run for a miss below $10\,B$. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds $r$, $B$, $\epsilon_\text{tab}$ and the skip flag of the last call.
 
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
 [^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49-62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
