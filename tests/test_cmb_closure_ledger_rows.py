@@ -138,3 +138,34 @@ def test_write_mode_takes_a_bad_rows_file_as_no_stored_rows(tmp_path, monkeypatc
         assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
     with pytest.raises(pytest.fail.Exception, match='rows.json'):
         V._stored_rows(write=False)
+
+
+@pytest.mark.parametrize('rows', [[{'g': 0.1}], [{}]])
+def test_write_mode_takes_rows_that_do_not_compare_as_no_stored_rows(
+    tmp_path, monkeypatch, rows
+):
+    """A stored row without g0, or an empty row, makes the compare fail: in write mode the file
+    counts as no stored rows, with a warning; otherwise it is refused."""
+    import json
+
+    import tests.test_cmb_closure_validation as V
+
+    path = tmp_path / 'rows.json'
+    path.write_text(json.dumps({'rows': rows, 'provenance': {'sha256': {}}}))
+    monkeypatch.setattr(V, 'ROWS_FILE', path)
+    fresh = [
+        {
+            'g0': 0.1,
+            'g': 0.1,
+            'miss': 0.0,
+            'pred': 0.0,
+            'pred_cp': 0.1,
+            'atol': 1e-8,
+            'rtol': 1e-10,
+        }
+    ]
+    with pytest.warns(UserWarning, match='rows.json'):
+        data, faults = V._stored_faults({}, fresh, write=True)
+    assert data['rows'] == [] and faults == ['g0 0.1: no stored row']
+    with pytest.raises(pytest.fail.Exception, match='rows.json'):
+        V._stored_faults({}, fresh, write=False)
