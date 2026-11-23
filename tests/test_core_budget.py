@@ -523,25 +523,27 @@ def _float_steps(t_ref, t):
 
 
 @pytest.mark.parametrize(
-    ('fraction', 'depression', 'budget_class', 'steps'),
+    ('fraction', 'depression', 'budget_class'),
     [
-        (0.1, 1.2, CoreEnergyBudget, (2, 3)),
-        (0.05, 1.0, CoreEnergyBudget, (2, 3)),
-        (0.1, 1.2, _FreezeOutAboveTheJump, (-1, 0)),
+        (0.1, 1.2, CoreEnergyBudget),
+        (0.05, 1.0, CoreEnergyBudget),
+        (0.1, 1.2, _FreezeOutAboveTheJump),
     ],
 )
 def test_the_freeze_out_edges_are_the_floats_of_the_capacity_jump(
-    prof, fraction, depression, budget_class, steps, caplog
+    prof, fraction, depression, budget_class, caplog
 ):
-    """The edges are the last float with zero latent and gravitational capacity and the first
-    with a positive one, 0 to 3 floats from T_freeze, found without a warning."""
+    """The edges are adjacent floats within 4 floats of T_freeze, the last with zero latent and
+    gravitational capacity and the first with a positive one, found without a warning (their
+    exact position moves with the rounding of the compiled melting point)."""
     curve = IronMeltingCurve(light_element_fraction=fraction, depression=depression)
     budget = budget_class(
         prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
     )
     with caplog.at_level('WARNING', logger='fwl.aragog.core.budget'):
         lo, hi = budget._freeze_out_edges
-    assert tuple(_float_steps(budget.t_freeze, t) for t in (lo, hi)) == steps
+    steps = [_float_steps(budget.t_freeze, t) for t in (lo, hi)]
+    assert steps[1] == steps[0] + 1 and all(abs(n) <= 4 for n in steps)
     frozen, liquid = (float(v) for v in budget._boundary(jnp.asarray([lo, hi])))
     assert frozen == 0.0 < liquid
     assert not caplog.records

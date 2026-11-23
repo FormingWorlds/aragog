@@ -226,11 +226,16 @@ PARITY = [
 
 @pytest.mark.parametrize(('core_bc', 'rheology', 'heating'), PARITY)
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
-    """The JAX factory right-hand side with the lid equals the NumPy one on active and
-    handed-over lids: the 2 lid rates to relative 1e-12, the top cell to 5e-12, the other slots
-    to 1e-12 of the largest mantle rate. The call counter proves the JAX path ran."""
-    # Top cell: difference of 2 fluxes; JAX jit and eager orders differ by 1.31e-12 there.
-    _assert_rhs_parity(_lid_solver(core_bc, rheology, heating), rtol_top=5e-12)
+    """The jitted JAX factory right-hand side with the lid equals the NumPy one on active and
+    handed-over lids: the 2 lid rates to relative 1e-12, the top cell to 1e-12 (2e-12 for the
+    quasi_steady lid_closure case), the other slots to 1e-12 of the largest mantle rate. The call
+    counter proves the JAX path ran."""
+    # Top cell of that case: a difference of 2 fluxes, 1.32e-12 from NumPy on Linux and macOS
+    # (JAX without constant folding; jitted with folded constants it was 6e-15)
+    loose = (core_bc, rheology, heating) == ('quasi_steady', 'lid_closure', None)
+    _assert_rhs_parity(
+        _lid_solver(core_bc, rheology, heating), rtol_top=2e-12 if loose else 1e-12
+    )
 
 
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
