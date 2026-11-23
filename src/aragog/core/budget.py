@@ -650,9 +650,9 @@ class CoreEnergyBudget:
         return (q_conv - q_base) / capacity, d_shell
 
 
-# Programs of the budget functions, compiled once per budget form (classes, settings, shapes):
-# the budget is a pytree argument, so a new budget of the same form reuses them. Limit: a
-# tabulated core whose grid length follows r_cmb is a new form at each structure update.
+# Programs of the budget functions, compiled once per budget form and batch length class; the
+# budget is a pytree argument, so a new budget of the same form reuses them. clear_jit_cache of
+# cvode_jax does not clear them; a tabulated core with an r_cmb-dependent grid compiles again.
 @jax.jit
 def _r_icb_one(budget, t_cmb):
     return budget._r_icb_root(t_cmb)

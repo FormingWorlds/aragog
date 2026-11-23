@@ -78,8 +78,21 @@ def clear_jit_cache() -> None:
 
 def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
     """Record the input form of a factory build; a new form beyond ``MAX_FORMS`` first clears the
-    compiled programs, so the compile caches stay bounded over many meshes or table shapes. The
-    bound counts builds: a factory built before a clear and called again compiles once more."""
+    compiled programs.
+
+    Notes
+    -----
+    The bound covers the 4 CVODE programs of ``_programs`` (RHS, Jacobian, powers, lid weight),
+    by the count of input forms. It counts builds: a factory built before a clear and called
+    again compiles once more. Outside the bound:
+
+    - the budget programs of ``aragog.core.budget``: their batch calls are padded to a power-of-2
+      length, so they compile once per length class and budget form; a tabulated core whose grid
+      length follows ``r_cmb`` is a new budget form, so it compiles them again at each structure
+      update;
+    - the executables JAX keeps for eager array operations, 1 per operation and input shape, so a
+      new mesh size adds some.
+    """
     import jax
 
     leaves, treedef = jax.tree_util.tree_flatten((data, consts))
