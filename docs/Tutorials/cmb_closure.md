@@ -130,7 +130,7 @@ Near the solidus $c_p/T$ would make the node cool 13 % too fast, and near the li
 
 ## 3. Run one call and read the ledger
 
-Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, `rel`, the largest relative difference of the slope of the tabulated temperature from the closure slope, and `excluded`, true when the call went through a table cell where the temperature does not rise with entropy (a padded cell, for example), so that the check was skipped.
+Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ of the call (J), which the explanation calls $\Delta E_\text{cmb}$, and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, `rel`, the largest relative difference of the slope of the tabulated temperature from the closure slope, and `excluded`, true when the call went through a table cell where the temperature does not rise with entropy (a padded cell, for example), so that the check was skipped.
 
 ```python
 P_stag = np.ravel(solver.evaluator.mesh.staggered_pressure)

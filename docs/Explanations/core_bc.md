@@ -325,8 +325,8 @@ The heat capacity of the blend does not give this slope in the mush. There it is
 ### Limits of the slope closure
 
 - A table cell where $T$ does not rise with $S$ (for example a padded cell next to the liquidus) holds the node temperature, while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
-- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 146 GPa, it reaches 6 % in the solid and 0.5 % in the melt; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
-- A slope that is not finite and positive stops the call with a `CMBClosureError` from the NumPy right-hand side. The JAX right-hand side has no such guard; the ledger check refuses such a slope over the accepted states of a call that finishes.
+- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 146 GPa, it reaches 6 % in the solid and 0.5 % in the melt up to one band width above the liquidus; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
+- A slope that is not finite and positive stops the call with a `CMBClosureError` from the NumPy right-hand side, with CVODE and with Radau. The JAX right-hand side has no such guard; the ledger check refuses such a slope over the accepted states of a call that finishes.
 - With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
 
 **Where this is checked.** [The CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band), [the CMB closure on the states of 2 coupled runs](../Validation/core.md#17-the-cmb-closure-on-the-states-of-2-coupled-runs) and [the CMB node rate of each closure](../Validation/core.md#18-the-cmb-node-rate-of-each-closure).
@@ -348,22 +348,22 @@ B = \epsilon_\text{tab} \int |E|\, dt + E_\text{trap} + C\, \sqrt{n_y}\, n_\text
 $$
 
 - $\epsilon_\text{tab}$ is the largest relative difference, over the accepted states of the call, of the slope of the tabulated $T$ from the closure slope. It is 0 in the mush. It multiplies the integral of $|E|$, because $E$ can change sign within a call.
-- $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$, estimated from every other node of the energy trace of the call.
+- $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$ over the energy trace of the call, the states the integrator records (with CVODE every accepted step, every output point and, on a fired root, the root-search points; see [diagnostic outputs](#diagnostic-outputs)). It is estimated from every other node of that trace.
 - $w$ is the error weight of the node entropy (J kg$^{-1}$ K$^{-1}$): the weights of the states it depends on, each times its coefficient. These states are the bottom-cell entropy and the gradient, and in `gradient` all gradient states and the surface entropy.
 - The integrator accepts a step when the root mean square of the $n_y$ weighted errors is at most 1, with $n_y$ the length of the state vector, so the error of one state is at most $\sqrt{n_y}$ times its weight. $n_\text{st}$ is the number of intervals of the energy trace; the maximum runs over its nodes $k$.
 - In `core_module` the bound has no $C$ and no $E_\text{trap}$. The integral of $|E|$ becomes the sum of the absolute changes of the core-top temperature between trace nodes, and a term for the error weight of that temperature is added.
 
 ### What happens after a miss
 
-A miss above $B$ logs a warning and is counted; a miss above $10\,B$ raises a `CMBClosureError` (a `RuntimeError`). The solver then drops the refused call and keeps the solution of its last accepted call, from which the next call takes the CMB gradient. A coupled PROTEUS run catches that error like other solver errors: the interior step counts as skipped, and the run stops after 3 skipped steps in a row. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds the terms of the last call: `r`, `bound`, `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). It is `None` after a call that the check does not cover.
+A miss above $B$ logs a warning and is counted; a miss above $10\,B$ is counted and raises a `CMBClosureError` (a `RuntimeError`, from `aragog.solver.entropy_solver`). The solver then drops the refused call and puts back the solution it held at the start of the call (none before the first call), from which a caller that goes on takes the CMB gradient. A coupled PROTEUS run sets the solver back to the state at the call start itself and skips the interior step without a retry; the third failed step in a row stops the run. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds the terms of the last call: `r` and `bound` (J, or K in `core_module`), `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). It is `None` after a call that the check does not cover.
 
 ### What the ledger check detects
 
 $B$ is a worst case, so the check sees a closure error only where it is large against the error weight of the node. At `rtol = atol = 1e-8`, with $c_p/T$ in place of the slope, and with the node at a melt coordinate (0 at the solidus, 1 at the liquidus) of 0.9 or 0.3:
 
-- a 2-yr `core_module` call (CVODE, 0.9) misses by 0.0033 K, against a bound of 1.2 K for a core-top change of 0.032 K;
-- a 20-yr `energy_balance` call (CVODE) misses by 0.16 $B$ at 0.3, while at 0.9 it raises;
-- a 20-yr `gradient` call (Radau) warns at 0.9 (2.8 $B$) and passes at 0.3, where $B$ is 20 times the CMB heat.
+- a 2-yr `core_module` call (CVODE, node at 0.9) misses by 0.0033 K, against a bound of 1.2 K for a core-top change of 0.032 K;
+- a 20-yr `energy_balance` call (CVODE) misses by 0.16 $B$ with the node at 0.3, and raises with the node at 0.9;
+- a 20-yr `gradient` call (Radau) warns with the node at 0.9 (2.8 $B$) and passes with the node at 0.3, where $B$ is 20 times the CMB heat.
 
 The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = 1e-8` the slope closure itself reaches 0.79 $B$ in the mush.
 

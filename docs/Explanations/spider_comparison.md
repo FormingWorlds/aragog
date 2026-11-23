@@ -73,7 +73,7 @@ The default `convective_threshold = 0` gives the SPIDER switch; see [Heat transp
 
 ### CMB closure in the melt band
 
-SPIDER turns the core cooling rate into the entropy rate of the CMB node with $c_p/T$ of the node. Aragog divides by the slope $(\partial T/\partial S)_P$ of its own $T(P, S)$, so that the core loses the heat that crosses the CMB. The 2 factors agree while the node is in a single phase, as far as $T/c_p$ of the tables matches the slope of the tabulated $T$. Inside the band, $c_p/T$ makes the node cool faster or slower than the core: along the calls of [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band) it would miss by up to 20 % of the CMB heat. See [the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node).
+SPIDER turns the core cooling rate into the entropy rate of the CMB node with $c_p/T$ of the node. Aragog divides by the slope $(\partial T/\partial S)_P$ of its own $T(P, S)$, so that the core loses the heat that crosses the CMB. While the node is in a single phase away from the melt band, that slope is $T/c_p$ of the tables, so the 2 factors are the same; the miss that remains there comes from the difference between $T/c_p$ and the slope of the tabulated $T$ ([limits of the slope closure](core_bc.md#limits-of-the-slope-closure)). Inside the band, $c_p/T$ makes the node cool faster or slower than the core: along the calls of [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band) it would miss by up to 20 % of the CMB heat. See [the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node).
 
 ### Default thermodynamic tables
 
