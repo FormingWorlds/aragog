@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -10,7 +11,7 @@ import pytest
 
 from tests.conftest import _CANDIDATES, _REPO_ROOT
 
-pytestmark = [pytest.mark.smoke, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60)]
 
 NEEDS_TABLES = [
     'tests/test_rheology_solver_wiring.py::test_arrhenius_reference_viscosity_ci_table_vs_linear_solidus',
@@ -60,11 +61,11 @@ def test_rheology_wiring_tests_skip_without_the_eos_tables(tmp_path) -> None:
         env=env,
         capture_output=True,
         text=True,
-        timeout=540,
+        timeout=50,
     )
     out = run.stdout
     skipped = [line for line in out.splitlines() if 'SPIDER P-S tables not found' in line]
     assert run.returncode == 0, out[-2000:]
     assert ' failed' not in out, out[-2000:]
-    assert f'{len(NEEDS_TABLES)} skipped' in out, out[-2000:]
+    assert re.search(rf'\b{len(NEEDS_TABLES)} skipped\b', out), out[-2000:]
     assert len(skipped) == len(NEEDS_TABLES), out[-2000:]
