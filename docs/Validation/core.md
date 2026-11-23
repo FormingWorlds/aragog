@@ -654,7 +654,7 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
 
 ## 16. The CMB closure ledger across the melt band
 
-<!-- The numbers of this section come from its test, so the page test has no number of it to check. -->
+<!-- The numbers of this section come from its test and from the round-off probe of its stored rows, so the page test has no number of it to check. -->
 
 **Why this check exists.** The `energy_balance` closure turns the core cooling rate into the entropy rate of the CMB node ([explanation](../Explanations/core_bc.md#the-entropy-slope-at-the-cmb-node)). With the wrong conversion factor the core loses more or less heat than crosses the core-mantle boundary (CMB). The factor $c_p/T$, made from the heat capacity of the blend, is such a wrong factor in the mush: along the same trajectories it would miss by up to 20 % of the CMB heat. The test fails if the slope closure misses by more than $10^{-3}$ of the CMB heat in the mush.
 
@@ -667,15 +667,16 @@ The weight never reaches 0 or 1: with the default transition the formula gives $
 ![Ledger miss of one call against the melt coordinate of the CMB node](../assets/validation/core_cmb_closure_ledger.svg#only-light){ width="80%" }
 ![Ledger miss of one call against the melt coordinate of the CMB node](../assets/validation/core_cmb_closure_ledger_dark.svg#only-dark){ width="80%" }
 
-**How to read the plot.** The x axis is the melt coordinate $g$ of the CMB node at the call start; the shaded band is the mush. The y axis is the miss $r/|q|$ on a symmetric log scale, linear between $-10^{-4}$ and $10^{-4}$. Points in the text colour are the solver with the slope closure, named $(dS/dT)_P = 1/(\partial T/\partial S)_P$ in the legend after its factor; the line in the same colour is the closed form of the slope closure. The red line is the closed form of $c_p/T$ along the same trajectories. A pass puts every filled point on its line and near 0 in the mush.
+**How to read the plot.** The x axis is the melt coordinate $g$ of the CMB node at the call start; the shaded band is the mush. The y axis is the miss $r/|q|$ on a symmetric log scale, linear between $-10^{-4}$ and $10^{-4}$. Points in the text colour are the solver with the slope closure, named $(dS/dT)_P = 1/(\partial T/\partial S)_P$ in the legend after its factor; the line in the same colour is the closed form of the slope closure. The red line is the closed form of $c_p/T$ along the same trajectories. A pass puts every filled point on its line and near 0 in the mush. The plot shows the stored rows of one macOS run (`tests/validation/data/cmb_closure_ledger_rows.json`); each test run compares its own rows with them.
 
-**Known limit.** Below the solidus the slope closure misses by the table consistency of the test tables: $6.2 \times 10^{-3}$ at $g = -0.04$, as the closed form predicts. Just above the liquidus, from $g = 1$ to about $1.006$, the test tables hold a flat (padded) cell near the CMB pressure, where the path of a call depends on round-off; the melt-side call starts at $g = 1.15$ and stays above it, and the cell has a test of its own (`test_a_call_through_a_padded_cell_is_left_out_of_the_check`).
+**Known limit.** Below the solidus the slope closure misses by the table consistency of the test tables: $6.2 \times 10^{-3}$ at $g = -0.04$, as the closed form predicts. Just above the liquidus, from $g = 1$ to about $1.006$, the test tables hold a flat (padded) cell near the CMB pressure, where the path of a call depends on round-off; the melt-side call starts at $g = 1.15$, above it, and the cell has a test of its own (`tests/test_cmb_closure_ledger.py::test_a_call_through_a_padded_cell_is_left_out_of_the_check`). Every row also moves with round-off: a start changed by $10^{-14}$ to $10^{-11}$ of its value moves a row by up to $2.1 \times 10^{-7}$ in the mush and up to $2.3 \times 10^{-4}$ outside it. That is far above the tolerance of the plot check, so the plot is drawn from the stored rows.
 
 ??? info "Test details"
     - Reference: the closed form $\int (1 - k)\, E\, dt$ along each trajectory, from Bower et al. (2018)[^cite-bower2018] Eqs. 19-21.
     - Tolerance: $10^{-3}$ of $q$ between the solver and the closed form, and $10^{-3}$ of $q$ in the mush (largest found $4.2 \times 10^{-4}$ for both), and the solver bound; the $c_p/T$ closed form must exceed $0.05$ in the mush (it reaches $-0.20$).
-    - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`, and `::test_the_cp_over_t_closure_misses_by_its_closed_form` for the run of the $c_p/T$ closure.
-    - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair)
+    - Stored rows: each fresh row must equal its stored row within 10 times the largest shift measured on macOS (a start changed by $10^{-14}$ to $10^{-11}$, and the solver tolerances times 0.99 and 1.01): $2 \times 10^{-5}$ in the mush, and $3 \times 10^{-3}$, $3 \times 10^{-5}$ and $10^{-3}$ at $g = -0.04$, $-0.02$ and $1.15$. At $-0.04$ and $1.15$ this is 48 % and 11 times the miss, a weak check; the tolerance in $q$ above covers those rows.
+    - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`, and `::test_the_cp_over_t_closure_misses_by_its_closed_form` for the run of the $c_p/T$ closure; `tests/test_cmb_closure_ledger_rows.py::test_the_stored_rows_match_the_case` for the stored file.
+    - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair and the stored rows)
 
 ## 17. The CMB closure on the states of 2 coupled runs
 
