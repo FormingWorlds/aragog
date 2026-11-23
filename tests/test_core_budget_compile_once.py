@@ -4,7 +4,8 @@ Modules under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``,
 ``aragog.core.regime.refuse_unmodelled_regime`` and ``aragog.solver.entropy_solver._padded_call``.
 Invariants: after the first calls, an eager call at a new CMB temperature or a new number of
 states reuses the compiled programs, so a long core_module run does not add an XLA program at
-every step; the padding to a length bucket changes no value. Compiles are counted with the
+every step; the padding to a length bucket changes no value; with jit off every compiled
+budget program runs eagerly and gives its compiled value. Compiles are counted with the
 backend-compile events of ``jax.monitoring``.
 """
 
@@ -181,13 +182,30 @@ def test_padding_changes_no_value(budget, n):
     np.testing.assert_allclose(base, layer_base(t_shell, t_core), rtol=1e-13, atol=0)
 
 
-def test_the_budget_functions_give_the_compiled_values_without_jit(budget):
-    """With jit off (jax.disable_jit, JAX_DISABLE_JIT) the boundary radius and the CMB cooling
-    rate run eagerly and match the compiled values."""
-    t_cmb, q_cmb = 4000.0, 1.0e13
-    r_jit, rate_jit = float(budget.r_icb(t_cmb)), float(budget.dtcmb_dt(t_cmb, q_cmb))
-    with jax.disable_jit():
-        r_eager, rate_eager = float(budget.r_icb(t_cmb)), float(budget.dtcmb_dt(t_cmb, q_cmb))
-    assert 0.0 < r_jit < budget.profiles.r_cmb
-    assert r_eager == pytest.approx(r_jit, rel=1e-12)
-    assert rate_eager == pytest.approx(rate_jit, rel=1e-12)
+def test_the_budget_programs_give_the_compiled_values_without_jit(budget):
+    """With jit off (jax.disable_jit, JAX_DISABLE_JIT) every compiled budget program runs
+    eagerly and gives its compiled value: the boundary radius, the cooling rate and the batches."""
+    t_cmb, q_cmb, temps = 4000.0, 1.0e13, jnp.array([3900.0, 4000.0, 4100.0])
+
+    def values():
+        return [
+            np.asarray(v, dtype=float)
+            for v in (
+                budget.r_icb(t_cmb),
+                budget.rate(t_cmb, q_cmb),
+                budget.r_icb_batch(temps),
+                budget.regime_batch(temps),
+                budget.capacity_batch(temps),
+            )
+        ]
+
+    compiled = values()
+    try:
+        with jax.disable_jit():
+            eager = values()
+    except RecursionError as exc:
+        pytest.fail(f'a budget program recursed with jit off: {exc}')
+    assert 0.0 < compiled[0] < budget.profiles.r_cmb
+    assert compiled[1] < 0.0
+    for c, e in zip(compiled, eager, strict=True):
+        np.testing.assert_allclose(e, c, rtol=1e-12, atol=0.0)
