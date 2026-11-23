@@ -322,6 +322,8 @@ The first term acts only from the solidus to the liquidus and the second, the pu
 
 The heat capacity of the blend does not give this slope in the mush. There it is $c_p = T_\text{avg} (S_\text{liq} - S_\text{sol})/(T_\text{liq} - T_\text{sol})$, with $T_\text{avg}$ the mean of the solidus and liquidus temperatures. With $c_p/T$ the node would cool at $T_\text{avg}/T$ of the core rate. For $T_\text{sol} = 4000$ K, $T_\text{liq} = 5600$ K and a melt coordinate of 0.85 (0 at the solidus, 1 at the liquidus; the melt fraction in the mush), $T = 5360$ K, and the node cools at 0.90 of the core rate.
 
+Runs whose CMB node starts in the smoothing band above the liquidus (melt fraction 1) change too. In the 1 Earth-mass PALEOS run the node starts at $g = 1.028$, where $T/c_p$ lies 1.025 to 1.37 times below the slope up to 988 yr, and with `energy_balance` the CMB heat flux is 2.6 % higher at 2 yr and 33 % higher at 988 yr than with $c_p/T$ (`gradient` changes as well, `core_module` does not).
+
 ### Limits of the slope closure
 
 - A table cell where $T$ does not rise with $S$ holds the node temperature (on the test tables at 145.7 GPa: $g = 1$ to $1.0075$ next to the liquidus, $g = -0.009$ to $0$ next to the solidus, and $g \le -0.34$ in the solid), while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
