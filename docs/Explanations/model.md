@@ -167,7 +167,7 @@ The `core_bc` selector chooses how the core energy balance is closed when `inner
 | Mode | State vector | Formulation |
 |------|--------------|-------------|
 | `quasi_steady` | length $N$ | Alpha-factor heat-flux partition between the bottom mantle cell and the core, weighted by heat-capacity ratio. Available for SPIDER parity runs. |
-| `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula, with $1/(\partial T/\partial S)_P$ of the node in place of $c_p/T$ ([the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node)). It equals SPIDER while the node is in a single phase away from the melt band. **Default and PROTEUS production**. |
+| `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula, with $1/(\partial T/\partial S)_P$ of the node in place of $c_p/T$ ([the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node)). It equals SPIDER while the node is in a single phase outside the melt band and its smoothing bands. **Default and PROTEUS production**. |
 | `gradient` | length $N+2$ | Entropy gradient as the primary state field; $S$ is reconstructed by cumulative integration from the surface inward. |
 | `bower2018` | length $N+1$ | $T_\mathrm{core}$ as an ODE state with conduction-only $F_\mathrm{cmb}$. Available for parity testing only; not recommended. |
 | `core_module` | length $N+2$, plus the shell cells with `stratification = true` | The CMB flux is a boundary-layer law in the core-mantle temperature contrast, and the core temperature follows the core evolution budget of `aragog.core`, with inner-core growth. See [Core BC modes](core_bc.md). |

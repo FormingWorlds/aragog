@@ -160,7 +160,7 @@ The flux steps at a positive width too, because the tables hold the temperature 
 
 | Tables | CMB pressure | Band at the solidus | Band at the liquidus |
 |---|---|---|---|
-| Test tables | 146 GPa, the CMB pressure of the tests | 76 | 63 |
+| Test tables | 145.7 GPa, the CMB pressure of the tests | 76 | 63 |
 | PALEOS tables of the coupled runs, 1 Earth-mass run | 103 GPa | 30 | 59 |
 | PALEOS tables of the coupled runs, 3 and 5 Earth-mass runs | the CMB of those runs | 80 to 83 | none |
 
@@ -306,7 +306,7 @@ $$
 \text{fac}_\text{cmb} = \frac{1}{c_p^\text{core} \, \text{tfac} \, M_\text{core}\, (\partial T/\partial S)_P}
 $$
 
-Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flow out of the core. SPIDER writes the same balance in its own coordinate, which decreases towards the CMB, so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase outside the melting band and its smoothing bands, and differ inside them. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flux out of the core (W m$^{-2}$), so that $F_\text{cmb} A_\text{cmb}$ is the heat flow. SPIDER takes the difference across the bottom cell the other way (it divides by $\xi_\text{cmb} - \xi_\text{above} < 0$), so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase outside the melt band and its smoothing bands, and differ inside them. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
 
 ### The entropy slope at the CMB node
 
@@ -325,7 +325,7 @@ The heat capacity of the blend does not give this slope in the mush. There it is
 ### Limits of the slope closure
 
 - A table cell where $T$ does not rise with $S$ holds the node temperature (on the test tables at 145.7 GPa: $g = 1$ to $1.0075$ next to the liquidus, $g = -0.009$ to $0$ next to the solidus, and $g \le -0.34$ in the solid), while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
-- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 145.7 GPa, it reaches 6.2 % in the solid at the flat cell next to the solidus ($g = -0.009$) and 4.1 % below $g = -0.05$, and in the melt 0.66 % up to $g = 1.1$ and 0.79 % up to $g = 2$; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
+- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 145.7 GPa, it reaches 6.2 % in the solid just below the flat cell next to the solidus ($g = -0.009$) and 4.1 % below $g = -0.05$, and in the melt 0.66 % up to $g = 1.1$ and 0.79 % up to $g = 2$; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
 - A slope that is not finite and positive stops the call with a `CMBClosureError` from the NumPy right-hand side, with CVODE and with Radau. The JAX right-hand side has no such guard; the ledger check refuses such a slope over the accepted states of a call that finishes.
 - With the default `matprop_smooth_width` the slope jumps where the pure-phase term starts: by a factor 18.9 at the solidus and 4.1 at the liquidus on the test tables at 145.7 GPa. With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
 
@@ -365,7 +365,7 @@ $B$ is a worst case, so the check sees a closure error only where it is large ag
 - a 20-yr `energy_balance` call (CVODE) misses by 0.16 $B$ with the node at 0.3, and raises with the node at 0.9;
 - a 20-yr `gradient` call (Radau) warns with the node at 0.9 (2.8 $B$) and passes with the node at 0.3, where $B$ is 20 times the CMB heat.
 
-The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = atol = 1e-8`, in 2-yr and 20-yr `energy_balance` calls with the node at 0.5 to 0.99 on the test tables, the slope closure itself reaches 0.77 to 0.82 $B$. That miss is the trapezoid error $E_\text{trap}$ of the CMB heat over the accepted steps, not an error of the closure: in a 2-yr call with the node at 0.7 and `rtol = 1e-10`, Simpson's rule on the same steps lowers it from $6.3 \times 10^{-5}$ to $8.6 \times 10^{-8}$ of the CMB heat.
+The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = atol = 1e-8`, in 2-yr and 20-yr `energy_balance` calls with the node at 0.5 to 0.99 on the test tables, the miss of the slope closure reaches 0.77 to 0.82 $B$. That miss is mostly the trapezoid error $E_\text{trap}$ of the CMB heat over the accepted steps, not an error of the closure: in a 2-yr call with the node at 0.7, Simpson's rule on the same steps lowers it from $5.7 \times 10^{-4}$ to $5.6 \times 10^{-6}$ of the CMB heat at `rtol = 1e-8`, and from $6.3 \times 10^{-5}$ to $8.6 \times 10^{-8}$ at `rtol = 1e-10`.
 
 ## `gradient`
 

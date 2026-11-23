@@ -1,4 +1,5 @@
-"""Build ``tests/validation/data/cmb_closure_paleos_runs.npz`` from the stored states of 2 coupled PROTEUS runs, one per CMB closure.
+"""Build ``tests/validation/data/cmb_closure_paleos_runs.npz`` from the stored states of 2
+coupled PROTEUS runs, one per CMB closure.
 
 The runs couple aragog (energy_balance core, JAX right-hand side) to Zalmoxis with PALEOS:MgSiO3
 mantle and PALEOS:iron core tables, 1 Earth mass, from ``input/all_options.toml``:
