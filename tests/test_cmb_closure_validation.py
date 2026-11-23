@@ -11,21 +11,22 @@ same integral for ``c_p/T`` of the blend along that trajectory. A separate test 
 
 The plot is drawn from the rows stored in ``ROWS_FILE``, not from the fresh rows: a start
 perturbation of 1e-13 moves the plotted residuals by up to 2.7e4 times the tolerance of the plot
-check (1e-6 of the half range of a line). The fresh rows must agree with the stored rows within
-``ROWS_TOL``; ``--validation-plots`` (the default folder) writes the rows again.
+check (1e-6 of the range of a line). The fresh rows must agree with the stored rows within
+``ROWS_TOL``; ``ARAGOG_WRITE_LEDGER_ROWS=1`` writes the rows again.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
-from proteus_mpl.pytest_plugin import DEFAULT_DIR
 from scipy.constants import Julian_year
 
 from tests.conftest import EOS_DIR, assert_figure_legend_below, entropy_eos_copy, needs_eos
@@ -39,6 +40,7 @@ G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.9
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 ROWS_FILE = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_ledger_rows.json'
+WRITE_ROWS = 'ARAGOG_WRITE_LEDGER_ROWS'
 PLOTTED = ('g', 'miss', 'pred', 'pred_cp')
 ROW_KEYS = ('g0', *PLOTTED)
 # 10x, rounded up, the largest shift of a row value over starts changed by 1e-14 to 1e-11 and
@@ -111,29 +113,22 @@ def _call(eos, g0, cp_over_t=False):
     }
 
 
+def _git(*args):
+    return subprocess.run(
+        ['git', *args], cwd=ROWS_FILE.parents[3], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
 def _write_rows(rows, sha):
     """Store the plotted values and the solver tolerances of ``rows`` with their provenance,
-    one top-level block per line; refuse when ``src``, ``tests`` or ``pyproject.toml`` has
-    local changes, other than the rows file."""
-    root = Path(__file__).parents[1]
-
-    def git(*args):
-        return subprocess.run(
-            ['git', *args], cwd=root, capture_output=True, text=True, check=True
-        ).stdout.strip()
-
-    rows_path = ROWS_FILE.relative_to(root).as_posix()
-    if git('status', '--porcelain', '--', 'src', 'tests', 'pyproject.toml', f':!{rows_path}'):
-        pytest.fail(
-            f'{ROWS_FILE.name}: commit the changes of src, tests and pyproject.toml first'
-        )
+    one top-level block per line."""
     provenance = {
-        'commit': git('rev-parse', 'HEAD'),
+        'commit': _git('rev-parse', 'HEAD'),
         'platform': f'{platform.system()} {platform.machine()}',
         'tables': 'SPIDER EOS test data (ARAGOG_TEST_EOS_DIR)',
         'sha256': sha,
-        'builder': 'pytest tests/test_cmb_closure_validation.py::'
-        'test_the_cmb_ledger_across_the_melt_band --validation-plots',
+        'builder': f'{WRITE_ROWS}=1 pytest tests/test_cmb_closure_validation.py::'
+        'test_the_cmb_ledger_across_the_melt_band',
     }
     keys = (*ROW_KEYS, 'atol', 'rtol')
     lines = [f'"provenance": {json.dumps(provenance)}']
@@ -146,7 +141,15 @@ def _write_rows(rows, sha):
 def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
     """The slope closure misses by ``int (1 - k) E dt`` within 1e-3 of the CMB heat (Bower et al.
     2018, Eqs. 19-21), closes in the mush to 1e-3 and inside the solver bound, while ``c_p/T``
-    along the same trajectories would miss by more than 5 % in the mush."""
+    along the same trajectories would miss by more than 5 % in the mush. With
+    ``ARAGOG_WRITE_LEDGER_ROWS=1`` (a tree without local changes in src, tests and pyproject.toml)
+    the run replaces the stored rows and warns with each shift above its tolerance."""
+    write = os.environ.get(WRITE_ROWS) == '1'
+    rows_path = ROWS_FILE.relative_to(ROWS_FILE.parents[3]).as_posix()
+    if write and _git(
+        'status', '--porcelain', '--', 'src', 'tests', 'pyproject.toml', f':!{rows_path}'
+    ):
+        pytest.fail(f'{WRITE_ROWS}: commit the changes of src, tests and pyproject.toml first')
     eos = entropy_eos_copy(EOS_DIR)
     rows = [dict(_call(eos, g0), g0=g0) for g0 in G0]
     for row in rows:
@@ -163,21 +166,27 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         f.name: hashlib.sha256(f.read_bytes()).hexdigest()
         for f in sorted(Path(EOS_DIR).glob('*.dat'))
     }
-    if request.config.getoption('validation_plots') == DEFAULT_DIR:
-        _write_rows(rows, sha)
     data = json.loads(ROWS_FILE.read_text())
-    again = (
-        f'explain the change first; for an intended change, pytest {request.node.nodeid} '
-        '--validation-plots writes the rows again'
-    )
-    assert data['provenance']['sha256'] == sha, f'{ROWS_FILE.name} has other tables; {again}'
+    bad = [] if data['provenance']['sha256'] == sha else ['other tables']
     for row, ref in zip(rows, data['rows'], strict=True):
         tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
-        bad = [
-            f'{k} {row[k]:.6g} vs {ref[k]:.6g}' for k in PLOTTED if abs(row[k] - ref[k]) > tol
+        out = [
+            f'{k} {row[k]:.6g} vs {ref[k]:.6g}'
+            for k in PLOTTED
+            if not abs(row[k] - ref[k]) <= tol
         ]
-        bad += [f'{k} {row[k]:g} vs {ref[k]:g}' for k in ('atol', 'rtol') if row[k] != ref[k]]
-        assert not bad, f'g0 {row["g0"]} (tol {tol:g}): {"; ".join(bad)}; {again}'
+        out += [f'{k} {row[k]:g} vs {ref[k]:g}' for k in ('atol', 'rtol') if row[k] != ref[k]]
+        bad += [f'g0 {row["g0"]} (tol {tol:g}): {"; ".join(out)}'] if out else []
+    if write:
+        if bad:
+            warnings.warn(f'{ROWS_FILE.name} replaced: {" | ".join(bad)}', stacklevel=1)
+        _write_rows(rows, sha)
+        data = json.loads(ROWS_FILE.read_text())
+    else:
+        assert not bad, (
+            f'{" | ".join(bad)}; explain the change first; for an intended change, {WRITE_ROWS}=1 '
+            f'pytest {request.node.nodeid} writes the rows again'
+        )
 
     assert_figure_legend_below(_figure(data['rows']))
     validation_plot(lambda: _figure(data['rows']), 'core_cmb_closure_ledger')
