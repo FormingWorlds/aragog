@@ -361,7 +361,7 @@ def test_a_non_positive_node_slope_stops_the_rhs_and_the_check(monkeypatch):
     """A node slope of 0 or below is refused with a message, in the RHS (before a division by 0)
     and in the ledger check over the accepted states."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-    from aragog.solver.entropy_solver import EntropySolver
+    from aragog.solver.entropy_solver import CMBClosureError, EntropySolver
 
     eos = entropy_eos_copy(EOS_DIR)
     params = _build_parameters(core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1)
@@ -374,9 +374,9 @@ def test_a_non_positive_node_slope_stops_the_rhs_and_the_check(monkeypatch):
         monkeypatch.setattr(
             EntropyPhaseEvaluator, 'temperature_slope', lambda self, v=value: np.full(1, v)
         )
-        with pytest.raises(RuntimeError, match='finite positive slope'):
+        with pytest.raises(CMBClosureError, match='finite positive slope'):
             solver._dSdt_single(0.0, y)
-        with pytest.raises(RuntimeError, match='node slope'):
+        with pytest.raises(CMBClosureError, match='node slope'):
             solver._check_cmb_ledger(np.array([0.0, 1.0]), np.c_[y, y], np.zeros(2), 0.0)
 
 
@@ -402,7 +402,7 @@ def test_a_call_the_check_does_not_cover_leaves_no_ledger(monkeypatch):
 def test_a_closure_fault_keeps_the_last_accepted_state(monkeypatch):
     """After a closure fault the solver hands the CMB gradient of its last accepted call to the
     next one, not that of the refused call."""
-    from aragog.solver.entropy_solver import EntropySolver
+    from aragog.solver.entropy_solver import CMBClosureError, EntropySolver
 
     _, _, _, solver = _ledger('energy_balance', 'radau', 0.9, end_time=2.0)
     accepted = solver.get_current_dSdr_cmb()
@@ -412,8 +412,38 @@ def test_a_closure_fault_keeps_the_last_accepted_state(monkeypatch):
 
     monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', cp_of_the_blend)
     solver.parameters.solver.end_time = 20.0
-    with pytest.raises(RuntimeError, match='CMB closure fault') as fault:
+    with pytest.raises(CMBClosureError, match='CMB closure fault'):
         solver.solve()
     assert solver.get_current_dSdr_cmb() == accepted
-    assert solver.cmb_ledger['r'] > 10.0 * solver.cmb_ledger['bound']
-    assert fault.type.__name__ == 'CMBClosureError'
+    assert abs(solver.cmb_ledger['r']) > 10.0 * solver.cmb_ledger['bound']
+
+
+@pytest.mark.parametrize('n_calls', [3, 200])
+def test_a_slope_fault_in_the_cvode_rhs_reaches_the_caller(monkeypatch, n_calls):
+    """A slope fault in the NumPy RHS stops a CVODE call with ``CMBClosureError``, early in the
+    call (where CVODE would turn it into a failed step) and late."""
+    from aragog.solver.entropy_solver import CMBClosureError, EntropySolver
+
+    exact, calls = EntropySolver._cmb_closure_cp, [0]
+
+    def faulty(self):
+        calls[0] += 1
+        if calls[0] > n_calls:
+            raise CMBClosureError('CMB closure: node slope (dT/dS)_P = -1 at the probe')
+        return exact(self)
+
+    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', faulty)
+    eos = entropy_eos_copy(EOS_DIR)
+    params = _build_parameters(
+        core_bc='energy_balance',
+        n_nodes=15,
+        end_time=20.0,
+        inner_boundary_condition=1,
+        solver_method='cvode',
+        use_jax_jacobian=False,
+    )
+    solver = EntropySolver(params, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(_profile(solver, eos, 0.9))
+    with pytest.raises(CMBClosureError, match='at the probe'):
+        solver.solve()
