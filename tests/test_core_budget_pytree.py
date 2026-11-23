@@ -220,3 +220,22 @@ def test_a_static_object_of_another_instance_gets_its_own_program():
     x = jnp.float64(2.0)
     assert float(f(_Reads(3), x)) == 6.0
     assert float(f(_Reads(5), x)) == 10.0
+
+
+@register_pytree
+class _Shadowed:
+    def __init__(self):
+        self.scale = 1.0
+
+    def f(self, x):
+        return x * self.scale
+
+
+def test_a_callable_that_shadows_a_method_stops_the_flatten():
+    """An instance attribute that replaces a method would be dropped by the flatten and the
+    rebuilt object would run the class method: the flatten refuses it instead."""
+    obj = _Shadowed()
+    jax.tree_util.tree_flatten(obj)
+    obj.f = lambda x: 2.0 * x
+    with pytest.raises(ValueError, match='shadows'):
+        jax.tree_util.tree_flatten(obj)
