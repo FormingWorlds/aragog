@@ -67,6 +67,12 @@ def register_pytree(cls):
     )
 
     def flatten(obj):
+        for k, v in vars(obj).items():
+            if callable(v) and k not in cached and hasattr(type(obj), k):
+                raise ValueError(
+                    f'{type(obj).__name__}.{k}: a callable instance attribute shadows a class '
+                    'attribute; a compiled program would run the class attribute'
+                )
         items = sorted(
             (k, v) for k, v in vars(obj).items() if k not in cached and not callable(v)
         )
