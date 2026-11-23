@@ -86,7 +86,7 @@ def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
         core_bc_mode,
         use_radio,
         treedef,
-        tuple((np.shape(x), np.result_type(x)) for x in leaves),
+        tuple((np.shape(x), getattr(x, 'dtype', type(x))) for x in leaves),
     )
     if form in _FORMS:
         return
