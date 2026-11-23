@@ -95,3 +95,29 @@ def test_a_new_eos_object_from_the_same_tables_reuses_the_program():
     second = f(EntropyEOS_JAX(EOS_DIR), p, s)
     assert traces[0] == 1
     np.testing.assert_array_equal(np.asarray(second), np.asarray(first))
+
+
+def test_a_copy_or_a_pickle_of_a_grid_stays_read_only():
+    """A copy, a deep copy or a pickle round trip keeps the grid read-only, and its flag cannot be
+    set back, so no route leaves a writable array behind a hash taken from the old values."""
+    import copy
+    import pickle
+
+    from aragog.jax.eos import StaticArray
+
+    a = StaticArray(P)
+    for b in (copy.copy(a), copy.deepcopy(a), pickle.loads(pickle.dumps(a))):
+        assert b == a and hash(b) == hash(a)
+        with pytest.raises(ValueError):
+            b.value[0] = 1.0
+    with pytest.raises(ValueError):
+        a.value.setflags(write=True)
+
+
+@pytest.mark.parametrize('bad', [np.array([0.0, np.nan, 2.0]), np.array([0.0, 1.0j, 2.0])])
+def test_a_grid_that_is_not_finite_and_real_is_refused(bad):
+    """A NaN never equals itself and a complex value would lose its imaginary part: refused."""
+    from aragog.jax.eos import StaticArray
+
+    with pytest.raises(ValueError, match='finite real'):
+        StaticArray(bad)
