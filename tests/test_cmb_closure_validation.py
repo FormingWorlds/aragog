@@ -41,6 +41,12 @@ PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 ROWS_FILE = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_ledger_rows.json'
 WRITE_ROWS = 'ARAGOG_WRITE_LEDGER_ROWS'
+TABLES = [
+    f'{q}_{p}.dat'
+    for p in ('solid', 'melt')
+    for q in ('temperature', 'density', 'heat_capacity', 'adiabat_temp_grad', 'thermal_exp')
+]
+TABLES += ['solidus_P-S.dat', 'liquidus_P-S.dat']  # the files EntropyEOS reads
 PLOTTED = ('g', 'miss', 'pred', 'pred_cp')
 ROW_KEYS = ('g0', *PLOTTED)
 # 10x, rounded up, the largest shift of a row value over starts changed by 1e-14 to 1e-11 and
@@ -162,12 +168,14 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
 
-    sha = {
-        f.name: hashlib.sha256(f.read_bytes()).hexdigest()
-        for f in sorted(Path(EOS_DIR).glob('*.dat'))
-    }
+    sha = {f: hashlib.sha256((Path(EOS_DIR) / f).read_bytes()).hexdigest() for f in TABLES}
     data = json.loads(ROWS_FILE.read_text())
-    bad = [] if data['provenance']['sha256'] == sha else ['other tables']
+    stored_sha = data['provenance']['sha256']
+    bad = [
+        f'table {f} differs'
+        for f in sorted(set(sha) | set(stored_sha))
+        if sha.get(f) != stored_sha.get(f)
+    ]
     for row, ref in zip(rows, data['rows'], strict=True):
         tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
         out = [

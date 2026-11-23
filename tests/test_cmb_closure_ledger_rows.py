@@ -18,6 +18,7 @@ from tests.test_cmb_closure_validation import (
     ROW_KEYS,
     ROWS_FILE,
     ROWS_TOL,
+    TABLES,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
@@ -26,15 +27,14 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 def test_the_stored_rows_match_the_case():
     """One row per start of ``G0`` with float values, a melt coordinate at its start, the solver
     tolerances of the case, a tolerance for each start outside the band, the pass criteria of the
-    case, and the provenance of the writer with one sha256 for each of the 12 table files."""
+    case, and the provenance of the writer with one sha256 for each table file the case reads."""
     data = json.loads(ROWS_FILE.read_text())
     rows, provenance = data['rows'], data['provenance']
     assert set(provenance) == {'commit', 'platform', 'tables', 'sha256', 'builder'}
     assert re.fullmatch('[0-9a-f]{40}', provenance['commit'])
     sha = provenance['sha256']
-    assert len(sha) == 12 and all(
-        re.fullmatch(r'[\w.-]+\.dat', f) and re.fullmatch('[0-9a-f]{64}', h)
-        for f, h in sha.items()
+    assert set(sha) == set(TABLES) and all(
+        re.fullmatch('[0-9a-f]{64}', h) for h in sha.values()
     ), sha
     assert [row['g0'] for row in rows] == G0
     assert {g0 for g0 in G0 if not 0.0 < g0 < 1.0} == set(ROWS_TOL) - {'band'}
