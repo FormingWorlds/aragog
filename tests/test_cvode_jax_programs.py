@@ -232,3 +232,26 @@ def test_the_program_caches_hold_at_most_max_forms_input_forms(eos, monkeypatch)
     assert len(cvode_jax._FORMS) == 1
     clear_jit_cache()
     np.testing.assert_array_equal(third, _rhs_at(eos, 8))
+
+
+def test_each_part_of_the_input_form_counts():
+    """The form key of the bound holds the core_bc mode, the radiogenic switch, the shape and the
+    dtype of each leaf: changing any one of them is a new form, the same inputs are not."""
+    from aragog.solver import cvode_jax
+
+    clear_jit_cache()
+    data, consts = (np.zeros(3),), (np.zeros(2),)
+    forms = [
+        ('quasi_steady', False, data, consts),
+        ('quasi_steady', False, (np.ones(3),), (np.ones(2),)),
+        ('energy_balance', False, data, consts),
+        ('quasi_steady', True, data, consts),
+        ('quasi_steady', False, (np.zeros(4),), consts),
+        ('quasi_steady', False, (np.zeros(3, np.float32),), consts),
+    ]
+    counts = []
+    for form in forms:
+        cvode_jax._bound_forms(*form)
+        counts.append(len(cvode_jax._FORMS))
+    clear_jit_cache()
+    assert counts == [1, 1, 2, 3, 4, 5]

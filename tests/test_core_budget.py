@@ -547,6 +547,14 @@ def test_the_freeze_out_edges_are_the_floats_of_the_capacity_jump(
     frozen, liquid = (float(v) for v in budget._boundary(jnp.asarray([lo, hi])))
     assert frozen == 0.0 < liquid
     assert not caplog.records
+    if budget_class is not CoreEnergyBudget:
+        base = CoreEnergyBudget(
+            prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+        )
+        assert (
+            lo,
+            hi,
+        ) == base._freeze_out_edges  # the scan below a shifted T_freeze finds them
 
 
 def test_a_freeze_out_jump_outside_the_scan_is_reported(prof, caplog):
