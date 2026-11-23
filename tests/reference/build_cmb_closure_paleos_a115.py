@@ -1,13 +1,13 @@
 """Build ``tests/validation/data/cmb_closure_paleos_a115.npz`` from the two a115 PROTEUS runs.
 
-The runs couple aragog (energy_balance core, option Z) to Zalmoxis with PALEOS:MgSiO3 mantle
-and PALEOS:iron core tables, 1 Earth mass, from ``input/all_options.toml``: ``base`` with the
-``c_p/T`` closure, ``fix`` with ``(dS/dT)_P`` of the blend. The file holds the run's mantle
+The runs couple aragog (energy_balance core, JAX right-hand side) to Zalmoxis with PALEOS:MgSiO3
+mantle and PALEOS:iron core tables, 1 Earth mass, from ``input/all_options.toml``:
+``cp_over_t`` with the ``c_p/T`` closure, ``slope`` with ``(dS/dT)_P`` of the blend. The file holds the run's mantle
 tables cropped to the CMB pressure window and, per helpfile row, the CMB node entropy at the
 row start and end (``S_stag0 - dr_cmb/2 dSdr_cmb`` from the interior snapshots), the CMB
 pressure, the CMB heat of the row and the core heat change ``c_core M_core T_hat dT_node``.
 
-Usage: ``python tests/reference/build_cmb_closure_paleos_a115.py <base run dir> <fix run dir>``
+Usage: ``python tests/reference/build_cmb_closure_paleos_a115.py <c_p/T run dir> <slope run dir>``
 """
 
 from __future__ import annotations
@@ -15,11 +15,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tomllib
 from pathlib import Path
 
 import numpy as np
+from scipy.constants import Julian_year
 
-T_HAT = 1.147
 TABLES = ('temperature', 'heat_capacity')  # the blend T and its slope read only these
 OUT = Path(__file__).resolve().parents[1] / 'validation' / 'data'
 P_WINDOW = (104.0e9, 131.0e9)  # [Pa] around the run's CMB pressures, 106.6 to 128.1 GPa
@@ -43,6 +44,21 @@ def _boundary(path):
     scales = [float(x) for x in head[4].lstrip('#').split()]
     data = np.loadtxt(path, skiprows=5)
     return data[:, 0] * scales[0], data[:, 1] * scales[1]
+
+
+def _tfac(run):
+    """``core_tfac_avg`` of the run's coupler configuration."""
+
+    def find(node):
+        if isinstance(node, dict):
+            if 'core_tfac_avg' in node:
+                return float(node['core_tfac_avg'])
+            return next((x for x in map(find, node.values()) if x is not None), None)
+        return None
+
+    value = find(tomllib.loads((run / 'init_coupler.toml').read_text()))
+    assert value is not None, run
+    return value
 
 
 def _rows(run):
@@ -73,11 +89,11 @@ def _rows(run):
         )
 
     t, S_node = h.Time.to_numpy(), np.array([node(x) for x in h.Time])
-    c = h.core_heatcap.to_numpy() * h.M_core.to_numpy() * T_HAT
+    c = h.core_heatcap.to_numpy() * h.M_core.to_numpy() * _tfac(run)
     structure = (np.diff(h.M_core.to_numpy()) != 0) | (np.diff(h.core_heatcap.to_numpy()) != 0)
     return {
         't_end': t[1:],
-        'dt_s': np.diff(t) * 3.15576e7,
+        'dt_s': np.diff(t) * Julian_year,
         'P_cmb': h.P_cmb.to_numpy()[1:],
         'S_start': S_node[:-1],
         'S_end': S_node[1:],
@@ -90,8 +106,8 @@ def _rows(run):
     }
 
 
-def main(base, fix):
-    eos = base / 'data' / 'spider_eos'
+def main(cp_over_t, slope):
+    eos = cp_over_t / 'data' / 'spider_eos'
     out, sha = {}, {}
     P_sol, S_sol = _boundary(eos / 'solidus_P-S.dat')
     P_liq, S_liq = _boundary(eos / 'liquidus_P-S.dat')
@@ -115,7 +131,7 @@ def main(base, fix):
         keep = (P >= P_WINDOW[0]) & (P <= P_WINDOW[1])
         out[f'P_{name}'], out[f'S_{name}'] = P[keep], S[keep]
         sha[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for label, run in (('base', base), ('fix', fix)):
+    for label, run in (('cp_over_t', cp_over_t), ('slope', slope)):
         for key, value in _rows(run).items():
             out[f'{label}_{key}'] = value
         sha[f'{label}/runtime_helpfile.csv'] = hashlib.sha256(
@@ -124,10 +140,12 @@ def main(base, fix):
     OUT.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(OUT / 'cmb_closure_paleos_a115.npz', **out)
     provenance = {
-        'runs': {'base': str(base), 'fix': str(fix)},
+        'runs': {
+            'cp_over_t': 'aragog 3a869bb1 (c_p/T closure), 0 to 166 kyr',
+            'slope': 'aragog fbf154789544 on tl/aragog-115-cmb-closure ((dS/dT)_P closure), 0 to 14.1 kyr',
+        },
         'config': 'PROTEUS input/all_options.toml, 1 M_earth, PALEOS:MgSiO3 mantle, PALEOS:iron core',
         'proteus_commit': 'da07391db',
-        'aragog_commit': {'base': '3a869bb1', 'fix': '3a869bb1 with the (dS/dT)_P closure'},
         'p_window_Pa': list(P_WINDOW),
         's_margin': S_MARGIN,
         'tables': list(TABLES),
@@ -139,7 +157,7 @@ def main(base, fix):
         {
             k: v.shape
             for k, v in out.items()
-            if k.startswith(('temperature_melt', 'base_t', 'fix_t'))
+            if k.startswith(('temperature_melt', 'cp_over_t_t', 'slope_t'))
         }
     )
 

@@ -1,7 +1,7 @@
 """Validation of the CMB closure on the PALEOS:MgSiO3 states of two coupled PROTEUS runs.
 
 The two a115 runs (``tests/validation/data/cmb_closure_paleos_a115_provenance.json``) differ
-only in the closure: ``c_p/T`` of the blend (base) and ``(dS/dT)_P`` (fix). For each row the
+only in the closure: ``c_p/T`` of the blend and ``(dS/dT)_P`` (the slope closure). For each row the
 core ledger misses by ``r/|dE| = sign(q) (1/k - 1)`` with ``k = c_p,used (dT/dS)_tab / T``
 (Bower et al. 2018, Eqs. 19-21, https://doi.org/10.1016/j.pepi.2017.11.004): the case
 evaluates ``k`` with the code's blend on the run's own tables at the stored CMB-node states and
@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import assert_figure_legend_below
+from tests.conftest import assert_figure_legend_below, write_ps_table
 
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
@@ -30,13 +30,6 @@ MAX_DK = 0.02  # rows whose closure factor changes less than this inside the row
 TOL = 2.0e-3
 
 
-def _write(path, P, S, v):
-    rows = '\n'.join(
-        f'{P[i]:.17g} {S[j]:.17g} {v[i, j]:.17g}' for j in range(S.size) for i in range(P.size)
-    )
-    path.write_text(f'# 5 {P.size} {S.size}\n#\n#\n#\n# 1 1 1\n{rows}\n')
-
-
 @pytest.fixture(scope='module')
 def case(tmp_path_factory):
     """The run's tables as an EOS directory (placeholders for the properties the slope does
@@ -47,7 +40,7 @@ def case(tmp_path_factory):
     tmp = tmp_path_factory.mktemp('paleos_a115')
     for ph in ('solid', 'melt'):
         for name in ('temperature', 'heat_capacity'):
-            _write(
+            write_ps_table(
                 tmp / f'{name}_{ph}.dat',
                 d[f'P_{name}_{ph}'],
                 d[f'S_{name}_{ph}'],
@@ -59,7 +52,7 @@ def case(tmp_path_factory):
             ('thermal_exp', 1.0e-5),
             ('adiabat_temp_grad', 1.0e-8),
         ):
-            _write(tmp / f'{name}_{ph}.dat', P, S, np.full((P.size, S.size), value))
+            write_ps_table(tmp / f'{name}_{ph}.dat', P, S, np.full((P.size, S.size), value))
     for name in ('solidus', 'liquidus'):
         rows = '\n'.join(f'{p:.17g} {s:.17g}' for p, s in zip(d[f'P_{name}'], d[f'S_{name}']))
         (tmp / f'{name}_P-S.dat').write_text(
@@ -89,7 +82,7 @@ def _rows(case, run):
         np.testing.assert_allclose(
             T[kept], d[f'{run}_T_node_{end}'][kept], rtol=0.0, atol=1.0e-6
         )
-        k = (cp / T if run == 'base' else 1.0 / slope) * s_tab
+        k = (cp / T if run == 'cp_over_t' else 1.0 / slope) * s_tab
         ends[end] = (k, (g > 0.0) & (g < 1.0) & (s_tab > 0.0))
     (k0, ok0), (k1, ok1) = ends['start'], ends['end']
     pred = np.sign(q) * (2.0 / (k0 + k1) - 1.0)
@@ -102,25 +95,25 @@ def _rows(case, run):
 
 
 def test_the_closed_form_gives_the_ledger_miss_of_both_runs(case, validation_plot):
-    """Rows in the mush with a steady closure factor: the base run misses by the closed form
-    (up to about 10 %) and the fix run by 0, both within 2e-3."""
-    base, fix = _rows(case, 'base'), _rows(case, 'fix')
-    for t, meas, pred, _, used in (base, fix):
+    """Rows in the mush with a steady closure factor: the ``c_p/T`` run misses by the closed form
+    (up to about 10 %) and the slope run by 0, both within 2e-3."""
+    cpt, slope = _rows(case, 'cp_over_t'), _rows(case, 'slope')
+    for t, meas, pred, _, used in (cpt, slope):
         assert used.sum() >= 10
         assert np.max(np.abs(meas - pred)[used]) < TOL
-    assert np.max(np.abs(base[1][base[4]])) > 0.05
-    assert np.max(np.abs(fix[1][fix[4]])) < TOL
-    assert_figure_legend_below(_figure(base, fix))
-    validation_plot(lambda: _figure(base, fix), 'core_cmb_closure_paleos')
+    assert np.max(np.abs(cpt[1][cpt[4]])) > 0.05
+    assert np.max(np.abs(slope[1][slope[4]])) < TOL
+    assert_figure_legend_below(_figure(cpt, slope))
+    validation_plot(lambda: _figure(cpt, slope), 'core_cmb_closure_paleos')
 
 
-def _figure(base, fix):
+def _figure(cpt, slope):
     """Ledger miss per row against time: the runs (points) and the closed form (line)."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
     fig, ax = plt.subplots(figsize=(5.6, 3.8))
-    for (t, meas, pred, strong, used), colour in ((base, 'C1'), (fix, 'C0')):
+    for (t, meas, pred, strong, used), colour in ((cpt, 'C1'), (slope, 'C0')):
         ax.plot(t[strong], pred[strong], color=colour, lw=2, alpha=0.4)
         ax.plot(t[used], meas[used], 'o', ms=4, color=colour)
         rest = strong & ~used

@@ -30,6 +30,7 @@ __all__ = [
     'entropy_eos_jax',
     'opaque_legend',
     'package_logger_isolation',
+    'write_ps_table',
 ]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -138,6 +139,17 @@ def opaque_legend(ax, **kwargs):
     return ax.legend(
         frameon=True, framealpha=1.0, facecolor=ax.get_facecolor(), edgecolor='none', **kwargs
     )
+
+
+def write_ps_table(path, P, S, values) -> None:
+    """Write a P-S table in the SPIDER layout (P varies fastest, unit scales); values (n_P, n_S)."""
+    rows = [
+        f'{p:.17g} {s:.17g} {values[i, j]:.17g}'
+        for j, s in enumerate(S)
+        for i, p in enumerate(P)
+    ]
+    head = f'# 5 {len(P)} {len(S)}\n#\n#\n#\n# 1 1 1\n'
+    Path(path).write_text(head + '\n'.join(rows) + '\n')
 
 
 def assert_figure_legend_below(fig) -> None:

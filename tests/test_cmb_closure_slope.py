@@ -16,7 +16,9 @@ from hypothesis import strategies as st
 
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos, write_ps_table
+
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(600)]
 
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
@@ -26,17 +28,6 @@ K_SLOPE = 0.2  # [K kg K/J] dT/dS of the consistent tables
 P_GRID = np.linspace(50.0e9, 150.0e9, 11)
 S_GRID = np.arange(1000.0, 12001.0, 100.0)
 WIDTH = st.one_of(st.just(0.0), st.floats(1.0e-3, 0.05))
-
-
-def _write_table(path, values):
-    """A P-S table in the SPIDER layout (P varies fastest), unit scales."""
-    rows = [
-        f'{p:.17g} {s:.17g} {values[i, j]:.17g}'
-        for j, s in enumerate(S_GRID)
-        for i, p in enumerate(P_GRID)
-    ]
-    head = f'# 5 {P_GRID.size} {S_GRID.size}\n#\n#\n#\n# 1 1 1\n'
-    path.write_text(head + '\n'.join(rows) + '\n')
 
 
 @pytest.fixture(scope='module')
@@ -53,7 +44,7 @@ def consistent_dir(tmp_path_factory):
     }
     for name, values in tables.items():
         for phase in ('solid', 'melt'):
-            _write_table(d / f'{name}_{phase}.dat', values)
+            write_ps_table(d / f'{name}_{phase}.dat', P_GRID, S_GRID, values)
     for name, s0 in (('solidus', 4000.0), ('liquidus', 7000.0)):
         rows = '\n'.join(f'{p:.17g} {s0 + 1.0e-8 * p:.17g}' for p in P_GRID)
         (d / f'{name}_P-S.dat').write_text(f'# 5 {P_GRID.size}\n#\n#\n#\n# 1 1\n{rows}\n')
@@ -81,6 +72,7 @@ def _g_to_S(eos, P, g):
     return S_sol + g * (S_liq - S_sol)
 
 
+@pytest.mark.physics_invariant
 @settings(max_examples=200, deadline=None)
 @given(P=st.floats(60.0e9, 140.0e9), g=st.floats(-0.05, 1.05), width=WIDTH)
 def test_the_slope_is_the_derivative_of_the_blend_on_consistent_tables(
@@ -97,6 +89,7 @@ def test_the_slope_is_the_derivative_of_the_blend_on_consistent_tables(
 
 
 @needs_eos
+@pytest.mark.physics_invariant
 @settings(max_examples=200, deadline=None)
 @given(P=st.floats(20.0e9, 135.0e9), g=st.floats(1.0e-6, 1.0 - 1.0e-6), width=WIDTH)
 def test_the_slope_is_the_derivative_of_the_blend_inside_the_mush(P, g, width):
@@ -109,6 +102,7 @@ def test_the_slope_is_the_derivative_of_the_blend_inside_the_mush(P, g, width):
 
 
 @needs_eos
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize('width', [0.0, 0.005, 0.01, 0.02])
 def test_the_numpy_and_jax_slopes_agree(width):
     """The NumPy evaluator and the JAX blend return the same slope from the solid to the melt."""
@@ -134,8 +128,10 @@ def test_the_numpy_and_jax_slopes_agree(width):
     assert np.all(ev.temperature_slope() > 0.0)
 
 
+@pytest.mark.physics_invariant
 def test_the_slope_of_the_constant_property_mode_is_t_over_cp():
-    """``T = T_ref exp((S - S_ref)/c_p)`` has the exact slope ``T/c_p``."""
+    """``T = T_ref exp((S - S_ref)/c_p)`` has the slope ``T/c_p``: the central difference of the
+    evaluated temperature."""
     ev = EntropyPhaseEvaluator(
         None,
         10.0,
@@ -148,13 +144,20 @@ def test_the_slope_of_the_constant_property_mode_is_t_over_cp():
         const_T_ref=3000.0,
         const_S_ref=3000.0,
     )
+    S, h = np.array([2500.0, 3000.0, 3500.0]), 1.0e-3
     ev.set_pressure(np.full(3, 1.0e10))
-    ev.set_entropy(np.array([2500.0, 3000.0, 3500.0]))
-    ev.update()
-    np.testing.assert_allclose(ev.temperature_slope(), ev.temperature() / 1200.0, rtol=1.0e-15)
+    temperature = []
+    for shift in (h, -h, 0.0):
+        ev.set_entropy(S + shift)
+        ev.update()
+        temperature.append(np.array(ev.temperature()))
+    fd = (temperature[0] - temperature[1]) / (2.0 * h)
+    np.testing.assert_allclose(ev.temperature_slope(), fd, rtol=1.0e-9)
+    assert np.all(np.diff(ev.temperature_slope()) > 0.0)  # T/c_p grows with T
 
 
 @needs_eos
+@pytest.mark.physics_invariant
 def test_a_non_finite_entropy_gives_a_nan_slope():
     """The JAX blend propagates a non-finite entropy into the slope as NaN."""
     from aragog.jax.phase import PhaseParams, evaluate_phase
@@ -175,6 +178,7 @@ def test_the_consistent_tables_load_with_both_evaluators(consistent_dir):
     assert float(np.ravel(eos.temperature(P, S))[0]) == pytest.approx(1500.0 + 750.0 + 400.0)
 
 
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize('g', [0.0, 1.0])
 def test_the_sharp_blend_has_the_mush_slope_at_the_phase_boundaries(consistent_dir, g):
     """With no smoothing the blend is the mush line on the closed interval, so its slope at
