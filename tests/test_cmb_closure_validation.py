@@ -11,7 +11,8 @@ same integral for ``c_p/T`` of the blend along that trajectory. A separate test 
 
 The plot is drawn from the rows stored in ``ROWS_FILE``, not from the fresh rows: a start
 perturbation of 1e-13 moves the plotted residuals by up to 2.7e4 times the 1e-6 summary
-tolerance of the plot check. The fresh rows must agree with the stored rows within ``ROWS_TOL``.
+tolerance of the plot check. The fresh rows must agree with the stored rows within ``ROWS_TOL``;
+``--validation-plots`` (the default folder) writes the rows again.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from proteus_mpl.pytest_plugin import DEFAULT_DIR
 from scipy.constants import Julian_year
 
 from tests.conftest import EOS_DIR, assert_figure_legend_below, entropy_eos_copy, needs_eos
@@ -32,15 +34,16 @@ from tests.test_entropy_solver_integration import _build_parameters
 
 pytestmark = [pytest.mark.slow, needs_eos, pytest.mark.timeout(1800)]
 
-# the melt start stays above the flat (padded) cell at g 1 to 1.006, where a call depends on round-off
+# the melt start stays above the flat (padded) table cell at g 1 to 1.006, which has its own test
 G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.15]
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 ROWS_FILE = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_ledger_rows.json'
 ROW_KEYS = ('g0', 'g', 'miss', 'pred', 'pred_cp')
 # 10x the largest shift of a row value under a 1e-13 start perturbation (macOS): 1.6e-7 for g0
-# in (0, 1), 1.7e-4 outside the band (about 30 % of the g0 -0.04 miss, a weak check there)
-ROWS_TOL = {'band': 2.0e-6, 'outside': 2.0e-3}
+# 10x the largest shift of a row value over start perturbations of 1e-14 to 1e-11 and solver
+# tolerances x0.99 and x1.01 (macOS); weak outside the band (g0 -0.04: 48 % of its miss, 1.15: 11x)
+ROWS_TOL = {'band': 2.0e-5, -0.04: 3.0e-3, -0.02: 3.0e-5, 1.15: 1.0e-3}
 
 
 def _call(eos, g0, cp_over_t=False):
@@ -103,58 +106,45 @@ def _call(eos, g0, cp_over_t=False):
         'pred_cp': integral(k_cp) / abs(q),
         'mush': bool(np.all((S_node > S_sol0) & (S_node < S_liq0))),
         'check': solver.cmb_ledger,
+        'atol': float(solver._call_tol[0]),
+        'rtol': float(solver._call_tol[1]),
     }
 
 
-def _write_rows(rows):
-    """Store the plotted values of ``rows`` with their provenance, one top-level block per line."""
-    root = Path(__file__).parents[1]
-    commit = subprocess.run(
-        ['git', 'rev-parse', 'HEAD'], cwd=root, capture_output=True, text=True, check=True
-    ).stdout.strip()
-    sha = {
+def _table_hashes():
+    """sha256 of each table file of ``EOS_DIR``."""
+    return {
         f.name: hashlib.sha256(f.read_bytes()).hexdigest()
         for f in sorted(Path(EOS_DIR).glob('*.dat'))
     }
+
+
+def _write_rows(rows, sha):
+    """Store the plotted values and the solver tolerances of ``rows`` with their provenance,
+    one top-level block per line; refuse when ``src`` or this file has local changes."""
+    root = Path(__file__).parents[1]
+
+    def git(*args):
+        return subprocess.run(
+            ['git', *args], cwd=root, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    if git('status', '--porcelain', '--', 'src', 'tests/test_cmb_closure_validation.py'):
+        pytest.fail(
+            f'{ROWS_FILE.name}: commit the changes of src and this test before the rows'
+        )
     provenance = {
-        'commit': commit,
+        'commit': git('rev-parse', 'HEAD'),
         'platform': f'{platform.system()} {platform.machine()}',
         'tables': 'SPIDER EOS test data (ARAGOG_TEST_EOS_DIR)',
         'sha256': sha,
-        'rtol': 1.0e-10,
-        'atol': 1.0e-8,  # the 1e-10 of the call, raised to the solver floor
         'builder': 'pytest tests/test_cmb_closure_validation.py::'
         'test_the_cmb_ledger_across_the_melt_band --validation-plots',
     }
+    keys = (*ROW_KEYS, 'atol', 'rtol')
     lines = [f'"provenance": {json.dumps(provenance)}']
-    lines += [f'"rows": {json.dumps([{k: row[k] for k in ROW_KEYS} for row in rows])}']
+    lines += [f'"rows": {json.dumps([{k: row[k] for k in keys} for row in rows])}']
     ROWS_FILE.write_text('{\n' + ',\n'.join(lines) + '\n}\n')
-
-
-def _stored_rows():
-    """Rows and provenance of ``ROWS_FILE``."""
-    data = json.loads(ROWS_FILE.read_text())
-    return data['rows'], data['provenance']
-
-
-def test_the_stored_rows_match_the_case():
-    """The stored rows hold one row per start of ``G0`` with the plotted values and the
-    provenance fields of ``_write_rows``."""
-    rows, provenance = _stored_rows()
-    assert set(provenance) == {
-        'commit',
-        'platform',
-        'tables',
-        'sha256',
-        'rtol',
-        'atol',
-        'builder',
-    }
-    assert len(provenance['commit']) == 40 and provenance['sha256']
-    assert [row['g0'] for row in rows] == G0
-    assert all(
-        set(row) == set(ROW_KEYS) and all(np.isfinite(list(row.values()))) for row in rows
-    )
 
 
 @pytest.mark.physics_invariant
@@ -175,12 +165,16 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
 
-    if request.config.getoption('validation_plots') is not None:
-        _write_rows(rows)
-    stored, _ = _stored_rows()
+    sha = _table_hashes()
+    if request.config.getoption('validation_plots') == DEFAULT_DIR:
+        _write_rows(rows, sha)
+    data = json.loads(ROWS_FILE.read_text())
+    assert data['provenance']['sha256'] == sha, f'{ROWS_FILE.name} was made from other tables'
+    stored = data['rows']
+    again = f'pytest {request.node.nodeid} --validation-plots writes the rows again'
     for row, ref in zip(rows, stored, strict=True):
-        tol = ROWS_TOL['band' if 0.0 < row['g0'] < 1.0 else 'outside']
-        assert all(abs(row[k] - ref[k]) <= tol for k in ROW_KEYS), (row, ref)
+        tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
+        assert all(abs(row[k] - ref[k]) <= tol for k in ROW_KEYS[1:]), (row, ref, again)
 
     assert_figure_legend_below(_figure(stored))
     validation_plot(lambda: _figure(stored), 'core_cmb_closure_ledger')
