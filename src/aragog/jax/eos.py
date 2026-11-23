@@ -226,6 +226,35 @@ def _bilinear_interp(
     return v00 * (1 - tp) * (1 - ts) + v10 * tp * (1 - ts) + v01 * (1 - tp) * ts + v11 * tp * ts
 
 
+class StaticArray:
+    """A NumPy array held as a static pytree field: a compile-time constant compared by value.
+
+    The array is a read-only copy, so an in-place change raises instead of leaving a program
+    that computes with the old values. The hash covers the bytes, dtype and shape and is taken
+    once; equality is identity first, then the full content.
+    """
+
+    __slots__ = ('value', '_hash')
+
+    def __init__(self, a) -> None:
+        self.value = np.array(a, dtype=float)
+        self.value.setflags(write=False)
+        self._hash = hash((self.value.tobytes(), self.value.dtype.str, self.value.shape))
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other) -> bool:
+        if self is other:
+            return True
+        return (
+            isinstance(other, StaticArray)
+            and self._hash == other._hash
+            and self.value.shape == other.value.shape
+            and np.array_equal(self.value, other.value)
+        )
+
+
 class _Table2D(eqx.Module):
     """A single 2D (P, S) property table as a JAX pytree.
 
@@ -235,8 +264,8 @@ class _Table2D(eqx.Module):
     with diffrax).
     """
 
-    _P_grid: jax.Array
-    _S_grid: jax.Array
+    _P_grid: StaticArray = eqx.field(static=True)
+    _S_grid: StaticArray = eqx.field(static=True)
     _values: jax.Array
     P_min: float
     P_max: float
@@ -244,8 +273,8 @@ class _Table2D(eqx.Module):
     S_max: float
 
     def __init__(self, P: np.ndarray, S: np.ndarray, values: np.ndarray):
-        self._P_grid = jnp.asarray(P)
-        self._S_grid = jnp.asarray(S)
+        self._P_grid = StaticArray(P)
+        self._S_grid = StaticArray(S)
         self._values = jnp.asarray(values)
         self.P_min = float(P[0])
         self.P_max = float(P[-1])
@@ -255,8 +284,8 @@ class _Table2D(eqx.Module):
     def __call__(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Query the table at (P, S), clamping to the table domain."""
         return _bilinear_interp(
-            self._P_grid,
-            self._S_grid,
+            jnp.asarray(self._P_grid.value),
+            jnp.asarray(self._S_grid.value),
             self._values,
             P,
             S,
@@ -273,12 +302,12 @@ class _PhaseBoundary1D(eqx.Module):
     ``_load_spider_phase_boundary`` dinterp path (entropy.py:279-296).
     """
 
-    _P: jax.Array
+    _P: StaticArray = eqx.field(static=True)
     _S: jax.Array
     _dSdP: jax.Array
 
     def __init__(self, P: np.ndarray, S: np.ndarray):
-        self._P = jnp.asarray(P)
+        self._P = StaticArray(P)
         self._S = jnp.asarray(S)
         # np.gradient matches the numpy reference (entropy.py:279) exactly
         # so downstream dS/dP values are bit-identical across paths.
@@ -286,7 +315,7 @@ class _PhaseBoundary1D(eqx.Module):
 
     def __call__(self, P: jax.Array) -> jax.Array:
         """Evaluate S_boundary(P) with linear interpolation and clamping."""
-        return jnp.interp(P, self._P, self._S)
+        return jnp.interp(P, jnp.asarray(self._P.value), self._S)
 
     def dSdP(self, P: jax.Array) -> jax.Array:
         """Evaluate dS_boundary/dP(P) [J/(kg·K·Pa)].
@@ -296,7 +325,7 @@ class _PhaseBoundary1D(eqx.Module):
         one-sided differences at the ends). This matches the numpy
         dinterp clamping-to-zero behaviour (entropy.py:280-281).
         """
-        return jnp.interp(P, self._P, self._dSdP)
+        return jnp.interp(P, jnp.asarray(self._P.value), self._dSdP)
 
 
 # ---------------------------------------------------------------------------
