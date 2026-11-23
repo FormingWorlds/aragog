@@ -166,12 +166,15 @@ def _table_faults(sha, stored_sha):
     ]
 
 
-def _stored_rows(write):
-    """The stored rows; with ``write`` a missing or unusable file counts as no stored rows."""
+def _stored_faults(sha, rows=None, write=False):
+    """The stored rows and the faults of the tables, and of ``rows`` if given, against them. In
+    write mode a rows file that cannot be read or compared counts as no stored rows, with a
+    warning; otherwise it is refused."""
     try:
         data = json.loads(ROWS_FILE.read_text())
-        data['rows'], data['provenance']['sha256']
-    except (OSError, ValueError, TypeError, KeyError) as err:
+        faults = _table_faults(sha, data['provenance']['sha256'])
+        return data, faults + (_row_faults(rows, data['rows']) if rows is not None else [])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as err:
         if not write:
             pytest.fail(
                 f'no usable stored rows at {ROWS_FILE} ({err!r}); {WRITE_ROWS}=1 writes them'
@@ -179,8 +182,10 @@ def _stored_rows(write):
         warnings.warn(
             f'{ROWS_FILE} holds no usable rows ({err!r}); written from the run', stacklevel=1
         )
-        return {'rows': [], 'provenance': {'sha256': {}}}
-    return data
+        empty = {'rows': [], 'provenance': {'sha256': {}}}
+        return empty, _table_faults(sha, {}) + (
+            _row_faults(rows, []) if rows is not None else []
+        )
 
 
 def _row_faults(rows, stored):
@@ -241,8 +246,7 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         f'pytest {request.node.nodeid} writes the rows again'
     )
     sha = _table_hashes(EOS_DIR)
-    data = _stored_rows(write)
-    bad = _table_faults(sha, data['provenance']['sha256'])
+    data, bad = _stored_faults(sha, write=write)
     assert write or not bad, f'{" | ".join(bad)}; {again}'
     eos = entropy_eos_copy(EOS_DIR)
     rows = [dict(_call(eos, g0), g0=g0) for g0 in G0]
@@ -256,7 +260,7 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
 
-    bad += _row_faults(rows, data['rows'])
+    data, bad = _stored_faults(sha, rows, write=write)
     if write:
         if bad:
             warnings.warn(f'{ROWS_FILE.name} replaced: {" | ".join(bad)}', stacklevel=1)

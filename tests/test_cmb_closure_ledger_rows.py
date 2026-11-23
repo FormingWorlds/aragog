@@ -70,9 +70,12 @@ def test_write_mode_takes_a_missing_rows_file_as_no_stored_rows(tmp_path, monkey
 
     monkeypatch.setattr(V, 'ROWS_FILE', tmp_path / 'rows.json')
     with pytest.warns(UserWarning, match='rows.json'):
-        assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
+        assert V._stored_faults({}, write=True) == (
+            {'rows': [], 'provenance': {'sha256': {}}},
+            [],
+        )
     with pytest.raises(pytest.fail.Exception, match='rows.json'):
-        V._stored_rows(write=False)
+        V._stored_faults({}, write=False)
 
 
 def test_the_write_guard_covers_tools_and_the_imported_aragog(monkeypatch):
@@ -135,9 +138,12 @@ def test_write_mode_takes_a_bad_rows_file_as_no_stored_rows(tmp_path, monkeypatc
     path.write_text(text)
     monkeypatch.setattr(V, 'ROWS_FILE', path)
     with pytest.warns(UserWarning, match='rows.json'):
-        assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
+        assert V._stored_faults({}, write=True) == (
+            {'rows': [], 'provenance': {'sha256': {}}},
+            [],
+        )
     with pytest.raises(pytest.fail.Exception, match='rows.json'):
-        V._stored_rows(write=False)
+        V._stored_faults({}, write=False)
 
 
 @pytest.mark.parametrize('rows', [[{'g': 0.1}], [{}]])
