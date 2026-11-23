@@ -242,8 +242,12 @@ class StaticArray:
             raise ValueError('a static grid must hold finite real values')
         a = np.ascontiguousarray(a, dtype=float)
         # backed by immutable bytes, so the write flag cannot be set back
-        self.value = np.frombuffer(a.tobytes(), dtype=float).reshape(a.shape)
-        self._hash = hash((self.value.tobytes(), self.value.dtype.str, self.value.shape))
+        value = np.frombuffer(a.tobytes(), dtype=float).reshape(a.shape)
+        object.__setattr__(self, 'value', value)
+        object.__setattr__(self, '_hash', hash((value.tobytes(), value.dtype.str, value.shape)))
+
+    def __setattr__(self, name, value) -> None:
+        raise AttributeError('a StaticArray cannot change after it is built')
 
     def __copy__(self):
         return self
