@@ -130,7 +130,7 @@ Near the solidus $c_p/T$ would make the node cool 13 % too fast, and near the li
 
 ## 3. Run one call and read the ledger
 
-Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, `rel`, the largest relative difference of the slope of the tabulated temperature from the closure slope, and `excluded`, true when the call went through a padded table cell and the check was skipped.
+Every cell starts at $g = 0.9$ at its own pressure. After the call the solver compares the core heat change with the CMB heat $q$ and stores the result in `solver.cmb_ledger`: the miss `r`, the bound `bound` from the solver tolerances, `rel`, the largest relative difference of the slope of the tabulated temperature from the closure slope, and `excluded`, true when the call went through a table cell where the temperature does not rise with entropy (a padded cell, for example), so that the check was skipped.
 
 ```python
 P_stag = np.ravel(solver.evaluator.mesh.staggered_pressure)
@@ -152,4 +152,4 @@ ledger miss below 1e-4 of the CMB heat: True
 ledger miss within the solver bound: True
 ```
 
-With $c_p/T$ the same call would miss by about 9 % of $q$ (see [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band)). A miss above the bound logs a warning, and a miss above 10 times the bound stops the run.
+With $c_p/T$ the same call would miss by about 9 % of $q$ (see [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band)). A miss above the bound logs a warning. A miss above 10 times the bound raises a `CMBClosureError`, which ends this script; a coupled PROTEUS run counts that interior step as skipped (see [what happens after a miss](../Explanations/core_bc.md#what-happens-after-a-miss)).

@@ -71,6 +71,10 @@ Integration-level parity between the two codes is the criterion that the product
 SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, and Aragog can drive an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default 0), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. Apart from the floor, the two codes therefore differ at nodes with $-D < \partial S/\partial r < 0$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
 The default `convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
 
+### CMB closure in the melt band
+
+SPIDER turns the core cooling rate into the entropy rate of the CMB node with $c_p/T$ of the node. Aragog divides by the slope $(\partial T/\partial S)_P$ of its own $T(P, S)$, so that the core loses the heat that crosses the CMB. The 2 factors agree while the node is in a single phase, as far as $T/c_p$ of the tables matches the slope of the tabulated $T$. Inside the band, $c_p/T$ makes the node cool faster or slower than the core: along the calls of [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band) it would miss by up to 20 % of the CMB heat. See [the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node).
+
 ### Default thermodynamic tables
 
 SPIDER ships with the Wolf & Bower (2018) RTpress liquid EOS as the default mantle EOS.

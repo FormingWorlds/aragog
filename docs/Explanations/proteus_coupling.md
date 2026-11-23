@@ -56,7 +56,7 @@ Solid-state mantle rheology (`[phase_solid.rheology]`), with stagnant-lid growth
 
 ### 3. Retry ladder
 
-A non-converged `solver.solve()` (status $\ne 0$, T_core jump $> 1500$ K, or NaN propagation) routes through a retry ladder that progressively perturbs the entropy gradient at the CMB (`set_initial_dSdr_cmb`) and loosens tolerances within a bounded window. After eight consecutive failures (`_ARAGOG_MAX_CONSECUTIVE_FAILS`) the run aborts. On first success the streak resets to zero and is logged for post-hoc analysis.
+A non-converged `solver.solve()` (status $\ne 0$, T_core jump $> 1500$ K, or NaN propagation) routes through a retry ladder that progressively perturbs the entropy gradient at the CMB (`set_initial_dSdr_cmb`) and loosens tolerances within a bounded window. After 3 consecutive failures (`_ARAGOG_MAX_CONSECUTIVE_FAILS` in `proteus/interior_energetics/wrapper.py` of PROTEUS) the run aborts. On first success the streak resets to zero and is logged for post-hoc analysis.
 
 ### 4. NetCDF snapshot
 
