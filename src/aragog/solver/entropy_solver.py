@@ -155,6 +155,10 @@ class AcceptedStateRangeError(RuntimeError):
     """An accepted state of a call has a cell entropy outside the EOS tables."""
 
 
+class CMBClosureError(RuntimeError):
+    """The CMB closure of a call fails its ledger check, or the node slope is not positive."""
+
+
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
 
@@ -4572,7 +4576,7 @@ class EntropySolver:
             float(np.asarray(f()).flat[0]) for f in (pb.temperature, pb.temperature_slope)
         )
         if not (np.isfinite(slope) and slope > 0.0):
-            raise RuntimeError(
+            raise CMBClosureError(
                 f'CMB closure: node slope (dT/dS)_P = {slope:.6g} at T = {T:.6g} K; the closure '
                 'needs a finite positive slope'
             )
@@ -4673,7 +4677,7 @@ class EntropySolver:
         # Aragog's radii increase from CMB to surface, so dr > 0
         # and the numerator must be (stag - basic) explicitly.
         if dr_node is None:
-            dr_node = 0.5 * self._cmb_dr_cmb
+            dr_node = self._cmb_dr_half
         return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) / dr_node
 
     def _core_module_rhs_per_s(
@@ -5608,6 +5612,7 @@ class EntropySolver:
         already passed at the call start still merges, so that state then holds the merged lid.
         """
         wall_start = time.perf_counter()
+        self.cmb_ledger, last_accepted = None, getattr(self, '_solution', None)
         s0 = getattr(self, '_S0', None)
         if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
@@ -6436,7 +6441,11 @@ class EntropySolver:
             t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
-        sol.energy_integrals = self._compute_step_energy_integrals()
+        try:
+            sol.energy_integrals = self._compute_step_energy_integrals()
+        except CMBClosureError:
+            self._solution = last_accepted  # the next call starts from the last accepted state
+            raise
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
             time.perf_counter() - t_solved,
@@ -6760,28 +6769,28 @@ class EntropySolver:
 
         energy_balance and gradient: the core heat change ``r = C (T_end - T_start) + q``
         with ``C = c_core T_hat M_core`` and ``q`` the CMB heat of the call [J] must satisfy
-        ``|r| <= B = rel |q| + E_trap + C sqrt(N) nst max_k(s_k w_k)``. core_module: the CMB
+        ``|r| <= B = rel int|E|dt + E_trap + C sqrt(N) nst max_k(s_k w_k)``. core_module: the CMB
         node must change by the core-top change ``d_top`` [K], with ``|r| <= B`` in K on the
         same terms plus the core-top weight. ``s`` is ``(dT/dS)_P`` of the node blend, ``w``
         the CVODE weight of the node entropy (the WRMS test bounds each of the ``N`` slots by
         ``sqrt(N)`` weights, and the node entropy is linear in its slots), ``nst`` the steps
         of the call, ``rel`` the largest ``|s_tab/s - 1|`` with ``s_tab`` the slope of the
         tabulated blend, and ``E_trap`` the trapezoid error of ``q`` (every-other-node
-        estimate). A state with ``s_tab <= 0`` (a padded, clamped or reversed table cell)
-        leaves the call out of the check, with one warning. A miss warns once per call; a
-        miss above 10 B raises ``RuntimeError``. ``self.cmb_ledger`` holds the call's terms (None
-        when the call is not checked). B is a worst case: it finds an order-one fault, but at
-        rtol 1e-8 a 2-yr core_module call with c_p/T in place of the slope misses by 0.0033 K
-        against B = 1.2 K, so a 10 % closure error shows only in some calls.
+        estimate). A state with ``s_tab <= 1e-6 s`` (a padded, clamped or reversed table
+        cell) leaves the call out of the check, with one warning. A miss warns once per call; a
+        miss above 10 B raises ``CMBClosureError``. ``self.cmb_ledger`` holds the call's terms
+        (None when the call is not checked). B is a worst case: at rtol 1e-8 a 2-yr core_module
+        call with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for a
+        core-top change of 0.032 K, so a closure error shows only in calls with a large change.
 
         Raises
         ------
-        RuntimeError
+        CMBClosureError
             On a node slope that is not finite and positive, or a miss above 10 B.
         """
         self.cmb_ledger = None
         n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
-        tol = getattr(self, '_call_tol', None)  # set by initialize() and solve()
+        tol = getattr(self, '_call_tol', None)  # set by solve()
         if ev is None or tol is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
             return
         atol, rtol = tol
@@ -6808,7 +6817,7 @@ class EntropySolver:
         bad = np.flatnonzero(~(np.isfinite(slope) & (slope > 0.0)))
         if bad.size:
             k = int(bad[0])
-            raise RuntimeError(
+            raise CMBClosureError(
                 f'CMB closure: node slope (dT/dS)_P = {slope[k]:.6g} at t = {t_pts[k]:.6e} yr, '
                 f'S = {S_node[k]:.6g} J/kg/K; the closure needs a finite positive slope'
             )
@@ -6817,17 +6826,15 @@ class EntropySolver:
         floor = np.sqrt(n_slots) * nst * float(np.max(slope * w))
         if d_top is None:
             C = float(self._core_cp * self._core_tfac * self._core_M)
-            t_s, p_cmb = np.asarray(t_pts, dtype=float) * SECS_PER_YEAR, np.asarray(p_cmb)
+            t_s = t_pts * SECS_PER_YEAR
             idx = np.unique(np.r_[np.arange(0, t_pts.size, 2), t_pts.size - 1])
             q2 = float(np.trapezoid(p_cmb[idx], t_s[idx]))
             scale = float(np.trapezoid(np.abs(p_cmb), t_s))  # int |E| dt: E can change sign
             r, extra = C * (T[-1] - T[0]) + q, abs(q - q2) / 3.0
             floor *= C
         else:
-            scale, r = (
-                float(np.sum(np.abs(np.diff(d_top)))),
-                (T[-1] - T[0]) - (d_top[-1] - d_top[0]),
-            )
+            scale = float(np.sum(np.abs(np.diff(d_top))))
+            r = (T[-1] - T[0]) - (d_top[-1] - d_top[0])
             extra = (
                 np.sqrt(n_slots) * nst * (atol + rtol * float(np.max(np.abs(d_top - d_top[0]))))
             )
@@ -6840,13 +6847,14 @@ class EntropySolver:
             counts['excluded'] += 1
             logger.warning(
                 'EntropySolver: CMB closure check skipped for the call to t = %.6e yr: the node '
-                'table slope is <= 0 (padded or clamped cell); %d call(s) skipped so far',
+                'table slope is <= 1e-6 of the closure slope (padded or clamped cell); %d call(s) '
+                'skipped so far',
                 t_pts[-1],
                 counts['excluded'],
             )
             return
         if abs(r) > 10.0 * bound:
-            raise RuntimeError(
+            raise CMBClosureError(
                 f'CMB closure fault in the call to t = {t_pts[-1]:.6e} yr: ledger miss {r:.6g} '
                 f'is above 10x the solver bound {bound:.6g} ({"J" if d_top is None else "K"})'
             )
