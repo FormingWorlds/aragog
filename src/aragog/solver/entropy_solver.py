@@ -4594,11 +4594,11 @@ class EntropySolver:
 
         Pure numerical helper extracted from ``_dSdt_single`` so the
         formula can be unit-tested without building a full solver
-        state. It has the form of SPIDER's C code:
+        state. It is the balance of SPIDER's C code in Aragog's radius (dr_node > 0; SPIDER
+        divides by xi_cmb - xi_above < 0, which flips the sign of its form):
 
             fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
-            rhs     = (-Etot_cmb + Ecore) * fac_cmb - dSdt_s_cmb
-            rhs    /= dr_node
+            rhs     = (dSdt_s_cmb - (-Etot_cmb + Ecore) * fac_cmb) / dr_node
 
         where ``Etot_cmb = F_cmb_basic * area_cmb`` is the heat flow
         at the CMB basic node, ``Ecore`` is the core internal heat

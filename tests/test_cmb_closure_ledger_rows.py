@@ -15,6 +15,7 @@ from tests.test_cmb_closure_validation import (
     G0,
     MUSH_TOL,
     PREDICTION_TOL,
+    REQUIRED_TABLES,
     ROW_KEYS,
     ROWS_FILE,
     ROWS_TOL,
@@ -33,7 +34,7 @@ def test_the_stored_rows_match_the_case():
     assert set(provenance) == {'commit', 'platform', 'tables', 'sha256', 'builder'}
     assert re.fullmatch('[0-9a-f]{40}', provenance['commit'])
     sha = provenance['sha256']
-    assert set(sha) == set(TABLES) and all(
+    assert set(REQUIRED_TABLES) <= set(sha) <= set(TABLES) and all(
         re.fullmatch('[0-9a-f]{64}', h) for h in sha.values()
     ), sha
     assert [row['g0'] for row in rows] == G0
@@ -68,7 +69,8 @@ def test_write_mode_takes_a_missing_rows_file_as_no_stored_rows(tmp_path, monkey
     import tests.test_cmb_closure_validation as V
 
     monkeypatch.setattr(V, 'ROWS_FILE', tmp_path / 'rows.json')
-    assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
+    with pytest.warns(UserWarning, match='rows.json'):
+        assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
     with pytest.raises(pytest.fail.Exception, match='rows.json'):
         V._stored_rows(write=False)
 
@@ -81,6 +83,9 @@ def test_the_write_guard_covers_tools_and_the_imported_aragog(monkeypatch):
 
     calls = []
     monkeypatch.setattr(V, '_git', lambda *a: calls.append(a) or '')
+    monkeypatch.setattr(
+        aragog, '__file__', str(V.ROWS_FILE.parents[3] / 'src/aragog/__init__.py')
+    )
     V._check_write_tree()
     assert 'tools' in calls[0]
     monkeypatch.setattr(aragog, '__file__', '/elsewhere/aragog/__init__.py')

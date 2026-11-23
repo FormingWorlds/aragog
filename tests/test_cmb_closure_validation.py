@@ -35,7 +35,7 @@ from tests.test_entropy_solver_integration import _build_parameters
 
 pytestmark = [pytest.mark.slow, needs_eos, pytest.mark.timeout(1800)]
 
-# the melt start stays above the flat (padded) table cell at g 1 to 1.006, which has its own test
+# the melt start stays above the flat (padded) table cell at g 1 to 1.0075, which has its own test
 G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.15]
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
@@ -167,12 +167,20 @@ def _table_faults(sha, stored_sha):
 
 
 def _stored_rows(write):
-    """The stored rows; with ``write`` a missing file counts as no stored rows."""
-    if ROWS_FILE.is_file():
-        return json.loads(ROWS_FILE.read_text())
-    if write:
+    """The stored rows; with ``write`` a missing or unusable file counts as no stored rows."""
+    try:
+        data = json.loads(ROWS_FILE.read_text())
+        data['rows'], data['provenance']['sha256']
+    except (OSError, ValueError, TypeError, KeyError) as err:
+        if not write:
+            pytest.fail(
+                f'no usable stored rows at {ROWS_FILE} ({err!r}); {WRITE_ROWS}=1 writes them'
+            )
+        warnings.warn(
+            f'{ROWS_FILE} holds no usable rows ({err!r}); written from the run', stacklevel=1
+        )
         return {'rows': [], 'provenance': {'sha256': {}}}
-    pytest.fail(f'no stored rows at {ROWS_FILE}; {WRITE_ROWS}=1 writes them')
+    return data
 
 
 def _row_faults(rows, stored):
@@ -185,7 +193,10 @@ def _row_faults(rows, stored):
         if ref is None:
             faults.append(f'g0 {row["g0"]}: no stored row')
             continue
-        tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
+        tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL.get(row['g0'])
+        if tol is None:
+            faults.append(f'g0 {row["g0"]}: no tolerance')
+            continue
         out = [
             f'{k} {row[k]:.6g} vs {ref[k]:.6g}'
             for k in PLOTTED

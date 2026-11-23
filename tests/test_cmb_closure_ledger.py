@@ -253,8 +253,8 @@ def _check_the_node_rate(core_bc, g0):
 
     from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 
-    eos = entropy_eos_copy(EOS_DIR)
     if core_bc == 'core_module':
+        eos = entropy_eos_copy(EOS_DIR)
         solver = _build('core_module', eos, CORE_MODULE_PARAMS)
         S = _profile(solver, eos, g0)
         solver.set_initial_entropy(S)
