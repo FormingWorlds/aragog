@@ -21,6 +21,7 @@ import jax  # noqa: E402
 import jax.monitoring  # noqa: E402
 import numpy as np  # noqa: E402
 
+from aragog.jax.eos import StaticArray  # noqa: E402
 from aragog.jax.nondim import NonDimScales  # noqa: E402
 from aragog.jax.phase import PhaseParams  # noqa: E402
 from aragog.solver.cvode_jax import (  # noqa: E402
@@ -234,9 +235,16 @@ def test_the_program_caches_hold_at_most_max_forms_input_forms(eos, monkeypatch)
         np.testing.assert_allclose(third, _rhs_at(eos, 8), rtol=1e-10, atol=0.0)
 
 
+class _Grid(eqx.Module):
+    """A pytree whose only field is a static grid, as the EOS tables hold theirs."""
+
+    grid: StaticArray = eqx.field(static=True)
+
+
 def test_each_part_of_the_input_form_counts():
-    """The form key of the bound holds the core_bc mode, the radiogenic switch, the shape and the
-    dtype of each leaf: changing any one of them is a new form, the same inputs are not."""
+    """The form key of the bound holds the core_bc mode, the radiogenic switch, the static fields
+    (a grid by value), the shape and the dtype of each leaf: changing any one of them is a new
+    form, the same inputs are not."""
     from aragog.solver import cvode_jax
 
     clear_jit_cache()
@@ -248,10 +256,13 @@ def test_each_part_of_the_input_form_counts():
         ('quasi_steady', True, data, consts),
         ('quasi_steady', False, (np.zeros(4),), consts),
         ('quasi_steady', False, (np.zeros(3, np.float32),), consts),
+        ('quasi_steady', False, data, (_Grid(StaticArray([0.0, 1.0])),)),
+        ('quasi_steady', False, data, (_Grid(StaticArray([0.0, 2.0])),)),
+        ('quasi_steady', False, data, (_Grid(StaticArray([0.0, 2.0])),)),
     ]
     counts = []
     for form in forms:
         cvode_jax._bound_forms(*form)
         counts.append(len(cvode_jax._FORMS))
     clear_jit_cache()
-    assert counts == [1, 1, 2, 3, 4, 5]
+    assert counts == [1, 1, 2, 3, 4, 5, 6, 7, 7]

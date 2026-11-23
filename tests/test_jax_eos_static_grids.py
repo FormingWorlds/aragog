@@ -112,9 +112,14 @@ def test_a_copy_or_a_pickle_of_a_grid_stays_read_only():
             b.value[0] = 1.0
     with pytest.raises(ValueError):
         a.value.setflags(write=True)
+    with pytest.raises(AttributeError):
+        a.value = np.zeros(6)
 
 
-@pytest.mark.parametrize('bad', [np.array([0.0, np.nan, 2.0]), np.array([0.0, 1.0j, 2.0])])
+@pytest.mark.parametrize(
+    'bad',
+    [np.array([0.0, np.nan, 2.0]), np.array([0.0, np.inf, 2.0]), np.array([0.0, 1.0j, 2.0])],
+)
 def test_a_grid_that_is_not_finite_and_real_is_refused(bad):
     """A NaN never equals itself and a complex value would lose its imaginary part: refused."""
     from aragog.jax.eos import StaticArray
