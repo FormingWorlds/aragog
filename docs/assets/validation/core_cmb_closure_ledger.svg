@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band; command: pytest tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "symlog"], "categories": [null, null], "lines": [[15, -0.03999999997119014, 1.1499999975867485, 0.5033333322471404, 0.23847618998680095, -0.4069231860112475, 0.1068546923939661, -0.03246099640237295, 0.05999080451191314], [15, -0.03999999997119014, 1.1499999975867485, 0.5033333322471404, 0.23847618998680095, -1.2003169558667573e-09, 0.006159615319634921, 0.0004799172358298961, -0.0004673790781223059], [15, -0.03999999997119014, 1.1499999975867485, 0.5033333322471404, 0.23847618998680095, -1.4192554334278325e-05, 0.0062137939453491536, 0.0005815607203160048, -0.0004883816690762337]], "collections": [], "values": [], "value_scales": [], "patches": [[5, 0.0, 1.0, 0.4, -0.1, 0.0, 1.0, 0.4, 0.1]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
+    <dc:description>test: tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band; command: pytest tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band --validation-plots; summary: {"v": 1, "axes": [{"scales": ["linear", "symlog"], "categories": [null, null], "lines": [[16, -0.03999999997119014, 1.1499999975867485, 0.5406249988372789, 0.24637499949440095, -0.4069231860112475, 0.1068546923939661, -0.031173761283604242, 0.05387821630199188], [16, -0.03999999997119014, 1.1499999975867485, 0.5406249988372789, 0.24637499949440095, -2.9963889707746845e-05, 0.006159615319634921, 0.00044804966548379346, -0.0004403967596202639], [16, -0.03999999997119014, 1.1499999975867485, 0.5406249988372789, 0.24637499949440095, -1.4192554334278325e-05, 0.0062137939453491536, 0.0005522467706074878, -0.00045685999460700743]], "collections": [], "values": [], "value_scales": [], "patches": [[5, 0.0, 1.0, 0.4, -0.1, 0.0, 1.0, 0.4, 0.1]], "images": [], "image_scales": [], "extents": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -817,6 +817,7 @@ L 296.805781 16.454383
 L 319.493329 14.620491 
 L 330.837103 13.896558 
 L 339.912122 13.827107 
+L 364.868424 123.404091 
 L 376.212198 72.757426 
 " clip-path="url(#p6eb21ed2d5)" style="fill: none; stroke: #e23d28; stroke-opacity: 0.6; stroke-width: 2; stroke-linecap: square"/>
    </g>
@@ -835,6 +836,7 @@ L 296.805781 75.754808
 L 319.493329 75.754767 
 L 330.837103 75.754818 
 L 339.912122 75.754826 
+L 364.868424 80.735015 
 L 376.212198 72.208464 
 " clip-path="url(#p6eb21ed2d5)" style="fill: none; stroke: #10151b; stroke-opacity: 0.4; stroke-width: 2; stroke-linecap: square"/>
    </g>
@@ -867,6 +869,7 @@ z
      <use xlink:href="#m767fd6f28c" x="319.493329" y="65.475542" style="fill: #10151b; stroke: #10151b"/>
      <use xlink:href="#m767fd6f28c" x="330.837103" y="65.540821" style="fill: #10151b; stroke: #10151b"/>
      <use xlink:href="#m767fd6f28c" x="339.912122" y="65.666641" style="fill: #10151b; stroke: #10151b"/>
+     <use xlink:href="#m767fd6f28c" x="364.868424" y="58.366636" style="fill: #10151b; stroke: #10151b"/>
      <use xlink:href="#m767fd6f28c" x="376.212198" y="61.280157" style="fill: #10151b; stroke: #10151b"/>
     </g>
    </g>
