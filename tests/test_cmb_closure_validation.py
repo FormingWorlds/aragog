@@ -10,9 +10,9 @@ same integral for ``c_p/T`` of the blend along that trajectory. A separate test 
 ``c_p/T`` closure itself and checks its miss against its own integral.
 
 The plot is drawn from the rows stored in ``ROWS_FILE``, not from the fresh rows: a start
-perturbation of 1e-13 moves the plotted residuals by up to 2.7e4 times the 1e-6 summary
-tolerance of the plot check. The fresh rows must agree with the stored rows within ``ROWS_TOL``;
-``--validation-plots`` (the default folder) writes the rows again.
+perturbation of 1e-13 moves the plotted residuals by up to 2.7e4 times the tolerance of the plot
+check (1e-6 of the half range of a line). The fresh rows must agree with the stored rows within
+``ROWS_TOL``; ``--validation-plots`` (the default folder) writes the rows again.
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.9
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 ROWS_FILE = Path(__file__).parent / 'validation' / 'data' / 'cmb_closure_ledger_rows.json'
-ROW_KEYS = ('g0', 'g', 'miss', 'pred', 'pred_cp')
-# 10x the largest shift of a row value under a 1e-13 start perturbation (macOS): 1.6e-7 for g0
-# 10x the largest shift of a row value over start perturbations of 1e-14 to 1e-11 and solver
-# tolerances x0.99 and x1.01 (macOS); weak outside the band (g0 -0.04: 48 % of its miss, 1.15: 11x)
+PLOTTED = ('g', 'miss', 'pred', 'pred_cp')
+ROW_KEYS = ('g0', *PLOTTED)
+# 10x, rounded up, the largest shift of a row value over starts changed by 1e-14 to 1e-11 and
+# solver tolerances x0.99 and x1.01 (macOS); Validation core.md section 16 lists the weak keys
 ROWS_TOL = {'band': 2.0e-5, -0.04: 3.0e-3, -0.02: 3.0e-5, 1.15: 1.0e-3}
 
 
@@ -111,17 +111,10 @@ def _call(eos, g0, cp_over_t=False):
     }
 
 
-def _table_hashes():
-    """sha256 of each table file of ``EOS_DIR``."""
-    return {
-        f.name: hashlib.sha256(f.read_bytes()).hexdigest()
-        for f in sorted(Path(EOS_DIR).glob('*.dat'))
-    }
-
-
 def _write_rows(rows, sha):
     """Store the plotted values and the solver tolerances of ``rows`` with their provenance,
-    one top-level block per line; refuse when ``src`` or this file has local changes."""
+    one top-level block per line; refuse when ``src``, ``tests`` or ``pyproject.toml`` has
+    local changes, other than the rows file."""
     root = Path(__file__).parents[1]
 
     def git(*args):
@@ -129,9 +122,10 @@ def _write_rows(rows, sha):
             ['git', *args], cwd=root, capture_output=True, text=True, check=True
         ).stdout.strip()
 
-    if git('status', '--porcelain', '--', 'src', 'tests/test_cmb_closure_validation.py'):
+    rows_path = ROWS_FILE.relative_to(root).as_posix()
+    if git('status', '--porcelain', '--', 'src', 'tests', 'pyproject.toml', f':!{rows_path}'):
         pytest.fail(
-            f'{ROWS_FILE.name}: commit the changes of src and this test before the rows'
+            f'{ROWS_FILE.name}: commit the changes of src, tests and pyproject.toml first'
         )
     provenance = {
         'commit': git('rev-parse', 'HEAD'),
@@ -165,19 +159,28 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
 
-    sha = _table_hashes()
+    sha = {
+        f.name: hashlib.sha256(f.read_bytes()).hexdigest()
+        for f in sorted(Path(EOS_DIR).glob('*.dat'))
+    }
     if request.config.getoption('validation_plots') == DEFAULT_DIR:
         _write_rows(rows, sha)
     data = json.loads(ROWS_FILE.read_text())
-    assert data['provenance']['sha256'] == sha, f'{ROWS_FILE.name} was made from other tables'
-    stored = data['rows']
-    again = f'pytest {request.node.nodeid} --validation-plots writes the rows again'
-    for row, ref in zip(rows, stored, strict=True):
+    again = (
+        f'explain the change first; for an intended change, pytest {request.node.nodeid} '
+        '--validation-plots writes the rows again'
+    )
+    assert data['provenance']['sha256'] == sha, f'{ROWS_FILE.name} has other tables; {again}'
+    for row, ref in zip(rows, data['rows'], strict=True):
         tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
-        assert all(abs(row[k] - ref[k]) <= tol for k in ROW_KEYS[1:]), (row, ref, again)
+        bad = [
+            f'{k} {row[k]:.6g} vs {ref[k]:.6g}' for k in PLOTTED if abs(row[k] - ref[k]) > tol
+        ]
+        bad += [f'{k} {row[k]:g} vs {ref[k]:g}' for k in ('atol', 'rtol') if row[k] != ref[k]]
+        assert not bad, f'g0 {row["g0"]} (tol {tol:g}): {"; ".join(bad)}; {again}'
 
-    assert_figure_legend_below(_figure(stored))
-    validation_plot(lambda: _figure(stored), 'core_cmb_closure_ledger')
+    assert_figure_legend_below(_figure(data['rows']))
+    validation_plot(lambda: _figure(data['rows']), 'core_cmb_closure_ledger')
 
 
 @pytest.mark.physics_invariant
