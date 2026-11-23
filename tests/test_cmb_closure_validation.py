@@ -22,7 +22,8 @@ from tests.test_entropy_solver_integration import _build_parameters
 
 pytestmark = [pytest.mark.slow, needs_eos, pytest.mark.timeout(1800)]
 
-G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.03]
+# the melt start stays above the flat (padded) cell at g 1 to 1.006, where a call depends on round-off
+G0 = [-0.04, -0.02, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.15]
 PREDICTION_TOL = 1.0e-3  # quadrature of E over the accepted steps
 MUSH_TOL = 1.0e-3
 
@@ -85,7 +86,6 @@ def _call(eos, g0, cp_over_t=False):
         'miss': r / abs(q),
         'pred': integral(k_cp if cp_over_t else s_tab / slope) / abs(q),
         'pred_cp': integral(k_cp) / abs(q),
-        'padded': bool(np.any(s_tab <= 1.0e-6 * slope)),
         'mush': bool(np.all((S_node > S_sol0) & (S_node < S_liq0))),
         'check': solver.cmb_ledger,
     }
@@ -127,7 +127,7 @@ def test_the_cp_over_t_closure_misses_by_its_closed_form():
 
 def _figure(rows):
     """Ledger miss of each call against the melt coordinate of the CMB node: the slope closure
-    (points from the solver, hollow in a padded cell, and its closed form) and the closed form
+    (points from the solver and its closed form) and the closed form
     of ``c_p/T`` along the same trajectories."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
@@ -136,16 +136,7 @@ def _figure(rows):
     g = [row['g'] for row in rows]
     ax.plot(g, [row['pred_cp'] for row in rows], color='C1', lw=2, alpha=0.6)
     ax.plot(g, [row['pred'] for row in rows], color='C0', lw=2, alpha=0.4)
-    for padded in (False, True):
-        sel = [row for row in rows if row['padded'] == padded]
-        ax.plot(
-            [row['g'] for row in sel],
-            [row['miss'] for row in sel],
-            'o',
-            ms=4,
-            color='C0',
-            mfc='none' if padded else 'C0',
-        )
+    ax.plot(g, [row['miss'] for row in rows], 'o', ms=4, color='C0')
     ax.set_yscale('symlog', linthresh=1.0e-4)
     ticks = [-0.1, -1.0e-3, 0.0, 1.0e-3, 0.1]
     ax.set_yticks(ticks, ['-0.1', '-0.001', '0', '0.001', '0.1'])
@@ -157,15 +148,6 @@ def _figure(rows):
         Line2D([], [], color='C1', lw=2, alpha=0.6, label='c_p/T, closed form'),
         Line2D([], [], color='C0', lw=2, alpha=0.4, label='(dS/dT)_P, closed form'),
         Line2D([], [], color='C0', marker='o', ls='none', label='(dS/dT)_P, solver'),
-        Line2D(
-            [],
-            [],
-            color=plt.rcParams['axes.labelcolor'],
-            marker='o',
-            ls='none',
-            mfc='none',
-            label='padded cell',
-        ),
     ]
     fig.legend(handles=handles, loc='lower center', ncol=2, frameon=False)
     fig.tight_layout(rect=(0.0, 0.2, 1.0, 1.0))
