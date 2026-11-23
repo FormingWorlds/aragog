@@ -145,6 +145,7 @@ CHANGES = {
 }
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize('name', list(CHANGES))
 def test_each_input_reaches_the_reused_program(eos, name):
     """An input changed at the same shape reaches the program compiled for the first inputs: the
