@@ -6,6 +6,8 @@ phase field and its gradient stay finite down to the smallest kept width."""
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -180,7 +182,6 @@ def test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width():
     config width, matches the NumPy one to 1e-10 relative; JAX at width 0 misses it by more
     than 1e-6, so the width reaches the JAX path."""
     jnp = pytest.importorskip('jax.numpy')
-    eqx = pytest.importorskip('equinox')
     from aragog.jax.solver import dSdt
     from tests.test_jax_dsdt_core_module import _build_jax_pieces
 
@@ -199,7 +200,8 @@ def test_the_jax_rhs_matches_numpy_inside_the_blend_at_the_default_width():
     np.testing.assert_allclose(
         f_jax[:n], f_np[:n], rtol=1e-10, atol=1e-10 * np.abs(f_np[:n]).max()
     )
-    sharp = eqx.tree_at(lambda q: q.matprop_smooth_width, args[1], 0.0)
+    sharp = copy.copy(args[1])
+    object.__setattr__(sharp, 'matprop_smooth_width', 0.0)  # a static field: no tree_at
     f_sharp = np.ravel(dSdt(0.0, jnp.asarray(y), (args[0], sharp, *args[2:])))
     assert np.max(np.abs(f_sharp[:n] / f_np[:n] - 1.0)) > 1e-6
 
