@@ -102,3 +102,34 @@ def test_the_tables_are_hashed_by_the_files_that_exist(tmp_path):
     (tmp_path / 'density_melt.dat').unlink()
     with pytest.raises(pytest.fail.Exception, match='density_melt.dat'):
         _table_hashes(tmp_path)
+
+
+def test_a_start_without_a_tolerance_is_named():
+    """A stored start outside the band with no tolerance of its own is named, not a KeyError."""
+    from tests.test_cmb_closure_validation import _row_faults
+
+    row = {
+        'g0': -0.03,
+        'g': -0.03,
+        'miss': 1e-3,
+        'pred': 1e-3,
+        'pred_cp': 0.1,
+        'atol': 1e-7,
+        'rtol': 1e-10,
+    }
+    assert _row_faults([row], [row]) == ['g0 -0.03: no tolerance']
+
+
+@pytest.mark.parametrize('text', ['', '{bad', '{}', '{"rows": []}'])
+def test_write_mode_takes_a_bad_rows_file_as_no_stored_rows(tmp_path, monkeypatch, text):
+    """A rows file that does not parse or lacks its blocks counts as no stored rows in write mode,
+    with a warning, and is refused without it."""
+    import tests.test_cmb_closure_validation as V
+
+    path = tmp_path / 'rows.json'
+    path.write_text(text)
+    monkeypatch.setattr(V, 'ROWS_FILE', path)
+    with pytest.warns(UserWarning, match='rows.json'):
+        assert V._stored_rows(write=True) == {'rows': [], 'provenance': {'sha256': {}}}
+    with pytest.raises(pytest.fail.Exception, match='rows.json'):
+        V._stored_rows(write=False)
