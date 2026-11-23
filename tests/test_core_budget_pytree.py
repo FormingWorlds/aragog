@@ -146,7 +146,8 @@ def test_each_input_reaches_the_reused_program(name, value):
     changed = _Form(**{name: value}).budget()
     got, want = _batched(changed), _fresh(changed)
     for a, b in zip(got, want):
-        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-12, atol=0.0)
+        # near the inner-core onset 1 ulp of T moves the capacity by ~3e-13 (condition ~1.4e3)
+        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-10, atol=0.0)
     assert any(not np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(got, base))
 
 
