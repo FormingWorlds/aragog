@@ -47,6 +47,9 @@ TABLES = [
     for q in ('temperature', 'density', 'heat_capacity', 'adiabat_temp_grad', 'thermal_exp')
 ]
 TABLES += ['solidus_P-S.dat', 'liquidus_P-S.dat']  # the files EntropyEOS reads
+REQUIRED_TABLES = [
+    f for f in TABLES if not f.startswith('thermal_exp')
+]  # thermal_exp: optional
 PLOTTED = ('g', 'miss', 'pred', 'pred_cp')
 ROW_KEYS = ('g0', *PLOTTED)
 # 10x, rounded up, the largest shift of a row value over starts changed by 1e-14 to 1e-11 and
@@ -125,6 +128,75 @@ def _git(*args):
     ).stdout.strip()
 
 
+def _check_write_tree():
+    """Refuse a write while src, tests, tools or pyproject.toml has local changes, or with an
+    aragog imported from outside the repository's src."""
+    import aragog
+
+    src = ROWS_FILE.parents[3] / 'src'
+    if not Path(aragog.__file__).resolve().is_relative_to(src.resolve()):
+        pytest.fail(f'{WRITE_ROWS}: aragog is imported from {aragog.__file__}, not from {src}')
+    rows_path = ROWS_FILE.relative_to(ROWS_FILE.parents[3]).as_posix()
+    paths = ('src', 'tests', 'tools', 'pyproject.toml', f':!{rows_path}')
+    if _git('status', '--porcelain', '--', *paths):
+        pytest.fail(
+            f'{WRITE_ROWS}: commit the changes of src, tests, tools and pyproject.toml first'
+        )
+
+
+def _table_hashes(eos_dir):
+    """sha256 of each table of ``eos_dir`` that EntropyEOS reads and that exists; a missing
+    required table stops the case."""
+    d = Path(eos_dir)
+    missing = [f for f in REQUIRED_TABLES if not (d / f).is_file()]
+    if missing:
+        pytest.fail(f'{d}: no table {", ".join(missing)}')
+    return {
+        f: hashlib.sha256((d / f).read_bytes()).hexdigest() for f in TABLES if (d / f).is_file()
+    }
+
+
+def _table_faults(sha, stored_sha):
+    """Name each table that is missing, not stored, or differs from its stored hash."""
+    state = {True: 'missing', False: 'not stored'}
+    return [
+        f'table {f} {state[f not in sha] if (f in sha) != (f in stored_sha) else "differs"}'
+        for f in sorted(set(sha) | set(stored_sha))
+        if sha.get(f) != stored_sha.get(f)
+    ]
+
+
+def _stored_rows(write):
+    """The stored rows; with ``write`` a missing file counts as no stored rows."""
+    if ROWS_FILE.is_file():
+        return json.loads(ROWS_FILE.read_text())
+    if write:
+        return {'rows': [], 'provenance': {'sha256': {}}}
+    pytest.fail(f'no stored rows at {ROWS_FILE}; {WRITE_ROWS}=1 writes them')
+
+
+def _row_faults(rows, stored):
+    """Name each row that moved beyond its tolerance, matched by start, and each start without a
+    stored row or stored row without a start."""
+    ref_by = {ref['g0']: ref for ref in stored}
+    faults = []
+    for row in rows:
+        ref = ref_by.get(row['g0'])
+        if ref is None:
+            faults.append(f'g0 {row["g0"]}: no stored row')
+            continue
+        tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
+        out = [
+            f'{k} {row[k]:.6g} vs {ref[k]:.6g}'
+            for k in PLOTTED
+            if not abs(row[k] - ref[k]) <= tol
+        ]
+        out += [f'{k} {row[k]:g} vs {ref[k]:g}' for k in ('atol', 'rtol') if row[k] != ref[k]]
+        faults += [f'g0 {row["g0"]} (tol {tol:g}): {"; ".join(out)}'] if out else []
+    starts = {row['g0'] for row in rows}
+    return faults + [f'stored g0 {g}: no start' for g in ref_by if g not in starts]
+
+
 def _write_rows(rows, sha):
     """Store the plotted values and the solver tolerances of ``rows`` with their provenance,
     one top-level block per line."""
@@ -148,14 +220,19 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
     """The slope closure misses by ``int (1 - k) E dt`` within 1e-3 of the CMB heat (Bower et al.
     2018, Eqs. 19-21), closes in the mush to 1e-3 and inside the solver bound, while ``c_p/T``
     along the same trajectories would miss by more than 5 % in the mush. With
-    ``ARAGOG_WRITE_LEDGER_ROWS=1`` (a tree without local changes in src, tests and pyproject.toml)
+    ``ARAGOG_WRITE_LEDGER_ROWS=1`` (a tree without local changes in src, tests, tools and pyproject.toml)
     the run replaces the stored rows and warns with each shift above its tolerance."""
     write = os.environ.get(WRITE_ROWS) == '1'
-    rows_path = ROWS_FILE.relative_to(ROWS_FILE.parents[3]).as_posix()
-    if write and _git(
-        'status', '--porcelain', '--', 'src', 'tests', 'pyproject.toml', f':!{rows_path}'
-    ):
-        pytest.fail(f'{WRITE_ROWS}: commit the changes of src, tests and pyproject.toml first')
+    if write:
+        _check_write_tree()
+    again = (
+        f'explain the change first; for an intended change, {WRITE_ROWS}=1 '
+        f'pytest {request.node.nodeid} writes the rows again'
+    )
+    sha = _table_hashes(EOS_DIR)
+    data = _stored_rows(write)
+    bad = _table_faults(sha, data['provenance']['sha256'])
+    assert write or not bad, f'{" | ".join(bad)}; {again}'
     eos = entropy_eos_copy(EOS_DIR)
     rows = [dict(_call(eos, g0), g0=g0) for g0 in G0]
     for row in rows:
@@ -168,33 +245,14 @@ def test_the_cmb_ledger_across_the_melt_band(validation_plot, request):
         ), row
     assert max(abs(row['pred_cp']) for row in mush) > 0.05
 
-    sha = {f: hashlib.sha256((Path(EOS_DIR) / f).read_bytes()).hexdigest() for f in TABLES}
-    data = json.loads(ROWS_FILE.read_text())
-    stored_sha = data['provenance']['sha256']
-    bad = [
-        f'table {f} differs'
-        for f in sorted(set(sha) | set(stored_sha))
-        if sha.get(f) != stored_sha.get(f)
-    ]
-    for row, ref in zip(rows, data['rows'], strict=True):
-        tol = ROWS_TOL['band'] if 0.0 < row['g0'] < 1.0 else ROWS_TOL[row['g0']]
-        out = [
-            f'{k} {row[k]:.6g} vs {ref[k]:.6g}'
-            for k in PLOTTED
-            if not abs(row[k] - ref[k]) <= tol
-        ]
-        out += [f'{k} {row[k]:g} vs {ref[k]:g}' for k in ('atol', 'rtol') if row[k] != ref[k]]
-        bad += [f'g0 {row["g0"]} (tol {tol:g}): {"; ".join(out)}'] if out else []
+    bad += _row_faults(rows, data['rows'])
     if write:
         if bad:
             warnings.warn(f'{ROWS_FILE.name} replaced: {" | ".join(bad)}', stacklevel=1)
         _write_rows(rows, sha)
         data = json.loads(ROWS_FILE.read_text())
     else:
-        assert not bad, (
-            f'{" | ".join(bad)}; explain the change first; for an intended change, {WRITE_ROWS}=1 '
-            f'pytest {request.node.nodeid} writes the rows again'
-        )
+        assert not bad, f'{" | ".join(bad)}; {again}'
 
     assert_figure_legend_below(_figure(data['rows']))
     validation_plot(lambda: _figure(data['rows']), 'core_cmb_closure_ledger')

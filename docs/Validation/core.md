@@ -682,7 +682,7 @@ Every row also moves with round-off. A start changed by $10^{-14}$ to $10^{-11}$
         - Detection: a closure scaled by $1 + \epsilon$ moves the miss of each start in the mush by $\epsilon$, so the stored rows detect $\epsilon$ above $2 \times 10^{-5}$.
         - Weak or absent where the tolerance is at least 0.48 of the stored value: the miss at $g = 0.4$ (1.4 times); the miss and the closed form of the slope closure at $-0.04$ (48 % and 49 %) and $c_p/T$ there (1.1 times); the closed form of the slope closure in the mush (near 0 by construction); the miss and both closed forms at $1.15$ (11 to 56 times).
     - Test id: `tests/test_cmb_closure_validation.py::test_the_cmb_ledger_across_the_melt_band`, and `::test_the_cp_over_t_closure_misses_by_its_closed_form` for the run of the $c_p/T$ closure; `tests/test_cmb_closure_ledger_rows.py::test_the_stored_rows_match_the_case` for the stored file.
-    - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair from the stored rows). `ARAGOG_WRITE_LEDGER_ROWS=1` writes the stored rows from the run; it refuses while `src`, `tests` or `pyproject.toml` has uncommitted changes and warns with each shift above its tolerance.
+    - Command: `pytest tests/test_cmb_closure_validation.py` (add `--validation-plots` to write the plot pair from the stored rows). `ARAGOG_WRITE_LEDGER_ROWS=1` writes the stored rows from the run; it refuses while `src`, `tests`, `tools` or `pyproject.toml` has uncommitted changes and warns with each shift above its tolerance.
 
 ## 17. The CMB closure on the states of 2 coupled runs
 
