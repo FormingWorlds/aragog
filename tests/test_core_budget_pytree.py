@@ -19,6 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from aragog.core._pytree import register_pytree
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
@@ -193,3 +194,29 @@ def test_the_melting_point_of_an_argument_pressure_differs_by_at_most_one_float(
     argument = float(jax.jit(lambda q, x: f(q) + 0.0 * x)(jnp.float64(p), x)[0])
     assert constant == scalar == float(f(p))
     assert abs(argument - scalar) <= np.spacing(scalar)
+
+
+class _Table:
+    """A static object (no float, array or registered type) that a traced method reads."""
+
+    def __init__(self, k):
+        self.k = k
+
+
+@register_pytree
+class _Reads:
+    def __init__(self, k):
+        self.scale = 1.0
+        self.table = _Table(k)
+
+    def f(self, x):
+        return x * self.scale * self.table.k
+
+
+def test_a_static_object_of_another_instance_gets_its_own_program():
+    """Static objects compare by identity: an instance holding another one is not run through
+    the program traced with the first, whose static values are baked in."""
+    f = jax.jit(lambda obj, x: obj.f(x))
+    x = jnp.float64(2.0)
+    assert float(f(_Reads(3), x)) == 6.0
+    assert float(f(_Reads(5), x)) == 10.0

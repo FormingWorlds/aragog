@@ -77,6 +77,24 @@ def test_eager_boundary_solves_at_new_temperatures_reuse_the_compiled_loop(budge
     assert _compiles(lambda: [budget.r_icb(t) for t in temperatures]) == 0
 
 
+def test_a_second_budget_of_the_same_form_reuses_the_boundary_solve(budget):
+    """After a scalar boundary solve on one budget, the same solve on a budget of the same form
+    with other values (a new structure) compiles nothing."""
+    budget.r_icb(4100.0)
+    budget.r_icb(jnp.float64(4100.0))
+    prof = GaussianCoreProfiles(
+        rho_cen=12400.0,
+        length_scale=7150e3,
+        r_cmb=3470e3,
+        p_cmb=135e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    other = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    assert _compiles(lambda: [other.r_icb(4050.0), other.r_icb(jnp.float64(4050.0))]) == 0
+
+
 def test_the_regime_check_compiles_once_per_power_of_two_bucket(budget):
     """After a first call, the batch lengths 2 to 512 compile exactly once per new bucket: the 6
     buckets 16, 32, 64, 128, 256 and 512 (lengths 2 to 8 share the bucket of the first call)."""
