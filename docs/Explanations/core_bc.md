@@ -301,12 +301,12 @@ $$
 Here $T_\text{cmb}$ is the temperature of the CMB basic node, read from its entropy at the CMB pressure. The entropy gradient at the CMB is the extra state variable. It is integrated with the formula of SPIDER's [`bc.c:76-131`](https://github.com/FormingWorlds/SPIDER):
 
 $$
-\frac{d}{dt}\left(\frac{dS}{dr}\bigg|_\text{cmb}\right) = \frac{2}{\Delta r}\left( -F_\text{cmb} A_\text{cmb} \cdot \text{fac}_\text{cmb} - \frac{dS}{dt}\bigg|_0\right),
+\frac{d}{dt}\left(\frac{dS}{dr}\bigg|_\text{cmb}\right) = \frac{2}{\Delta r}\left( \frac{dS}{dt}\bigg|_0 + F_\text{cmb} A_\text{cmb} \cdot \text{fac}_\text{cmb}\right),
 \qquad
 \text{fac}_\text{cmb} = \frac{1}{c_p^\text{core} \, \text{tfac} \, M_\text{core}\, (\partial T/\partial S)_P}
 $$
 
-The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase away from the melting band, and differ inside it. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flow out of the core. SPIDER writes the same balance in its own coordinate, which decreases towards the CMB, so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase away from the melting band, and differ inside it. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
 
 ### The entropy slope at the CMB node
 

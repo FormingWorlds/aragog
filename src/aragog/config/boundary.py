@@ -310,8 +310,9 @@ class BoundaryConfig:
         underestimates the CMB heat loss against a SPIDER-parity reference),
         'energy_balance' (default, the PROTEUS production path: SPIDER-parity
         BC with the CMB entropy gradient as an extra state, integrated by
-        SPIDER's ``bc.c:76-131`` formula
-        d/dt(dSdr_cmb) = (2/dr) ((-F_cmb area_cmb) fac_cmb - dSdt_s[0]),
+        the balance of SPIDER's ``bc.c:76-131`` in Aragog's radius (dr > 0, the spacing of
+        the 2 lowest basic nodes; dSdt_s[0] the entropy rate of the bottom cell)
+        d/dt(dSdr_cmb) = (2/dr) (dSdt_s[0] + (F_cmb area_cmb - E_core) fac_cmb), E_core = 0,
         fac_cmb = cp_cmb / (cp_core T_cmb tfac M_core), cp_cmb = T_cmb (dS/dT)_P of the
         node's phase blend; state length N+1),
         'gradient' (entropy gradient as the primary state, S rebuilt by
