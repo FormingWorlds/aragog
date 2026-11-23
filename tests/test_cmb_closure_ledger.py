@@ -154,6 +154,8 @@ def test_core_heat_change_equals_the_cmb_heat_flow(core_bc, method, jax_rhs, g0)
         f'(core change {d_e:+.4e} J, CMB heat {q:+.4e} J)'
     )
     assert not check['excluded'] and abs(check['r']) <= check['bound'], check
+    # the check rebuilds the node entropy itself; it must agree with the solver state
+    assert check['r'] == pytest.approx(d_e + q, rel=0.0, abs=1.0e-10 * abs(q))
 
 
 @pytest.mark.physics_invariant
@@ -341,20 +343,48 @@ def test_a_call_through_a_padded_cell_is_left_out_of_the_check(caplog):
     assert (d_e + q) / abs(q) > 1.0e-3
 
 
-def test_a_small_closure_miss_warns_and_is_counted(monkeypatch, caplog):
-    """A closure 3e-4 off misses the ledger by about 3 bounds: the run warns and goes on."""
+@pytest.mark.parametrize(('error', 'missed'), [(1.5e-4, 0), (2.0e-4, 1)])
+def test_a_small_closure_miss_warns_and_is_counted(monkeypatch, caplog, error, missed):
+    """A closure 1.5e-4 off stays inside the bound of a 20-yr call at rtol 1e-10 (about 0.9 B),
+    and 2e-4 off misses it by about 1.3 B: the run warns, counts the call and goes on."""
     import logging
 
     from aragog.solver.entropy_solver import EntropySolver
 
     exact = EntropySolver._cmb_closure_cp
-    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', lambda self: exact(self) * (1 + 3e-4))
+    monkeypatch.setattr(
+        EntropySolver, '_cmb_closure_cp', lambda self: exact(self) * (1 + error)
+    )
     with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
         _, _, _, solver = _ledger('energy_balance', 'radau', 0.9)
     check = solver.cmb_ledger
-    assert check['bound'] < abs(check['r']) < 10.0 * check['bound'], check
-    assert solver._cmb_ledger_counts == {'missed': 1, 'excluded': 0}
-    assert 'CMB closure ledger miss' in caplog.text
+    assert (abs(check['r']) > check['bound']) == bool(missed), check
+    assert abs(check['r']) < 10.0 * check['bound'], check
+    assert solver._cmb_ledger_counts == {'missed': missed, 'excluded': 0}
+    assert ('CMB closure ledger miss' in caplog.text) == bool(missed)
+
+
+@pytest.mark.parametrize('g0', [-0.005, 1.0015])
+def test_a_state_with_round_off_table_slope_is_left_out(g0):
+    """In a flat (padded) cell the central difference of the table leaves round-off of either
+    sign (about 4.5e-10 here); such a state is left out of the check, not compared."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    eos = entropy_eos_copy(EOS_DIR)
+    params = _build_parameters(core_bc='energy_balance', n_nodes=15, inner_boundary_condition=1)
+    solver = EntropySolver(params, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(_profile(solver, eos, 0.5))
+    P = np.asarray(solver._P_basic_flat[:1], dtype=float)
+    S_sol, S_liq = (
+        float(np.ravel(eos.solidus_entropy(P))[0]),
+        float(np.ravel(eos.liquidus_entropy(P))[0]),
+    )
+    y = np.asarray(solver._S0, dtype=float).copy()
+    y[0], y[solver._n_stag] = S_sol + g0 * (S_liq - S_sol), 0.0  # node entropy = y[0]
+    solver._call_tol = (1.0e-8, 1.0e-8)  # as solve() sets them
+    solver._check_cmb_ledger(np.array([0.0, 1.0]), np.c_[y, y], np.zeros(2), 0.0)
+    assert solver.cmb_ledger['excluded'] and solver._cmb_ledger_counts['excluded'] == 1
 
 
 def test_a_non_positive_node_slope_stops_the_rhs_and_the_check(monkeypatch):
