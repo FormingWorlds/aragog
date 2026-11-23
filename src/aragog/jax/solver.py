@@ -196,7 +196,7 @@ class BoundaryParams(eqx.Module):
         1 = core cooling (Bower+2018 Eq. 37)
         2 = prescribed flux
         3 = prescribed temperature (preserve conduction-derived flux)
-        5 = energy_balance (SPIDER bit-parity): F_cmb derived from
+        5 = energy_balance (SPIDER bc.c formula with (dS/dT)_P): F_cmb derived from
             the boundary entropy gradient (state-tracked dSdr_cmb).
             Used by ``dSdt_energy_balance``.
 

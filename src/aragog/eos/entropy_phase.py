@@ -194,6 +194,7 @@ class EntropyPhaseEvaluator:
 
         # Cached properties (computed on update)
         self._temperature: npt.NDArray = np.array([])
+        self._temperature_slope: npt.NDArray = np.array([])
         self._density: npt.NDArray = np.array([])
         self._heat_capacity: npt.NDArray = np.array([])
         self._thermal_expansivity: npt.NDArray = np.array([])
