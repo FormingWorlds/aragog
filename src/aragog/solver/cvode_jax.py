@@ -60,6 +60,69 @@ class UnsupportedCoreBCError(ValueError):
     """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
+class _ByValue:
+    """A pytree held as a static program argument: its leaves are compile-time constants, and
+    two holders are equal when their treedefs and the bytes of their leaves are equal.
+
+    The leaves are read-only host copies, so a later in-place change of the source cannot reach
+    a compiled program. The hash is taken once; equality is identity first.
+    """
+
+    __slots__ = ('tree', '_leaves', '_treedef', '_hash')
+
+    def __init__(self, tree) -> None:
+        import jax
+
+        leaves, treedef = jax.tree.flatten(tree)
+        held = []
+        for x in leaves:
+            a = np.array(x)
+            a.flags.writeable = False
+            held.append(a)
+        for name, value in (
+            ('tree', jax.tree.unflatten(treedef, held)),
+            ('_leaves', tuple(held)),
+            ('_treedef', treedef),
+            (
+                '_hash',
+                hash((treedef, tuple((a.tobytes(), a.dtype.str, a.shape) for a in held))),
+            ),
+        ):
+            object.__setattr__(self, name, value)
+
+    def __setattr__(self, name, value) -> None:
+        raise AttributeError('a _ByValue cannot change after it is built')
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, _ByValue) or self._hash != other._hash:
+            return False
+        return self._treedef == other._treedef and all(
+            a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()
+            for a, b in zip(self._leaves, other._leaves, strict=True)
+        )
+
+
+# EOS holders by the identity of their EOS (kept alive here), so a reused EOS is hashed once.
+_EOS_HOLDERS: dict = {}
+
+
+def _eos_holder(eos_jax) -> _ByValue:
+    """The by-value holder of ``eos_jax``, built once per EOS object."""
+    hit = _EOS_HOLDERS.get(id(eos_jax))
+    if hit is not None and hit[0] is eos_jax:
+        return hit[1]
+    if len(_EOS_HOLDERS) >= MAX_FORMS:
+        _EOS_HOLDERS.clear()
+    holder = _ByValue(eos_jax)
+    _EOS_HOLDERS[id(eos_jax)] = (eos_jax, holder)
+    return holder
+
+
 # At most this many input forms keep compiled CVODE programs; a new form beyond it clears them.
 MAX_FORMS = 8
 _FORMS: set = set()
@@ -72,6 +135,7 @@ def clear_jit_cache() -> None:
             program.clear_cache()
     _programs.cache_clear()
     _FORMS.clear()
+    _EOS_HOLDERS.clear()
     for key in _TRACE_COUNTERS:
         _TRACE_COUNTERS[key] = 0
 
@@ -100,7 +164,10 @@ def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
         core_bc_mode,
         use_radio,
         treedef,
-        tuple((np.shape(x), getattr(x, 'dtype', type(x))) for x in leaves),
+        tuple(
+            x if isinstance(x, _ByValue) else (np.shape(x), getattr(x, 'dtype', type(x)))
+            for x in leaves
+        ),
     )
     if form in _FORMS:
         return
@@ -145,18 +212,24 @@ def _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
     return dydt_phys * rhs_scale_jax
 
 
-def _rhs_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves):
+def _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves):
+    """``_eval_core`` with the phase parameters and the EOS from their static holders and the
+    data and budget from their flat leaves."""
     import jax
 
+    data, budget = jax.tree.unflatten(treedef, leaves)
+    consts = (*jax.tree.map(jax.numpy.asarray, (phase.tree, eos.tree)), budget)
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+
+def _rhs_program(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, *leaves):
     _TRACE_COUNTERS['rhs'] += 1
-    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, *jax.tree.unflatten(treedef, leaves))
+    return _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves)
 
 
-def _jac_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves):
-    import jax
-
+def _jac_program(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, *leaves):
     _TRACE_COUNTERS['jac'] += 1
-    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, *jax.tree.unflatten(treedef, leaves))
+    return _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves)
 
 
 def _powers_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, aux, consts):
@@ -192,12 +265,13 @@ def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts)
 def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs. Every input is an argument, with the core_bc
     mode and the radiogenic switch static, so a solver of the same form reuses them. The RHS and
-    Jacobian take the leaves of ``(data, consts)`` flat after their static treedef."""
+    Jacobian hold the phase parameters and the EOS as static by-value holders (compile-time
+    constants) and take the leaves of the data and the budget flat after their static treedef."""
     import jax
 
     return (
-        jax.jit(_rhs_program, static_argnums=(0, 1, 2)),
-        jax.jit(jax.jacrev(_jac_program, argnums=4), static_argnums=(0, 1, 2)),
+        jax.jit(_rhs_program, static_argnums=(0, 1, 2, 3, 4)),
+        jax.jit(jax.jacrev(_jac_program, argnums=6), static_argnums=(0, 1, 2, 3, 4)),
         jax.jit(_powers_program, static_argnums=(0, 1)),
         jax.jit(_lid_weight_program, static_argnums=(0, 1)),
     )
@@ -461,18 +535,20 @@ def build_jax_rhs_and_jacobian(
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
     data, consts = _strong(data), _strong((phase_params, eos_jax, budget))
-    _bound_forms(core_bc_mode, use_radio, data, consts)
+    phase_fixed, eos_fixed = _ByValue(consts[0]), _eos_holder(consts[1])
+    _bound_forms(core_bc_mode, use_radio, data, (phase_fixed, eos_fixed, consts[2]))
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
     # flattened and on the device once per build, not at every call
-    leaves, treedef = jax.tree.flatten((data, consts))
+    leaves, treedef = jax.tree.flatten((data, consts[2]))
     leaves = [jnp.asarray(x) for x in leaves]
+    fixed = (core_bc_mode, use_radio, phase_fixed, eos_fixed, treedef)
 
     def rhs_jit(t_nd, y_nd):
-        return rhs_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves)
+        return rhs_program(*fixed, t_nd, y_nd, *leaves)
 
     def jac_jit(t_nd, y_nd):
-        return jac_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves)
+        return jac_program(*fixed, t_nd, y_nd, *leaves)
 
     def first_call(kind, label, call):
         """Run ``call`` and log whether it compiled a program or reused one."""
