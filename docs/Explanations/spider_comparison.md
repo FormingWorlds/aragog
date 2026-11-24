@@ -10,14 +10,14 @@ This page summarises the points of agreement and divergence and gives guidance o
 |---------|--------|--------|
 | Implementation language | C with PETSc (serial) | Python with optional JAX |
 | Primary state variable | Specific entropy $S$ at staggered nodes | Specific entropy $S$ at staggered nodes |
-| Extra ODE state at CMB | $dS/dr\vert_\mathrm{cmb}$ via the `bc.c:76-131` formula | $dS/dr\vert_\mathrm{cmb}$ via the same formula in `core_bc = energy_balance` |
+| Extra ODE state at CMB | $dS/dr\vert_\mathrm{cmb}$ via the `bc.c:76-131` formula | $dS/dr\vert_\mathrm{cmb}$ via the same formula in `core_bc = energy_balance`, with $1/(\partial T/\partial S)_P$ of the node in place of $c_p/T$ ([explanation](core_bc.md#the-entropy-slope-at-the-cmb-node)) |
 | Time integrator | SUNDIALS CVODE/BDF via PETSc `TSSUNDIALS` (`main.c:86-95`) | SUNDIALS CVODE/BDF via `scikits.odes`; scipy `Radau`/`BDF` fallbacks |
 | Linear solver inside Newton | Dense (`TSSundialsSetUseDense`) | CVODE dense (default) |
 | Jacobian source | Finite difference (CVODE-internal) | JAX analytic (default), CVODE finite difference (fallback) |
 | Phase-boundary smoothing | `get_smoothing` two-branch tanh, `matprop_smooth_width` (`util.c:245-265`) | Identical two-branch tanh, `matprop_smooth_width = 0.01` (default) |
 | Pressure-EOS profile | Adams-Williamson (`eos_adamswilliamson.c`) or external mesh file | Adams-Williamson (`eos_method = 1`) or external mesh file (`eos_method = 2`) |
 | Thermodynamic EOS tables | P-S lookup tables, bilinear interpolation (`eos_lookup.c`), Wolf & Bower (2018)[^cite-wolfbower2018] by default | P-S lookup tables, bilinear interpolation, PALEOS (Attia et al. (2026)[^cite-attia2026]) by default; Wolf & Bower (2018) tables for parity runs |
-| Default core BC | `bc.c:76-131` $dS/dr$ ODE | `core_bc = energy_balance` (bit-parity with SPIDER); `quasi_steady` for fast standalone exploration |
+| Default core BC | `bc.c:76-131` $dS/dr$ ODE | `core_bc = energy_balance` (SPIDER's formula; equal to SPIDER while the CMB node is in a single phase outside the melt band and its smoothing bands); `quasi_steady` for fast standalone exploration |
 | Step-size control during phase change | CVODE adaptive control with user tolerances | CVODE adaptive control plus an Aragog-only SUNDIALS root function `phi_step_cap` that bounds $\lvert\Delta\Phi_\mathrm{global}\rvert$ per call |
 | Atmosphere coupling | Built-in atmosphere module: grey-body, Zahnle steam, Jeans/Zahnle escape, volatile speciation (`atmosphere.c`) | Surface BC modes 1, 4, 5 only (grey-body, prescribed flux, prescribed temperature); volatile chemistry handled by JANUS / AGNI / Atmodeller through PROTEUS |
 | Mass-coordinate option | `MASS_COORDINATES` flag (`mesh.c`) | `mass_coordinates = true` |
@@ -53,10 +53,10 @@ See [Phi step cap](../How-to/phi-step-cap.md) for tuning guidance.
 
 ## Where the two codes should agree
 
-In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, `convective_threshold = 0`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference.
+In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, `convective_threshold = 0`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference while the CMB node stays outside the melt band. Inside the band the closure factors differ ([the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node)).
 Specifically:
 
-- The bit-parity helper-formula tests in `tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs` reproduce the SPIDER `bc.c:76-131` evaluation to machine precision on hand-computed inputs.
+- The bit-parity helper-formula tests in `tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs` reproduce the SPIDER `bc.c:76-131` evaluation to machine precision on hand-computed inputs. The test passes the heat capacity directly, so it checks the formula, not the factor the solver passes in the mush.
 - The Adams-Williamson density profile in `eos_method = 1` matches the exponential form $\rho(z) = \rho_s \exp(\beta z)$ that SPIDER uses (`eos_adamswilliamson.c:104`) when the same $\beta$ is configured; the `adams_williamson_beta` config knob accepts $\beta$ directly so that the two codes share an unambiguous scale.
 - The `get_smoothing` two-branch tanh in `util.c:245-265` is reproduced by Aragog's `phase_smoothing = "tanh"` with the same width parameter.
 - Six-isotope radiogenic heating with the Ruedas (2017)[^cite-ruedas2017] cocktail produces the same present-day $H_\mathrm{radio}$ in both codes when the same isotope abundances and half-lives are configured.
@@ -70,6 +70,10 @@ Integration-level parity between the two codes is the criterion that the product
 
 SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, and Aragog can drive an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default 0), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. Apart from the floor, the two codes therefore differ at nodes with $-D < \partial S/\partial r < 0$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
 The default `convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
+
+### CMB closure in the melt band
+
+SPIDER turns the core cooling rate into the entropy rate of the CMB node with $c_p/T$ of the node. Aragog divides by the slope $(\partial T/\partial S)_P$ of its own $T(P, S)$, so that the core loses the heat that crosses the CMB. While the node is in a single phase outside the melt band and its smoothing bands, that slope is $T/c_p$ of the tables, so the 2 factors are the same; the miss that remains there comes from the difference between $T/c_p$ and the slope of the tabulated $T$ ([limits of the slope closure](core_bc.md#limits-of-the-slope-closure)). Inside the band, $c_p/T$ makes the node cool faster or slower than the core: along the calls of [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band) it would miss by up to 20 % of the CMB heat at the starts in the mush and by 41 % at the start in the smoothing band below the solidus ($g = -0.02$). See [the entropy slope at the CMB node](core_bc.md#the-entropy-slope-at-the-cmb-node).
 
 ### Default thermodynamic tables
 

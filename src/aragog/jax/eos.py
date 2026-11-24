@@ -57,6 +57,7 @@ class PhaseState(NamedTuple):
     smth: jax.Array  # mixed-vs-single blend factor
     latent_heat: jax.Array  # [J/kg]
     solidus_temperature: jax.Array | None = None  # [K]
+    temperature_slope: jax.Array | None = None  # (dT/dS)_P of the blend [K^2 kg/J]
 
 
 def _tanh_weight_jax(x: jax.Array, threshold: float, width: float) -> jax.Array:
@@ -726,8 +727,14 @@ class EntropyEOS_JAX(eqx.Module):
                 1.0 - _tanh_weight_jax(gphi, 1.0, matprop_smooth_width),
                 _tanh_weight_jax(gphi, 0.0, matprop_smooth_width),
             )
+            sech2 = (
+                1.0
+                - jnp.tanh(jnp.where(gphi > 0.5, gphi - 1.0, gphi) / matprop_smooth_width) ** 2
+            )
+            dsmth_dg = jnp.where(gphi > 0.5, -0.5, 0.5) * sech2 / matprop_smooth_width
         else:
             smth = jnp.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
+            dsmth_dg = jnp.zeros_like(gphi)
 
         # ── Step 2: phase-boundary table evaluations (ONCE each) ────
         T_sol = self._lookup_at_phase_boundary('temperature', P, 'solid')
@@ -796,6 +803,12 @@ class EntropyEOS_JAX(eqx.Module):
             return smth * mixed + (1.0 - smth) * single
 
         temperature = _blend(T_mixed, T_single)
+        # (dT/dS)_P of that blend, with the pure-phase slope T/Cp in the single-phase term
+        temperature_slope = (
+            smth * jnp.where((gphi >= 0.0) & (gphi <= 1.0), (T_liq - T_sol) / dS_phase, 0.0)
+            + (1.0 - smth) * jnp.where(mushy, 0.0, T_single / Cp_single)
+            + (T_mixed - T_single) * dsmth_dg / dS_phase
+        )
         density = _blend(rho_mixed, rho_single)
         heat_capacity = _blend(Cp_mixed, Cp_single)
         alpha_raw = _blend(alpha_mixed, alpha_single)
@@ -827,4 +840,5 @@ class EntropyEOS_JAX(eqx.Module):
             smth=jnp.where(finite_S, smth, jnp.nan),
             latent_heat=latent_heat,
             solidus_temperature=T_sol,
+            temperature_slope=jnp.where(finite_S, temperature_slope, jnp.nan),
         )

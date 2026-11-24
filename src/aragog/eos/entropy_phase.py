@@ -194,6 +194,7 @@ class EntropyPhaseEvaluator:
 
         # Cached properties (computed on update)
         self._temperature: npt.NDArray = np.array([])
+        self._temperature_slope: npt.NDArray = np.array([])
         self._density: npt.NDArray = np.array([])
         self._heat_capacity: npt.NDArray = np.array([])
         self._thermal_expansivity: npt.NDArray = np.array([])
@@ -255,6 +256,7 @@ class EntropyPhaseEvaluator:
         self._temperature = self._const_T_ref * np.exp((S - self._const_S_ref) / self._const_Cp)
         self._density = np.full_like(S, self._const_rho)
         self._heat_capacity = np.full_like(S, self._const_Cp)
+        self._temperature_slope = self._temperature / self._const_Cp
         self._thermal_expansivity = np.full_like(S, self._const_alpha)
         self._melt_fraction = np.full_like(S, 1.0)
         self._dTdPs_val = (
@@ -282,6 +284,7 @@ class EntropyPhaseEvaluator:
                 '_temperature',
                 '_density',
                 '_heat_capacity',
+                '_temperature_slope',
                 '_thermal_expansivity',
                 '_dTdPs_val',
                 '_thermal_conductivity_val',
@@ -335,8 +338,11 @@ class EntropyPhaseEvaluator:
                 1.0 - tanh_weight(gphi, 1.0, smw),
                 tanh_weight(gphi, 0.0, smw),
             )
+            sech2 = 1.0 - np.tanh(np.where(gphi > 0.5, gphi - 1.0, gphi) / smw) ** 2
+            dsmth_dg = np.where(gphi > 0.5, -0.5, 0.5) * sech2 / smw
         else:
             smth = np.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
+            dsmth_dg = np.zeros_like(gphi)
 
         # ── Step 2: phase-boundary table evaluations (ONCE each) ────
         # SPIDER eos_composite.c:216-217
@@ -436,6 +442,12 @@ class EntropyPhaseEvaluator:
             return smth * mixed + (1.0 - smth) * single
 
         self._temperature = _blend(T_mixed, T_single)
+        # (dT/dS)_P of that blend, with the pure-phase slope T/Cp in the single-phase term
+        self._temperature_slope = (
+            smth * np.where((gphi >= 0.0) & (gphi <= 1.0), (T_liq - T_sol) / dS_phase, 0.0)
+            + (1.0 - smth) * np.where(mushy, 0.0, T_single / Cp_single)
+            + (T_mixed - T_single) * dsmth_dg / dS_phase
+        )
         self._density = _blend(rho_mixed, rho_single)
         self._heat_capacity = _blend(Cp_mixed, Cp_single)
         self._thermal_expansivity = _blend(alpha_mixed, alpha_single)
@@ -448,6 +460,7 @@ class EntropyPhaseEvaluator:
         if np.ndim(P) == 0:
             for attr in (
                 '_temperature',
+                '_temperature_slope',
                 '_density',
                 '_heat_capacity',
                 '_thermal_expansivity',
@@ -662,6 +675,16 @@ class EntropyPhaseEvaluator:
 
     def heat_capacity(self) -> FloatOrArray:
         return self._heat_capacity
+
+    def temperature_slope(self) -> FloatOrArray:
+        """Slope ``(dT/dS)_P`` [K^2 kg/J] of the blended temperature.
+
+        The derivative of :meth:`temperature` in S at fixed P, with the pure-phase slope
+        ``T/Cp`` of the single-phase table in place of the bilinear table slope (which is 0
+        in a padded or clamped cell). Positive where the single-phase tables increase with S.
+        The CMB closure divides the core cooling rate by it.
+        """
+        return self._temperature_slope
 
     def kinematic_viscosity(self) -> FloatOrArray:
         self._ensure_rheology_viscosity()

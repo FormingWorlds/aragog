@@ -1333,12 +1333,11 @@ class TestEnergyBalanceCoreBC:
     basic node uses the boundary entropy gradient rather than the FD
     estimate from staggered cells alone.
 
-    The d/dt equation for the boundary state is the SPIDER bc.c:76-131
-    formula:
+    The d/dt equation for the boundary state is the balance of SPIDER bc.c:76-131
+    in Aragog's radius (dr_cmb > 0):
 
         fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
-        rhs_cmb = (-F_cmb*area_cmb + 0) * fac_cmb - dSdt_s_cmb
-        rhs_cmb *= 2 / dr_cmb
+        rhs_cmb = (dSdt_s_cmb - (-F_cmb*area_cmb + 0) * fac_cmb) * 2 / dr_cmb
 
     where dSdt_s_cmb is dS/dt at the bottom staggered cell and the
     Ecore term is zero (simple core cooling, no internal source).

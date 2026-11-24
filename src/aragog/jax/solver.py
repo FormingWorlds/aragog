@@ -196,7 +196,7 @@ class BoundaryParams(eqx.Module):
         1 = core cooling (Bower+2018 Eq. 37)
         2 = prescribed flux
         3 = prescribed temperature (preserve conduction-derived flux)
-        5 = energy_balance (SPIDER bit-parity): F_cmb derived from
+        5 = energy_balance (SPIDER bc.c formula with (dS/dT)_P): F_cmb derived from
             the boundary entropy gradient (state-tracked dSdr_cmb).
             Used by ``dSdt_energy_balance``.
 
@@ -771,8 +771,7 @@ def _dSdt_energy_balance_parts(
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
 
     # CMB BC: heat_flux[0] is already computed by compute_fluxes.
-    T_cmb = phase_basic.temperature[0]
-    cp_cmb = phase_basic.heat_capacity[0]
+    dTdS_cmb = phase_basic.temperature_slope[0]
     F_cmb_from_dSdr = heat_flux[0]
     lid_fix = lid_terms = None
     if y_lid is not None:
@@ -796,13 +795,10 @@ def _dSdt_energy_balance_parts(
     dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
     dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
 
-    # dSdr_cmb closure equation (SPIDER bc.c:76-131)
+    # dSdr_cmb closure (SPIDER bc.c:76-131), with (dS/dT)_P of the node's blend in place of cp/T
     E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
-    fac_cmb = cp_cmb / (
-        bc.core_heat_capacity
-        * jnp.maximum(T_cmb, 1.0)
-        * bc.tfac_core_avg
-        * jnp.maximum(bc.core_M, 1.0)
+    fac_cmb = 1.0 / (
+        bc.core_heat_capacity * dTdS_cmb * bc.tfac_core_avg * jnp.maximum(bc.core_M, 1.0)
     )
     dSdt_basic_cmb_per_s = -E_tot_cmb * fac_cmb
     d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
@@ -1101,8 +1097,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
         )
     )
 
-    T_cmb = phase_basic.temperature[0]
-    cp_cmb = phase_basic.heat_capacity[0]
+    dTdS_cmb = phase_basic.temperature_slope[0]
     lid_fix = lid_terms = None
     if y_lid is not None:
         heat_flux, *lid_fix, lid_terms = _lid_apply(
@@ -1138,8 +1133,8 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
         )
         d_shell, dT_top = jnp.zeros(0), dT_core_dt_per_s
     # The CMB basic node rides on the core (its top shell cell): its temperature changes at
-    # that rate, converted through the node's own cp/T.
-    dSdt_basic_cmb_per_s = cp_cmb / jnp.maximum(T_cmb, 1.0) * dT_top
+    # that rate, converted through (dS/dT)_P of the node's blend.
+    dSdt_basic_cmb_per_s = dT_top / dTdS_cmb
     d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
 
     rate = jnp.concatenate(

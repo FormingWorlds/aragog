@@ -234,6 +234,7 @@ def generate_reference(
     eos_dir: Path,
     output_path: Path,
     commit_sha: str,
+    base_main: tuple[str, str] | None = None,
 ) -> None:
     """Compute and store reference arrays and source commit SHA.
 
@@ -247,6 +248,10 @@ def generate_reference(
         Destination .npz file path.
     commit_sha : str
         Commit SHA corresponding to the main tree.
+    base_main : tuple of str, optional
+        For a tree that is not on main: the SHA of the main commit it starts from and how its
+        arrays differ from that commit, stored as ``base_main_commit`` and
+        ``base_main_difference``.
 
     Raises
     ------
@@ -285,6 +290,8 @@ def generate_reference(
     res: dict[str, np.ndarray] = {
         'source_commit': np.array(commit_sha),
     }
+    if base_main is not None:
+        res['base_main_commit'], res['base_main_difference'] = map(np.array, base_main)
 
     # 1. 42 quasi-steady RHS arrays across 7 energy configurations
     configs = {
@@ -455,6 +462,13 @@ def main() -> int:
         help='Explicit source commit SHA string.',
     )
     parser.add_argument(
+        '--base-main',
+        nargs=2,
+        metavar=('SHA', 'DIFFERENCE'),
+        default=None,
+        help='For a tree that is not on main: its main base commit and how the arrays differ.',
+    )
+    parser.add_argument(
         '--eos-dir',
         type=Path,
         default=None,
@@ -484,7 +498,7 @@ def main() -> int:
         return 1
     print(f'Generating reference using commit {commit_sha}...')
     try:
-        generate_reference(args.main_tree, eos_dir, args.output, commit_sha)
+        generate_reference(args.main_tree, eos_dir, args.output, commit_sha, args.base_main)
     except RuntimeError as exc:
         print(f'Error: {exc}', file=sys.stderr)
         return 1

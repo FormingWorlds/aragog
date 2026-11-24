@@ -29,14 +29,14 @@ heat_radiogenic  = true
 
 [interior_energetics.aragog]
 backend                     = "jax"          # CVODE + JAX analytic Jacobian
-core_bc                     = "energy_balance"   # SPIDER bit-parity
+core_bc                     = "energy_balance"   # SPIDER formula, slope closure in the melt band
 solver_method               = "cvode"
 mass_coordinates            = true
 atol_temperature_equivalent = 1e-8
 phi_step_cap                = 0.05
 ```
 
-This is the production-default pairing: SUNDIALS CVODE with the JAX-derived analytic Jacobian, the `energy_balance` core BC for SPIDER bit-parity, mass coordinates for SPIDER-equivalent meshing, and a per-call $|\Delta\Phi|$ cap of 0.05.
+This is the production-default pairing: SUNDIALS CVODE with the JAX-derived analytic Jacobian, the `energy_balance` core BC (SPIDER's formula with the entropy slope of the CMB node), mass coordinates for SPIDER-equivalent meshing, and a per-call $|\Delta\Phi|$ cap of 0.05.
 
 !!! tip "EOS table provenance"
     When `interior_struct.module = "zalmoxis"`, Aragog's P-T tables are written by Zalmoxis on the fly from the active PALEOS EOS into `<outdir>/data/aragog_pt/`.
@@ -73,7 +73,7 @@ Aragog supports five core-mantle boundary modes:
 
 | Mode | When to use | Notes |
 |---|---|---|
-| `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the Bower et al. (2018)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy through the CMB. |
+| `"energy_balance"` (default) | Production. SPIDER's formula, with the entropy slope of the CMB node in the melt band. | Implements the Bower et al. (2018)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy through the CMB. |
 | `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
@@ -273,7 +273,7 @@ The JAX-derived analytic Jacobian is the only path that consistently survives th
 
 **Default**: `"energy_balance"`. **Recommendation**: keep `"energy_balance"`.
 
-Implements Bower et al. (2018) `bc.c::core_BC` to bit-parity. The `"quasi_steady"` mode gives a $\sim 19$% T_core offset against SPIDER and is appropriate only for parity-test reproduction.
+Implements Bower et al. (2018) `bc.c::core_BC`, with $1/(\partial T/\partial S)_P$ of the CMB node in place of $c_p/T$ ([the entropy slope at the CMB node](../Explanations/core_bc.md#the-entropy-slope-at-the-cmb-node)). The `"quasi_steady"` mode gives a $\sim 19$% T_core offset against SPIDER and is appropriate only for parity-test reproduction.
 
 ### 4. `interior_energetics.aragog.phi_step_cap`
 
@@ -314,7 +314,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 |---|---|---|---|
 | `interior_energetics.module` | `"aragog"` | `"aragog"` | CVODE + JAX analytic Jacobian, robust at production tolerances. |
 | `interior_energetics.aragog.backend` | `"jax"` | `"jax"` | Eliminates FD-Jacobian noise at the rheological transition. |
-| `interior_energetics.aragog.core_bc` | `"energy_balance"` | `"energy_balance"` | SPIDER bit-parity; correct T_core. |
+| `interior_energetics.aragog.core_bc` | `"energy_balance"` | `"energy_balance"` | SPIDER's formula with the slope closure; correct T_core. |
 | `interior_energetics.aragog.phi_step_cap` | `0.0` | `0.05` | SUNDIALS rootfn caps per-call $|\Delta\Phi|$ excursion. |
 | `planet.prevent_warming` | `false` | `false` | The clamp is energy-non-conserving in warming sub-steps. |
 | `interior_energetics.rtol` / `atol` | `1e-8` / `1e-10` | `1e-8` / `1e-10` | Defaults for Aragog; the `atol` key is not used, Aragog takes its atol from `atol_temperature_equivalent` (`1e-8`). Do not loosen `rtol` above `1e-8`. |

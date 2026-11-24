@@ -71,6 +71,7 @@ class PhaseProperties(NamedTuple):
     tau_y: jax.Array | None = None  # [Pa]
     smth: jax.Array | None = None  # [-]
     visc_solid_weight: jax.Array | None = None  # [-]
+    temperature_slope: jax.Array | None = None  # (dT/dS)_P [K^2 kg/J]
 
 
 class FluxOutput(NamedTuple):
@@ -796,6 +797,7 @@ def evaluate_phase(
         eta_diff=eta_diff,
         tau_y=tau_y,
         smth=state.smth,
+        temperature_slope=state.temperature_slope,
         visc_solid_weight=visc_solid_weight,
     )
 
