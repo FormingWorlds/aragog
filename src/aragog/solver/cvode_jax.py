@@ -107,7 +107,7 @@ class _ByValue:
         )
 
 
-# One static argument tuple per value, so a program's jit cache matches a later build by identity.
+# One static argument tuple per value, so a program's jit cache matches builds by identity.
 _HELD: dict = {}
 
 # Core budget leaves held as program constants, by attribute path: the config constants. The
@@ -131,8 +131,8 @@ _BUDGET_CONSTANTS = frozenset(
 
 
 def _is_constant(path) -> bool:
-    """Whether the leaf at ``path`` of ``(data, phase_params, eos, budget)`` is held as a program
-    constant: every phase parameter, and the budget config constants."""
+    """Whether the leaf at ``path`` of ``(data, phase_params, eos, budget)`` is held as a
+    program constant: every phase parameter, and the budget config constants."""
     part = path[0].idx
     if part == 3:
         return tuple(getattr(k, 'name', None) for k in path[1:]) in _BUDGET_CONSTANTS
@@ -145,7 +145,8 @@ _FORMS: set = set()
 
 
 def clear_jit_cache() -> None:
-    """Drop the compiled CVODE programs, the record of their input forms and the trace counters."""
+    """Drop the compiled CVODE programs, the record of their input forms, the interned static
+    arguments and the trace counters."""
     if _programs.cache_info().currsize:
         for program in _programs():
             program.clear_cache()
@@ -287,10 +288,10 @@ def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts)
 @functools.cache
 def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs, with the core_bc mode and the
-    radiogenic switch static. The RHS and Jacobian take the phase parameters and the budget
-    config constants as one static by-value holder (compile-time constants) and every other
-    leaf flat after its static layout; the step-power and lid-weight programs take all inputs
-    as traced arguments."""
+    radiogenic switch static. The RHS and Jacobian also take as static arguments the by-value
+    holder of the constant leaves (the phase parameters and the budget config constants) and
+    the layout (treedef and mask), and every other leaf flat; the step-power and lid-weight
+    programs take all inputs as traced arguments."""
     import jax
 
     return (
@@ -432,10 +433,13 @@ def build_jax_rhs_and_jacobian(
     -----
     The RHS and Jacobian programs compile once per input form: the mode, the radiogenic
     switch, the shape and dtype of each traced leaf, and the values of the compile-time
-    constants: every leaf of ``phase_params``, the budget leaves named in
-    ``_BUDGET_CONSTANTS``, and the static fields of the EOS (its pressure and entropy grid
-    axes). The EOS table values, the mesh, the boundary values and every other budget leaf are
-    traced, so a structure update with new values on the same grids compiles nothing.
+    constants. Those are every leaf of ``phase_params``, the budget leaves named in
+    ``_BUDGET_CONSTANTS``, and every static field of the inputs, which the treedef holds: the
+    EOS pressure and entropy grid axes, the boundary condition types and ``param_utbl``, the
+    mesh flag ``top_limited``, the static phase fields ``matprop_smooth_width`` and
+    ``rheology``, and the non-array budget attributes. The EOS table values, the mesh and
+    boundary arrays and every other budget leaf are traced, so a structure update with new
+    values on the same grids and settings compiles nothing.
     """
     if core_bc_mode == 'core_module' and core_module_budget is None:
         raise ValueError(
@@ -577,7 +581,8 @@ def build_jax_rhs_and_jacobian(
     # flattened and on the device once per build, not at every call
     leaves = [jnp.asarray(x) for (_, x), m in zip(paths, mask, strict=True) if not m]
     static_args = (core_bc_mode, use_radio, held, (treedef, mask))
-    static_args = _HELD.setdefault(static_args, static_args)  # after the bound, which clears it
+    # after the bound, which can clear _HELD
+    static_args = _HELD.setdefault(static_args, static_args)
 
     rhs_jit = functools.partial(rhs_program, *static_args)
     jac_jit = functools.partial(jac_program, *static_args)

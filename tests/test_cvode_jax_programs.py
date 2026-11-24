@@ -161,8 +161,8 @@ def test_new_input_objects_of_one_form_reuse_the_programs(eos, mode):
 @pytest.mark.parametrize('mode', ['energy_balance', 'core_module'])
 def test_a_second_build_calls_the_programs_by_identity(eos, mode, source, monkeypatch):
     """A factory built again from equal inputs in new objects (an EOS copy, or the same tables
-    parsed again from disk) matches the cached programs by identity at every call: no value
-    comparison of a static input or of a static EOS field runs per call."""
+    parsed again from disk) runs the cached programs and matches them by identity at every
+    call: no ``_ByValue`` or ``StaticArray`` is compared by value per call."""
     from aragog.jax.eos import EntropyEOS_JAX
 
     core = mode == 'core_module'
@@ -174,12 +174,15 @@ def test_a_second_build_calls_the_programs_by_identity(eos, mode, source, monkey
 
 
 def _compared_per_call(mode, rhs, jac, monkeypatch):
-    """The classes of the static inputs that 5 calls (after a first one) compare by value."""
+    """The classes of the static inputs that 5 calls (after a first one, which must trace
+    nothing) compare by value."""
     from aragog.solver import cvode_jax
 
     n = N + EXTRA[mode]
     f, J = np.zeros(n), np.zeros((n, n))
+    traces = dict(_TRACE_COUNTERS)
     assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
+    assert dict(_TRACE_COUNTERS) == traces
     compared = []
     for cls in (cvode_jax._ByValue, StaticArray):
         monkeypatch.setattr(
@@ -268,7 +271,7 @@ def test_each_input_reaches_the_reused_program(eos, name):
 
 
 def test_a_new_phase_value_is_a_new_input_form_and_a_new_eos_value_is_not(eos):
-    """The phase parameters are constants of the programs and the EOS tables are traced: a
+    """The phase parameters are constants of the programs and the EOS table values are traced: a
     changed phase value is a new input form of the bound, a changed table value is not."""
     from aragog.solver import cvode_jax
 
