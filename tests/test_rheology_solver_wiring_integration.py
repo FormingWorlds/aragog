@@ -78,8 +78,7 @@ def test_rheology_off_preserves_main_rhs_and_solve(caplog) -> None:
     and RHS and solve outputs match the pinned main reference across all 54 arrays
     (tolerance 1e-12 per RHS and 1e-9 per solve, relative to each value or to the
     largest value of the array). The JAX solve, here and in the reference, runs on the
-    JAX RHS with the analytic Jacobian (option Z). The energy_balance arrays differ from the
-    main commit ``base_main_commit`` at the CMB element by the slope closure of the CMB node."""
+    JAX RHS with the analytic Jacobian (option Z)."""
     counts_off = _measure_numpy_rhs_counts(SolidRheologyParams(enabled=False))
     assert counts_off['arrhenius_viscosity_core'] == 0
     assert counts_off['yield_stress_core'] == 0
