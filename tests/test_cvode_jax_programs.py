@@ -136,6 +136,16 @@ def _copy(tree):
     return jax.tree_util.tree_map(lambda x: x, tree)
 
 
+def _replaced(tree, changes):
+    """``tree`` with the leaves at the attribute paths of ``changes`` set to their values."""
+    leaves, treedef = jax.tree_util.tree_flatten_with_path(tree)
+    names = [tuple(k.name for k in p) for p, _ in leaves]
+    assert set(changes) <= set(names), set(changes) - set(names)
+    return jax.tree_util.tree_unflatten(
+        treedef, [changes.get(n, x) for n, (_, x) in zip(names, leaves)]
+    )
+
+
 @pytest.mark.parametrize('mode', MODES)
 def test_new_input_objects_of_one_form_reuse_the_programs(eos, mode):
     """A factory built from new phase parameters, a new EOS object and a new budget of the same
@@ -205,6 +215,11 @@ CHANGES = {
         b,
     ),
     'core_profile': lambda e, p, b: (e, p, _budget(rho_cen=12300.0)),
+    'core_constant': lambda e, p, b: (
+        e,
+        p,
+        _replaced(b, {('ds_fusion',): b.ds_fusion * 1.1, ('profiles', 'c_p'): 900.0}),
+    ),
 }
 
 
@@ -226,34 +241,63 @@ def test_each_input_reaches_the_reused_program(eos, name):
     assert np.max(np.abs(got[1] - want[1])) <= 2e-12 * np.max(np.abs(want[1]))
 
 
-def test_a_new_eos_or_phase_value_is_a_new_input_form(eos):
-    """The EOS tables and the phase parameters are constants of the programs, so a changed value
-    is a new input form of the bound, and an equal value in a new object is the same form."""
+def test_a_new_phase_value_is_a_new_input_form_and_a_new_eos_value_is_not(eos):
+    """The phase parameters are constants of the programs and the EOS tables are traced: a
+    changed phase value is a new input form of the bound, a changed table value is not."""
     from aragog.solver import cvode_jax
 
     clear_jit_cache()
     mode = 'energy_balance'
-    _evaluate(mode, eos, PhaseParams())
-    _evaluate(mode, _copy(eos), PhaseParams())
+    _factory(mode, eos, PhaseParams())
+    _factory(mode, _copy(eos), PhaseParams())
+    _factory(mode, *CHANGES['eos_table'](eos, PhaseParams(), None)[:2])
     assert len(cvode_jax._FORMS) == 1
-    _evaluate(mode, *CHANGES['eos_table'](eos, PhaseParams(), None)[:2])
+    _factory(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
     assert len(cvode_jax._FORMS) == 2
-    _evaluate(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
-    assert len(cvode_jax._FORMS) == 3
 
 
-def test_the_budget_constants_are_program_constants(eos):
-    """The material constants and the frozen profile of the core budget are constants of the
-    programs, so a changed central density is a new input form, and a new CMB radius is not."""
+# Budget leaves that follow the structure (the profile fit and the CMB); all others are config.
+STRUCTURE = {
+    ('profiles', 'rho_cen'),
+    ('profiles', 'length_scale'),
+    ('profiles', 'd_scale'),
+    ('profiles', 'r_cmb'),
+    ('profiles', 'p_cmb'),
+    ('r_convecting',),
+}
+CURVES = {
+    'iron': {'melting_curve': 'iron', 'light_element_fraction': 0.1, 'depression': 1.2},
+    'quadratic': {'melting_curve': 'quadratic', 't_m0': 5000.0, 't_m1': 1e-8, 't_m2': -1e-20},
+    'latent_heat': {'melting_curve': 'iron', 'latent_heat': 7.5e5},
+}
+
+
+def _budget_leaves():
+    from aragog.core import build_core_module_budget
+
+    for curve, params in CURVES.items():
+        budget = build_core_module_budget(
+            {**params, 'm_core': 1.94e24, 'p_cen': 3.6e11}, r_cmb=3.48e6, p_cmb_fallback=135e9
+        )
+        for path, _ in jax.tree_util.tree_flatten_with_path(budget)[0]:
+            names = tuple(k.name for k in path)
+            yield pytest.param(budget, names, id=f'{curve}-{".".join(names)}')
+
+
+@pytest.mark.parametrize(('budget', 'path'), list(_budget_leaves()))
+def test_each_budget_leaf_is_a_constant_or_follows_the_structure(eos, budget, path):
+    """A changed config leaf of the core budget is a new input form (a compile-time constant);
+    a changed structure leaf is the same form (traced), so a refit compiles nothing."""
     from aragog.solver import cvode_jax
 
+    value = budget
+    for name in path:
+        value = getattr(value, name)
+    changed = _replaced(budget, {path: float(value) * 1.01 + 1e-3})
     clear_jit_cache()
-    mode = 'core_module'
-    _evaluate(mode, eos, PhaseParams(), _budget())
-    _evaluate(mode, eos, PhaseParams(), _budget(r_cmb=3.40e6))
-    assert len(cvode_jax._FORMS) == 1
-    _evaluate(mode, eos, PhaseParams(), _budget(rho_cen=12300.0))
-    assert len(cvode_jax._FORMS) == 2
+    _factory('core_module', eos, PhaseParams(), budget)
+    _factory('core_module', eos, PhaseParams(), changed)
+    assert len(cvode_jax._FORMS) == (1 if path in STRUCTURE else 2)
 
 
 @pytest.mark.parametrize('mode', MODES)
