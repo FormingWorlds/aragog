@@ -87,10 +87,28 @@ def _state(mode):
     )
 
 
-def _evaluate(mode, eos_jax, params, budget=None):
-    """RHS and Jacobian of a factory built from these inputs, on one mesh and one state."""
+def _fitted(i):
+    """A core budget fitted to one core mass and centre pressure at the i-th CMB of a series
+    that moves as a structure update moves it."""
+    from aragog.core import build_core_module_budget
+
+    return build_core_module_budget(
+        {
+            'melting_curve': 'iron',
+            'light_element_fraction': 0.1,
+            'depression': 1.2,
+            'm_core': 1.94e24,
+            'p_cen': 3.6e11,
+        },
+        r_cmb=3.48e6 * (1 - 1e-3 * i),
+        p_cmb_fallback=135e9 * (1 + 1e-3 * i),
+    )
+
+
+def _factory(mode, eos_jax, params, budget=None):
+    """RHS and Jacobian functions of a factory built from these inputs, on one mesh."""
     mesh = _make_mesh(N=N)
-    rhs, jac, _ = build_jax_rhs_and_jacobian(
+    return build_jax_rhs_and_jacobian(
         eos_jax=eos_jax,
         phase_params=params,
         mesh_arrays=mesh,
@@ -100,7 +118,12 @@ def _evaluate(mode, eos_jax, params, budget=None):
         core_bc_mode=mode,
         core_module_budget=budget,
         core_module_ra_crit_cmb=450.0 if mode == 'core_module' else None,
-    )
+    )[:2]
+
+
+def _evaluate(mode, eos_jax, params, budget=None):
+    """RHS and Jacobian of a factory built from these inputs, on one mesh and one state."""
+    rhs, jac = _factory(mode, eos_jax, params, budget)
     n = N + EXTRA[mode]
     f, J = np.zeros(n), np.zeros((n, n))
     assert rhs(0.0, _state(mode), f) == 0
@@ -127,6 +150,45 @@ def test_new_input_objects_of_one_form_reuse_the_programs(eos, mode):
     assert len(_SEEN) == 0
     for a, b in zip(first, second):
         np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.parametrize('mode', ['energy_balance', 'core_module'])
+def test_a_second_build_calls_the_programs_by_identity(eos, mode, monkeypatch):
+    """A factory built again from equal inputs in new objects matches the cached programs by
+    identity at every call: no value comparison of a static input runs per call."""
+    from aragog.solver import cvode_jax
+
+    core = mode == 'core_module'
+    clear_jit_cache()
+    _evaluate(mode, eos, PhaseParams(), _budget() if core else None)
+    rhs, jac = _factory(mode, _copy(eos), PhaseParams(), _budget() if core else None)
+    n = N + EXTRA[mode]
+    f, J = np.zeros(n), np.zeros((n, n))
+    assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
+    by_value, eq = [], cvode_jax._ByValue.__eq__
+    monkeypatch.setattr(
+        cvode_jax._ByValue, '__eq__', lambda a, b: by_value.append(a is b) or eq(a, b)
+    )
+    for _ in range(5):
+        assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
+    assert by_value.count(False) == 0
+
+
+def test_a_refitted_core_profile_reuses_the_programs(eos):
+    """Core budgets fitted to one core mass at a moving CMB radius and pressure (as a structure
+    update refits them) run the programs of the first budget: no trace, no compile."""
+    clear_jit_cache()
+    mode = 'core_module'
+    budgets = [_fitted(i) for i in range(4)]
+    for name in ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb'):
+        assert len({float(getattr(b.profiles, name)) for b in budgets}) == 4, name
+    _evaluate(mode, eos, PhaseParams(), budgets[0])
+    traces = dict(_TRACE_COUNTERS)
+    _SEEN.clear()
+    for b in budgets[1:]:
+        _evaluate(mode, _copy(eos), PhaseParams(), b)
+    assert dict(_TRACE_COUNTERS) == traces
+    assert len(_SEEN) == 0
 
 
 CHANGES = {
