@@ -456,6 +456,7 @@ class TestSolver:
         np.testing.assert_allclose(got, want, rtol=1e-10, atol=1e-30)
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.parametrize(('frac', 'refused'), [(0.25, True), (0.75, False)])
@@ -569,6 +570,7 @@ class TestFluxSolver:
         t, y = (np.array(v, dtype=float) for v in (sol.get('energy_trace') or (sol.t, sol.y)))
         return s, t, y
 
+    @pytest.mark.usefixtures('keep_energy_trace')
     @pytest.mark.physics_invariant
     @pytest.mark.parametrize('F_atm', [200.0, 1000.0])
     def test_a_lid_melted_back_past_its_stop_returns_to_it(self, eos, F_atm):
@@ -586,6 +588,7 @@ class TestFluxSolver:
         assert undershoot < lo - s._lid_lo_bound(lo)
         assert abs(float(d[-1]) - lo) <= max(1e-3 * abs(undershoot), 1e-12 * lo)
 
+    @pytest.mark.usefixtures('keep_energy_trace')
     @pytest.mark.physics_invariant
     def test_the_rate_below_the_stop_pulls_a_melting_lid_back(self, eos):
         """At a melting state of the melt-back solve moved 1e-7 m below delta_lo, the stop factor
@@ -610,6 +613,7 @@ class TestFluxSolver:
         got = _physical(_factory_rhs(s, s.jax_lid_params())[0], s._build_nondim_scales())(x)
         np.testing.assert_allclose(got[-2], want[-2], rtol=1e-9)
 
+    @pytest.mark.usefixtures('keep_energy_trace')
     @pytest.mark.physics_invariant
     def test_a_lid_that_freezes_after_an_undershoot_grows_from_its_stop(self, eos):
         """When the flux from below falls under the prescribed flux after the lid reached its

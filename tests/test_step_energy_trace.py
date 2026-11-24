@@ -23,10 +23,10 @@ def _pulse(t: float) -> float:
     return np.exp(-(((t - T_PULSE) / WIDTH) ** 2))
 
 
-def _solve(n_out=2, rootfn=None):
+def _solve(n_out=2, rootfn=None, max_steps=100000, nodes=None):
     """Integrate y' = -AMP pulse(t) over [0, 1] through ``_solve_cvode``."""
     s = es.EntropySolver.__new__(es.EntropySolver)
-    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', n_out, 100000
+    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', n_out, max_steps
     # A time-only pulse has no state signature, so a step cap makes CVODE step through it.
     return s._solve_cvode(
         start_time=0.0,
@@ -37,6 +37,7 @@ def _solve(n_out=2, rootfn=None):
         max_step=0.01,
         rhs=lambda t, y: np.array([-AMP * _pulse(t)]),
         phi_cap_rootfn=rootfn,
+        nodes=nodes,
     )
 
 
@@ -49,7 +50,7 @@ def test_trace_filters_nodes():
     t, y = np.array([0.0, 1.0]), np.array([[1.0, 5.0], [2.0, 6.0]])
     nodes = [(0.3, [1.1, 2.1]), (0.2, [9, 9]), (0.5, [1.2, 2.2]), (0.5, [9, 9]), (1.5, [9, 9])]
     sink = es.ListSink()
-    call = es.CallNodes(sink, t[0], y[:, 0])
+    call = es.CallNodes(sink, t[0], y[:, 0], t)
     for tn, yn in nodes:
         call.record(tn, yn)
     call.end(t, y)
@@ -141,6 +142,49 @@ def test_recording_a_firing_root_leaves_the_solution_unchanged():
     assert sol.flag == 2 and np.array_equal(sol.values.t, [0.0, 0.45, 0.52])
     assert np.array_equal(ref.values.y, sol.values.y) and ref.roots.t[0] == sol.roots.t[0]
     assert np.any(np.diff(seen) < 0), 'the root search must revisit earlier times'
+
+
+@pytest.mark.unit
+@pytest.mark.xfail(
+    reason='scikits.odes loses an exception raised in a CVODE callback; egpbos/odes#1 '
+    'raises it out of solve unchanged',
+    strict=False,
+)
+def test_an_error_of_the_node_stream_is_raised_after_the_solve():
+    """A sink that raises on its 3rd node, inside the CVODE root function, makes the call raise
+    that KeyError once CVODE returns, not fail as "rootfinding function failed" (status -1)."""
+
+    class Broken(es.ListSink):
+        def add(self, t, y):
+            if len(self.t) == 2:
+                raise KeyError('injected')
+            super().add(t, y)
+
+    sink = Broken()
+    with pytest.raises(KeyError, match='injected'):
+        _solve(n_out=11, nodes=sink)
+    assert len(sink.t) == 2 and sink.t[0] == 0.0 and 0.0 < sink.t[1] < 0.1
+
+
+@pytest.mark.unit
+def test_a_failed_call_passes_no_node_past_its_returned_end():
+    """With 30 steps per output interval of 0.1 and steps of at most 0.01, CVODE stops before
+    t = 1: the root function saw steps past the last returned output time, and none of them
+    reaches the nodes, which end at that time as the stored-list filter did."""
+    seen = []
+
+    def watch(t, y, g):
+        seen.append(float(t))
+        g[0] = 1.0
+        return 0
+
+    sink = es.ListSink()
+    res = _solve(n_out=11, rootfn=watch, max_steps=12, nodes=sink)
+    t_nodes = np.asarray(sink.t)
+    assert res.status == -1 and res.t[-1] < 1.0
+    assert max(seen) > res.t[-1] + 1e-3  # the call stepped past the returned end
+    assert t_nodes[-1] == res.t[-1] and np.all(np.diff(t_nodes) > 0)
+    assert t_nodes.size > 2 * res.t.size  # the steps before the end are kept
 
 
 @pytest.mark.smoke

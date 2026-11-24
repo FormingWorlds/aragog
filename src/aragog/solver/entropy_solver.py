@@ -63,6 +63,7 @@ from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
 from aragog.solver.energy_stream import (
     CallNodes,
+    CMBLedger,
     EnergyQuadrature,
     FloorMin,
     ListSink,
@@ -5065,13 +5066,21 @@ class EntropySolver:
             Without ``nodes``, also carries ``energy_trace``, the nondimensional ``(t, y)``
             quadrature nodes of the per-call energy integrals.
         """
+        # CVODE calls the root function at t0, every accepted step end, every output and,
+        # on a fired root, the root-search points; CallNodes keeps the increasing ones up to
+        # the call end as quadrature nodes. Without a user root function a g=1 one records.
+        zero_span = not (end_time > start_time)
+        if tspan is None and not zero_span:
+            tspan = self._output_grid(start_time, end_time)
+        sink = ListSink() if nodes is None else nodes
+        call = CallNodes(sink, start_time, y0, [start_time] if zero_span else tspan, not join)
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
         # but CVODE rejects it with "tout too close to t0". This
         # happens during Aragog's static-init PROTEUS iterations where
         # start_time == end_time == 0. Return a scipy-compatible
         # result without invoking CVODE at all.
-        if not (end_time > start_time):
+        if zero_span:
             result = OptimizeResult()
             y_arr = np.asarray(y0, dtype=float).ravel().reshape(-1, 1)
             result.t = np.array([float(start_time)])
@@ -5083,6 +5092,9 @@ class EntropySolver:
             # flag attributes are always present on a _solve_cvode result.
             result.cvode_flag = 0
             result.cvode_flag_name = _cvode_flag_name(0)
+            call.end(result.t, result.y)  # the start state, a merged lid among them
+            if nodes is None:
+                result.energy_trace = sink.arrays()
             return result
 
         # Wrap the RHS into the in-place (t, y, ydot) -> int signature
@@ -5210,11 +5222,6 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
-        # CVODE calls the root function at t0, every accepted step end, every output and,
-        # on a fired root, the root-search points; CallNodes keeps the increasing ones up to
-        # the call end as quadrature nodes. Without a user root function a g=1 one records.
-        sink = ListSink() if nodes is None else nodes
-        call = CallNodes(sink, start_time, y0, start=not join)
         user_rootfn = cvode_options.get('rootfn')
         user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
         n_user = int(cvode_options.get('nr_rootfns', 1)) if user_rootfn is not None else 1
@@ -5242,8 +5249,6 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
-        if tspan is None:
-            tspan = self._output_grid(start_time, end_time)
         cvode_sol = solver.solve(
             tspan,
             np.asarray(y0, dtype=float).ravel(),
@@ -6508,6 +6513,8 @@ class EntropySolver:
         if guard is None:
             guard = TableGuard(self)
             feed([guard], *(sol.get('energy_trace') or (sol.t, sol.y)))
+        if guard.error is not None:
+            raise guard.error
         return guard.bad
 
     def _log_solution_outcome(self, end_time: float) -> None:
@@ -6610,7 +6617,9 @@ class EntropySolver:
             feed([quad], t_pts, y_pts, change)
         return quad.result(sol)
 
-    def _check_cmb_ledger(self, t_pts, y_arr, p_cmb, q, d_top=None) -> None:
+    def _check_cmb_ledger(
+        self, t_pts=None, y_arr=None, p_cmb=None, q=0.0, d_top=None, ledger=None
+    ) -> None:
         """Check the CMB closure of a call against the solver's own error bound.
 
         energy_balance and gradient: the core heat change ``r = C (T_end - T_start) + q``
@@ -6629,91 +6638,18 @@ class EntropySolver:
         call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
         a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
 
+        The solve passes the ``CMBLedger`` it filled while CVODE stepped as ``ledger``;
+        without it the check runs on the nodes ``t_pts``, ``y_arr`` with ``p_cmb`` or ``d_top``.
+
         Raises
         ------
         CMBClosureError
             On a node slope that is not finite and positive, or a miss above 10 B.
         """
-        self.cmb_ledger = None
-        n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
-        tol = getattr(self, '_call_tol', None)  # set by solve()
-        if ev is None or tol is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
-            return
-        atol, rtol = tol
-        if self._core_bc == 'gradient':
-            dr, g = np.diff(self._r_stag_flat), y_arr[: n + 1]
-            S0 = y_arr[n + 1] - dr @ g[1:n]
-            w0 = rtol * np.abs(y_arr[n + 1]) + atol + dr @ (rtol * np.abs(g[1:n]) + atol)
-            off = float(self._r_basic_flat[0] - self._r_stag_flat[0])  # to the staggered radius
-        else:
-            S0, g = y_arr[0], y_arr[n : n + 1]
-            w0 = rtol * np.abs(S0) + atol
-            off = -0.5 * float(self._cmb_dr_cmb)  # to the basic-node midpoint
-        S_node = S0 + g[0] * off
-        w = w0 + abs(off) * (rtol * np.abs(g[0]) + atol)
-        h = 1.0e-3
-        ev.set_pressure(np.full(S_node.size, float(self._P_basic_flat[0])))
-
-        def blend(S):
-            ev.set_entropy(S)
-            ev.update()
-            return np.ravel(ev.temperature()), np.ravel(ev.temperature_slope())
-
-        T, slope = blend(S_node)
-        bad = np.flatnonzero(~(np.isfinite(slope) & (slope > 0.0)))
-        if bad.size:
-            k = int(bad[0])
-            raise CMBClosureError(
-                f'CMB closure: node slope (dT/dS)_P = {slope[k]:.6g} at t = {t_pts[k]:.6e} yr, '
-                f'S = {S_node[k]:.6g} J/kg/K; the closure needs a finite positive slope'
-            )
-        s_tab = (blend(S_node + h)[0] - blend(S_node - h)[0]) / (2.0 * h)
-        nst, n_slots = t_pts.size - 1, y_arr.shape[0]
-        floor = np.sqrt(n_slots) * nst * float(np.max(slope * w))
-        if d_top is None:
-            C = float(self._core_cp * self._core_tfac * self._core_M)
-            t_s = t_pts * SECS_PER_YEAR
-            idx = np.unique(np.r_[np.arange(0, t_pts.size, 2), t_pts.size - 1])
-            q2 = float(np.trapezoid(p_cmb[idx], t_s[idx]))
-            scale = float(np.trapezoid(np.abs(p_cmb), t_s))  # int |E| dt: E can change sign
-            r, extra = C * (T[-1] - T[0]) + q, abs(q - q2) / 3.0
-            floor *= C
-        else:
-            scale = float(np.sum(np.abs(np.diff(d_top))))
-            r = (T[-1] - T[0]) - (d_top[-1] - d_top[0])
-            extra = (
-                np.sqrt(n_slots) * nst * (atol + rtol * float(np.max(np.abs(d_top - d_top[0]))))
-            )
-        excluded = bool(np.any(s_tab <= 1.0e-6 * slope))  # a flat cell leaves round-off only
-        rel = float(np.max(np.abs(s_tab / slope - 1.0)))
-        bound = rel * scale + extra + floor
-        self.cmb_ledger = {'r': r, 'bound': bound, 'rel': rel, 'excluded': excluded}
-        counts = self._cmb_ledger_counts
-        if excluded:
-            counts['excluded'] += 1
-            logger.warning(
-                'EntropySolver: CMB closure check skipped for the call to t = %.6e yr: the node '
-                'table slope is <= 1e-6 of the closure slope (padded or clamped cell); %d call(s) '
-                'skipped so far',
-                t_pts[-1],
-                counts['excluded'],
-            )
-            return
-        counts['missed'] += int(abs(r) > bound)
-        if abs(r) > 10.0 * bound:
-            raise CMBClosureError(
-                f'CMB closure fault in the call to t = {t_pts[-1]:.6e} yr: ledger miss {r:.6g} '
-                f'is above 10x the solver bound {bound:.6g} ({"J" if d_top is None else "K"})'
-            )
-        if abs(r) > bound:
-            logger.warning(
-                'EntropySolver: CMB closure ledger miss %.6g above the bound %.6g in the call '
-                'to t = %.6e yr; %d call(s) missed so far',
-                r,
-                bound,
-                t_pts[-1],
-                counts['missed'],
-            )
+        if ledger is None:
+            ledger = CMBLedger(self, core=d_top is not None)
+            ledger.add(np.asarray(t_pts, dtype=float), np.atleast_2d(y_arr), p=p_cmb, d=d_top)
+        ledger.finish(q)
 
     def _core_capacity(self, budget, y_arr) -> npt.NDArray:
         """C_eff [J/K] of the core at the node states ``y_arr`` (n_state, n_nodes).

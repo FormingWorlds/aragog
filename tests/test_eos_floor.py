@@ -98,6 +98,7 @@ def _floor_logs(caplog):
     ]
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.parametrize('margin', [_UNSET, 0.0, -50.0], ids=['default', 'zero', 'negative'])
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_the_default_config_leaves_the_floor_off(
@@ -574,6 +575,7 @@ def _scipy_stop_below(monkeypatch):
 @pytest.mark.parametrize(
     ('method', 'start_time'), [('cvode', 1.0e9), ('bdf', 9.0e9), ('radau', 1.2345678e9)]
 )
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
     shared_eos, caplog, monkeypatch, method, start_time
 ):

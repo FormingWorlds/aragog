@@ -730,6 +730,7 @@ def test_ledger_over_a_solve(eos, heating):
     assert s._lid_last.delta > 5.0 * s._lid_delta_lo
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('n_nodes', [10, 20, 40])
 def test_lid_growth_sanity_against_quasi_static_neumann(eos, n_nodes, monkeypatch):
@@ -898,6 +899,7 @@ def _thin_lid_trace(eos, caplog, dips, atol_sf):
     [(lambda n: 1.5, False), (lambda n: 2.0 * math.sqrt(n), True)],
     ids=['solver precision', 'twice the slack'],
 )
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_lid_below_the_melt_back_stop_by_the_solver_precision_passes(
     eos, caplog, where, dips, raises, atol_sf
 ):

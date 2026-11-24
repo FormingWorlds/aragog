@@ -507,6 +507,7 @@ class TestOpenTotalSolver:
             ws.append(w)
         assert ws[0] == 1.0 and 1.0 - 1e-9 < ws[1] < 1.0 and 0.1 < min(ws[2:4]) < 0.95
 
+    @pytest.mark.usefixtures('keep_energy_trace')
     @pytest.mark.physics_invariant
     def test_the_booked_surface_energy_closes_the_energy_sum(self, eos):
         """The booked surface integral of a call is the trapezoid, over the accepted states,

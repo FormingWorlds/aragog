@@ -1,16 +1,20 @@
 """``aragog.solver.energy_stream``: the per-call energy integrals and node checks in chunks.
 
-Checks that the node filter of a CVODE call equals the stored-list filter across the chunk and
-tail boundaries, including a root step whose end lies past the call end; that the joined nodes
-of a solve are deduplicated and converted as the stored trace was; that the chunked trapezoid
-equals the analytic integral of a linear power and does not drop the interval between chunks;
-that a batch failure in a later chunk falls back to the per-node powers from that chunk on;
-that a failed check is raised after the solve, not inside a callback; and that the memory of
-the recording does not grow with the node count.
+Checks that the node filter of a CVODE call equals the stored-list filter, including a root
+step whose end lies past the call end, and passes no node past an output time CVODE has not
+returned; that the joined nodes of a solve are deduplicated and converted as the stored trace
+was; that every consumer gives with 4-node chunks what it gives on the whole trace when its
+extreme or its fault lies in a later chunk (the trapezoid, the core heat tolerance, the CMB
+ledger, the floor minimum, the table guard, the regime check, the lid weight maximum); that
+the checks raise in the order of the stored trace; that a batch failure in a later chunk falls
+back from that chunk on and names the earlier steps; that a failed check is raised after the
+solve, not inside a callback; and that the memory of the recording does not grow with the node
+count.
 """
 
 from __future__ import annotations
 
+import re
 import tracemalloc
 from types import SimpleNamespace
 
@@ -43,13 +47,14 @@ def _list_filter(nodes, t, y, start=True):
 def _cvode_like_nodes(rng, t0, n, root):
     """Root-function times of a CVODE call: increasing step ends with output points behind
     them, and with ``root`` a last step past the root followed by root-search points around
-    it. Returns the times and the call end."""
+    it. Returns the times, the call end and the output times."""
     ends = t0 + np.cumsum(rng.uniform(1e-3, 4e-3, n))
-    times = []
+    times, t_out = [], [t0]
     for k, te in enumerate(ends):
         times.append(float(te))
         if k % 7 == 3:  # an output point inside the step just taken
             times.append(float(te - 0.3 * (te - (ends[k - 1] if k else t0))))
+            t_out.append(times[-1])
     if root:
         t_end = float(ends[-1] + 2e-3)
         times.append(t_end + 1.5e-3)  # the step that crosses the root
@@ -58,7 +63,8 @@ def _cvode_like_nodes(rng, t0, n, root):
         t_end = float(ends[-1] + 1e-3)
         times.append(t_end + 2e-3)  # CVODE steps past the call end and interpolates back
         times.append(t_end)
-    return times, t_end
+    t_out.append(t_end + (1e-2 if root else 0.0))
+    return times, t_end, np.array(t_out)
 
 
 @pytest.mark.parametrize('root', [False, True])
@@ -74,14 +80,15 @@ def test_call_nodes_equal_the_list_filter_across_chunk_and_tail_boundaries(
     expected_t, expected_y, t0 = [], [], 0.0
     y_end = None
     for start in (True, False):  # the second call continues the first one's end node
-        times, t_end = _cvode_like_nodes(rng, t0, 300, root)
+        times, t_end, t_out = _cvode_like_nodes(rng, t0, 300, root)
         nodes = [(tn, rng.normal(size=3)) for tn in times]
         y0 = rng.normal(size=3) if start else y_end
         t = np.array([t0, t_end])
         y = np.column_stack([y0, rng.normal(size=3)])
-        call = st.CallNodes(sink, t0, y0, start=start)
+        call = st.CallNodes(sink, t0, y0, t_out, start=start)
         for tn, yn in nodes:
             call.record(tn, yn)
+            assert sink.t[-1] <= t_end  # no node past the call end before the call returns
         call.end(t, y)
         ts, ys = _list_filter(nodes, t, y, start=start)
         assert call.count == ts.size
@@ -101,12 +108,12 @@ def test_a_call_without_nodes_and_without_a_start_passes_only_its_end():
     length passes nothing, and an empty sink has no trace."""
     sink = st.ListSink()
     assert sink.arrays() is None
-    call = st.CallNodes(sink, 2.0, np.zeros(2), start=False)
+    call = st.CallNodes(sink, 2.0, np.zeros(2), [2.0, 3.0], start=False)
     call.end(np.array([2.0, 3.0]), np.array([[0.0, 1.0], [0.0, 2.0]]))
     t, y = sink.arrays()
     np.testing.assert_array_equal(t, [3.0])
     np.testing.assert_array_equal(y, [[1.0], [2.0]])
-    empty = st.CallNodes(sink, 3.0, np.zeros(2), start=False)
+    empty = st.CallNodes(sink, 3.0, np.zeros(2), [3.0], start=False)
     empty.end(np.array([3.0, 3.0]), np.ones((2, 2)))
     assert empty.count == 0 and sink.arrays()[0].size == 1
 
@@ -165,6 +172,7 @@ def _ledger_solver(powers):
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = powers
     s._warned = set()
+    s.parameters = SimpleNamespace(solver=SimpleNamespace(strict_accepted_range=False))
     return s
 
 
@@ -241,8 +249,9 @@ def test_the_table_guard_finds_the_first_bad_node_across_chunks(monkeypatch):
 
 
 def test_streamed_recording_memory_does_not_grow_with_the_node_count():
-    """100,000 nodes of 80 floats (64 MB of states) pass the filter and the chunked conversion
-    with a peak below 12 MB; a stored list of (t, y) pairs needs about 840 B a node, 84 MB."""
+    """100,000 nodes of 80 floats (64 MB of states), with an output time every 100 nodes, pass
+    the filter and the chunked conversion with a peak below 12 MB; a stored list of (t, y)
+    pairs needs about 840 B a node, 84 MB."""
     n_state, n = 80, 100_000
     y = np.linspace(1.0, 2.0, n_state)
     counter = SimpleNamespace(n=0, add=None)
@@ -254,7 +263,7 @@ def test_streamed_recording_memory_does_not_grow_with_the_node_count():
     tracemalloc.start()
     try:
         nodes = st.SolveNodes([counter], 1.0, np.ones(n_state), np.zeros(n_state), n_state)
-        call = st.CallNodes(nodes, 0.0, y)
+        call = st.CallNodes(nodes, 0.0, y, np.arange(0.0, n + 1.0, 100.0))
         for i in range(1, n):
             call.record(float(i), y)
         call.end(np.array([0.0, float(n)]), np.column_stack([y, y]))
@@ -294,6 +303,318 @@ def test_a_batch_that_fails_in_a_later_chunk_falls_back_from_that_chunk_on(monke
     assert batch_calls == [8, 8]  # the third chunk does not try the batch again
     np.testing.assert_array_equal(numpy_nodes, t[8:])
     assert sum('batch step powers evaluation failed' in r.message for r in caplog.records) == 1
+    named = 'steps 0 to 7 of the call had the batch checks only'
+    assert sum(named in r.message for r in caplog.records) == 1
     assert s._batch_powers_calls == 1
     exact = rate[0] * (10.0 + 0.5 * 10.0**2) * st.SECS_PER_YEAR
     assert out['F_int'] == pytest.approx(exact, rel=1e-13)
+
+
+def test_a_failed_call_passes_no_node_past_its_last_returned_output():
+    """CVODE returns the output time 1 and then fails after 59 steps toward 2: those steps reach
+    the sink neither during the call nor at its end, as with the stored list (the base keeps
+    the nodes up to the returned end); a joined start still counts as the call start."""
+    sink = st.ListSink()
+    call = st.CallNodes(sink, 0.0, np.zeros(1), [0.0, 1.0, 2.0])
+    steps = np.r_[0.4, 0.8, 1.1, 1.1 + np.cumsum(np.full(59, 0.01))]
+    for tn in steps:
+        call.record(tn, np.array([tn]))
+        assert sink.t[-1] <= 1.0
+    assert sink.t == [0.0, 0.4, 0.8]  # 1.1 waits: CVODE has not passed a later step
+    call.end(np.array([0.0, 1.0]), np.array([[0.0, 1.0]]))
+    np.testing.assert_array_equal(sink.arrays()[0], [0.0, 0.4, 0.8, 1.0])
+    assert call.count == 4 and call.recorded == steps.size
+
+
+def test_nodes_at_a_waiting_time_are_dropped_so_the_wait_stays_bounded():
+    """10,000 root-function calls at the time of a waiting node never enter the wait list, since
+    the stored filter would never keep them; a time below the last passed node is dropped too."""
+    sink = st.ListSink()
+    call = st.CallNodes(sink, 0.0, np.zeros(1), [0.0, 5.0])
+    call.record(1.0, np.ones(1))
+    for _ in range(10_000):
+        call.record(1.0, np.full(1, 2.0))
+    call.record(0.0, np.ones(1))
+    assert len(call._wait) == 1 and call.recorded == 10_002
+    call.end(np.array([0.0, 5.0]), np.array([[0.0, 3.0]]))
+    np.testing.assert_array_equal(sink.arrays()[0], [0.0, 1.0, 5.0])
+    np.testing.assert_array_equal(sink.arrays()[1], [[0.0, 1.0, 3.0]])
+
+
+def test_the_floor_minimum_of_a_later_chunk_and_of_an_earlier_one_survive_the_chunks(
+    monkeypatch,
+):
+    """The floor entropy is lowest in chunk 1 and the cell entropy lowest in chunk 3: both 4-node
+    chunks and one chunk give the minimum of the two; a minimum that the last chunk overwrote
+    would be 450, outside any tolerance."""
+    s = SimpleNamespace(_n_stag=2)
+    w = np.array([[0.5, 0.5], [1.0, 0.0]])
+    y = np.full((3, 11), 500.0)
+    y[:2, 1] = [430.0, 440.0]  # floor entropies 435 and 430 at node 1
+    y[1, 9] = 420.0  # a cell at 420 in chunk 3; its floor entropy is 460
+    y[:2, 10] = 450.0
+    lows = []
+    for chunk in (4, 2048):
+        monkeypatch.setattr(st, 'CHUNK', chunk)
+        floor = st.FloorMin(s, w)
+        st.feed([floor], np.arange(11.0), y)
+        lows.append(floor.low)
+    assert lows == [420.0, 420.0]
+    y[1, 9] = 500.0
+    floor = st.FloorMin(s, w)
+    monkeypatch.setattr(st, 'CHUNK', 4)
+    st.feed([floor], np.arange(11.0), y)
+    assert floor.low == 430.0 and floor.low < 450.0
+
+
+@pytest.mark.parametrize('strict', [False, True])
+def test_the_strict_table_guard_keeps_the_first_bad_node_of_a_later_chunk(monkeypatch, strict):
+    """With ``strict_accepted_range`` the guard keeps an ``AcceptedStateRangeError`` for the
+    first bad node (node 6, chunk 2) with the message of the failure; off, it keeps none."""
+    monkeypatch.setattr(st, 'CHUNK', 4)
+    s = _ledger_solver(None)
+    s._n_stag, s.entropy_eos = 2, SimpleNamespace(S_min=100.0, S_max=200.0)
+    s.parameters = SimpleNamespace(solver=SimpleNamespace(strict_accepted_range=strict))
+    s._stag_entropy = lambda y: np.asarray(y[:2])
+    y = np.full((2, 12), 150.0)
+    y[0, 6], y[1, 10] = 250.0, 20.0
+    guard = st.TableGuard(s)
+    st.feed([guard], np.arange(12.0), y)
+    assert guard.bad[0] == 6.0
+    if strict:
+        assert isinstance(guard.error, es.AcceptedStateRangeError)
+        assert str(guard.error) == guard.bad[1] and 'cell 0 entropy 250' in guard.bad[1]
+    else:
+        assert guard.error is None
+
+
+def test_the_regime_check_keeps_the_first_refused_state_of_a_later_chunk(monkeypatch):
+    """The regime refusal of the T_core row (stand-in raising below 2000 K) fires first in chunk
+    2 at node 5; the error of chunk 3 (node 9) does not replace it."""
+    import aragog.core.regime as regime
+
+    def refuse(budget, t_cmb):
+        cold = np.flatnonzero(np.asarray(t_cmb) < 2000.0)
+        if cold.size:
+            raise ValueError(f'refused at T_core = {t_cmb[cold[0]]:.1f} K')
+
+    monkeypatch.setattr(regime, 'refuse_unmodelled_regime', refuse)
+    monkeypatch.setattr(st, 'CHUNK', 4)
+    y = np.full((3, 12), 3000.0)
+    y[2, 5], y[2, 9] = 1900.0, 1500.0
+    check = st.RegimeCheck(SimpleNamespace(_n_stag=1), budget=None)
+    st.feed([check], np.arange(12.0), y)
+    assert isinstance(check.error, ValueError) and '1900.0 K' in str(check.error)
+
+
+def _core_solver(stratified):
+    """A core_module solver stub: C_eff linear in T_core, the real tolerance scale."""
+    s = _ledger_solver(lambda t, y: np.zeros(7))
+    s._core_bc, s._n_stag, s._call_tol = 'core_module', 1, (1e-8, 1e-8)
+    shell = SimpleNamespace(n_cells=0, heat_change=lambda d: 0.0)
+    s._core_module_budget = SimpleNamespace(
+        stratification=stratified, shell=shell, heat_change=lambda t0, d: 7.0e26 * d
+    )
+    s._core_capacity = lambda budget, y: 1.0e27 * (1.0 + 1e-4 * y[2])
+    s._core_shell = lambda: None
+    s._cmb_node_phase = None
+    s.cmb_ledger, s._cmb_ledger_counts = None, {'missed': 0, 'excluded': 0}
+    return s
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('stratified', [False, True])
+def test_core_heat_and_its_tolerance_scale_equal_the_one_chunk_values(monkeypatch, stratified):
+    """Over 11 nodes of a falling T_core the core heat change and its tolerance scale with 4-node
+    chunks equal the whole-trace formula ``sum_k C_k (atol + rtol |d_k - d_0|)`` to 1e-14; a
+    chunk that counted its carried node again would add at least 1e27 atol = 1e19 J per
+    chunk boundary, 1e-3 of the scale."""
+    t = np.linspace(0.0, 10.0, 11)
+    T = 4000.0 - 3.0 * t**1.5
+    y = np.vstack([np.full(11, 3000.0), np.zeros(11), T])
+    change = (T - 4000.0)[None, :]
+    out = []
+    for chunk in (4, 2048):
+        monkeypatch.setattr(st, 'CHUNK', chunk)
+        s = _core_solver(stratified)
+        s._solution = OptimizeResult(t=t, y=y)
+        quad = st.EnergyQuadrature(s)
+        st.feed([quad], t, y, change)
+        out.append(quad.result(s._solution))
+    d = change[0] - change[0, 0]
+    c = 1.0e27 * (1.0 + 1e-4 * T)
+    tol = float(np.sum(c[1:] * (1e-8 + 1e-8 * np.abs(d[1:]))))
+    assert out[0]['core_tol'] == pytest.approx(tol, rel=1e-14)
+    assert out[1]['core_tol'] == pytest.approx(tol, rel=1e-14)
+    assert 1e27 * 1e-8 > 1e-4 * tol  # one recounted boundary node is far outside 1e-14
+    heat = float(np.sum(0.5 * (c[1:] + c[:-1]) * np.diff(d))) if stratified else 7e26 * d[-1]
+    assert out[0]['core'] == pytest.approx(heat, rel=1e-13) and out[0]['core'] < 0.0
+
+
+class _Blend:
+    """CMB node blend stand-in: T = S^2 / 1000 with the slope ``2 S / 1000 (1 + bump(S))``."""
+
+    def __init__(self, bump):
+        self.bump = bump
+
+    def set_pressure(self, P):
+        self.P = P
+
+    def set_entropy(self, S):
+        self.S = np.asarray(S, dtype=float)
+
+    def update(self):
+        pass
+
+    def temperature(self):
+        return self.S**2 / 1000.0
+
+    def temperature_slope(self):
+        return 2.0 * self.S / 1000.0 * (1.0 + self.bump(self.S))
+
+
+def _cmb_solver(bump, core_bc='energy_balance'):
+    s = _ledger_solver(None)
+    s._core_bc, s._n_stag, s._call_tol = core_bc, 2, (1e-8, 1e-8)
+    s._cmb_node_phase = _Blend(bump)
+    s._cmb_dr_cmb, s._P_basic_flat = 2.0e4, np.array([1.3e11])
+    s._core_cp, s._core_tfac, s._core_M = 800.0, 1.1, 1.9e24
+    s.cmb_ledger, s._cmb_ledger_counts = None, {'missed': 0, 'excluded': 0}
+    return s
+
+
+def _cmb_nodes(n):
+    """Nodes of a cooling call: the CMB node entropy ``S0 + 10`` and its temperature change."""
+    t = np.linspace(0.0, 30.0, n) ** 1.2
+    S0 = 3000.0 - 2.0 * t
+    y = np.vstack([S0, S0 + 5.0, np.full(n, -1e-3)])
+    p = 1e16 * (1.0 + 0.3 * np.sin(t))
+    T = (S0 + 10.0) ** 2 / 1000.0
+    return t, y, p, T - T[0]
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('core', [False, True])
+@pytest.mark.parametrize('n', [10, 11])
+def test_cmb_ledger_terms_of_4_node_chunks_equal_the_whole_trace(n, core):
+    """The ledger terms of 4-node chunks equal those of the whole trace (``_check_cmb_ledger``
+    on the arrays) for an even and an odd node count: the largest slope error ``rel`` sits in
+    the last chunk, and a ``rel`` kept from the first chunks only would be 0.002 against 0.038."""
+    t, y, p, dT = _cmb_nodes(n)
+    S_late = y[0, -2] - 0.5 * 2.0e4 * y[2, -2]
+    bump = lambda S: np.where(np.abs(S - S_late) < 1e-6, 0.04, 0.002)  # noqa: E731
+    whole = _cmb_solver(bump, 'core_module' if core else 'energy_balance')
+    # the core cools by the heat the CMB carries out, so the ledger closes to round-off
+    q = -800.0 * 1.1 * 1.9e24 * dT[-1]
+    d = dT if core else None
+    whole._check_cmb_ledger(t, y, p, q, d_top=d)
+    parts = _cmb_solver(bump, 'core_module' if core else 'energy_balance')
+    ledger = st.CMBLedger(parts, core=core)
+    for a in range(0, n, 4):
+        sl = slice(a, a + 4)
+        ledger.add(t[sl], y[:, sl], p=p[sl], d=None if d is None else d[sl])
+    parts._check_cmb_ledger(q=q, ledger=ledger)
+    ref, got = whole.cmb_ledger, parts.cmb_ledger
+    assert got['rel'] == ref['rel'] == pytest.approx(0.04 / 1.04, rel=1e-6)
+    assert 0.002 / 1.002 < 0.1 * got['rel']  # the first chunks alone
+    assert got['excluded'] is ref['excluded'] is False
+    assert got['r'] == pytest.approx(ref['r'], rel=1e-14, abs=1e-30)
+    assert got['bound'] == pytest.approx(ref['bound'], rel=1e-14)
+
+
+def test_a_cmb_node_slope_fault_of_a_later_chunk_is_raised_with_its_time():
+    """A node slope of 0 at node 9 (chunk 3) is kept and raised by the check at the end, naming
+    that node's time, as the whole-trace check does; the same fault in a call that does not
+    advance is not judged."""
+    t, y, p, _ = _cmb_nodes(11)
+    S9 = y[0, 9] - 0.5 * 2.0e4 * y[2, 9]
+    bump = lambda S: np.where(np.abs(S - S9) < 1e-6, -1.0, 0.0)  # noqa: E731
+    ledger = st.CMBLedger(_cmb_solver(bump))
+    for a in range(0, 11, 4):
+        ledger.add(t[a : a + 4], y[:, a : a + 4], p=p[a : a + 4])
+    at = re.escape(f'slope (dT/dS)_P = 0 at t = {t[9]:.6e} yr')
+    with pytest.raises(es.CMBClosureError, match=at):
+        ledger.s._check_cmb_ledger(q=0.0, ledger=ledger)
+    with pytest.raises(es.CMBClosureError, match=at):
+        _cmb_solver(bump)._check_cmb_ledger(t, y, p, 0.0)
+    still = _cmb_solver(bump)
+    still._check_cmb_ledger(np.zeros(11), y, p, 0.0)
+    assert still.cmb_ledger is None
+
+
+class _LidSolver(es.EntropySolver):
+    """A lid solver stub for the batch checks: every check reads the arrays it is given."""
+
+    _n_lid = 2
+    _rheology_enabled = True
+
+
+def _lid_batch_solver(rheo_bad=None, weights=None):
+    s = _LidSolver.__new__(_LidSolver)
+    s.entropy_eos, s._n_stag, s._core_bc = object(), 2, 'quasi_steady'
+    s._r_basic_flat = np.array([1.0, 2.0, 3.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: np.asarray(y[:2])
+    s._step_heat_content = lambda a, b: 0.0
+    s._lid_heat_change = lambda a, b: 0.0
+    s._warned, s._batch_powers_calls = set(), 0
+    s._cvode_step_powers_batch = object()
+    s._step_powers_batch = lambda t, y: np.zeros((t.size, 7))
+    s._lid_weights_of = weights or (lambda t, y: np.zeros(t.size))
+    s._dSdt_single = lambda t, y: None
+    s._check_lid_step = lambda lo, k, t: None
+    s._check_rheology_step_invariants = lambda rheo, step_idx, time_yr: None
+    s._solid_rheology = lambda: None
+    s._lid_active, s._lid_mush = True, True
+    s._lid_h_top, s._lid_delta_lo, s._lid_S_sol = 1.0e4, 10.0, 2000.0
+    s._lid_const, s._lid_W_of_S = False, SimpleNamespace(x=np.array([1000.0, 4000.0]))
+    s._lid_lo_bound = lambda lo: lo - 1.0
+
+    def rheo_range(S, step_idx=0, time_yr=None):
+        if rheo_bad is not None and step_idx == rheo_bad:
+            raise es.AcceptedStateRangeError(f'rheology invariant violated at step {step_idx}')
+
+    s._check_rheology_eos_range = rheo_range
+    return s
+
+
+def _lid_nodes(n=80):
+    t = np.linspace(0.0, 1.0, n)
+    y = np.vstack([np.full(n, 3000.0), np.full(n, 3000.0), np.full(n, 100.0), np.ones(n)])
+    return t, y
+
+
+@pytest.mark.parametrize('chunk', [4, 2048])
+@pytest.mark.parametrize('rheo_bad', [None, 50])
+def test_the_checks_raise_in_the_order_of_the_stored_trace(monkeypatch, chunk, rheo_bad):
+    """A thickness fault at step 1 and a floor fault at step 69: the stored trace raised the
+    floor fault, since it checks the floor of every node before the thickness, and so do
+    4-node chunks. With an EOS range fault at step 50 both raise the
+    ``AcceptedStateRangeError``, which PROTEUS retries with a half step, not the lid
+    ``RuntimeError``."""
+    monkeypatch.setattr(st, 'CHUNK', chunk)
+    s = _lid_batch_solver(rheo_bad)
+    t, y = _lid_nodes()
+    y[2, 1] = 5.0  # thinner than the stop
+    y[1, 69] = 1990.0  # top cell below the solidus floor
+    s._solution = OptimizeResult(t=t, y=y)
+    want = (es.AcceptedStateRangeError, 'step 50') if rheo_bad else (RuntimeError, 'step 69')
+    with pytest.raises(want[0], match=want[1]):
+        s._compute_step_energy_integrals()
+
+
+@pytest.mark.parametrize('chunk', [4, 2048])
+def test_the_largest_lid_weight_of_a_later_chunk_is_kept(monkeypatch, chunk):
+    """The lid weight is largest (0.93) at node 70, in a later chunk than the next largest
+    (0.6 at node 2): both chunkings report 0.93, and a value that a later chunk overwrote
+    would be 0.1."""
+    monkeypatch.setattr(st, 'CHUNK', chunk)
+    t, y = _lid_nodes()
+    w = np.full(t.size, 0.1)
+    w[2], w[70] = 0.6, 0.93
+    s = _lid_batch_solver(weights=lambda tc, yc: w[np.searchsorted(t, tc)])
+    s._solution = sol = OptimizeResult(t=t, y=y)
+    s._compute_step_energy_integrals()
+    cap = st._lid.LID_CAP_FRAC * 1.0e4
+    assert sol.lid_weight_max == 0.93
+    assert sol.lid_cap_excess == pytest.approx(100.0 / cap - 1.0, rel=1e-12)

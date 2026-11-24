@@ -948,7 +948,7 @@ def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segmen
         assert kw['start_time'] == t_nodes[0]
         y = np.vstack([t_nodes, -t_nodes])
         res = OptimizeResult(t=t_nodes[[0, -1]], y=y[:, [0, -1]])
-        call = es.CallNodes(kw['nodes'], t_nodes[0], y[:, 0], start=not kw['join'])
+        call = es.CallNodes(kw['nodes'], t_nodes[0], y[:, 0], kw['tspan'], start=not kw['join'])
         for k in range(1, t_nodes.size):  # the states the real call's root function sees
             call.record(t_nodes[k], y[:, k])
         call.end(res.t, res.y)
