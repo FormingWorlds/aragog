@@ -164,6 +164,22 @@ def test_each_input_reaches_the_reused_program(eos, name):
     assert np.max(np.abs(got[1] - want[1])) <= 2e-12 * np.max(np.abs(want[1]))
 
 
+def test_a_new_eos_or_phase_value_is_a_new_input_form(eos):
+    """The EOS tables and the phase parameters are constants of the programs, so a changed value
+    is a new input form of the bound, and an equal value in a new object is the same form."""
+    from aragog.solver import cvode_jax
+
+    clear_jit_cache()
+    mode = 'energy_balance'
+    _evaluate(mode, eos, PhaseParams())
+    _evaluate(mode, _copy(eos), PhaseParams())
+    assert len(cvode_jax._FORMS) == 1
+    _evaluate(mode, *CHANGES['eos_table'](eos, PhaseParams(), None)[:2])
+    assert len(cvode_jax._FORMS) == 2
+    _evaluate(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
+    assert len(cvode_jax._FORMS) == 3
+
+
 @pytest.mark.parametrize('mode', MODES)
 def test_no_argument_of_the_programs_is_weak_typed(eos, mode):
     """Every float leaf of the program arguments (the data and the phase parameters, EOS and
