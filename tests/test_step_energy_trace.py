@@ -187,6 +187,30 @@ def test_a_failed_call_passes_no_node_past_its_returned_end():
     assert t_nodes.size > 2 * res.t.size  # the steps before the end are kept
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize('join', [False, True])
+def test_a_zero_span_call_passes_its_start_state_as_a_node(join):
+    """A call of zero span, as after a lid hand-over at the call end, passes its start state
+    (the merged lid) to the nodes and returns it; joined to the previous call, it passes
+    nothing, since that call's end is the same node."""
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    sink = es.ListSink()
+    res = s._solve_cvode(
+        start_time=2.0,
+        end_time=2.0,
+        y0=np.array([5.0, -1.0]),
+        atol=1e-10,
+        rtol=1e-10,
+        max_step=1.0,
+        nodes=sink,
+        join=join,
+    )
+    assert res.status == 0 and res.t.tolist() == [2.0] and res.y[:, -1].tolist() == [5.0, -1.0]
+    assert sink.t == ([] if join else [2.0])
+    if not join:
+        np.testing.assert_array_equal(sink.y[0], [5.0, -1.0])
+
+
 @pytest.mark.smoke
 def test_cmb_energy_matches_the_core_energy_change():
     """bower2018 evolves T_core by -F_cmb A_cmb / C_core, so int F_cmb A_cmb dt = -C_core dT_core.
