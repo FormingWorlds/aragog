@@ -145,14 +145,18 @@ def _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
     return dydt_phys * rhs_scale_jax
 
 
-def _rhs_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+def _rhs_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves):
+    import jax
+
     _TRACE_COUNTERS['rhs'] += 1
-    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, *jax.tree.unflatten(treedef, leaves))
 
 
-def _jac_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+def _jac_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves):
+    import jax
+
     _TRACE_COUNTERS['jac'] += 1
-    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, *jax.tree.unflatten(treedef, leaves))
 
 
 def _powers_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, aux, consts):
@@ -187,12 +191,13 @@ def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts)
 @functools.cache
 def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs. Every input is an argument, with the core_bc
-    mode and the radiogenic switch static, so a solver of the same form reuses them."""
+    mode and the radiogenic switch static, so a solver of the same form reuses them. The RHS and
+    Jacobian take the leaves of ``(data, consts)`` flat after their static treedef."""
     import jax
 
     return (
-        jax.jit(_rhs_program, static_argnums=(0, 1)),
-        jax.jit(jax.jacrev(_jac_program, argnums=3), static_argnums=(0, 1)),
+        jax.jit(_rhs_program, static_argnums=(0, 1, 2)),
+        jax.jit(jax.jacrev(_jac_program, argnums=4), static_argnums=(0, 1, 2)),
         jax.jit(_powers_program, static_argnums=(0, 1)),
         jax.jit(_lid_weight_program, static_argnums=(0, 1)),
     )
@@ -341,6 +346,7 @@ def build_jax_rhs_and_jacobian(
         )
 
     try:
+        import jax
         import jax.numpy as jnp
 
         import aragog.jax.solver
@@ -458,11 +464,15 @@ def build_jax_rhs_and_jacobian(
     _bound_forms(core_bc_mode, use_radio, data, consts)
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
-    def rhs_jit(t_nd, y_nd, data):
-        return rhs_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+    # flattened and on the device once per build, not at every call
+    leaves, treedef = jax.tree.flatten((data, consts))
+    leaves = [jnp.asarray(x) for x in leaves]
 
-    def jac_jit(t_nd, y_nd, data):
-        return jac_program(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+    def rhs_jit(t_nd, y_nd):
+        return rhs_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves)
+
+    def jac_jit(t_nd, y_nd):
+        return jac_program(core_bc_mode, use_radio, treedef, t_nd, y_nd, *leaves)
 
     def first_call(kind, label, call):
         """Run ``call`` and log whether it compiled a program or reused one."""
@@ -491,7 +501,7 @@ def build_jax_rhs_and_jacobian(
         try:
 
             def call():
-                return rhs_jit(float(t_nd), jnp.asarray(y_nd), data)
+                return rhs_jit(float(t_nd), jnp.asarray(y_nd))
 
             first = not info['first_rhs_compile_done']
             result = first_call('rhs', 'RHS', call) if first else call()
@@ -508,7 +518,7 @@ def build_jax_rhs_and_jacobian(
         try:
 
             def call():
-                return jac_jit(float(t_nd), jnp.asarray(y_nd), data)
+                return jac_jit(float(t_nd), jnp.asarray(y_nd))
 
             first = not info['first_jac_compile_done']
             jac = first_call('jac', 'Jacobian', call) if first else call()
