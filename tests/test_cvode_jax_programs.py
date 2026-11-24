@@ -10,6 +10,7 @@ backend-compile events of ``jax.monitoring``.
 
 from __future__ import annotations
 
+import functools
 import os
 
 import pytest
@@ -87,19 +88,13 @@ def _state(mode):
     )
 
 
-def _fitted(i):
-    """A core budget fitted to one core mass and centre pressure at the i-th CMB of a series
-    that moves as a structure update moves it."""
+def _fitted(i=0, curve='iron'):
+    """A core budget of a melting curve of ``CURVES``, fitted to one core mass and centre
+    pressure at the i-th CMB of a series that moves as a structure update moves it."""
     from aragog.core import build_core_module_budget
 
     return build_core_module_budget(
-        {
-            'melting_curve': 'iron',
-            'light_element_fraction': 0.1,
-            'depression': 1.2,
-            'm_core': 1.94e24,
-            'p_cen': 3.6e11,
-        },
+        {**CURVES[curve], 'm_core': 1.94e24, 'p_cen': 3.6e11},
         r_cmb=3.48e6 * (1 - 1e-3 * i),
         p_cmb_fallback=135e9 * (1 + 1e-3 * i),
     )
@@ -169,13 +164,19 @@ def test_a_second_build_calls_the_programs_by_identity(eos, mode, source, monkey
     parsed again from disk) matches the cached programs by identity at every call: no value
     comparison of a static input or of a static EOS field runs per call."""
     from aragog.jax.eos import EntropyEOS_JAX
-    from aragog.solver import cvode_jax
 
     core = mode == 'core_module'
     clear_jit_cache()
     _evaluate(mode, eos, PhaseParams(), _budget() if core else None)
     second = _copy(eos) if source == 'copy' else EntropyEOS_JAX(EOS_DIR)
     rhs, jac = _factory(mode, second, PhaseParams(), _budget() if core else None)
+    assert _compared_per_call(mode, rhs, jac, monkeypatch) == []
+
+
+def _compared_per_call(mode, rhs, jac, monkeypatch):
+    """The classes of the static inputs that 5 calls (after a first one) compare by value."""
+    from aragog.solver import cvode_jax
+
     n = N + EXTRA[mode]
     f, J = np.zeros(n), np.zeros((n, n))
     assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
@@ -186,24 +187,44 @@ def test_a_second_build_calls_the_programs_by_identity(eos, mode, source, monkey
         )
     for _ in range(5):
         assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
-    assert compared == []
+    return compared
+
+
+def test_a_rebuild_after_a_bound_clear_calls_the_programs_by_identity(eos, monkeypatch):
+    """After a new form past ``MAX_FORMS`` clears the programs, a factory built again from equal
+    inputs in new objects matches the program of that form by identity."""
+    from aragog.solver import cvode_jax
+
+    monkeypatch.setattr(cvode_jax, 'MAX_FORMS', 1)
+    clear_jit_cache()
+    mode = 'energy_balance'
+    _evaluate(mode, eos, PhaseParams())
+    _evaluate(mode, eos, PhaseParams(convection=0))
+    rhs, jac = _factory(mode, _copy(eos), PhaseParams(convection=0))
+    assert _compared_per_call(mode, rhs, jac, monkeypatch) == []
 
 
 def test_a_refitted_core_profile_reuses_the_programs(eos):
     """Core budgets fitted to one core mass at a moving CMB radius and pressure (as a structure
-    update refits them) run the programs of the first budget: no trace, no compile."""
+    update refits them) run the programs of the first budget, with no trace and no compile,
+    and give the values of a build from empty caches."""
     clear_jit_cache()
     mode = 'core_module'
     budgets = [_fitted(i) for i in range(4)]
     for name in ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb'):
         assert len({float(getattr(b.profiles, name)) for b in budgets}) == 4, name
-    _evaluate(mode, eos, PhaseParams(), budgets[0])
+    first = _evaluate(mode, eos, PhaseParams(), budgets[0])
     traces = dict(_TRACE_COUNTERS)
     _SEEN.clear()
-    for b in budgets[1:]:
-        _evaluate(mode, _copy(eos), PhaseParams(), b)
+    got = [_evaluate(mode, _copy(eos), PhaseParams(), b) for b in budgets[1:]][-1]
     assert dict(_TRACE_COUNTERS) == traces
     assert len(_SEEN) == 0
+    clear_jit_cache()
+    jax.clear_caches()
+    want = _evaluate(mode, eos, PhaseParams(), budgets[-1])
+    assert not np.array_equal(got[0], first[0])
+    assert np.max(np.abs(got[0] - want[0])) <= 1e-14 * np.max(np.abs(want[0]))
+    assert np.max(np.abs(got[1] - want[1])) <= 2e-12 * np.max(np.abs(want[1]))
 
 
 CHANGES = {
@@ -278,12 +299,8 @@ CURVES = {
 
 
 def _budget_leaves():
-    from aragog.core import build_core_module_budget
-
-    for curve, params in CURVES.items():
-        budget = build_core_module_budget(
-            {**params, 'm_core': 1.94e24, 'p_cen': 3.6e11}, r_cmb=3.48e6, p_cmb_fallback=135e9
-        )
+    for curve in CURVES:
+        budget = _fitted(0, curve)
         for path, _ in jax.tree_util.tree_flatten_with_path(budget)[0]:
             names = tuple(k.name for k in path)
             yield pytest.param(budget, names, id=f'{curve}-{".".join(names)}')
@@ -295,10 +312,8 @@ def test_each_budget_leaf_is_a_constant_or_follows_the_structure(eos, budget, pa
     a changed structure leaf is the same form (traced), so a refit compiles nothing."""
     from aragog.solver import cvode_jax
 
-    value = budget
-    for name in path:
-        value = getattr(value, name)
-    changed = _replaced(budget, {path: float(value) * 1.01 + 1e-3})
+    value = float(functools.reduce(getattr, path, budget))
+    changed = _replaced(budget, {path: value * 1.01 + 1e-3})
     clear_jit_cache()
     _factory('core_module', eos, PhaseParams(), budget)
     _factory('core_module', eos, PhaseParams(), changed)

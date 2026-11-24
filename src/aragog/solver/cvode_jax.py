@@ -107,7 +107,7 @@ class _ByValue:
         )
 
 
-# One holder per held value, so a program's jit cache matches a later build by identity.
+# One static argument tuple per value, so a program's jit cache matches a later build by identity.
 _HELD: dict = {}
 
 # Core budget leaves held as program constants, by attribute path: the config constants. The
@@ -164,7 +164,8 @@ def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
     -----
     The bound covers the 4 CVODE programs of ``_programs`` (RHS, Jacobian, powers, lid weight),
     by the count of input forms. It counts builds: a factory built before a clear and called
-    again compiles once more. Outside the bound:
+    again compiles once more, and its static arguments then match those of a later equal build
+    by value, not identity. Outside the bound:
 
     - the budget programs of ``aragog.core.budget``: their batch calls are padded to a power-of-2
       length, so they compile once per length class and budget form; a tabulated core whose grid
@@ -172,6 +173,10 @@ def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
       update;
     - the executables JAX keeps for eager array operations, 1 per operation and input shape, so a
       new mesh size adds some.
+
+    A tabulated core with the default ``t_cmb_range`` sizes its CMB temperature grid from the
+    core pressures, so a structure update that changes its length is also a new form of the RHS
+    and Jacobian.
     """
     import jax
 
@@ -237,7 +242,7 @@ def _flat_core(core_bc_mode, use_radio, held, layout, t_nd, y_nd, leaves):
     treedef, mask = layout
     const, traced = iter(jax.tree.map(jax.numpy.asarray, held.tree)), iter(leaves)
     data, *consts = jax.tree.unflatten(treedef, [next(const if m else traced) for m in mask])
-    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, tuple(consts))
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
 
 
 def _rhs_program(core_bc_mode, use_radio, held, layout, t_nd, y_nd, *leaves):
@@ -427,10 +432,10 @@ def build_jax_rhs_and_jacobian(
     -----
     The RHS and Jacobian programs compile once per input form: the mode, the radiogenic
     switch, the shape and dtype of each traced leaf, and the values of the compile-time
-    constants (every leaf of ``phase_params`` and the config constants of the budget,
-    ``_BUDGET_CONSTANTS``). The EOS tables, the mesh, the boundary values and the budget
-    leaves that follow the structure are traced, so a structure update with new values of
-    the same shapes compiles nothing.
+    constants: every leaf of ``phase_params``, the budget leaves named in
+    ``_BUDGET_CONSTANTS``, and the static fields of the EOS (its pressure and entropy grid
+    axes). The EOS table values, the mesh, the boundary values and every other budget leaf are
+    traced, so a structure update with new values on the same grids compiles nothing.
     """
     if core_bc_mode == 'core_module' and core_module_budget is None:
         raise ValueError(
@@ -567,12 +572,12 @@ def build_jax_rhs_and_jacobian(
     mask = tuple(_is_constant(p) for p, _ in paths)
     held = _ByValue(tuple(x for (_, x), m in zip(paths, mask, strict=True) if m))
     _bound_forms(core_bc_mode, use_radio, data, (held, consts))
-    held = _HELD.setdefault(held, held)  # after the bound, which can clear _HELD
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
     # flattened and on the device once per build, not at every call
     leaves = [jnp.asarray(x) for (_, x), m in zip(paths, mask, strict=True) if not m]
     static_args = (core_bc_mode, use_radio, held, (treedef, mask))
+    static_args = _HELD.setdefault(static_args, static_args)  # after the bound, which clears it
 
     rhs_jit = functools.partial(rhs_program, *static_args)
     jac_jit = functools.partial(jac_program, *static_args)
