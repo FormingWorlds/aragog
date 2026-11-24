@@ -48,7 +48,7 @@ from aragog.jax.solver import (
 from aragog.parser import Parameters
 from aragog.rheology import SolidRheologyParams
 from aragog.solver import EntropySolver
-from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax, needs_eos
 
 jax.config.update('jax_enable_x64', True)
 
@@ -1286,6 +1286,7 @@ def test_phase_liquid_rheology_nondefault_rejected_across_all_config_paths(tmp_p
     assert loaded.phase_liquid.rheology == SolidRheologyParams()
 
 
+@needs_eos
 def test_arrhenius_reference_viscosity_ci_table_vs_linear_solidus() -> None:
     """At (T_ref = 1600 K, P = 0 Pa) with viscosity_solid = 1e21 Pa s, g_homologous = 25,
     and t_sol_0 = 1400 K, the linear solidus gives 1.0e21 Pa s and the CI EOS solidus
@@ -1364,6 +1365,7 @@ def test_check_jax_factory_rheology_accepts_bare_factory_when_rheology_disabled(
         pytest.fail(f'bare factory rejected with rheology disabled: {exc}')
 
 
+@needs_eos
 def test_update_stores_the_pass_two_viscosity_when_yielding_is_active() -> None:
     """After update, viscosity() is the solid blend of eta_eff, not of eta_diff."""
     rheo = SolidRheologyParams(
