@@ -60,7 +60,7 @@ def eos():
     return entropy_eos_jax(EOS_DIR)
 
 
-def _budget(rho_cen=12500.0):
+def _budget(rho_cen=12500.0, r_cmb=3.48e6):
     from aragog.core import build_core_module_budget
 
     return build_core_module_budget(
@@ -70,7 +70,7 @@ def _budget(rho_cen=12500.0):
             'depression': 1.2,
             'rho_cen': rho_cen,
         },
-        r_cmb=3.48e6,
+        r_cmb=r_cmb,
         p_cmb_fallback=135e9,
     )
 
@@ -178,6 +178,20 @@ def test_a_new_eos_or_phase_value_is_a_new_input_form(eos):
     assert len(cvode_jax._FORMS) == 2
     _evaluate(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
     assert len(cvode_jax._FORMS) == 3
+
+
+def test_the_budget_constants_are_program_constants(eos):
+    """The material constants and the frozen profile of the core budget are constants of the
+    programs, so a changed central density is a new input form, and a new CMB radius is not."""
+    from aragog.solver import cvode_jax
+
+    clear_jit_cache()
+    mode = 'core_module'
+    _evaluate(mode, eos, PhaseParams(), _budget())
+    _evaluate(mode, eos, PhaseParams(), _budget(r_cmb=3.40e6))
+    assert len(cvode_jax._FORMS) == 1
+    _evaluate(mode, eos, PhaseParams(), _budget(rho_cen=12300.0))
+    assert len(cvode_jax._FORMS) == 2
 
 
 @pytest.mark.parametrize('mode', MODES)
