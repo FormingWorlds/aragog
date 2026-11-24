@@ -583,16 +583,13 @@ def build_jax_rhs_and_jacobian(
     leaves = [jnp.asarray(x) for x, m in zip(leaves, mask, strict=True) if not m]
     fixed = (core_bc_mode, use_radio, phase_fixed, eos_fixed, budget_fixed, (treedef, mask))
 
-    def rhs_jit(t_nd, y_nd):
-        return rhs_program(*fixed, t_nd, y_nd, *leaves)
+    rhs_jit = functools.partial(rhs_program, *fixed)
+    jac_jit = functools.partial(jac_program, *fixed)
 
-    def jac_jit(t_nd, y_nd):
-        return jac_program(*fixed, t_nd, y_nd, *leaves)
-
-    def first_call(kind, label, call):
-        """Run ``call`` and log whether it compiled a program or reused one."""
+    def first_call(kind, label, program, t_nd, y_nd):
+        """Run ``program`` once and log whether it compiled a program or reused one."""
         before = _TRACE_COUNTERS[kind]
-        out = call()
+        out = program(t_nd, y_nd, *leaves)
         compiled = _TRACE_COUNTERS[kind] > before
         how = 'compiled for new inputs' if compiled else 'reused'
         logger.log(
@@ -614,15 +611,13 @@ def build_jax_rhs_and_jacobian(
     def rhs_fn(t_nd, y_nd, ydot_nd):
         """scikits.odes RHS function: fills ydot in-place."""
         try:
-
-            def call():
-                return rhs_jit(float(t_nd), jnp.asarray(y_nd))
-
-            first = not info['first_rhs_compile_done']
-            result = first_call('rhs', 'RHS', call) if first else call()
-            ydot_nd[:] = np.asarray(result)
+            t, y = float(t_nd), jnp.asarray(y_nd)
+            if info['first_rhs_compile_done']:
+                ydot_nd[:] = np.asarray(rhs_jit(t, y, *leaves))
+            else:
+                ydot_nd[:] = np.asarray(first_call('rhs', 'RHS', rhs_jit, t, y))
+                info['first_rhs_compile_done'] = True
             info['rhs_calls'] += 1
-            info['first_rhs_compile_done'] = True
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -631,15 +626,13 @@ def build_jax_rhs_and_jacobian(
     def jacfn(t_nd, y_nd, fy_nd, J, user_data=None):
         """scikits.odes Jacobian function: fills J in-place."""
         try:
-
-            def call():
-                return jac_jit(float(t_nd), jnp.asarray(y_nd))
-
-            first = not info['first_jac_compile_done']
-            jac = first_call('jac', 'Jacobian', call) if first else call()
-            J[...] = np.asarray(jac)
+            t, y = float(t_nd), jnp.asarray(y_nd)
+            if info['first_jac_compile_done']:
+                J[...] = np.asarray(jac_jit(t, y, *leaves))
+            else:
+                J[...] = np.asarray(first_call('jac', 'Jacobian', jac_jit, t, y))
+                info['first_jac_compile_done'] = True
             info['jac_calls'] += 1
-            info['first_jac_compile_done'] = True
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
