@@ -162,26 +162,31 @@ def test_new_input_objects_of_one_form_reuse_the_programs(eos, mode):
         np.testing.assert_array_equal(a, b)
 
 
+@pytest.mark.parametrize('source', ['copy', 'disk'])
 @pytest.mark.parametrize('mode', ['energy_balance', 'core_module'])
-def test_a_second_build_calls_the_programs_by_identity(eos, mode, monkeypatch):
-    """A factory built again from equal inputs in new objects matches the cached programs by
-    identity at every call: no value comparison of a static input runs per call."""
+def test_a_second_build_calls_the_programs_by_identity(eos, mode, source, monkeypatch):
+    """A factory built again from equal inputs in new objects (an EOS copy, or the same tables
+    parsed again from disk) matches the cached programs by identity at every call: no value
+    comparison of a static input or of a static EOS field runs per call."""
+    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.solver import cvode_jax
 
     core = mode == 'core_module'
     clear_jit_cache()
     _evaluate(mode, eos, PhaseParams(), _budget() if core else None)
-    rhs, jac = _factory(mode, _copy(eos), PhaseParams(), _budget() if core else None)
+    second = _copy(eos) if source == 'copy' else EntropyEOS_JAX(EOS_DIR)
+    rhs, jac = _factory(mode, second, PhaseParams(), _budget() if core else None)
     n = N + EXTRA[mode]
     f, J = np.zeros(n), np.zeros((n, n))
     assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
-    by_value, eq = [], cvode_jax._ByValue.__eq__
-    monkeypatch.setattr(
-        cvode_jax._ByValue, '__eq__', lambda a, b: by_value.append(a is b) or eq(a, b)
-    )
+    compared = []
+    for cls in (cvode_jax._ByValue, StaticArray):
+        monkeypatch.setattr(
+            cls, '__eq__', lambda a, b, eq=cls.__eq__: compared.append(type(a)) or eq(a, b)
+        )
     for _ in range(5):
         assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
-    assert by_value.count(False) == 0
+    assert compared == []
 
 
 def test_a_refitted_core_profile_reuses_the_programs(eos):
