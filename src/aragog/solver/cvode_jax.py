@@ -123,6 +123,37 @@ def _eos_holder(eos_jax) -> _ByValue:
     return holder
 
 
+# Core budget leaves held as program constants: the material constants and the core profile
+# that PROTEUS freezes after the first setup. Every other budget leaf stays traced.
+_BUDGET_FIXED = frozenset(
+    {
+        'alpha_c',
+        'c_light',
+        'ds_fusion',
+        'icn_width',
+        'latent_heat',
+        'depression',
+        'light_element_fraction',
+        'alpha',
+        'c_p',
+        'd_scale',
+        'length_scale',
+        'rho_cen',
+    }
+)
+
+
+def _fixed_mask(data, budget) -> tuple:
+    """For each leaf of ``(data, budget)``: whether it is a budget leaf held as a constant."""
+    import jax
+
+    def fixed(path) -> bool:
+        key = path[-1]
+        return path[0].idx == 1 and getattr(key, 'name', None) in _BUDGET_FIXED
+
+    return tuple(fixed(p) for p, _ in jax.tree_util.tree_flatten_with_path((data, budget))[0])
+
+
 # At most this many input forms keep compiled CVODE programs; a new form beyond it clears them.
 MAX_FORMS = 8
 _FORMS: set = set()
@@ -212,24 +243,27 @@ def _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
     return dydt_phys * rhs_scale_jax
 
 
-def _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves):
-    """``_eval_core`` with the phase parameters and the EOS from their static holders and the
-    data and budget from their flat leaves."""
+def _flat_core(core_bc_mode, use_radio, phase, eos, fixed, layout, t_nd, y_nd, leaves):
+    """``_eval_core`` with the phase parameters, the EOS and the fixed budget leaves from their
+    static holders and the other leaves of ``(data, budget)`` flat; ``layout`` is the treedef
+    of ``(data, budget)`` and its mask of fixed leaves."""
     import jax
 
-    data, budget = jax.tree.unflatten(treedef, leaves)
+    treedef, mask = layout
+    held, traced = iter(jax.tree.map(jax.numpy.asarray, fixed.tree)), iter(leaves)
+    data, budget = jax.tree.unflatten(treedef, [next(held if m else traced) for m in mask])
     consts = (*jax.tree.map(jax.numpy.asarray, (phase.tree, eos.tree)), budget)
     return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
 
 
-def _rhs_program(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, *leaves):
+def _rhs_program(core_bc_mode, use_radio, phase, eos, fixed, layout, t_nd, y_nd, *leaves):
     _TRACE_COUNTERS['rhs'] += 1
-    return _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves)
+    return _flat_core(core_bc_mode, use_radio, phase, eos, fixed, layout, t_nd, y_nd, leaves)
 
 
-def _jac_program(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, *leaves):
+def _jac_program(core_bc_mode, use_radio, phase, eos, fixed, layout, t_nd, y_nd, *leaves):
     _TRACE_COUNTERS['jac'] += 1
-    return _flat_core(core_bc_mode, use_radio, phase, eos, treedef, t_nd, y_nd, leaves)
+    return _flat_core(core_bc_mode, use_radio, phase, eos, fixed, layout, t_nd, y_nd, leaves)
 
 
 def _powers_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, aux, consts):
@@ -265,13 +299,14 @@ def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts)
 def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs. Every input is an argument, with the core_bc
     mode and the radiogenic switch static, so a solver of the same form reuses them. The RHS and
-    Jacobian hold the phase parameters and the EOS as static by-value holders (compile-time
-    constants) and take the leaves of the data and the budget flat after their static treedef."""
+    Jacobian hold the phase parameters, the EOS and the budget constants as static by-value
+    holders (compile-time constants) and take the other leaves of the data and the budget flat
+    after their static layout."""
     import jax
 
     return (
-        jax.jit(_rhs_program, static_argnums=(0, 1, 2, 3, 4)),
-        jax.jit(jax.jacrev(_jac_program, argnums=6), static_argnums=(0, 1, 2, 3, 4)),
+        jax.jit(_rhs_program, static_argnums=(0, 1, 2, 3, 4, 5)),
+        jax.jit(jax.jacrev(_jac_program, argnums=7), static_argnums=(0, 1, 2, 3, 4, 5)),
         jax.jit(_powers_program, static_argnums=(0, 1)),
         jax.jit(_lid_weight_program, static_argnums=(0, 1)),
     )
@@ -536,13 +571,17 @@ def build_jax_rhs_and_jacobian(
     budget = core_module_budget if core_bc_mode == 'core_module' else None
     data, consts = _strong(data), _strong((phase_params, eos_jax, budget))
     phase_fixed, eos_fixed = _ByValue(consts[0]), _eos_holder(consts[1])
-    _bound_forms(core_bc_mode, use_radio, data, (phase_fixed, eos_fixed, consts[2]))
+    leaves, treedef = jax.tree.flatten((data, consts[2]))
+    mask = _fixed_mask(data, consts[2])
+    budget_fixed = _ByValue(tuple(x for x, m in zip(leaves, mask, strict=True) if m))
+    _bound_forms(
+        core_bc_mode, use_radio, data, (phase_fixed, eos_fixed, budget_fixed, consts[2])
+    )
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
     # flattened and on the device once per build, not at every call
-    leaves, treedef = jax.tree.flatten((data, consts[2]))
-    leaves = [jnp.asarray(x) for x in leaves]
-    fixed = (core_bc_mode, use_radio, phase_fixed, eos_fixed, treedef)
+    leaves = [jnp.asarray(x) for x, m in zip(leaves, mask, strict=True) if not m]
+    fixed = (core_bc_mode, use_radio, phase_fixed, eos_fixed, budget_fixed, (treedef, mask))
 
     def rhs_jit(t_nd, y_nd):
         return rhs_program(*fixed, t_nd, y_nd, *leaves)

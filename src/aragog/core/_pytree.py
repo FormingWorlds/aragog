@@ -89,7 +89,11 @@ def register_pytree(cls):
         obj.__dict__.update(zip(keys, children))
         return obj
 
-    jax.tree_util.register_pytree_node(cls, flatten, unflatten)
+    def flatten_with_keys(obj):
+        children, aux = flatten(obj)
+        return [(jax.tree_util.GetAttrKey(k), c) for k, c in zip(aux[0], children)], aux
+
+    jax.tree_util.register_pytree_with_keys(cls, flatten_with_keys, unflatten, flatten)
     _REGISTERED.add(cls)
     if '__init_subclass__' not in vars(cls):
 
