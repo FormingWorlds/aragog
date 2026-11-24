@@ -155,6 +155,10 @@ class AcceptedStateRangeError(RuntimeError):
     """An accepted state of a call has a cell entropy outside the EOS tables."""
 
 
+class CMBClosureError(RuntimeError):
+    """The CMB closure of a call fails its ledger check, or the node slope is not positive."""
+
+
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
 # Entropy intervals of the lid enthalpy table below the solidus, in the melt band and above it;
@@ -1692,6 +1696,9 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
+        self._cmb_node_phase = None
+        self._cmb_ledger_counts = {'missed': 0, 'excluded': 0}
+        self.cmb_ledger = None
         # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); exceeding it
@@ -2062,6 +2069,12 @@ class EntropySolver:
             **phase_kwargs,
         )
         self._bl_phase.set_pressure(np.repeat(P_basic[:1], 2))
+        # The CMB basic node at its pressure, for the closure check over a call's states.
+        self._cmb_node_phase = EntropyPhaseEvaluator(
+            gravitational_acceleration=float(g_basic[0]),
+            defer_rheology_viscosity=True,
+            **phase_kwargs,
+        )
 
         # Energy settings
         energy = self.parameters.energy
@@ -3071,23 +3084,9 @@ class EntropySolver:
         logger.debug('set_initial_entropy: core_bc=%r, n_stag=%d', core_bc, n_stag)
 
         if core_bc == 'energy_balance':
-            # SPIDER bit-parity core BC (energy_balance mode).
-            # State = [S_0, ..., S_{N-1}, dSdr_cmb]
-            # The boundary state dSdr_cmb is the entropy gradient at
-            # the CMB basic node (mirror of SPIDER's dSdxi[ind_cmb]).
-            # Its time derivative is set by the bc.c:76-131 formula
-            # in _dSdt_single from the actual physical heat flux.
-            #
-            # Cold-start dSdr_cmb_init: use the finite-difference
-            # estimate from the staggered cells (one-sided forward
-            # difference, since there's no cell below the CMB).
-            # The boundary state will then evolve from this to its
-            # quasi-equilibrium value over the first few coupling
-            # steps as the energy balance constraint kicks in.
-            #
-            # Hot-start dSdr_cmb_init: preserve from the previous
-            # solution if available, so the integrated boundary state
-            # survives PROTEUS coupling resets.
+            # State [S_0, ..., S_{N-1}, dSdr_cmb]: the CMB gradient evolves by the bc.c:76-131 closure.
+            # A cold start takes the one-sided difference of the bottom cells; a hot start keeps
+            # the previous solution's gradient across PROTEUS coupling resets.
             dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag)
             self._S0 = np.empty(n_stag + 1)
             self._S0[:n_stag] = S_arr
@@ -4264,7 +4263,8 @@ class EntropySolver:
         - 'quasi_steady': state = [S_0, ..., S_{N-1}],
           length N. F_cmb is set by the alpha-factor partition of
           F[1].
-        - 'energy_balance' (default, SPIDER bit-parity): state =
+        - 'energy_balance' (default, the SPIDER bc.c formula with (dS/dT)_P of the node
+          blend): state =
           [S_0, ..., S_{N-1}, dSdr_cmb], length N+1. The boundary
           state dSdr_cmb is passed into ``state.update`` so the
           convective+conductive flux at the CMB basic node uses
@@ -4419,13 +4419,14 @@ class EntropySolver:
             # CMB basic node (i=0): core energy balance (SPIDER bc.c:113-122)
             F_cmb = float(self.state._heat_flux[0])
             T_cmb = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
-            cp_cmb = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
+            cp_cmb = self._cmb_closure_cp()
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
             rhs_cmb_per_s = self._energy_balance_rhs_per_s(
                 F_cmb_basic=F_cmb,
                 dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
                 T_cmb_basic=T_cmb,
                 cp_cmb_basic=cp_cmb,
+                dr_node=float(self._r_stag_flat[0] - self._r_basic_flat[0]),
             )
             rhs_cmb = rhs_cmb_per_s * SECS_PER_YEAR
 
@@ -4459,7 +4460,7 @@ class EntropySolver:
             # divergence).
             F_cmb_basic = float(self.state._heat_flux[0])
             T_cmb_basic = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
-            cp_cmb_basic = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
+            cp_cmb_basic = self._cmb_closure_cp()
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
             d_dSdr_cmb_dt_per_s = self._energy_balance_rhs_per_s(
@@ -4478,7 +4479,7 @@ class EntropySolver:
             # integrates the same cooling rate.
             F_cmb_basic = float(self.state._heat_flux[0])
             T_cmb_basic = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
-            cp_cmb_basic = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
+            cp_cmb_basic = self._cmb_closure_cp()
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
             inputs = (F_cmb_basic, dSdt_s_cmb_per_s, T_cmb_basic, cp_cmb_basic, t_core)
@@ -4565,28 +4566,48 @@ class EntropySolver:
             )
         )
 
+    def _cmb_closure_cp(self) -> float:
+        """Effective heat capacity ``T (dS/dT)_P`` [J/kg/K] of the CMB basic node.
+
+        The closure helpers convert a core temperature rate to the node's entropy rate with
+        ``cp/T``; this value makes that factor ``1/(dT/dS)_P`` of the node's phase blend, so
+        the node temperature moves at the core rate (in the mush the blend ``c_p`` differs
+        by ``T_avg/T_mix``).
+        """
+        pb = self.state.phase_basic
+        T, slope = (
+            float(np.asarray(f()).flat[0]) for f in (pb.temperature, pb.temperature_slope)
+        )
+        if not (np.isfinite(slope) and slope > 0.0):
+            raise CMBClosureError(
+                f'CMB closure: node slope (dT/dS)_P = {slope:.6g} at T = {T:.6g} K; the closure '
+                'needs a finite positive slope'
+            )
+        return T / slope
+
     def _energy_balance_rhs_per_s(
         self,
         F_cmb_basic: float,
         dSdt_s_cmb_per_s: float,
         T_cmb_basic: float,
         cp_cmb_basic: float,
+        dr_node: float | None = None,
     ) -> float:
         """SPIDER bc.c:76-131 rhs for d(dSdr_cmb)/dt at the CMB.
 
         Pure numerical helper extracted from ``_dSdt_single`` so the
-        bit-parity formula can be unit-tested without building a full
-        solver state. Mirrors SPIDER's C code:
+        formula can be unit-tested without building a full solver
+        state. It is the balance of SPIDER's C code in Aragog's radius (dr_node > 0; SPIDER
+        divides by xi_cmb - xi_above < 0, which flips the sign of its form):
 
             fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
-            rhs     = (-Etot_cmb + Ecore) * fac_cmb - dSdt_s_cmb
-            rhs    *= 2 / dr_cmb
+            rhs     = (dSdt_s_cmb - (-Etot_cmb + Ecore) * fac_cmb) / dr_node
 
         where ``Etot_cmb = F_cmb_basic * area_cmb`` is the heat flow
         at the CMB basic node, ``Ecore`` is the core internal heat
         source (zero for the simple core-cooling mode used here), and
-        ``dr_cmb = r_basic[1] - r_basic[0]`` is the half-cell spacing
-        between the CMB basic node and the first staggered node.
+        ``dr_node`` is the distance from the CMB basic node to the
+        staggered node its entropy is extrapolated from.
 
         All cached constants (``_core_cp``, ``_core_tfac``, ``_core_M``,
         ``_cmb_area``, ``_cmb_dr_cmb``) are taken from
@@ -4607,8 +4628,12 @@ class EntropySolver:
             Temperature at the CMB basic node [K], derived from the
             boundary-entropy via the EOS.
         cp_cmb_basic : float
-            Heat capacity at the CMB basic node [J/(kg*K)], derived
-            from the boundary-entropy via the EOS.
+            Effective heat capacity ``T (dS/dT)_P`` of the CMB basic node's phase
+            blend [J/(kg*K)] (``_cmb_closure_cp``), so that ``cp/T`` is ``(dS/dT)_P``.
+        dr_node : float, optional
+            Distance [m] from the CMB basic node to the node its entropy is extrapolated
+            from: half the basic spacing (the default; energy_balance), or the staggered
+            radius minus the CMB radius for the gradient reconstruction.
 
         Returns
         -------
@@ -4654,7 +4679,9 @@ class EntropySolver:
         # denominator flips the sign to match the formula above.
         # Aragog's radii increase from CMB to surface, so dr > 0
         # and the numerator must be (stag - basic) explicitly.
-        return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
+        if dr_node is None:
+            dr_node = self._cmb_dr_half
+        return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) / dr_node
 
     def _core_module_rhs_per_s(
         self,
@@ -4693,7 +4720,7 @@ class EntropySolver:
         T_cmb_basic : float
             Temperature at the CMB basic node [K] (mantle side).
         cp_cmb_basic : float
-            Heat capacity at the CMB basic node [J/(kg*K)].
+            Effective heat capacity ``T (dS/dT)_P`` of the CMB basic node [J/(kg*K)].
         t_core : float
             Integrated core temperature state [K]; the budget's
             capacity is evaluated here, not at the mantle-side node.
@@ -4713,7 +4740,7 @@ class EntropySolver:
         )
         # The CMB basic node rides on the core: its temperature changes
         # at the core cooling rate, converted to an entropy rate through
-        # the node's own cp/T (mirrors fac_cmb in the SPIDER formula).
+        # cp/T with cp the effective T (dS/dT)_P (mirrors fac_cmb in the SPIDER formula).
         dS_basic_cmb_dt = (cp_cmb_basic / max(T_cmb_basic, 1.0)) * dT_core_dt
         d_dSdr_cmb_dt = (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
         return d_dSdr_cmb_dt, dT_core_dt
@@ -5102,7 +5129,7 @@ class EntropySolver:
         # that scikits.odes CVODE expects. Count RHS calls for parity
         # with scipy's sol.nfev.
         _rhs = rhs if rhs is not None else self.dSdt
-        nfev_box = [0]
+        nfev_box, rhs_fault = [0], []
 
         if cvode_rhs_fn_override is not None:
             # Option Z: caller supplies a fully-formed CVODE RHS
@@ -5118,7 +5145,11 @@ class EntropySolver:
         else:
 
             def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
-                ydot[:] = _rhs(t, y)
+                try:
+                    ydot[:] = _rhs(t, y)
+                except CMBClosureError as err:  # CVODE can turn a raise into a failed step
+                    rhs_fault.append(err)
+                    return -1
                 nfev_box[0] += 1
                 return 0
 
@@ -5255,6 +5286,8 @@ class EntropySolver:
             tspan,
             np.asarray(y0, dtype=float).ravel(),
         )
+        if rhs_fault:
+            raise rhs_fault[0]
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
@@ -5588,6 +5621,7 @@ class EntropySolver:
         already passed at the call start still merges, so that state then holds the merged lid.
         """
         wall_start = time.perf_counter()
+        self.cmb_ledger, last_accepted = None, getattr(self, '_solution', None)
         s0 = getattr(self, '_S0', None)
         if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
@@ -6416,7 +6450,11 @@ class EntropySolver:
             t_core = trace_y[self._n_stag + 1]
             refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
-        sol.energy_integrals = self._compute_step_energy_integrals()
+        try:
+            sol.energy_integrals = self._compute_step_energy_integrals()
+        except CMBClosureError:
+            self._solution = last_accepted  # back to the solution held at the call start
+            raise
         logger.info(
             'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
             time.perf_counter() - t_solved,
@@ -6678,6 +6716,8 @@ class EntropySolver:
         # equals step_dE_F_cmb by construction. None on a zero-duration or
         # zero-area call, so the caller keeps the end-of-step snapshot.
         step_dE_F_cmb = trap(P_F_cmb)
+        if core_bc in ('energy_balance', 'gradient'):
+            self._check_cmb_ledger(t_pts, np.atleast_2d(y_pts), P_F_cmb, step_dE_F_cmb)
         denom = 4.0 * np.pi * float(self._r_basic_flat[0]) ** 2 * float(np.sum(dt_s))
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
@@ -6701,6 +6741,12 @@ class EntropySolver:
             )
             if t_pts[-1] > t_pts[0]:  # a call that does not advance has no scale
                 step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
+            top = (
+                y_arr.shape[0] - 1 - self._n_lid
+                if self._core_shell() is not None
+                else n_stag + 1
+            )
+            self._check_cmb_ledger(t_pts, y_arr, P_F_cmb, step_dE_F_cmb, d_top=d_arr[top])
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -6726,6 +6772,111 @@ class EntropySolver:
             'core': step_dE_core,
             'core_tol': step_core_tol,
         }
+
+    def _check_cmb_ledger(self, t_pts, y_arr, p_cmb, q, d_top=None) -> None:
+        """Check the CMB closure of a call against the solver's own error bound.
+
+        energy_balance and gradient: the core heat change ``r = C (T_end - T_start) + q``
+        with ``C = c_core T_hat M_core`` and ``q`` the CMB heat of the call [J] must satisfy
+        ``|r| <= B = rel int|E|dt + E_trap + C sqrt(N) nst max_k(s_k w_k)``. core_module: the CMB
+        node must change by the core-top change ``d_top`` [K], with ``|r| <= B`` in K on the
+        same terms plus the core-top weight. ``s`` is ``(dT/dS)_P`` of the node blend, ``w``
+        the CVODE weight of the node entropy (the WRMS test bounds each of the ``N`` slots by
+        ``sqrt(N)`` weights, and the node entropy is linear in its slots), ``nst`` the steps
+        of the call, ``rel`` the largest ``|s_tab/s - 1|`` with ``s_tab`` the slope of the
+        tabulated blend, and ``E_trap`` the trapezoid error of ``q`` (every-other-node
+        estimate). A state with ``s_tab <= 1e-6 s`` (a padded, clamped or reversed table
+        cell) leaves the call out of the check, with one warning. A miss warns once per call; a
+        miss above 10 B raises ``CMBClosureError``. ``self.cmb_ledger`` holds the call's terms
+        (None when the call is not checked). B is a worst case: at rtol 1e-8 a 2-yr core_module
+        call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
+        a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
+
+        Raises
+        ------
+        CMBClosureError
+            On a node slope that is not finite and positive, or a miss above 10 B.
+        """
+        self.cmb_ledger = None
+        n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
+        tol = getattr(self, '_call_tol', None)  # set by solve()
+        if ev is None or tol is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
+            return
+        atol, rtol = tol
+        if self._core_bc == 'gradient':
+            dr, g = np.diff(self._r_stag_flat), y_arr[: n + 1]
+            S0 = y_arr[n + 1] - dr @ g[1:n]
+            w0 = rtol * np.abs(y_arr[n + 1]) + atol + dr @ (rtol * np.abs(g[1:n]) + atol)
+            off = float(self._r_basic_flat[0] - self._r_stag_flat[0])  # to the staggered radius
+        else:
+            S0, g = y_arr[0], y_arr[n : n + 1]
+            w0 = rtol * np.abs(S0) + atol
+            off = -0.5 * float(self._cmb_dr_cmb)  # to the basic-node midpoint
+        S_node = S0 + g[0] * off
+        w = w0 + abs(off) * (rtol * np.abs(g[0]) + atol)
+        h = 1.0e-3
+        ev.set_pressure(np.full(S_node.size, float(self._P_basic_flat[0])))
+
+        def blend(S):
+            ev.set_entropy(S)
+            ev.update()
+            return np.ravel(ev.temperature()), np.ravel(ev.temperature_slope())
+
+        T, slope = blend(S_node)
+        bad = np.flatnonzero(~(np.isfinite(slope) & (slope > 0.0)))
+        if bad.size:
+            k = int(bad[0])
+            raise CMBClosureError(
+                f'CMB closure: node slope (dT/dS)_P = {slope[k]:.6g} at t = {t_pts[k]:.6e} yr, '
+                f'S = {S_node[k]:.6g} J/kg/K; the closure needs a finite positive slope'
+            )
+        s_tab = (blend(S_node + h)[0] - blend(S_node - h)[0]) / (2.0 * h)
+        nst, n_slots = t_pts.size - 1, y_arr.shape[0]
+        floor = np.sqrt(n_slots) * nst * float(np.max(slope * w))
+        if d_top is None:
+            C = float(self._core_cp * self._core_tfac * self._core_M)
+            t_s = t_pts * SECS_PER_YEAR
+            idx = np.unique(np.r_[np.arange(0, t_pts.size, 2), t_pts.size - 1])
+            q2 = float(np.trapezoid(p_cmb[idx], t_s[idx]))
+            scale = float(np.trapezoid(np.abs(p_cmb), t_s))  # int |E| dt: E can change sign
+            r, extra = C * (T[-1] - T[0]) + q, abs(q - q2) / 3.0
+            floor *= C
+        else:
+            scale = float(np.sum(np.abs(np.diff(d_top))))
+            r = (T[-1] - T[0]) - (d_top[-1] - d_top[0])
+            extra = (
+                np.sqrt(n_slots) * nst * (atol + rtol * float(np.max(np.abs(d_top - d_top[0]))))
+            )
+        excluded = bool(np.any(s_tab <= 1.0e-6 * slope))  # a flat cell leaves round-off only
+        rel = float(np.max(np.abs(s_tab / slope - 1.0)))
+        bound = rel * scale + extra + floor
+        self.cmb_ledger = {'r': r, 'bound': bound, 'rel': rel, 'excluded': excluded}
+        counts = self._cmb_ledger_counts
+        if excluded:
+            counts['excluded'] += 1
+            logger.warning(
+                'EntropySolver: CMB closure check skipped for the call to t = %.6e yr: the node '
+                'table slope is <= 1e-6 of the closure slope (padded or clamped cell); %d call(s) '
+                'skipped so far',
+                t_pts[-1],
+                counts['excluded'],
+            )
+            return
+        counts['missed'] += int(abs(r) > bound)
+        if abs(r) > 10.0 * bound:
+            raise CMBClosureError(
+                f'CMB closure fault in the call to t = {t_pts[-1]:.6e} yr: ledger miss {r:.6g} '
+                f'is above 10x the solver bound {bound:.6g} ({"J" if d_top is None else "K"})'
+            )
+        if abs(r) > bound:
+            logger.warning(
+                'EntropySolver: CMB closure ledger miss %.6g above the bound %.6g in the call '
+                'to t = %.6e yr; %d call(s) missed so far',
+                r,
+                bound,
+                t_pts[-1],
+                counts['missed'],
+            )
 
     def _core_heat_change(self, budget, y_arr, d_arr) -> tuple[float, npt.NDArray]:
         """Heat change [J] of the core over a call and C_eff [J/K] at its nodes.

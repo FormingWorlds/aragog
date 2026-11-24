@@ -36,7 +36,7 @@ from aragog.rheology import (
     SolidRheologyParams,
 )
 from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
-from tests.conftest import EOS_DIR, entropy_eos_copy
+from tests.conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 from tests.test_jax_dsdt_core_module import _build_jax_pieces
 from tests.test_rheology_solver_wiring import (
@@ -550,6 +550,7 @@ def test_rhs_numpy_vs_jax_parity_100_cooling_states(closure_mode: str) -> None:
 # ============================================================================
 
 
+@needs_eos
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
@@ -855,6 +856,7 @@ def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None
     assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 2.5e-13
 
 
+@needs_eos
 def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
     """NumPy and JAX right-hand sides agree with rheology in energy_balance mode."""
     rheo = SolidRheologyParams(
@@ -906,6 +908,7 @@ def test_rhs_parity_rheology_on_energy_balance_mode() -> None:
     assert rel_diff <= 1.0e-10
 
 
+@needs_eos
 def test_rhs_parity_rheology_on_core_module_mode() -> None:
     """NumPy and JAX right-hand sides agree with rheology in core_module mode."""
     eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)

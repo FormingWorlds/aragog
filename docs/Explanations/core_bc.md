@@ -160,7 +160,7 @@ The flux steps at a positive width too, because the tables hold the temperature 
 
 | Tables | CMB pressure | Band at the solidus | Band at the liquidus |
 |---|---|---|---|
-| Test tables | 146 GPa, the CMB pressure of the tests | 76 | 63 |
+| Test tables | 145.7 GPa, the CMB pressure of the tests | 76 | 63 |
 | PALEOS tables of the coupled runs, 1 Earth-mass run | 103 GPa | 30 | 59 |
 | PALEOS tables of the coupled runs, 3 and 5 Earth-mass runs | the CMB of those runs | 80 to 83 | none |
 
@@ -292,25 +292,92 @@ This mode is fast, stable, and conservative in the sense that it does not requir
 
 State vector length: $N + 1$ (entropy at staggered nodes plus the entropy gradient at the CMB basic node, $dS/dr |_\text{cmb}$).
 
-The entropy gradient at the CMB is added as an extra state variable and is integrated via SPIDER's [`bc.c:76-131`](https://github.com/FormingWorlds/SPIDER) formula:
+The core is a reservoir that loses the heat crossing the core-mantle boundary (CMB). Its mean temperature is $\text{tfac}\, T_\text{cmb}$, with $\text{tfac} = 1.147$ for an isentropic Earth core, as in Bower et al. (2018)[^cite-bower2018] Eqs. 19-21:
 
 $$
-\frac{d}{dt}\left(\frac{dS}{dr}\bigg|_\text{cmb}\right) = \frac{2}{\Delta r}\left( -F_\text{cmb} A_\text{cmb} \cdot \text{fac}_\text{cmb} - \frac{dS}{dt}\bigg|_0\right)
+M_\text{core}\, c_p^\text{core}\, \text{tfac}\, \frac{dT_\text{cmb}}{dt} = -F_\text{cmb} A_\text{cmb}
 $$
 
-with
+Here $T_\text{cmb}$ is the temperature of the CMB basic node, read from its entropy at the CMB pressure. The entropy gradient at the CMB is the extra state variable. It is integrated with the formula of SPIDER's [`bc.c:76-131`](https://github.com/FormingWorlds/SPIDER):
 
 $$
-\text{fac}_\text{cmb} = \frac{c_p^\text{cmb}}{c_p^\text{core} \, T_\text{cmb} \, \text{tfac} \, M_\text{core}}
+\frac{d}{dt}\left(\frac{dS}{dr}\bigg|_\text{cmb}\right) = \frac{2}{\Delta r}\left( \frac{dS}{dt}\bigg|_0 + F_\text{cmb} A_\text{cmb} \cdot \text{fac}_\text{cmb}\right),
+\qquad
+\text{fac}_\text{cmb} = \frac{1}{c_p^\text{core} \, \text{tfac} \, M_\text{core}\, (\partial T/\partial S)_P}
 $$
 
-This is the SPIDER-parity formulation. It produces bit-for-bit agreement with SPIDER on the Earth reference. Use this mode for any run that needs to reproduce SPIDER results, including the published verification suite. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+Here $\Delta r > 0$ is the spacing of the 2 lowest basic nodes, $dS/dt|_0$ the entropy rate of the bottom cell, and $F_\text{cmb} > 0$ a heat flux out of the core (W m$^{-2}$), so that $F_\text{cmb} A_\text{cmb}$ is the heat flow. SPIDER takes the difference across the bottom cell the other way (it divides by $\xi_\text{cmb} - \xi_\text{above} < 0$), so its form has the opposite sign. The factor $\text{fac}_\text{cmb}$ turns the core cooling rate into the entropy rate of the CMB node; [the next section](#the-entropy-slope-at-the-cmb-node) explains the slope $(\partial T/\partial S)_P$. SPIDER uses $c_p/T_\text{cmb}$ of the node in its place. The 2 agree while the node is in a single phase outside the melt band and its smoothing bands, and differ inside them. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+
+### The entropy slope at the CMB node
+
+How does the closure make the node temperature follow the core? Between structure updates the node keeps its pressure, so $dT = (\partial T/\partial S)_P\, dS$. The closure divides the core cooling rate by this slope of the code's own $T(P, S)$, so the core loses exactly the heat that crosses the CMB.
+
+The node temperature is the blend $T = s_b\, T_\text{mix} + (1 - s_b)\, T_\text{single}$ of [the phase transitions](phase_transitions.md). Here $T_\text{mix}$ is the temperature of the mush, linear in $S$ from the solidus ($S_\text{sol}$, $T_\text{sol}$) to the liquidus ($S_\text{liq}$, $T_\text{liq}$) at the node pressure. $T_\text{single}$ is the temperature of a pure-phase table (melt above the middle of the band, solid below), with heat capacity $c_p^\text{single}$, and $s_b$ is the blend weight. The slope is
+
+$$
+\left(\frac{\partial T}{\partial S}\right)_P = s_b\, \frac{T_\text{liq} - T_\text{sol}}{S_\text{liq} - S_\text{sol}} + (1 - s_b)\, \frac{T_\text{single}}{c_p^\text{single}} + (T_\text{mix} - T_\text{single})\, \frac{\partial s_b}{\partial S}
+$$
+
+The first term acts only from the solidus to the liquidus and the second, the pure-phase slope $T/c_p$, only outside them. The last, the change of the weight, acts only in the smoothing bands, a few `matprop_smooth_width` wide on both sides of the solidus and the liquidus. On the test tables at the CMB pressure of 145.7 GPa with the default width 0.01, the slope is the mush slope from $g = 0.1$ to $0.9$ and $T/c_p$ at $g \le -0.1$ and $g \ge 1.1$ ($g$ the melt coordinate, 0 at the solidus and 1 at the liquidus).
+
+The heat capacity of the blend does not give this slope in the mush. There it is $c_p = T_\text{avg} (S_\text{liq} - S_\text{sol})/(T_\text{liq} - T_\text{sol})$, with $T_\text{avg}$ the mean of the solidus and liquidus temperatures. With $c_p/T$ the node would cool at $T_\text{avg}/T$ of the core rate. For $T_\text{sol} = 4000$ K, $T_\text{liq} = 5600$ K and a melt coordinate of 0.85 (0 at the solidus, 1 at the liquidus; the melt fraction in the mush), $T = 5360$ K, and the node cools at 0.90 of the core rate.
+
+Runs whose CMB node starts in the smoothing band above the liquidus (melt fraction 1) change too. In the 1 Earth-mass PALEOS run the node starts at $g = 1.028$, where $T/c_p$ lies 1.025 to 1.37 times below the slope up to 988 yr, and with `energy_balance` the CMB heat flux is 2.6 % higher at 2 yr and 33 % higher at 988 yr than with $c_p/T$ (`gradient` changes as well, `core_module` does not).
+
+### Limits of the slope closure
+
+- A table cell where $T$ does not rise with $S$ holds the node temperature (on the test tables at 145.7 GPa: $g = 1$ to $1.0075$ next to the liquidus, $g = -0.009$ to $0$ next to the solidus, and $g \le -0.34$ in the solid), while the closure uses the pure-phase slope $T/c_p$. The [ledger check](#ledger-check-of-the-cmb-closure) skips such a call with a warning.
+- Outside the mush, where $T/c_p$ of the tables differs from the slope of the tabulated $T$, the ledger misses by that difference. On the PALEOS:MgSiO3 tables of a 1 Earth-mass run it is $1.3 \times 10^{-3}$ to $4.8 \times 10^{-3}$ next to the liquidus. On the test tables of the CI, at a CMB node pressure of 145.7 GPa, it reaches 6.2 % in the solid just below the flat cell next to the solidus ($g = -0.009$) and 4.1 % below $g = -0.05$, and in the melt 0.66 % up to $g = 1.1$ and 0.79 % up to $g = 2$; the term $\epsilon_\text{tab}$ of the [ledger check](#ledger-check-of-the-cmb-closure) widens its bound by that amount.
+- A slope that is not finite and positive stops the call with a `CMBClosureError` from the NumPy right-hand side, with CVODE and with Radau. The JAX right-hand side has no such guard; the ledger check refuses such a slope over the accepted states of a call that finishes.
+- With the default `matprop_smooth_width` the slope jumps where the pure-phase term starts: by a factor 18.9 at the solidus and 4.1 at the liquidus on the test tables at 145.7 GPa. With `matprop_smooth_width = 0` the slope at the solidus and at the liquidus is the mush slope.
+
+**Where this is checked.** [The CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band), [the CMB closure on the states of 2 coupled runs](../Validation/core.md#17-the-cmb-closure-on-the-states-of-2-coupled-runs) and [the CMB node rate of each closure](../Validation/core.md#18-the-cmb-node-rate-of-each-closure).
+
+### Ledger check of the CMB closure
+
+How does a run notice a CMB closure that loses heat? After each call of `energy_balance`, `gradient` and `core_module`, the solver checks the CMB node over the accepted states of the call. In `energy_balance` and `gradient` it compares the core heat change with the CMB heat of the call, $\Delta E_\text{cmb} = \int E\, dt$ (J), with $E = A_\text{cmb} F_\text{cmb}$ the CMB heat flow (W):
+
+$$
+r = C\, \Delta T_\text{cmb} + \Delta E_\text{cmb}, \qquad C = M_\text{core}\, c_p^\text{core}\, \text{tfac}
+$$
+
+In `core_module` it compares the change of the node temperature with that of the core top, so $r$ and its bound are in K. This check tests that the CMB node follows the core; the [core ledger](#energy-conservation-and-core-closure) of `core_module` tests the energy balance of the core itself.
+
+The miss $r$ must stay within a bound $B$ set by the solver tolerances:
+
+$$
+B = \epsilon_\text{tab} \int |E|\, dt + E_\text{trap} + C\, \sqrt{n_y}\, n_\text{st} \max_k \left[\left(\frac{\partial T}{\partial S}\right)_P w\right]_k
+$$
+
+- $\epsilon_\text{tab}$ is the largest relative difference of the tabulated $T$ slope from the closure slope over the accepted states; in the mush it is the round-off of the central difference. It multiplies the integral of $|E|$, as $E$ can change sign.
+- $E_\text{trap}$ is the error of the trapezoid sum of $\Delta E_\text{cmb}$ over the energy trace of the call, which with CVODE holds the nodes listed in [diagnostic outputs](#diagnostic-outputs). It is estimated from every other trace node.
+- $w$ is the error weight of the node entropy (J kg$^{-1}$ K$^{-1}$): the weights of the states it depends on, each times its coefficient. These states are the bottom-cell entropy and the gradient, and in `gradient` all gradient states and the surface entropy.
+- The integrator accepts a step when the root mean square of the $n_y$ weighted errors ($n_y$ the length of the state vector) is at most 1, so one state errs by at most $\sqrt{n_y}$ times its weight. $n_\text{st}$ is the number of intervals of the energy trace; the maximum runs over its nodes $k$.
+- In `core_module` the bound has no $C$ and no $E_\text{trap}$. The integral of $|E|$ becomes the sum of the absolute core-top temperature changes between trace nodes, plus a term for the error weight of that temperature.
+
+### What happens after a miss
+
+A miss above $B$ logs a warning and is counted; a miss above $10\,B$ is counted and raises a `CMBClosureError` (a `RuntimeError`, from `aragog.solver.entropy_solver`). The solver then drops the refused call and puts back the solution it held at the start of the call (none before the first call), from which a caller that goes on takes the CMB gradient. A coupled PROTEUS run sets the solver back to the state at the call start itself and skips the interior step without a retry; the third failed step in a row stops the run. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds the terms of the last call: `r` and `bound` (J, or K in `core_module`), `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). It is `None` after a call that the check does not cover.
+
+### What the ledger check detects
+
+$B$ is a worst case, so the check sees a closure error only where it is large against the error weight of the node. At `rtol = atol = 1e-8`, with $c_p/T$ in place of the slope, and with the node at a melt coordinate (0 at the solidus, 1 at the liquidus) of 0.9 or 0.3:
+
+- a 2-yr `core_module` call (CVODE, node at 0.9) misses by 0.0033 K, against a bound of 1.2 K for a core-top change of 0.032 K;
+- a 20-yr `energy_balance` call (CVODE) misses by 0.16 $B$ with the node at 0.3, and raises with the node at 0.9;
+- a 20-yr `gradient` call (Radau) warns with the node at 0.9 (2.8 $B$) and passes with the node at 0.3, where $B$ is 20 times the CMB heat.
+
+The tests of the slope closure run at `rtol` $10^{-10}$ to $10^{-12}$ for this reason. With Radau at `rtol = atol = 1e-8`, in 2-yr and 20-yr `energy_balance` calls with the node at 0.5 to 0.99 on the test tables, the miss of the slope closure reaches 0.77 to 0.82 $B$. That miss is mostly the trapezoid error $E_\text{trap}$ of the CMB heat over the accepted steps, not an error of the closure: in a 2-yr call with the node at 0.7, Simpson's rule on the same steps lowers it from $5.7 \times 10^{-4}$ to $5.6 \times 10^{-6}$ of the CMB heat at `rtol = 1e-8`, and from $6.3 \times 10^{-5}$ to $8.6 \times 10^{-8}$ at `rtol = 1e-10`.
 
 ## `gradient`
 
 State vector length: $N + 2$ (the entropy gradient is the primary field; entropy is reconstructed by cumulative integration from the surface).
 
 Treats $dS/dr$ as the integrated quantity rather than $S$ itself, with two extra boundary states (one for each surface). Produces the same physics as `energy_balance` but with a different conditioning that is more stable in regimes where $S$ has a sharp kink at the rheological transition. Has not been validated against SPIDER as thoroughly as `energy_balance`; treat as experimental.
+
+The CMB closure is that of `energy_balance`, with one difference: the reconstruction places the CMB node entropy at $S_0 + (r_\text{cmb} - r_0)\, dS/dr|_\text{cmb}$, with $r_0$ the radius of the first staggered node, and the closure divides by that same distance $r_0 - r_\text{cmb}$ in place of $\Delta r/2$.
+
+The [entropy slope](#the-entropy-slope-at-the-cmb-node) changes the results of `gradient` as it changes those of `energy_balance`: on the test tables at 145.7 GPa the CMB heat flux at the end of a 2 yr call differs from that with $c_p/T$ by up to 11 % (10 % and 11 % lower at $g = 0.99$ and $1.02$, 1.4 % higher at $g = 0.5$). In `core_module` the mantle entropy, the core temperature and the CMB heat flux of such a call agree with those of $c_p/T$ to $10^{-11}$ (relative); only the CMB entropy gradient in the solver state moves, by up to $2.3 \times 10^{-5}$.
 
 ## `bower2018`
 
@@ -323,7 +390,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 | Need | Recommended `core_bc` |
 |------|----------------------|
 | Core evolution with inner-core growth, or a core temperature decoupled from basal-node phase snaps | `core_module` |
-| Production PROTEUS runs and SPIDER-parity validation | `energy_balance` (default) |
+| Production PROTEUS runs; SPIDER parity while the CMB node is in a single phase outside the melt band and its smoothing bands | `energy_balance` (default) |
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Parity tests with a conduction-only CMB flux | `bower2018` (legacy) |
@@ -439,6 +506,7 @@ The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along t
 **Where this is checked.** [Core ledger closure](../Validation/core.md#core-ledger-closure) and [a CVODE solve across the inner-core onset](../Validation/core.md#9-a-cvode-solve-across-the-inner-core-onset).
 
 [^cite-anzellini2013]: Anzellini, S., Dewaele, A., Mezouar, M. et al., *[Melting of Iron at Earth's Inner Core Boundary Based on Fast X-ray Diffraction](https://doi.org/10.1126/science.1233514)*, Science, 340, 464-466, 2013. [SciX](https://scixplorer.org/abs/2013Sci...340..464A/abstract).
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49-62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
 [^cite-deschamps2000]: Deschamps, F. & Sotin, C., *[Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity](https://doi.org/10.1046/j.1365-246x.2000.00228.x)*, Geophysical Journal International, 143, 204-218, 2000. [SciX](https://scixplorer.org/abs/2000GeoJI.143..204D/abstract).
 [^cite-foley2016]: Foley, B.J. & Driscoll, P.E., *[Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution](https://doi.org/10.1002/2015gc006210)*, Geochemistry, Geophysics, Geosystems, 17, 1885-1914, 2016. [SciX](https://scixplorer.org/abs/2016GGG....17.1885F/abstract).
 [^cite-greenwood2021]: Greenwood, S., Davies, C.J. & Mound, J.E., *[On the evolution of thermally stratified layers at the top of Earth's core](https://doi.org/10.1016/j.pepi.2021.106763)*, Physics of the Earth and Planetary Interiors, 318, 106763, 2021. [SciX](https://scixplorer.org/abs/2021PEPI..31806763G/abstract).

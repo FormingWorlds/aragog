@@ -56,7 +56,7 @@ Solid-state mantle rheology (`[phase_solid.rheology]`), with stagnant-lid growth
 
 ### 3. Retry ladder
 
-A non-converged `solver.solve()` (status $\ne 0$, T_core jump $> 1500$ K, or NaN propagation) routes through a retry ladder that progressively perturbs the entropy gradient at the CMB (`set_initial_dSdr_cmb`) and loosens tolerances within a bounded window. After eight consecutive failures (`_ARAGOG_MAX_CONSECUTIVE_FAILS`) the run aborts. On first success the streak resets to zero and is logged for post-hoc analysis.
+A call that ends with a failed integration (status $\ne 0$), a non-finite core temperature or a core temperature change above $\max(3000\ \mathrm{K}, 1500\ \mathrm{K} \times M/M_\oplus)$ goes through a retry ladder. Each retry starts again from the state at the start of the call. The ladder halves the interval and scales atol, over up to 6 attempts; for a `CV_TOO_MUCH_WORK` stall it first raises the CVODE step budget and loosens rtol, over up to 8 attempts. An exhausted ladder, or an error that `solver.solve()` raises (a `CMBClosureError`, for example), skips the interior step: PROTEUS keeps the previous interior state, sets the energies of the call to 0 and advances the other modules. The third failed step in a row (`_ARAGOG_MAX_CONSECUTIVE_FAILS` in `proteus/interior_energetics/wrapper.py` of PROTEUS) stops the run; a successful call resets the count to zero.
 
 ### 4. NetCDF snapshot
 
@@ -172,7 +172,7 @@ Use sparingly: the flag has a small per-step cost (XLA fast-math disabled) and m
 - [Energy equation](energy_equation.md): the entropy-form RHS that Aragog integrates.
 - [Energy diagnostics](energy_diagnostics.md): per-call energy-budget integrals (`step_dE_*_J`) and cumulative conservation residuals (`E_residual_cons_J`, `solver_residual_J`).
 - [Aragog vs SPIDER](spider_comparison.md): formulation differences and parity guarantees.
-- [Core BC modes](core_bc.md): the five core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
+- [Core BC modes](core_bc.md): the five core-mantle boundary conditions, with the `energy_balance` closure and the entropy slope of its CMB node.
 - [PROTEUS framework documentation](https://proteus-framework.org/PROTEUS): top-level entry.
 
 The wrapper itself lives in the PROTEUS repository, not in Aragog. The single source of truth for the symbol-level API is rendered from PROTEUS source via mkdocstrings:

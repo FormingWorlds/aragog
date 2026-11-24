@@ -24,11 +24,13 @@ from tools.verification._ssc_helpers import _parsed
 
 __all__ = [
     '_parsed',
+    'assert_figure_legend_below',
     'assert_legend_clear',
     'entropy_eos_copy',
     'entropy_eos_jax',
     'opaque_legend',
     'package_logger_isolation',
+    'write_ps_table',
 ]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -137,6 +139,33 @@ def opaque_legend(ax, **kwargs):
     return ax.legend(
         frameon=True, framealpha=1.0, facecolor=ax.get_facecolor(), edgecolor='none', **kwargs
     )
+
+
+def write_ps_table(path, P, S, values) -> None:
+    """Write a P-S table in the SPIDER layout (P varies fastest, unit scales); values (n_P, n_S)."""
+    rows = [
+        f'{p:.17g} {s:.17g} {values[i, j]:.17g}'
+        for j, s in enumerate(S)
+        for i, p in enumerate(P)
+    ]
+    head = f'# 5 {len(P)} {len(S)}\n#\n#\n#\n# 1 1 1\n'
+    Path(path).write_text(head + '\n'.join(rows) + '\n')
+
+
+def assert_figure_legend_below(fig) -> None:
+    """The figure legend sits below the axes: it overlaps neither the axes nor any text."""
+    import matplotlib.pyplot as plt
+    from matplotlib.text import Text
+
+    fig.canvas.draw()
+    (legend,) = fig.legends
+    box, own = legend.get_window_extent(), set(legend.findobj())
+    for ax in fig.axes:
+        assert not box.overlaps(ax.get_window_extent())
+    for text in fig.findobj(Text):
+        if text.get_visible() and text.get_text() and text not in own:
+            assert not box.overlaps(text.get_window_extent()), text.get_text()
+    plt.close(fig)
 
 
 def assert_legend_clear(fig) -> None:

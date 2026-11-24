@@ -169,6 +169,8 @@ def test_solve_sets_stop_early_from_the_status(monkeypatch, status, stop):
     from aragog.solver import EntropySolver
 
     monkeypatch.setattr('aragog.solver.entropy_solver.solve_ivp', _stub_solve_ivp(status))
+    # the stub holds the state while the CMB flux is nonzero, which the ledger check refuses
+    monkeypatch.setattr(EntropySolver, '_check_cmb_ledger', lambda *a, **k: None)
     solver = EntropySolver.from_file(str(CFG), eos_dir=str(EOS_DIR))
     solver.parameters.energy.solver_method = 'bdf'
     solver.initialize()
