@@ -1216,3 +1216,133 @@ def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts
     ]
     assert len(status) == posts
     assert not any('/status?' in a for c in calls[1:] for a in c)
+
+
+def _job(name):
+    assert f'\n  {name}:\n' in _WORKFLOW
+    return _block(_WORKFLOW, f'\n  {name}:', 2)
+
+
+def test_only_the_resolve_job_can_write_contents_and_it_runs_no_pull_request_code():
+    resolve = _job('resolve')
+    assert 'needs: review' in resolve and "needs.review.result == 'success'" in resolve
+    perms = _block(resolve, '    permissions:', 4).splitlines()[1:]
+    assert sorted(p.strip() for p in perms) == ['contents: write', 'statuses: write']
+    assert 'checkout' not in resolve and 'python' not in resolve and 'claude' not in resolve
+    assert '${{' not in _run_block(
+        _step_in(resolve, 'Resolve the threads the review found fixed')
+    )
+    for job in ('pending', 'command', 'review'):
+        assert 'contents: write' not in _job(job)
+    outputs = _block(_job('review'), '    outputs:', 4)
+    for key in ('resolve', 'description', 'head'):
+        assert f'{key}: ${{{{ steps.' in outputs
+
+
+def _step_in(text, name):
+    return _block(text, f'      - name: {name}', 6)
+
+
+_FAKE_RESOLVE_GH = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['GH_LOG'], 'a') as f:
+    f.write(json.dumps(args) + '\\n')
+text = ' '.join(args)
+if 'resolveReviewThread' in text:
+    if os.environ.get('RESOLVE_FAILS'):
+        sys.stderr.write('gh: Resource not accessible by integration\\n')
+        sys.exit(1)
+    sys.exit(0)
+if 'query=' in text:
+    print(os.environ['THREAD_JSON'])
+    sys.exit(0)
+sys.exit(0)
+"""
+OWN_BODY = 'text\n<!-- claude-review:finding key=0123456789ab severity=important -->'
+
+
+@pytest.mark.parametrize(
+    ('threads', 'thread', 'fails', 'resolved', 'cause'),
+    [
+        ('["PRRT_ab-1"]', {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY}, '', 1, None),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'egpbos', 'body': OWN_BODY},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'github-actions', 'body': 'no marker'},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 6, 'login': 'github-actions', 'body': OWN_BODY},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["x; rm -rf /"]',
+            {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY},
+            '',
+            0,
+            'bad thread id',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY},
+            '1',
+            1,
+            'Resource not accessible',
+        ),
+    ],
+)
+def test_the_resolve_job_resolves_only_own_findings_and_reports_a_failure(
+    tmp_path, threads, thread, fails, resolved, cause
+):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(_FAKE_RESOLVE_GH)
+    (bin_dir / 'gh').chmod(0o755)
+    node = {
+        'pullRequest': {'number': thread['pr']},
+        'comments': {
+            'nodes': [
+                {
+                    'body': thread['body'],
+                    'author': {'login': thread['login']},
+                }
+            ]
+        },
+    }
+    env = {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'GH_LOG': str(tmp_path / 'log'),
+        'THREAD_JSON': json.dumps(node),
+        'RESOLVE_FAILS': fails,
+        'THREADS': threads,
+        'DESCRIPTION': 'protected path changed: maintainer review',
+        'HEAD_SHA': HEAD,
+        'PR_NUMBER': '5',
+        'RUN_URL': 'RUN',
+        'GITHUB_REPOSITORY': 'o/r',
+    }
+    step = _run_block(_step_in(_job('resolve'), 'Resolve the threads the review found fixed'))
+    rc = subprocess.run(['bash', '-e', '-c', step], env=env).returncode
+    calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
+    assert sum('resolveReviewThread' in ' '.join(c) for c in calls) == resolved
+    status = [c for c in calls if 'repos/o/r/statuses/' + HEAD in c]
+    if cause is None:
+        assert rc == 0 and status == []
+    else:
+        assert rc == 1 and len(status) == 1
+        desc = next(a for a in status[0] if a.startswith('description='))
+        assert desc.startswith('description=protected path changed: maintainer review; ')
+        assert cause in desc and len(desc) <= len('description=') + 140
