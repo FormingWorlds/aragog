@@ -243,11 +243,11 @@ def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(length_scale, be
     """With a short Gaussian length scale the CMB freezes while a liquid layer remains above the
     inner core (snow topology): around and below T_freeze the radius and its derivative are
     those of the 80-step bisection, the inner-core crossing, not r_cmb. With a frozen CMB the
-    capacities that use dr/dT are zero, so the radius reaches the diagnostics and the checks
-    after a step (regime, shell base), not the right-hand side. At 16 and 17 K below T_freeze
-    (3000 km) and 25 K (3300 km) a secant step from two frozen ends would land in the frozen
-    top shell and lose the layer. The search keeps the bracket, the width and the step bound,
-    and next to a frozen core in one array call it gives its own bits."""
+    capacities that use dr/dT are zero, so the radius reaches the diagnostics and the checks of
+    accepted steps (regime, shell base), not the right-hand side. At 16 and 17 K below T_freeze
+    (3000 km) and 25 K (3300 km) a secant step from two frozen ends would land in the frozen top
+    shell and lose the layer. The search keeps the bracket, the width and the step bound, and
+    next to a frozen core in one array call it gives its own bits."""
     prof = GaussianCoreProfiles(**{**EARTH, 'length_scale': length_scale})
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     new = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)

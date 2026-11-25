@@ -307,7 +307,7 @@ class CoreEnergyBudget:
 
     def _r_icb_bracket(self, t_cmb):
         """Steps, final bracket [m] and end superheats [K] as the search stored them; the stored
-        superheats bracket a sign change only for an inner core."""
+        superheats bracket a sign change unless the centre is liquid or no point is liquid."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
@@ -315,7 +315,7 @@ class CoreEnergyBudget:
         b = jnp.where(f_0 > 0.0, 0.0, jnp.ones_like(t))  # a liquid centre: [0, 0], no step
         init = (0, jnp.zeros_like(t), b, f_0, f_c, jnp.zeros(jnp.shape(t), jnp.int32), t)
         k, a, b, f_a, f_b, *_ = jax.lax.while_loop(*self._root_steps, init)
-        frozen = (b == 1.0) & (f_c < 0.0)  # no liquid point found: frozen throughout
+        frozen = (b == 1.0) & (f_c < 0.0)  # no liquid bisection point: r_cmb
         return k, jnp.where(frozen, p.r_cmb, a * p.r_cmb), b * p.r_cmb, f_a, f_b
 
     def _r_icb_solve(self, t_cmb):
@@ -339,13 +339,16 @@ class CoreEnergyBudget:
         interval of Theorem 2.1 (p. 5:6) and the bound holds.
 
         With a frozen CMB the bracket has no sign change, and the search
-        bisects until it finds a liquid point: it finds an inner-core crossing
-        under a frozen CMB where a bisection finds one, and returns r_cmb when
-        it finds no liquid point (a core frozen throughout, up to 58 steps). A
-        liquid centre returns zero with no step, whatever lies above it (a
-        top-down or snow topology with a liquid centre has no inner core in
-        the bottom-up sense); the boundary terms drop to zero there, and the
-        solver refuses those states
+        bisects until it finds a liquid point. It then finds the inner-core
+        crossing a bisection finds, and returns r_cmb when no bisection point
+        is liquid (at most 58 steps): a core frozen throughout, or a liquid
+        layer under the frozen CMB that lies between the points. With a frozen
+        CMB the boundary terms are zero, so the radius reaches the diagnostics
+        and the checks of accepted steps, not the right-hand side. A liquid centre
+        returns zero with no step, whatever lies above it (a top-down or snow
+        topology with a liquid centre has no inner core in the bottom-up
+        sense); the boundary terms drop to zero there, and the solver refuses
+        those states
         (``aragog.core.regime.refuse_unmodelled_regime``).
 
         The derivative is the implicit-function sensitivity attached as a
