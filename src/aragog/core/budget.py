@@ -36,7 +36,7 @@ _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
-_BISECT_ITERS = 80  # most steps; the bracket reaches adjacent floats sooner and stops there
+_BISECT_ITERS = 80  # r_icb: at most this many steps; _kinks: exactly this many
 
 
 @register_pytree
@@ -264,10 +264,12 @@ class CoreEnergyBudget:
     def _bisect_steps(self):
         """Condition and step of the bisection, built once per budget so that the loop compiles
         once. A step that leaves the bracket unchanged ends the loop: every later step would
-        leave it unchanged too, so the root has the bits of all ``_BISECT_ITERS`` steps."""
+        leave it unchanged too, so the root has the bits of all ``_BISECT_ITERS`` steps of the
+        same compiled program. An array of temperatures steps until its slowest entry stops."""
 
         def cond(carry):
-            return carry[4] & (carry[0] < _BISECT_ITERS)
+            i, _, _, _, moving = carry
+            return jnp.any(moving) & (i < _BISECT_ITERS)
 
         def body(carry):
             i, lo, hi, t_cmb, _ = carry

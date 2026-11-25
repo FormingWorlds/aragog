@@ -291,9 +291,8 @@ def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs, with the core_bc mode and the
     radiogenic switch static. The RHS and Jacobian also take as static arguments the by-value
     holder of the constant leaves (the phase parameters, the EOS tables and the budget config
-    constants) and
-    the layout (treedef and mask), and every other leaf flat; the step-power and lid-weight
-    programs take all inputs as traced arguments."""
+    constants) and the layout (treedef and mask), and every other leaf flat; the step-power
+    and lid-weight programs take all inputs as traced arguments."""
     import jax
 
     return (
