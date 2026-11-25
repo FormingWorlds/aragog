@@ -806,3 +806,25 @@ def test_the_check_reads_the_lookup_points_of_the_jax_rhs(monkeypatch):
     assert (
         seen_check[1][1][0, 0] != seen_check[0][1][0, 0]
     )  # the CMB node is not the bottom cell
+
+
+def test_a_trace_longer_than_one_block_is_judged_in_full(monkeypatch):
+    """The states are judged in blocks: with 2 states per block, the worst state in the last block
+    is named with its time and the count sums the points of every block."""
+    import aragog.solver.entropy_solver as es_mod
+
+    monkeypatch.setattr(es_mod, '_EOS_DOMAIN_BLOCK', 2)
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    a = _uniform_melt(s, eos, 0.0)
+    dS = eos.domain.melt.dS
+    sol = _states(a, a, t=[0.0, 4.0])
+    sol['energy_trace'] = (
+        np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
+        np.column_stack([a + 6.0 * dS, a, a + 7.0 * dS, a, a + 9.0 * dS]),
+    )
+    msg = s._eos_domain_failure(sol)
+    assert msg is not None
+    n_pts = 2 * s._n_stag + 1
+    assert msg.startswith(f'{_MSG}: {3 * n_pts} lookup points over the 5 accepted states')
+    assert 'worst at t=4.000000e+00 yr' in msg and '9.00 cells outside' in msg
