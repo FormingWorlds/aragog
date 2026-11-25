@@ -83,6 +83,10 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      resolve: ${{ steps.post.outputs.resolve }}
+      description: ${{ steps.post.outputs.description }}
+      head: ${{ steps.gate.outputs.head }}
     permissions:
       contents: read
       pull-requests: write
@@ -423,8 +427,17 @@ jobs:
             --out "$D/plan.json"
           jq '{state, description, event, resolve, dismiss, comments: (.comments | length)}' "$D/plan.json" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          python -I "$D/review_decision.py" apply --plan "$D/plan.json" --repo "$GITHUB_REPOSITORY" \
-            --pr "$PR_NUMBER" --url "$RUN_URL"
+          {
+            echo "resolve=$(jq -c .resolve "$D/plan.json")"
+            echo "state=$(jq -r .state "$D/plan.json")"
+            echo "description=$(jq -r .description "$D/plan.json")"
+          } >> "$GITHUB_OUTPUT"
+          jq '.resolve = []' "$D/plan.json" > "$D/apply.json"
+          if ! python -I "$D/review_decision.py" apply --plan "$D/apply.json" --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" --url "$RUN_URL" 2>"$RUNNER_TEMP/post_cause.txt"; then
+            cat "$RUNNER_TEMP/post_cause.txt" >&2
+            exit 1
+          fi
 
       - name: Report a failed review
         if: (failure() || cancelled()) && steps.gate.outputs.run == 'true'
@@ -449,7 +462,7 @@ jobs:
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac
-          if [ "$failed" = post ] && jq -e '.description | startswith("post failed:")' <<<"$last" >/dev/null; then
+          if [ "$failed" = post ] && grep -q "^review_decision: Command '" "$RUNNER_TEMP/post_cause.txt" 2>/dev/null; then
             echo "The post step set the status with its cause."
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
@@ -478,3 +491,54 @@ jobs:
               jq -c '[.[] | select(.type == "result")] | last | .permission_denials' "$e"
             fi
           done
+
+  resolve:
+    name: Resolve the review threads of fixed findings
+    needs: review
+    if: >-
+      !cancelled() && needs.review.result == 'success'
+      && needs.review.outputs.resolve != '' && needs.review.outputs.resolve != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # resolveReviewThread needs it; pull-requests: write is not enough
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Resolve the threads of fixed findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THREADS: ${{ needs.review.outputs.resolve }}
+          DESCRIPTION: ${{ needs.review.outputs.description }}
+          HEAD_SHA: ${{ needs.review.outputs.head }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          err=$(mktemp)
+          fail=''
+          for id in $(jq -r '.[]' <<<"$THREADS"); do
+            if ! [[ "$id" =~ ^PRRT_[A-Za-z0-9_-]+$ ]]; then fail='bad thread id'; break; fi
+            node=$(gh api graphql -f t="$id" --jq .data.node -f query='query($t: ID!) { node(id: $t) {
+              ... on PullRequestReviewThread { pullRequest { number }
+                comments(first: 1) { nodes { body author { login } } } } } }')
+            if ! jq -e --arg pr "$PR_NUMBER" '(.pullRequest.number | tostring) == $pr
+                and .comments.nodes[0].author.login == "github-actions"
+                and (.comments.nodes[0].body
+                  | test("<!-- claude-review:finding key=[0-9a-f]{12} severity=(important|pre_existing|nit) -->\\s*$"))' \
+                <<<"$node" >/dev/null; then
+              fail="thread $id is not a finding of this workflow"
+              break
+            fi
+            if ! gh api graphql -f t="$id" 2>"$err" \
+                -f query='mutation($t: ID!) { resolveReviewThread(input: {threadId: $t}) { thread { isResolved } } }'; then
+              fail="thread resolve failed: $(tail -n 1 "$err")"
+              break
+            fi
+          done
+          if [ -n "$fail" ]; then
+            msg="$DESCRIPTION; $fail"
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
+              -f context='Claude review' -f description="${msg:0:140}" -f target_url="$RUN_URL"
+            exit 1
+          fi

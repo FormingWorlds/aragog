@@ -966,8 +966,9 @@ def test_no_review_without_the_decision_script_on_the_default_branch():
 
 def test_the_failure_report_keeps_the_cause_that_the_post_step_set():
     report = _step('Report a failed review')
-    assert 'startswith("post failed:")' in report
-    check = report.index('startswith("post failed:")')
+    rule = 'grep -q "^review_decision: Command \'" "$RUNNER_TEMP/post_cause.txt"'
+    assert rule in report and 'startswith("post failed:")' not in report
+    check = report.index(rule)
     status = report.index("-f context='Claude review' -f description=\"$cause")
     assert '"$failed" = post' in report and check < report.index('else', check) < status
     assert "f'post failed: {cause[0]}'" in _PATH.read_text()
@@ -1126,3 +1127,224 @@ def test_the_run_report_reads_both_kept_execution_files():
         'for e in "$RUNNER_TEMP/exec_find.json" "$RUNNER_TEMP/exec_verify.json"; do' in report
     )
     assert 'if [ -f "$e" ]; then' in report
+
+
+def test_apply_with_no_resolve_still_sets_the_status_and_dismisses():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(threads=[_thread(key)], fixed=[key], policy=None, approvals=[7])
+    assert p['resolve'] == ['T1']
+    gh = _Gh(HEAD)
+    rd.apply({**p, 'resolve': []}, 'o/r', '5', 'url', gh)
+    assert not any(a[:2] == ['api', 'graphql'] for a, _ in gh.calls)
+    assert gh.calls[-2][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-1][0][-1] == 'repos/o/r/pulls/5/reviews/7/dismissals'
+
+
+def test_a_failed_post_prints_the_line_the_failure_report_looks_for(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(rd, 'gh', _FailGh(HEAD, '/reviews'))
+    args = ['apply', '--plan', str(_plan_file(tmp_path)), '--repo', 'o/r', '--pr', '5']
+    assert rd.main([*args, '--url', 'u']) == 2
+    assert capsys.readouterr().err.startswith("review_decision: Command '")
+    assert 'grep -q "^review_decision: Command \'" "$RUNNER_TEMP/post_cause.txt"' in _step(
+        'Report a failed review'
+    )
+
+
+def test_the_post_step_hands_the_threads_to_resolve_out_and_never_to_apply():
+    post = _step('Decide and post')
+    assert 'jq \'.resolve = []\' "$D/plan.json" > "$D/apply.json"' in post
+    assert '--plan "$D/apply.json"' in post and '--plan "$D/plan.json"' not in post
+    for key in ('resolve', 'state', 'description'):
+        assert f'echo "{key}=$(jq ' in post
+    assert '2>"$RUNNER_TEMP/post_cause.txt"' in post
+
+
+_FAKE_GH = """#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ['GH_LOG'], 'a') as f:
+    f.write(json.dumps(args) + '\\n')
+if 'statuses' in ' '.join(args) and '-X' in args:
+    sys.exit(0)
+if any('/status?' in a for a in args):
+    own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'], 'description': 'x'}
+    page = json.dumps({'statuses': [own]})
+    jq = args[args.index('--jq') + 1]
+    sys.stdout.write(subprocess.run(['jq', '-c', jq], input=page, capture_output=True, text=True).stdout)
+    sys.exit(0)
+print('[[]]')
+"""
+
+
+@pytest.mark.parametrize(
+    ('cause', 'posts'),
+    [
+        (
+            "review_decision: Command '['api', '-X', 'POST']' returned non-zero exit status 1.\n",
+            0,
+        ),
+        ('review_decision: no valid plan\n', 1),
+        (None, 1),
+    ],
+)
+def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(_FAKE_GH)
+    (bin_dir / 'gh').chmod(0o755)
+    if cause is not None:
+        (tmp_path / 'post_cause.txt').write_text(cause)
+    steps = {'post': {'outcome': 'failure'}}
+    env = {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'GH_LOG': str(tmp_path / 'log'),
+        'RUN_URL': 'RUN',
+        'RUNNER_TEMP': str(tmp_path),
+        'STEPS': json.dumps(steps),
+        'HEAD_SHA': HEAD,
+        'PR_NUMBER': '5',
+        'GITHUB_REPOSITORY': 'o/r',
+    }
+    step = _run_block(_step('Report a failed review'))
+    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == 0
+    calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
+    status = [
+        c for c in calls if '-X' in c and c[c.index('-X') + 2].startswith('repos/o/r/statuses/')
+    ]
+    assert len(status) == posts
+    assert not any('/status?' in a for c in calls[1:] for a in c)
+
+
+def _job(name):
+    assert f'\n  {name}:\n' in _WORKFLOW
+    return _block(_WORKFLOW[_WORKFLOW.index(f'\n  {name}:\n') + 1 :], f'  {name}:', 2)
+
+
+def test_only_the_resolve_job_can_write_contents_and_it_runs_no_pull_request_code():
+    resolve = _job('resolve')
+    assert 'needs: review' in resolve and "needs.review.result == 'success'" in resolve
+    perms = _block(resolve, '    permissions:', 4).splitlines()[1:]
+    assert sorted(p.split('#')[0].strip() for p in perms) == [
+        'contents: write',
+        'pull-requests: read',
+        'statuses: write',
+    ]
+    assert not any(s in resolve for s in ('actions/checkout', 'python', 'claude-code-action'))
+    assert '${{' not in _run_block(_step_in(resolve, 'Resolve the threads of fixed findings'))
+    for job in ('pending', 'command', 'review'):
+        assert 'contents: write' not in _job(job)
+    outputs = _block(_job('review'), '    outputs:', 4)
+    for key in ('resolve', 'description', 'head'):
+        assert f'{key}: ${{{{ steps.' in outputs
+
+
+def _step_in(text, name):
+    return _block(text, f'      - name: {name}', 6)
+
+
+_FAKE_RESOLVE_GH = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['GH_LOG'], 'a') as f:
+    f.write(json.dumps(args) + '\\n')
+text = ' '.join(args)
+if 'resolveReviewThread' in text:
+    if os.environ.get('RESOLVE_FAILS'):
+        sys.stderr.write('gh: Resource not accessible by integration\\n')
+        sys.exit(1)
+    sys.exit(0)
+if 'query=' in text:
+    print(os.environ['THREAD_JSON'])
+    sys.exit(0)
+sys.exit(0)
+"""
+OWN_BODY = 'text\n<!-- claude-review:finding key=0123456789ab severity=important -->'
+
+
+@pytest.mark.parametrize(
+    ('threads', 'thread', 'fails', 'resolved', 'cause'),
+    [
+        ('["PRRT_ab-1"]', {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY}, '', 1, None),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'egpbos', 'body': OWN_BODY},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'github-actions', 'body': 'no marker'},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 6, 'login': 'github-actions', 'body': OWN_BODY},
+            '',
+            0,
+            'not a finding',
+        ),
+        (
+            '["x; rm -rf /"]',
+            {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY},
+            '',
+            0,
+            'bad thread id',
+        ),
+        (
+            '["PRRT_ab-1"]',
+            {'pr': 5, 'login': 'github-actions', 'body': OWN_BODY},
+            '1',
+            1,
+            'Resource not accessible',
+        ),
+    ],
+)
+def test_the_resolve_job_resolves_only_own_findings_and_reports_a_failure(
+    tmp_path, threads, thread, fails, resolved, cause
+):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(_FAKE_RESOLVE_GH)
+    (bin_dir / 'gh').chmod(0o755)
+    node = {
+        'pullRequest': {'number': thread['pr']},
+        'comments': {
+            'nodes': [
+                {
+                    'body': thread['body'],
+                    'author': {'login': thread['login']},
+                }
+            ]
+        },
+    }
+    env = {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'GH_LOG': str(tmp_path / 'log'),
+        'THREAD_JSON': json.dumps(node),
+        'RESOLVE_FAILS': fails,
+        'THREADS': threads,
+        'DESCRIPTION': 'protected path changed: maintainer review',
+        'HEAD_SHA': HEAD,
+        'PR_NUMBER': '5',
+        'RUN_URL': 'RUN',
+        'GITHUB_REPOSITORY': 'o/r',
+    }
+    step = _run_block(_step_in(_job('resolve'), 'Resolve the threads of fixed findings'))
+    rc = subprocess.run(['bash', '-e', '-c', step], env=env).returncode
+    calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
+    assert sum('resolveReviewThread' in ' '.join(c) for c in calls) == resolved
+    status = [c for c in calls if 'repos/o/r/statuses/' + HEAD in c]
+    if cause is None:
+        assert rc == 0 and status == []
+    else:
+        assert rc == 1 and len(status) == 1
+        desc = next(a for a in status[0] if a.startswith('description='))
+        assert desc.startswith('description=protected path changed: maintainer review; ')
+        assert cause in desc and len(desc) <= len('description=') + 140
