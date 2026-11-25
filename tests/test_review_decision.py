@@ -883,10 +883,9 @@ def test_workflow_files_for_the_model_live_outside_the_checkout():
         args = _step(name)
         assert '${{ runner.temp }}/review_in/diff.patch' in args
         assert '--add-dir ${{ runner.temp }}/review_in' in args
-        assert (
-            '--allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"'
-            in args
-        )
+        # a bare Grep or Glob entry lets those tools read outside the tree and review_in
+        tools = '--allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"\n'
+        assert tools in args
         assert 'Bash(' not in args
     assert 'gh pr diff "$PR_NUMBER"' in _step('Write the diff for the model passes')
     merge = _step('Check that the merge commit holds the head')
