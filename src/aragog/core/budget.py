@@ -37,8 +37,8 @@ _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
 _BISECT_ITERS = 80  # steps of the kink bisection
-# ITP search of the boundary on u = r / r_cmb in [0, 1] (Oliveira & Takahashi 2020, Algorithm 1):
-# eps = 2^-54 is half the float spacing at u = 1, so n_1/2 = 53, and n0 = 5 gives the slack.
+# ITP search of the boundary on u = r / r_cmb in [0, 1] (Oliveira & Takahashi 2020, Alg. 1):
+# eps = 2^-54 is half the float spacing just below u = 1, so n_1/2 = 53; n0 = 5 is the slack.
 _ITP_EPS, _ITP_STEPS, _ITP_K1, _ITP_K2 = 2.0**-54, 53 + 5, 0.2, 2.0
 
 
@@ -266,9 +266,8 @@ class CoreEnergyBudget:
     @functools.cached_property
     def _root_steps(self):
         """Condition and step of the boundary root search, built once per budget so that the
-        loop compiles once. A step that leaves the bracket unchanged ends the loop: its ends are
-        then adjacent floats, so every later step would leave it unchanged too. An array of
-        temperatures steps until its slowest entry stops."""
+        loop compiles once. The search stops when its bracket is at most 2 eps wide, as in
+        Algorithm 1; an array of temperatures steps until its slowest entry stops."""
         r_cmb = self.profiles.r_cmb
 
         def cond(carry):
@@ -294,7 +293,7 @@ class CoreEnergyBudget:
             f_b = jnp.where(frozen, jnp.where(kept == 1, f_b / 2.0, f_b), f_x)
             new_a, new_b = jnp.where(frozen, x, a), jnp.where(frozen, b, x)
             kept = jnp.where(frozen, 1, -1).astype(kept.dtype)
-            return k + 1, new_a, new_b, f_a, f_b, kept, t_cmb, (new_a != a) | (new_b != b)
+            return k + 1, new_a, new_b, f_a, f_b, kept, t_cmb, new_b - new_a > 2.0 * _ITP_EPS
 
         return cond, body
 
@@ -303,22 +302,24 @@ class CoreEnergyBudget:
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
-        f_0 = self.superheat(0.0, t_cmb) * jnp.ones_like(t)
-        f_c = self.superheat(p.r_cmb, t_cmb) * jnp.ones_like(t)
-        # A liquid centre gives [0, 0] and a frozen CMB [1, 1]: no root, no step.
-        liquid, frozen = f_0 > 0.0, (f_c < 0.0) & ~(f_0 > 0.0)
+        f_0, f_c = self.superheat(0.0, t_cmb), self.superheat(p.r_cmb, t_cmb)
+        # A liquid centre gives [0, 0] with no step. With a frozen CMB both ends are negative:
+        # the secant point falls outside, and the projection and the inside guard pick the step
+        # until a liquid point is found; if none is, the core is frozen throughout: [1, 1].
+        b = jnp.where(f_0 > 0.0, 0.0, jnp.ones_like(t))
         init = (
             0,
-            jnp.where(frozen, 1.0, jnp.zeros_like(t)),
-            jnp.where(liquid, 0.0, jnp.ones_like(t)),
+            jnp.zeros_like(t),
+            b,
             f_0,
             f_c,
             jnp.zeros(jnp.shape(t), jnp.int32),
             t,
-            ~liquid & ~frozen,
+            b > 0.0,
         )
         k, a, b, f_a, f_b, *_ = jax.lax.while_loop(*self._root_steps, init)
-        return k, a * p.r_cmb, b * p.r_cmb, f_a, f_b
+        frozen = (b == 1.0) & (f_c < 0.0)
+        return k, jnp.where(frozen, p.r_cmb, a * p.r_cmb), b * p.r_cmb, f_a, f_b
 
     def _r_icb_solve(self, t_cmb):
         """Boundary radius [m] of the root search; see :meth:`r_icb`."""
@@ -332,14 +333,15 @@ class CoreEnergyBudget:
         (Oliveira & Takahashi 2020, Algorithm 1, p. 5:21,
         https://doi.org/10.1145/3423597) with k1 = 0.2, k2 = 2, n0 = 5 and
         eps = 2^-54: at most n_1/2 + n0 = 58 steps, and a final bracket of at
-        most 2 eps r_cmb (3.9e-10 m for r_cmb = 3480 km). The interpolation
+        most 2 eps r_cmb plus 1 ulp of r_cmb (8.5e-10 m for r_cmb = 3480 km). The interpolation
         step is modified: its regula falsi point uses the stored superheats,
         and the stored superheat of an end kept twice in a row is halved (the
         Illinois rule, Dowell & Jarratt 1971, https://doi.org/10.1007/BF01934364).
         Truncation and projection are those of Algorithm 1, so the evaluated
         point stays in the minmax interval of Theorem 2.1 (p. 5:6) and the
-        bound holds. The search stops when its bracket no longer changes. A liquid centre
-        returns zero and a frozen CMB returns r_cmb, both with no step; zero
+        bound holds. A liquid centre returns zero with no step, and a core
+        frozen throughout returns r_cmb; a frozen CMB above a liquid layer
+        keeps the inner-core crossing below it. Zero
         holds regardless of frozen shells above the centre (the top-down
         and snow topologies have no inner core in the bottom-up sense);
         the boundary terms drop to zero there, and the solver refuses those
