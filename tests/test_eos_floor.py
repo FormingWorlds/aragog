@@ -77,13 +77,14 @@ def _drained(
         p.energy, **{'phi_step_cap': None, **caps}, **floor, phase_boundary_cap=mode
     )
     s = EntropySolver(p, entropy_eos=eos)
+    s.keep_energy_trace = True  # the floor check below reads every node of a CVODE call
     s.initialize()
     s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
     s.solve()
     if margin is not _UNSET and margin is not None and margin > 0.0:
         # the floor keeps basic nodes and cells in the table
         sol, S_min = s._solution, float(eos.S_min)
-        tt, ty = sol.get('energy_trace') or (sol.t, sol.y)
+        tt, ty = sol.energy_trace if method == 'cvode' else (sol.t, sol.y)
         after = np.asarray(tt) > sol.t[0]  # the call start is the previous call's end
         assert np.all(_basic(s) >= S_min) and np.all(_cells(s)[:, sol.t > sol.t[0]] >= S_min)
         ty = np.asarray(ty)[: s._n_stag, after]
