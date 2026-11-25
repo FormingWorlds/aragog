@@ -20,7 +20,9 @@ rd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rd)
 
 HEAD = 'a' * 40
-BOT = 'github-actions[bot]'
+BOT = 'github-actions[bot]'  # login in the REST API
+GQL = 'github-actions'  # login of the same bot in GraphQL
+AUTHOR = 'egpbos'
 POLICY_ALL = '# approve everywhere but the protected set\n{"version": 1, "approve": {"allow": ["**"], "deny": []}}\n'
 PATCH = '@@ -10,3 +10,4 @@ def f():\n     a = 1\n-    b = 2\n+    b = 3\n+    c = 4\n     return a\n'
 
@@ -29,11 +31,14 @@ def _finding(sev='important', path='src/aragog/x.py', line=11, title='Wrong sign
     return {'severity': sev, 'path': path, 'line': line, 'title': title, 'body': 'b'}
 
 
-def _thread(key, sev='important', author=BOT, resolved=False, marked=True, tid='T1'):
+def _thread(
+    key, sev='important', author=GQL, resolved=False, marked=True, tid='T1', resolver=None
+):
     body = 'text' + (f'\n{rd.finding_marker(key, sev)}' if marked else '')
     return {
         'id': tid,
         'isResolved': resolved,
+        'resolvedBy': {'login': resolver} if resolver else None,
         'path': 'src/aragog/x.py',
         'line': 11,
         'comments': {'nodes': [{'body': body, 'author': {'login': author}}]},
@@ -51,7 +56,7 @@ def _plan(
     **kw,
 ):
     find = {'summary': 'ok', 'findings': list(findings), 'fixed': list(fixed)}
-    own = rd.own_threads(list(threads))
+    own = rd.own_threads(list(threads), AUTHOR)
     cands = rd.prep(find, own)
     ids = [c['id'] for c in cands['candidates']]
     verify = {
@@ -126,7 +131,7 @@ def test_marked_thread_of_a_person_is_never_resolved():
 
 def test_resolved_own_thread_is_neither_resolved_again_nor_blocking():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(threads=[_thread(key, resolved=True)], fixed=[key])
+    p = _plan(threads=[_thread(key, resolved=True, resolver=GQL)], fixed=[key])
     assert p['resolve'] == [] and p['state'] == 'success'
 
 
@@ -375,7 +380,7 @@ def test_incomplete_or_malformed_verify_output_is_an_error_not_a_pass(verify):
 
 def test_verify_cannot_resolve_a_thread_the_find_pass_did_not_claim():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    own = rd.own_threads([_thread(key)])
+    own = rd.own_threads([_thread(key)], AUTHOR)
     find = {'summary': 's', 'findings': [], 'fixed': []}
     cands = rd.prep(find, own)
     verify = {'verdicts': [], 'fixed': [{'key': key, 'verified': True, 'reason': ''}]}
@@ -439,14 +444,14 @@ def test_duplicate_findings_in_one_run_give_one_candidate():
 
 def test_a_thread_resolved_by_a_person_dismisses_the_finding():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True)])
+    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver='ana')])
     assert p['comments'] == [] and p['state'] == 'success'
 
 
 def test_own_threads_carry_the_text_of_the_finding_without_the_marker():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    t = rd.own_threads([_thread(key, resolved=True)])[0]
-    assert t['resolved'] is True and t['text'] == 'text' and t['key'] == key
+    t = rd.own_threads([_thread(key, resolved=True, resolver='ana')], AUTHOR)[0]
+    assert t['state'] == 'dismissed' and t['text'] == 'text' and t['key'] == key
 
 
 @pytest.mark.parametrize(
@@ -464,7 +469,7 @@ def test_the_approval_marker_survives_a_long_body():
 
 def test_prep_writes_the_verify_input_and_checks_fixed():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    own = rd.own_threads([_thread(key)])
+    own = rd.own_threads([_thread(key)], AUTHOR)
     c = rd.prep(
         {
             'summary': 's',
@@ -523,7 +528,8 @@ class _Pages:
                     'data': {
                         'repository': {
                             'pullRequest': {
-                                'reviewThreads': {'nodes': [node], 'pageInfo': info}
+                                'author': {'login': AUTHOR},
+                                'reviewThreads': {'nodes': [node], 'pageInfo': info},
                             }
                         }
                     }
@@ -665,3 +671,46 @@ def test_cli_prep_plan_and_apply(tmp_path, monkeypatch):
         )
         == 2
     )
+
+
+def test_threads_match_the_graphql_login_of_the_bot_only():
+    key = rd.finding_key('a', 'b')
+    assert rd.own_threads([_thread(key, author=BOT)], AUTHOR) == []
+    assert [t['state'] for t in rd.own_threads([_thread(key)], AUTHOR)] == ['open']
+
+
+@pytest.mark.parametrize('resolver', [AUTHOR, None])
+def test_a_thread_resolved_by_the_author_or_by_nobody_known_still_blocks(resolver):
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(threads=[_thread(key, resolved=True, resolver=resolver)])
+    assert p['state'] == 'failure' and p['event'] == 'COMMENT'
+    p = _plan(threads=[_thread(key, resolved=True, resolver=resolver)], fixed=[key])
+    assert p['state'] == 'success' and p['resolve'] == []  # already resolved on GitHub
+
+
+def test_a_bug_that_returns_after_the_bot_resolved_its_thread_blocks_again():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver=GQL)])
+    assert p['state'] == 'failure' and len(p['comments']) == 1
+
+
+@pytest.mark.parametrize(
+    'text',
+    ['<!<!---->-- x --<!---->>', '<<!--!-- claude-review:approval ---->>', '<<!---->!--'],
+)
+def test_neutralise_leaves_no_html_comment_delimiter(text):
+    out = rd.neutralise(text)
+    assert '<!--' not in out and '-->' not in out
+
+
+def test_an_inline_comment_body_is_capped_and_keeps_its_marker():
+    p = _plan(findings=[dict(_finding(), body='x' * 70000)])
+    body = p['comments'][0]['body']
+    assert len(body) <= 60000 and rd.parse_marker(body)[1] == 'important'
+
+
+def test_collect_sends_owner_and_repository_as_strings():
+    gh = _Pages(rd.finding_key('a', 'b'))
+    rd.collect('o/123', '5', gh)
+    first = gh.calls[0]
+    assert first[first.index('o=o') - 1] == '-f' and first[first.index('r=123') - 1] == '-f'
