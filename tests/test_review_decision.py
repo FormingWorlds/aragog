@@ -840,3 +840,15 @@ def test_a_returning_bug_on_a_thread_the_workflow_resolved_is_a_candidate_again(
         'fixed': [],
     }
     assert [c['key'] for c in rd.prep(find, own)['candidates']] == [key]
+
+
+@pytest.mark.parametrize(
+    ('resolved', 'resolver', 'author'),
+    [(False, BOT, 'timlichtenberg'), (False, 'ana', 'timlichtenberg'), (True, 'ana', None)],
+)
+def test_a_thread_stays_open_unless_it_is_resolved_and_its_author_is_known(
+    resolved, resolver, author
+):
+    key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
+    node = {**_live_thread(key, resolver), 'isResolved': resolved}
+    assert rd.own_threads([node], author)[0]['state'] == 'open'
