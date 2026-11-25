@@ -1089,3 +1089,20 @@ def _execution(tools, used):
 )
 def test_the_tool_check_names_every_tool_beyond_read(tools, used, beyond):
     assert _beyond_read(_execution(tools, used)) == beyond
+
+
+@pytest.mark.parametrize(('used', 'code'), [(['Read'], 0), (['Read', 'Bash'], 1)])
+def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, used, code):
+    jq = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
+    assert jq
+    run = tmp_path / 'execution.json'
+    run.write_text(json.dumps(_execution(['Read', 'StructuredOutput'], used)))
+    env = {
+        **os.environ,
+        'EXEC': str(run),
+        'RUNNER_TEMP': str(tmp_path),
+        'TOOLS_BEYOND_READ': jq[1],
+    }
+    step = _run_block(_step('Check the tools of the find pass'))
+    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == code
+    assert (tmp_path / 'exec_find.json').read_text() == run.read_text()
