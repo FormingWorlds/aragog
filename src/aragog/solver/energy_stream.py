@@ -11,9 +11,10 @@ fired root, the root-search points below the root. They pass through three stage
 3. The consumers (``EnergyQuadrature``, ``TableGuard``, ``FloorMin``, ``RegimeCheck``) take
    one chunk at a time and keep only running sums, extremes and the last node.
 
-So the memory of a call does not grow with its step count. The nodes, their order and the
-arithmetic per node are those of a stored trace; only the trapezoid sums are added chunk by
-chunk. A consumer stores its first error and raises it after the solve, never inside a CVODE
+So the memory of a call is bounded by the steps of one output interval (at most
+``max_steps``, which wait in ``CallNodes``) and one chunk, not by its step count. The nodes,
+their order and the arithmetic per node are those of a stored trace; only the trapezoid sums
+are added chunk by chunk. A consumer stores its first error and raises it after the solve, never inside a CVODE
 callback.
 """
 

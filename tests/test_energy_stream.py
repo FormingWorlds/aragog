@@ -618,3 +618,23 @@ def test_the_largest_lid_weight_of_a_later_chunk_is_kept(monkeypatch, chunk):
     cap = st._lid.LID_CAP_FRAC * 1.0e4
     assert sol.lid_weight_max == 0.93
     assert sol.lid_cap_excess == pytest.approx(100.0 / cap - 1.0, rel=1e-12)
+
+
+def test_with_two_output_points_every_step_of_the_call_waits_for_its_end():
+    """With 2 output points, the start and the end of the call, CVODE returns no output time
+    before the end, so all 99 steps wait in ``CallNodes``: the wait is bounded by the steps of
+    one output interval, not by less. With 11 output points it holds at most 11 of them; both
+    pass the same nodes."""
+    steps = np.linspace(0.01, 0.99, 99)
+    for n_out, most in ((2, 99), (11, 11)):
+        sink = st.ListSink()
+        call = st.CallNodes(sink, 0.0, np.zeros(1), np.linspace(0.0, 1.0, n_out))
+        held = 0
+        for tn in steps:
+            call.record(tn, np.array([tn]))
+            held = max(held, len(call._wait))
+        assert held == most if n_out == 2 else 1 < held <= most
+        assert len(sink.t) == (1 if n_out == 2 else 100 - len(call._wait))
+        call.end(np.array([0.0, 1.0]), np.array([[0.0, 1.0]]))
+        np.testing.assert_array_equal(sink.arrays()[0], np.r_[0.0, steps, 1.0])
+
