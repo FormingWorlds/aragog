@@ -961,3 +961,12 @@ def test_no_review_without_the_decision_script_on_the_default_branch():
     assert 'contents/.github/scripts/review_decision.py?ref=$DEFAULT_BRANCH' in gate
     copy = _step('Collect the review threads of this workflow')
     assert 'cp .github/scripts' not in copy and 'no-approve' not in _WORKFLOW
+
+
+def test_the_failure_report_keeps_the_cause_that_the_post_step_set():
+    report = _step('Report a failed review')
+    assert 'startswith("post failed:")' in report
+    check = report.index('startswith("post failed:")')
+    status = report.index("-f context='Claude review' -f description=\"$cause")
+    assert '"$failed" = post' in report and check < report.index('else', check) < status
+    assert "f'post failed: {cause[0]}'" in _PATH.read_text()
