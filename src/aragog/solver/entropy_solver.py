@@ -166,6 +166,11 @@ _LID_E_DENSITY_SCALE = 3.6e6
 _CALL_START = object()  # solve() reads the call-start solution itself
 
 
+def _eos_domain_of(eos):
+    """The table domain of ``eos``; None for no EOS or an EOS class without one."""
+    return eos.domain if hasattr(type(eos), 'domain') else None
+
+
 @dataclass(frozen=True)
 class _LidEval:
     """Sub-grid lid at one RHS evaluation: states, base state, surface and rates (SI)."""
@@ -5622,9 +5627,9 @@ class EntropySolver:
         ``_start`` (internal) is the solution held at the call start, passed on to that solve.
         """
         wall_start = time.perf_counter()
-        self.cmb_ledger = None
         last_accepted = getattr(self, '_solution', None) if _start is _CALL_START else _start
         self._eos_domain_prepare()
+        self.cmb_ledger = None
         s0 = getattr(self, '_S0', None)
         if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
@@ -6529,7 +6534,7 @@ class EntropySolver:
         check_eos_domain_mode(cfg.eos_domain_check)
         check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
         if cfg.eos_domain_check != 'off' and not self.parameters.phase_mixed.const_properties:
-            getattr(self.entropy_eos, 'domain', None)
+            _eos_domain_of(self.entropy_eos)
 
     def _eos_domain_failure(self, sol) -> str | None:
         """Judge the EOS lookup points of a call's output states against the valid table window.
@@ -6557,7 +6562,7 @@ class EntropySolver:
         check_eos_domain_mode(cfg.eos_domain_check)
         if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
             return None
-        domain = getattr(eos, 'domain', None)
+        domain = _eos_domain_of(eos)
         if domain is None:
             return None
         tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)

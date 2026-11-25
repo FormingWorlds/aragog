@@ -100,6 +100,8 @@ class TableDomain:
         ------
         FileNotFoundError
             When only one of the 2 mask files exists.
+        ValueError
+            When a mask breaks a rule of ``PhaseWindow.from_mask``.
         """
         files = {ph: Path(eos_dir) / f'valid_mask_{ph}.dat' for ph in ('melt', 'solid')}
         missing = [f for f in files.values() if not f.is_file()]
@@ -150,6 +152,4 @@ class TableDomain:
         """
         if not (np.isfinite(P) and np.isfinite(S)):
             return math.nan
-        return eos._lookup_scalar(
-            'temperature', 'melt' if melt else 'solid', float(P), float(S)
-        )
+        return eos._lookup_scalar('temperature', 'melt' if melt else 'solid', P, S)

@@ -61,7 +61,7 @@ class SolverConfig:
         Check of the EOS lookup points of each call against the valid window of the tables
         (``valid_mask_*.dat``): ``'off'``, ``'warn'`` (1 warning per call, the default) or
         ``'raise'`` (``EOSDomainError``). Off for tables with neither mask file; with only one,
-        the first call raises ``FileNotFoundError``.
+        the first call raises ``FileNotFoundError``; a malformed mask raises ``ValueError``.
     eos_domain_tolerance_cells : float
         Distance outside the window, in table entropy cells, beyond which a point counts.
         Default 5.
