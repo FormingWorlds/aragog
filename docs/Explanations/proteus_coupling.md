@@ -84,7 +84,7 @@ Aragog reads the current planet boundary state from `hf_row`, runs its time step
 
 | Key | Meaning |
 |---|---|
-| `T_magma` | Mantle potential temperature [K], mass-weighted from the entropy field |
+| `T_magma` | Temperature of the top basic node [K]; with a live lid and the mush base, a blend with the melt temperature at the lid base (see [Surface lid](surface_lid.md)) |
 | `Phi_global` | Global melt fraction [0, 1], mass-weighted |
 | `F_int` | Top-of-mantle energy flux [W m$^{-2}$] |
 | `F_radio` | Radiogenic surface-equivalent flux [W m$^{-2}$] |
