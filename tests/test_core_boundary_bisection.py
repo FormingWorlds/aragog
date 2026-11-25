@@ -76,10 +76,11 @@ def test_the_reference_is_the_bisection_of_80_steps():
     ],
 )
 def test_the_bisection_stops_at_its_fixed_point(monkeypatch, t_cmb, most):
-    """Superheat evaluations of one boundary solve (the guard and the steps): 1 for a liquid
-    centre (above the onset near 4147 K), 55 to 58 for a frozen core or an inner core of 0.27e6
-    m or more, more near the onset (about 53 + log2(r_cmb / r_icb) steps), and all 81 for a NaN
-    temperature; the root is unchanged."""
+    """Superheat evaluations of one boundary solve (1 guard + the steps), within 2 below and
+    1 above the measured count: 1 for a liquid centre (above the onset near 4147 K), 55 to 58
+    for a frozen core or an inner core of 0.27e6 m or more, 72 at 10 m (steps grow as about
+    54 + log2(r_cmb / r_icb)), all 81 for NaN, and for an array the count of its slowest entry
+    (a liquid entry adds none); the root is unchanged."""
     calls = []
     original = CoreEnergyBudget.superheat
 
@@ -129,7 +130,8 @@ def test_the_early_stop_gives_the_bits_of_80_steps(t_cmb):
     The gradient is a new program: near the onset the superheat crossing is tangent, a
     round-off dS moves the root by dr/r = dS/(2 a r^2), and the gradient may differ by
     1e-12 + (1 m / r_icb)^2 relative; where that bound is 1 or more (r_icb below about 1 m)
-    the test checks the sign of the gradient instead."""
+    the test checks the sign of the gradient instead. The radius comes from the derivative
+    program, whose liquid guard can differ from the eager one by an ulp at the onset."""
     for fn in (
         lambda b: b.r_icb(t_cmb),
         lambda b: jax.jit(b.r_icb)(t_cmb),
@@ -137,11 +139,8 @@ def test_the_early_stop_gives_the_bits_of_80_steps(t_cmb):
     ):
         assert _bits(fn(BUDGET), fn(REFERENCE))
     if np.isfinite(t_cmb):
-        got, want = (
-            float(jax.grad(BUDGET.r_icb)(t_cmb)),
-            float(jax.grad(REFERENCE.r_icb)(t_cmb)),
-        )
-        radius = float(REFERENCE.r_icb(t_cmb))
+        radius, want = map(float, jax.jvp(REFERENCE.r_icb, (t_cmb,), (1.0,)))
+        got = float(jax.grad(BUDGET.r_icb)(t_cmb))
         bound = 1e-12 + (1.0 / radius) ** 2 if radius > 0.0 else 0.0
         if bound < 1.0:
             assert abs(got - want) <= bound * abs(want)
@@ -153,7 +152,8 @@ def test_the_early_stop_gives_the_bits_of_80_steps(t_cmb):
 @pytest.mark.parametrize('jac', [jax.jacrev, jax.jacfwd])
 def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
     """The derivative of dtcmb_dt in the CMB temperature and heat flow, in reverse mode (the
-    solver Jacobian) and forward mode, equals the 80-step reference to 1e-11 relative, with an
+    solver Jacobian) and forward mode, equals the 80-step reference to 1e-11 of the largest
+    term J_k x_k of the linear change (an entry can pass through zero, near 4128 K), with an
     inner core (3900 to 4146 K) and with a liquid centre (4400 K); a new compiled program can
     round differently, so the test does not ask for the bits."""
 
@@ -163,4 +163,5 @@ def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
     x = jnp.array([t_cmb, -8.0e12])
     got, want = rate(BUDGET)(x), rate(REFERENCE)(x)
     assert np.all(np.isfinite(want)) and np.any(want != 0.0)
-    assert np.all(np.abs(got - want) <= 1e-11 * np.abs(want))
+    scale = np.max(np.abs(want * x)) / np.abs(x)
+    assert np.all(np.abs(got - want) <= 1e-11 * scale)

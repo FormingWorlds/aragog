@@ -285,9 +285,16 @@ class CoreEnergyBudget:
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
-        # All-liquid guard: with positive centre superheat there is no root and no step.
+        # All-liquid guard: with positive centre superheat there is no root; the bracket
+        # [0, 0] of a liquid entry does not move, so it never holds an array loop open.
         liquid = self.superheat(0.0, t_cmb) > 0.0
-        init = (0, jnp.zeros_like(t), jnp.full_like(t, p.r_cmb), t, ~liquid)
+        init = (
+            0,
+            jnp.zeros_like(t),
+            jnp.where(liquid, 0.0, jnp.full_like(t, p.r_cmb)),
+            t,
+            ~liquid,
+        )
         _, lo, hi, _, _ = jax.lax.while_loop(*self._bisect_steps, init)
         return jnp.where(liquid, 0.0, (lo + hi) / 2.0)
 
