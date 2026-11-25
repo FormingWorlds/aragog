@@ -1111,7 +1111,7 @@ def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, kind,
 
 
 def _if_line(step):
-    return next(line.strip() for line in step.splitlines() if line.strip().startswith('if: '))
+    return next((ln.strip() for ln in step.splitlines() if ln.strip().startswith('if: ')), None)
 
 
 def test_each_tool_check_runs_exactly_when_its_pass_ran():
