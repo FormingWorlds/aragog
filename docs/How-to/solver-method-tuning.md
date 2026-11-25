@@ -91,7 +91,7 @@ The guard is a safety net. It does not set the step and does not remove the caus
 **What it does not judge.**
 
 - The extrapolated basic nodes: with the floor off they can lie below $S_\mathrm{min}$ in a returned state.
-- The padded rows of a pressure column.
+- The padded rows of a pressure column. The [EOS domain check](#lookups-outside-the-valid-window-of-the-tables) reports lookups on them.
 - A run with constant properties or without tables, and a call that does not advance.
 
 **A cell at a table edge.** It passes until it has moved past the edge by the tolerance, so it fails after about $10^{-3}$ J kg$^{-1}$ K$^{-1}$ over its outward rate.
@@ -122,6 +122,27 @@ Turn the floor on in a standalone run when a drain must stop at a known entropy,
 - In one PALEOS solid table at the lowest pressure, $T$ is the same over the rows from about $S_\mathrm{min} + 70$ to $S_\mathrm{min} + 620$ J kg$^{-1}$ K$^{-1}$.
 
 With the floor on, every state a call returns is inside the table when the call starts inside it, and the returned states and the energy trace cannot hold a state below $S_\mathrm{min}$.
+
+## Lookups outside the valid window of the tables
+
+A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables. A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range of its valid nodes; between 2 columns, the window ends are linear in pressure.
+
+**What it does.** After each call, the solver checks the lookup points of the output states. These are each cell at its own phase (in the mush, the melt table at the liquidus entropy and the solid table at the solidus entropy) and each basic node, the top node included. A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table entropy cells outside its window. A non-finite point always counts.
+
+**What you see.**
+
+- With `eos_domain_check = "warn"`, the default: 1 WARNING per call. It names the worst point (node, radius, pressure, entropy, table, window ends, distance in cells, and the temperature that the lookup returns) and the count of points outside. The result is the same as with the check off.
+- With `"raise"`: the call raises `EOSDomainError` with the same text, and the solver keeps the solution from the call start.
+
+**What to do.** Look at the node that the message names. With `top_node = "linear"`, the default, the top basic node is a linear extrapolation from the 2 top cells, so it can leave the window while every cell is inside. Its temperature is then a filled table value, and a coupled run passes that value to its atmosphere as the surface temperature.
+
+**What it does not judge.**
+
+- States between 2 output points of a call: only the output grid counts.
+- Tables without the 2 mask files (the check is off, and the EOS logs 1 INFO line when it loads) and runs with constant properties.
+- Points closer to the window than the tolerance. The phase boundaries of a table can lie just outside its windows, so the mush lookups of ordinary runs read nodes near the window; the default tolerance leaves these out.
+
+**Where the check runs.** Only `EntropySolver.solve` has the check. The direct JAX integration in `aragog.jax.solver` does not.
 
 ## Reference
 
