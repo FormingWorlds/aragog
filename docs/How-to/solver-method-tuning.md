@@ -1,6 +1,6 @@
 # Solver method tuning
 
-Use this page to choose an integrator, set its tolerances, get a stalled run moving, and decide what to do when a run leaves the EOS tables. `_EnergyParameters.solver_method` (see `src/aragog/parser.py`) selects the integrator for the stiff time integration. It accepts 3 values: `"cvode"` (the default), `"radau"` and `"bdf"`.
+Use this page to choose an integrator, set its tolerances, get a stalled run moving, and decide what to do when a run leaves the EOS tables or [reads table values with no EOS data behind them](#lookups-outside-the-valid-window-of-the-tables). `_EnergyParameters.solver_method` (see `src/aragog/parser.py`) selects the integrator for the stiff time integration. It accepts 3 values: `"cvode"` (the default), `"radau"` and `"bdf"`.
 
 !!! note "Default is CVODE"
     Normal PROTEUS runs use `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
@@ -91,7 +91,7 @@ The guard is a safety net. It does not set the step and does not remove the caus
 **What it does not judge.**
 
 - The extrapolated basic nodes: with the floor off they can lie below $S_\mathrm{min}$ in a returned state.
-- The padded rows of a pressure column. The [EOS domain check](#lookups-outside-the-valid-window-of-the-tables) reports lookups on them.
+- The padded rows of a pressure column. When the mask files mark them 0, the [EOS domain check](#lookups-outside-the-valid-window-of-the-tables) reports lookups on them.
 - A run with constant properties or without tables, and a call that does not advance.
 
 **A cell at a table edge.** It passes until it has moved past the edge by the tolerance, so it fails after about $10^{-3}$ J kg$^{-1}$ K$^{-1}$ over its outward rate.
@@ -125,21 +125,23 @@ With the floor on, every state a call returns is inside the table when the call 
 
 ## Lookups outside the valid window of the tables
 
-A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables. A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range of its valid nodes; between 2 columns, the window ends are linear in pressure.
+A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables (format in [Reference: data](../Reference/data.md#validity-masks)). A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range from its lowest to its highest valid node; between 2 columns, the window ends are linear in pressure. A table cell is the mean entropy spacing of that phase's table.
 
-**What it does.** After each call, the solver checks the lookup points of the output states. These are each cell at its own phase (in the mush, the melt table at the liquidus entropy and the solid table at the solidus entropy) and each basic node, the top node included. A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table entropy cells outside its window. A non-finite point always counts.
+**What it does.** After each call, the solver checks the lookup points of the output states. These are each cell and each basic node at the entropy the solver gives the EOS there: the top node from the mesh transform (with BC 5, the entropy of the set surface temperature), and the CMB node from the CMB entropy gradient of the state with `core_bc = "energy_balance"` or `"core_module"`. A point in the mush is read on the melt table at the liquidus entropy and on the solid table at the solidus entropy, and the larger of the 2 distances counts. A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table cells outside its window. A non-finite point always counts.
 
 **What you see.**
 
-- With `eos_domain_check = "warn"`, the default: 1 WARNING per call. It names the worst point (node, radius, pressure, entropy, table, window ends, distance in cells, and the temperature that the lookup returns) and the count of points outside. The result is the same as with the check off.
-- With `"raise"`: the call raises `EOSDomainError` with the same text, and the solver keeps the solution from the call start.
+- With `eos_domain_check = "warn"`, the default: 1 WARNING per call. It names the worst point (time, node, radius, pressure, entropy, table, window ends, distance in cells, and the temperature that the table returns at that lookup) and the count of points outside, summed over the output states of the call. The result is the same as with the check off.
+- With `"raise"`: the call raises `EOSDomainError` with the same text, and the solver keeps the solution from the call start (none on a first call).
 
-**What to do.** Look at the node that the message names. With `top_node = "linear"`, the default, the top basic node is a linear extrapolation from the 2 top cells, so it can leave the window while every cell is inside. Its temperature is then a filled table value, and a coupled run passes that value to its atmosphere as the surface temperature.
+**What to do.** Look at the node that the message names. With `top_node = "linear"`, the default, the top basic node is a linear extrapolation from the 2 top cells, so it can leave the window while every cell is inside. Its temperature is then a filled table value, and Aragog reports it as `T_magma`.
 
 **What it does not judge.**
 
 - States between 2 output points of a call: only the output grid counts.
-- Tables without the 2 mask files (the check is off, and the EOS logs 1 INFO line when it loads) and runs with constant properties.
+- A call that fails (the [EOS table guard](#eos-table-guard) or the integrator).
+- A 0 node between 2 valid nodes of a column: it lies inside the window.
+- Tables with neither mask file (the check is off, and the EOS logs 1 INFO line at the first check) and runs with constant properties. With only one of the 2 files, or a mask column with no valid node, the first check raises; `"off"` does not read the masks.
 - Points closer to the window than the tolerance. The phase boundaries of a table can lie just outside its windows, so the mush lookups of ordinary runs read nodes near the window; the default tolerance leaves these out.
 
 **Where the check runs.** Only `EntropySolver.solve` has the check. The direct JAX integration in `aragog.jax.solver` does not.
