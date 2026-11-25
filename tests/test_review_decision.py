@@ -12,7 +12,9 @@ from hypothesis import strategies as st
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-_PATH = pathlib.Path(__file__).resolve().parents[1] / '.github' / 'scripts' / 'review_decision.py'
+_PATH = (
+    pathlib.Path(__file__).resolve().parents[1] / '.github' / 'scripts' / 'review_decision.py'
+)
 _spec = importlib.util.spec_from_file_location('review_decision', _PATH)
 rd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rd)
@@ -38,20 +40,35 @@ def _thread(key, sev='important', author=BOT, resolved=False, marked=True, tid='
     }
 
 
-def _plan(findings=(), verified=None, threads=(), fixed=(), fixed_ok=None, policy=POLICY_ALL,
-          files=None, **kw):
+def _plan(
+    findings=(),
+    verified=None,
+    threads=(),
+    fixed=(),
+    fixed_ok=None,
+    policy=POLICY_ALL,
+    files=None,
+    **kw,
+):
     find = {'summary': 'ok', 'findings': list(findings), 'fixed': list(fixed)}
     own = rd.own_threads(list(threads))
     cands = rd.prep(find, own)
     ids = [c['id'] for c in cands['candidates']]
     verify = {
-        'verdicts': [{'id': i, 'verified': True if verified is None else verified, 'reason': 'r'}
-                     for i in ids],
-        'fixed': [{'key': k, 'verified': True if fixed_ok is None else fixed_ok, 'reason': 'r'}
-                  for k in fixed],
+        'verdicts': [
+            {'id': i, 'verified': True if verified is None else verified, 'reason': 'r'}
+            for i in ids
+        ],
+        'fixed': [
+            {'key': k, 'verified': True if fixed_ok is None else fixed_ok, 'reason': 'r'}
+            for k in fixed
+        ],
     }
-    files = files if files is not None else [{'path': 'src/aragog/x.py', 'old_mode': '100644',
-                                              'new_mode': '100644'}]
+    files = (
+        files
+        if files is not None
+        else [{'path': 'src/aragog/x.py', 'old_mode': '100644', 'new_mode': '100644'}]
+    )
     patches = {'src/aragog/x.py': PATCH}
     return rd.plan(find, verify, cands, own, policy, files, patches, HEAD, **kw)
 
@@ -132,18 +149,21 @@ def test_same_finding_with_an_open_thread_gets_no_second_thread():
     assert p['comments'] == [] and p['state'] == 'failure'
 
 
-@pytest.mark.parametrize('path, mode', [
-    ('.github/workflows/claude-review.yml', '100644'),
-    ('.github/scripts/review_decision.py', '100644'),
-    ('.github/review-policy.yml', '100644'),
-    ('AGENTS.md', '100644'),
-    ('tests/AGENTS.md', '100644'),
-    ('CODEOWNERS', '100644'),
-    ('docs/.gitattributes', '100644'),
-    ('.gitmodules', '100644'),
-    ('docs/link.md', '120000'),
-    ('vendor/sub', '160000'),
-])
+@pytest.mark.parametrize(
+    'path, mode',
+    [
+        ('.github/workflows/claude-review.yml', '100644'),
+        ('.github/scripts/review_decision.py', '100644'),
+        ('.github/review-policy.yml', '100644'),
+        ('AGENTS.md', '100644'),
+        ('tests/AGENTS.md', '100644'),
+        ('CODEOWNERS', '100644'),
+        ('docs/.gitattributes', '100644'),
+        ('.gitmodules', '100644'),
+        ('docs/link.md', '120000'),
+        ('vendor/sub', '160000'),
+    ],
+)
 def test_protected_change_withholds_approval(path, mode):
     files = [{'path': path, 'old_mode': '100644', 'new_mode': mode}]
     p = _plan(files=files)
@@ -154,7 +174,13 @@ def test_protected_change_withholds_approval(path, mode):
 
 def test_policy_off_missing_or_broken_withholds_approval():
     off = '{"version": 1, "approve": {"allow": [], "deny": []}}'
-    for policy in (off, None, '{"version": 2}', 'not json', '{"version": 1, "approve": {"allow": "**"}}'):
+    for policy in (
+        off,
+        None,
+        '{"version": 2}',
+        'not json',
+        '{"version": 1, "approve": {"allow": "**"}}',
+    ):
         assert _plan(policy=policy)['event'] == 'COMMENT', policy
 
 
@@ -175,16 +201,19 @@ def test_a_failed_or_withheld_run_dismisses_own_earlier_approvals():
     assert _plan(approvals=[7])['dismiss'] == []
 
 
-@pytest.mark.parametrize('pattern, path, hit', [
-    ('**', 'a/b/c.py', True),
-    ('src/aragog/**', 'src/aragog/solver/x.py', True),
-    ('src/aragog/**', 'src/aragogx/x.py', False),
-    ('**/CODEOWNERS', 'CODEOWNERS', True),
-    ('**/CODEOWNERS', 'docs/CODEOWNERS', True),
-    ('*.md', 'docs/a.md', False),
-    ('docs/*.md', 'docs/a.md', True),
-    ('docs/?.md', 'docs/ab.md', False),
-])
+@pytest.mark.parametrize(
+    'pattern, path, hit',
+    [
+        ('**', 'a/b/c.py', True),
+        ('src/aragog/**', 'src/aragog/solver/x.py', True),
+        ('src/aragog/**', 'src/aragogx/x.py', False),
+        ('**/CODEOWNERS', 'CODEOWNERS', True),
+        ('**/CODEOWNERS', 'docs/CODEOWNERS', True),
+        ('*.md', 'docs/a.md', False),
+        ('docs/*.md', 'docs/a.md', True),
+        ('docs/?.md', 'docs/ab.md', False),
+    ],
+)
 def test_glob_match(pattern, path, hit):
     assert rd.glob_match(pattern, path) is hit
 
@@ -206,24 +235,47 @@ def test_mentions_are_neutralised_outside_code():
     assert '@‍tim' in out and '`@keep`' in out and 'a@b.c' in out
 
 
-@pytest.mark.parametrize('find', [
-    None, {}, {'findings': 'x'}, {'summary': 's', 'findings': [{'severity': 'fatal', 'path': 'a',
-                                                               'line': 1, 'title': 't', 'body': 'b'}]},
-    {'summary': 's', 'findings': [{'severity': 'nit', 'path': 'a', 'line': True, 'title': 't',
-                                   'body': 'b'}]},
-])
+@pytest.mark.parametrize(
+    'find',
+    [
+        None,
+        {},
+        {'findings': 'x'},
+        {
+            'summary': 's',
+            'findings': [
+                {'severity': 'fatal', 'path': 'a', 'line': 1, 'title': 't', 'body': 'b'}
+            ],
+        },
+        {
+            'summary': 's',
+            'findings': [
+                {'severity': 'nit', 'path': 'a', 'line': True, 'title': 't', 'body': 'b'}
+            ],
+        },
+    ],
+)
 def test_malformed_find_output_is_rejected(find):
     with pytest.raises(rd.OutputError):
         rd.prep(find, [])
 
 
-@given(st.lists(st.sampled_from(['important', 'pre_existing', 'nit']), max_size=6),
-       st.lists(st.booleans(), min_size=6, max_size=6))
+@given(
+    st.lists(st.sampled_from(['important', 'pre_existing', 'nit']), max_size=6),
+    st.lists(st.booleans(), min_size=6, max_size=6),
+)
 def test_property_approval_only_when_nothing_blocking_is_verified(sevs, oks):
-    find = {'summary': 's', 'findings': [_finding(s, title=f't{i}') for i, s in enumerate(sevs)]}
+    find = {
+        'summary': 's',
+        'findings': [_finding(s, title=f't{i}') for i, s in enumerate(sevs)],
+    }
     cands = rd.prep(find, [])
-    verify = {'verdicts': [{'id': c['id'], 'verified': ok, 'reason': ''}
-                           for c, ok in zip(cands['candidates'], oks)]}
+    verify = {
+        'verdicts': [
+            {'id': c['id'], 'verified': ok, 'reason': ''}
+            for c, ok in zip(cands['candidates'], oks)
+        ]
+    }
     files = [{'path': 'src/aragog/x.py', 'old_mode': '100644', 'new_mode': '100644'}]
     p = rd.plan(find, verify, cands, [], POLICY_ALL, files, {'src/aragog/x.py': PATCH}, HEAD)
     blocking = any(s in rd.BLOCKING and ok for s, ok in zip(sevs, oks))
@@ -254,12 +306,20 @@ def test_apply_posts_nothing_when_the_head_moved(tmp_path):
     rd.apply(json.loads(_plan_file(tmp_path).read_text()), 'o/r', '5', 'url', gh)
     writes = [a for a, _ in gh.calls if a[:2] != ['pr', 'view']]
     assert len(writes) == 1 and 'statuses/' + HEAD in writes[0][-1]
-    assert gh.calls[-1][1]['state'] == 'failure' and 'head moved' in gh.calls[-1][1]['description']
+    assert (
+        gh.calls[-1][1]['state'] == 'failure' and 'head moved' in gh.calls[-1][1]['description']
+    )
 
 
 def test_apply_pins_the_review_to_the_head_and_sets_the_status_last(tmp_path):
     gh = _Gh(HEAD)
-    rd.apply(json.loads(_plan_file(tmp_path, findings=[_finding()]).read_text()), 'o/r', '5', 'url', gh)
+    rd.apply(
+        json.loads(_plan_file(tmp_path, findings=[_finding()]).read_text()),
+        'o/r',
+        '5',
+        'url',
+        gh,
+    )
     paths = [a[-1] for a, _ in gh.calls if a[0] == 'api']
     assert paths[-1].endswith('statuses/' + HEAD)
     review = [d for a, d in gh.calls if a[-1].endswith('/reviews')][0]
