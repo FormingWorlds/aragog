@@ -125,7 +125,7 @@ With the floor on, every state a call returns is inside the table when the call 
 
 ## Lookups outside the valid window of the tables
 
-A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables (format in [Reference: data](../Reference/data.md#validity-masks)). A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range from its lowest to its highest valid node; between 2 columns, the window ends are linear in pressure. One table entropy cell is the mean spacing of the entropy axis of the phase's temperature table [J kg$^{-1}$ K$^{-1}$]; it is not a cell of the solver mesh.
+A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables (format in [Reference: data](../Reference/data.md#validity-masks)). A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range from its lowest to its highest valid node; between 2 columns, the window ends are linear in pressure. One table entropy cell is the mean spacing of the entropy axis of the phase's temperature table, in J kg$^{-1}$ K$^{-1}$; it is not a cell of the solver mesh.
 
 **What it does.** After each call, the solver checks the lookup points of the output states. A lookup point is a cell or a basic node, at the pressure of the node and the entropy that the right-hand side gives the EOS there:
 
