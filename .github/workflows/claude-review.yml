@@ -41,7 +41,8 @@ jobs:
         && github.event.pull_request.user.type != 'Bot')
       || (github.event_name == 'issue_comment'
         && github.event.issue.pull_request
-        && startsWith(github.event.comment.body, '@claude ')
+        && (startsWith(github.event.comment.body, '@claude review')
+          || startsWith(github.event.comment.body, '@claude deep-review'))
         && github.event.comment.user.type != 'Bot'
         && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     concurrency:
@@ -110,12 +111,13 @@ jobs:
             echo "::error::the merge commit of the pull request is not built on its head $HEAD_SHA yet"
             exit 1
           fi
+          echo "base=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
 
       - name: Check out the base branch for reading
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
-          ref: ${{ steps.gate.outputs.base }}
+          ref: ${{ steps.merge.outputs.base }}
           path: .review_base
           persist-credentials: false
 
@@ -129,7 +131,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         continue-on-error: true
         run: |
-          python -m pip install --quiet ruff
+          (cd "$RUNNER_TEMP" && python -I -m pip install --quiet ruff)
           python -I - <<'PY'
           import os, re, subprocess
           added, out = {}, []
@@ -189,11 +191,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          d="$RUNNER_TEMP/review"
-          mkdir -p "$d"
+          d=$(mktemp -d "$RUNNER_TEMP/review.XXXXXX")
           if [ -f .review_base/.github/scripts/review_decision.py ]; then
             cp .review_base/.github/scripts/review_decision.py "$d/"
-            cp .review_base/.github/review-policy.yml "$d/" 2>/dev/null || true
+            if [ -f .review_base/.github/review-policy.yml ]; then
+              cp .review_base/.github/review-policy.yml "$d/"
+            fi
           elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             cp .github/scripts/review_decision.py "$d/"
             echo "no_approve=--no-approve" >> "$GITHUB_OUTPUT"
@@ -204,6 +207,10 @@ jobs:
           echo "dir=$d" >> "$GITHUB_OUTPUT"
           python -I "$d/review_decision.py" collect --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --out "$d/collect.json"
           jq '.threads' "$d/collect.json" | tee .review_threads.json
+
+      - name: Remove the agent settings of the pull request
+        if: steps.gate.outputs.run == 'true'
+        run: rm -rf .claude .mcp.json CLAUDE.local.md
 
       - name: Find
         id: find
@@ -239,8 +246,9 @@ jobs:
             short title and a body with the concrete input or state that fails. At most 8 findings.
 
             ./.review_threads.json lists the findings of earlier reviews (key, severity, path,
-            line, text, resolved). Do not report one of them again. Put the key of each open one
-            (resolved false) that the current code fixes into `fixed`.
+            line, text, state). Do not report again a finding whose state is "open" or
+            "dismissed"; report a "fixed" one again only if the bug is back. Put the key of each
+            "open" one that the current code fixes into `fixed`.
 
             `summary`: 2 to 5 plain, short sentences on what the pull request does and what
             you found. Do not post anything to GitHub; the workflow posts your output.
@@ -252,6 +260,7 @@ jobs:
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
       - name: Number the candidate findings
+        id: prep
         if: steps.gate.outputs.run == 'true'
         env:
           FIND: ${{ steps.find.outputs.structured_output }}
@@ -260,10 +269,11 @@ jobs:
           printf '%s' "$FIND" > "$D/find.json"
           python -I "$D/review_decision.py" prep --find "$D/find.json" --collect "$D/collect.json" --out "$D/candidates.json"
           jq '.verify_in' "$D/candidates.json" | tee .review_verify_in.json
+          echo "empty=$(jq '.verify_in | (.candidates | length) + (.fixed | length) == 0' "$D/candidates.json")" >> "$GITHUB_OUTPUT"
 
       - name: Verify
         id: verify
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && steps.prep.outputs.empty != 'true'
         timeout-minutes: 6
         uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe  # v1
         with:
@@ -302,7 +312,9 @@ jobs:
           D: ${{ steps.script.outputs.dir }}
           NO_APPROVE: ${{ steps.script.outputs.no_approve }}
           HEAD_SHA: ${{ steps.gate.outputs.head }}
+          EMPTY: ${{ steps.prep.outputs.empty }}
         run: |
+          if [ "$EMPTY" = true ]; then VERIFY='{"verdicts": [], "fixed": []}'; fi
           printf '%s' "$VERIFY" > "$D/verify.json"
           git diff --raw -z -M HEAD^1 HEAD > "$D/raw"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" > "$D/files.json"
@@ -322,6 +334,7 @@ jobs:
           HEAD_SHA: ${{ steps.gate.outputs.head }}
           STEPS: ${{ toJSON(steps) }}
         run: |
+          set -o pipefail
           last=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" \
             --jq '[.[] | select(.context == "Claude review")][0].target_url')
           if [ "$last" != "$RUN_URL" ]; then
@@ -332,6 +345,7 @@ jobs:
           case "$failed" in
             merge) cause="the merge commit is not built on the head yet" ;;
             find|verify) cause="the $failed pass failed (seat limit, timeout or no output)" ;;
+            prep) cause="the find pass returned output that does not match its schema" ;;
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac

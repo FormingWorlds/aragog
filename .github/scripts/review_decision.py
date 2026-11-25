@@ -20,7 +20,7 @@ Rules
 - The workflow's own threads are written by github-actions[bot] and end with
   ``<!-- claude-review:finding key=... severity=... -->``. A thread is resolved only when the
   find pass claims the fix and the verify pass confirms it; no other thread is ever resolved.
-  A thread that a person resolved dismisses its finding.
+  A thread that a person other than the pull request author resolved dismisses its finding.
 - APPROVE needs: no blocking finding or open blocking thread, a valid policy file whose
   ``allow`` globs match every changed path and whose ``deny`` globs match none, at least one
   changed path, and no change to a protected path (PROTECTED, a symlink, a submodule, or a
@@ -38,7 +38,8 @@ import re
 import subprocess
 import sys
 
-BOT = 'github-actions[bot]'
+BOT = 'github-actions[bot]'  # login of the workflow token in the REST API
+BOT_GRAPHQL = 'github-actions'  # the same bot in GraphQL
 CONTEXT = 'Claude review'
 BLOCKING = ('important', 'pre_existing')
 SEVERITIES = (*BLOCKING, 'nit')
@@ -59,9 +60,10 @@ _MARK = re.compile(
 )
 _RESOLVE = 'mutation($t: ID!) { resolveReviewThread(input: {threadId: $t}) { thread { id } } }'
 _THREADS = """query($o: String!, $r: String!, $n: Int!, $c: String) {
-  repository(owner: $o, name: $r) { pullRequest(number: $n) {
+  repository(owner: $o, name: $r) { pullRequest(number: $n) { author { login }
     reviewThreads(first: 100, after: $c) { pageInfo { hasNextPage endCursor }
-      nodes { id isResolved path line comments(first: 1) { nodes { body author { login } } } } } } } }"""
+      nodes { id isResolved resolvedBy { login } path line
+        comments(first: 1) { nodes { body author { login } } } } } } } }"""
 
 
 class OutputError(ValueError):
@@ -125,7 +127,8 @@ def parse_raw(raw):
 def neutralise(text):
     """Break @mentions outside code spans and drop HTML comments, so model text notifies
     nobody and cannot carry a marker."""
-    text = text.replace('<!--', '').replace('-->', '')
+    while '<!--' in text or '-->' in text:
+        text = text.replace('<!--', '').replace('-->', '')
     parts = re.split(r'(```.*?```|`[^`\n]*`)', text, flags=re.S)
     return ''.join(
         p if k % 2 else re.sub(r'(?<![\w.])@(?=[A-Za-z0-9_-])', '@‍', p)
@@ -151,23 +154,34 @@ def load_policy(text):
     return {'allow': allow, 'deny': deny} if ok else None
 
 
-def own_threads(nodes):
-    """Return the threads of this workflow: bot-authored and ending with a finding marker."""
+def own_threads(nodes, pr_author):
+    """Return the threads of this workflow: bot-authored and ending with a finding marker.
+
+    ``state`` is ``open`` when the thread is unresolved or resolved by the pull request author or
+    an unknown actor, ``fixed`` when the workflow resolved it, and ``dismissed`` when another
+    person resolved it.
+    """
     out = []
     for t in nodes:
         first = (t.get('comments', {}).get('nodes') or [{}])[0]
         mark = parse_marker(first.get('body'))
-        if mark and (first.get('author') or {}).get('login') == BOT:
-            text = _MARK.sub('', first['body']).strip()[:1500]
+        if mark and (first.get('author') or {}).get('login') == BOT_GRAPHQL:
+            by = (t.get('resolvedBy') or {}).get('login')
+            state = 'open'
+            if t.get('isResolved') and by == BOT_GRAPHQL:
+                state = 'fixed'
+            elif t.get('isResolved') and by and by != pr_author:
+                state = 'dismissed'
             out.append(
                 {
                     'id': t['id'],
                     'key': mark[0],
                     'severity': mark[1],
+                    'state': state,
                     'resolved': bool(t.get('isResolved')),
                     'path': t.get('path'),
                     'line': t.get('line'),
-                    'text': text,
+                    'text': _MARK.sub('', first['body']).strip()[:1500],
                 }
             )
     return out
@@ -176,7 +190,8 @@ def own_threads(nodes):
 def prep(find, threads):
     """Check the find output, number its findings and write the verify input.
 
-    A finding that already has a thread of this workflow (open or resolved) is not a candidate.
+    A finding with an open or dismissed thread of this workflow is not a candidate; a finding
+    whose thread the workflow resolved as fixed is, so a returning bug blocks again.
     """
     if (
         not isinstance(find, dict)
@@ -186,7 +201,7 @@ def prep(find, threads):
         or not all(isinstance(k, str) for k in find['fixed'])
     ):
         raise OutputError('the find pass returned no valid structured output')
-    seen, cands = {t['key'] for t in threads}, []
+    seen, cands = {t['key'] for t in threads if t['state'] != 'fixed'}, []
     for f in find['findings']:
         ok = (
             isinstance(f, dict)
@@ -201,7 +216,7 @@ def prep(find, threads):
         if key not in seen:
             seen.add(key)
             cands.append({**f, 'key': key, 'id': f'c{len(cands) + 1}'})
-    open_keys = {t['key'] for t in threads if not t['resolved']}
+    open_keys = {t['key'] for t in threads if t['state'] == 'open'}
     fixed = [k for k in dict.fromkeys(find['fixed']) if k in open_keys]
     shown = ('id', 'severity', 'path', 'line', 'title', 'body')
     return {
@@ -276,7 +291,7 @@ def plan(
     fixed = fixed_ok & set(cands['verify_in']['fixed'])
     found = [c for c in cands['candidates'] if c['id'] in ids]
     rejected = len(cands['candidates']) - len(found)
-    open_threads = [t for t in threads if not t['resolved']]
+    open_threads = [t for t in threads if t['state'] == 'open']
     still_open = [
         t for t in open_threads if t['key'] not in fixed and t['severity'] in BLOCKING
     ]
@@ -286,7 +301,7 @@ def plan(
     comments, outside = [], []
     for c in blocking:
         body = (
-            neutralise(f'**{LABEL[c["severity"]]}**: {c["title"]}\n\n{c["body"]}')
+            neutralise(f'**{LABEL[c["severity"]]}**: {c["title"]}\n\n{c["body"]}')[:59000]
             + '\n\n'
             + finding_marker(c['key'], c['severity'])
         )
@@ -338,7 +353,9 @@ def plan(
         'event': event,
         'body': '\n'.join(lines),
         'comments': comments,
-        'resolve': sorted(t['id'] for t in open_threads if t['key'] in fixed),
+        'resolve': sorted(
+            t['id'] for t in open_threads if t['key'] in fixed and not t['resolved']
+        ),
         'dismiss': [] if event == 'APPROVE' else list(approvals),
     }
 
@@ -359,22 +376,23 @@ def gh(args, data=None):
 def collect(repo, pr, run=gh):
     """Return the threads of this workflow (all pages) and the ids of its earlier approvals."""
     owner, name = repo.split('/')
-    nodes, cursor = [], None
+    nodes, cursor, author = [], None, None
     while True:
         args = [
             'api',
             'graphql',
             '-f',
             f'query={_THREADS}',
-            '-F',
+            '-f',
             f'o={owner}',
-            '-F',
+            '-f',
             f'r={name}',
             '-F',
             f'n={pr}',
         ]
         page = json.loads(run(args + (['-f', f'c={cursor}'] if cursor else [])))
-        threads = page['data']['repository']['pullRequest']['reviewThreads']
+        pull = page['data']['repository']['pullRequest']
+        author, threads = (pull.get('author') or {}).get('login'), pull['reviewThreads']
         nodes += threads['nodes']
         if not threads['pageInfo']['hasNextPage']:
             break
@@ -390,7 +408,7 @@ def collect(repo, pr, run=gh):
         and (r.get('user') or {}).get('login') == BOT
         and APPROVAL_MARK in (r.get('body') or '')
     ]
-    return {'threads': own_threads(nodes), 'approvals': approvals}
+    return {'threads': own_threads(nodes, author), 'approvals': approvals}
 
 
 def set_status(repo, sha, state, description, url, run=gh):
@@ -441,16 +459,7 @@ def main(argv=None):
     args = {
         'collect': ('--repo', '--pr', '--out'),
         'prep': ('--find', '--collect', '--out'),
-        'plan': (
-            '--find',
-            '--verify',
-            '--candidates',
-            '--collect',
-            '--raw',
-            '--files',
-            '--head',
-            '--out',
-        ),
+        'plan': '--find --verify --candidates --collect --raw --files --head --out'.split(),
         'apply': ('--plan', '--repo', '--pr', '--url'),
     }
     for cmd, names in args.items():
