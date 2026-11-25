@@ -1174,7 +1174,7 @@ if any('/status?' in a for a in args):
            'description': os.environ.get('LIVE_DESC', 'x')}
     page = json.dumps({'statuses': [own]})
     jq = args[args.index('--jq') + 1]
-    sys.stdout.write(subprocess.run(['jq', '-c', jq], input=page, capture_output=True, text=True).stdout)
+    sys.stdout.write(subprocess.run(['jq', '-r', jq], input=page, capture_output=True, text=True).stdout)
     sys.exit(0)
 print('[[]]')
 """

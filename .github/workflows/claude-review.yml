@@ -429,7 +429,6 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           {
             echo "resolve=$(jq -c .resolve "$D/plan.json")"
-            echo "state=$(jq -r .state "$D/plan.json")"
             echo "description=$(jq -r .description "$D/plan.json")"
           } >> "$GITHUB_OUTPUT"
           jq '.resolve = []' "$D/plan.json" > "$D/apply.json"
@@ -462,7 +461,16 @@ jobs:
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac
+          keep=''
           if [ "$failed" = post ] && grep -q "^review_decision: Command '" "$RUNNER_TEMP/post_cause.txt" 2>/dev/null; then
+            for i in 1 2 3; do
+              live=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
+                --jq '.statuses[] | select(.context == "Claude review") | .description')
+              if [[ "$live" == "post failed:"* ]]; then keep=1; break; fi
+              sleep 2
+            done
+          fi
+          if [ -n "$keep" ]; then
             echo "The post step set the status with its cause."
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
@@ -499,7 +507,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write  # resolveReviewThread needs it; pull-requests: write is not enough
-      pull-requests: read
+      pull-requests: write
       statuses: write
     steps:
       - name: Resolve the threads of fixed findings
@@ -514,11 +522,20 @@ jobs:
           set -o pipefail
           err=$(mktemp)
           fail=''
-          for id in $(jq -r '.[]' <<<"$THREADS"); do
+          if ! head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha 2>"$err"); then
+            fail="head lookup failed: $(tail -n 1 "$err")"
+          elif [ "$head" != "$HEAD_SHA" ]; then
+            echo "The head moved to $head after the review; no thread is resolved."
+            exit 0
+          fi
+          for id in $(if [ -z "$fail" ]; then jq -r '.[]' <<<"$THREADS"; fi); do
             if ! [[ "$id" =~ ^PRRT_[A-Za-z0-9_-]+$ ]]; then fail='bad thread id'; break; fi
-            node=$(gh api graphql -f t="$id" --jq .data.node -f query='query($t: ID!) { node(id: $t) {
+            if ! node=$(gh api graphql -f t="$id" --jq .data.node 2>"$err" -f query='query($t: ID!) { node(id: $t) {
               ... on PullRequestReviewThread { pullRequest { number }
-                comments(first: 1) { nodes { body author { login } } } } } }')
+                comments(first: 1) { nodes { body author { login } } } } } }'); then
+              fail="thread lookup failed: $(tail -n 1 "$err")"
+              break
+            fi
             if ! jq -e --arg pr "$PR_NUMBER" '(.pullRequest.number | tostring) == $pr
                 and .comments.nodes[0].author.login == "github-actions"
                 and (.comments.nodes[0].body
@@ -534,8 +551,21 @@ jobs:
             fi
           done
           if [ -n "$fail" ]; then
+            owner=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
+              --jq '.statuses[] | select(.context == "Claude review") | .target_url')
+            if [ "$owner" != "$RUN_URL" ]; then
+              echo "A newer run owns the status of $HEAD_SHA; not reported: $fail"
+              exit 1
+            fi
             msg="$DESCRIPTION; $fail"
             gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
               -f context='Claude review' -f description="${msg:0:140}" -f target_url="$RUN_URL"
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+              | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
+                  and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id' \
+              | while read -r rid; do
+                  gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$rid/dismissals" \
+                    -f message='A thread of a fixed finding could not be resolved.' -f event=DISMISS
+                done
             exit 1
           fi
