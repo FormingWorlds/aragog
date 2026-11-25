@@ -139,16 +139,28 @@ def test_from_mask_refuses_a_malformed_mask(mask, match):
         PhaseWindow.from_mask(P, S, mask)
 
 
-def test_from_mask_refuses_a_gap_in_a_column():
-    """The valid nodes of a column must be one run: a gap is refused and named by its column."""
+def test_a_gap_in_a_column_lies_inside_the_window():
+    """A 0 node between valid nodes of a column (a generator marks a node with no finite
+    nabla_ad this way) leaves the window ends at the lowest and highest valid node."""
     from aragog.eos.domain import PhaseWindow
 
+    whole = PhaseWindow.from_mask(P, S, _mask((2, 3, 4), (6, 7, 8)))
     m = _mask((2, 3, 4), (6, 7, 8))
-    m[5, 1] = 0.0
-    with pytest.raises(ValueError, match='column 1'):
-        PhaseWindow.from_mask(P, S, m)
-    m[5, 1] = 1.0
-    assert PhaseWindow.from_mask(P, S, m).hi[1] == 1700.0
+    m[5, 1] = m[4, 1] = 0.0
+    gap = PhaseWindow.from_mask(P, S, m)
+    np.testing.assert_array_equal(gap.lo, whole.lo)
+    np.testing.assert_array_equal(gap.hi, whole.hi)
+    assert gap.distance(P[1:2], S[5:6])[0] == 0.0
+
+
+@pytest.mark.parametrize('axis', ['P', 'S'])
+def test_from_mask_refuses_an_axis_that_does_not_rise(axis):
+    """A falling or repeated axis would turn every distance negative or undefined: refused."""
+    from aragog.eos.domain import PhaseWindow
+
+    P_ax, S_ax = (P[::-1], S) if axis == 'P' else (P, S[::-1])
+    with pytest.raises(ValueError, match='rise strictly'):
+        PhaseWindow.from_mask(P_ax, S_ax, _mask((2, 3, 4), (6, 7, 8)))
 
 
 def test_lookup_points_follow_the_phase_of_each_point():
@@ -162,12 +174,11 @@ def test_lookup_points_follow_the_phase_of_each_point():
     # on the liquidus: melt only; on the solidus: solid only
     np.testing.assert_allclose(d, [0.0, 2.0, 0.0, 0.0, 0.0, 0.0], rtol=0, atol=1e-12)
     assert melt_table.tolist()[:3] == [True, True, False]
-    assert s_look[3] in (1500.0, 1300.0) and s_look[1] == 2100.0
+    assert s_look.tolist()[:3] == [1800.0, 2100.0, 1100.0]
+    # a tie between the 2 lookups of a mush point counts the melt one
+    assert melt_table[3] and s_look[3] == 1500.0
     # the mush point at its own entropy would be 1 cell below the melt window
-    from aragog.eos.domain import PhaseWindow
-
     assert dom.melt.distance(np.zeros(1), np.array([1400.0]))[0] == pytest.approx(1.0)
-    assert isinstance(dom.melt, PhaseWindow)
 
 
 def test_a_mush_point_takes_the_worse_of_its_two_lookups():

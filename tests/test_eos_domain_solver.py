@@ -235,3 +235,247 @@ def test_the_eos_reads_the_masks_next_to_its_tables(tmp_path, caplog):
     with caplog.at_level(logging.INFO, logger='fwl.aragog'):
         assert EntropyEOS(EOS_DIR).domain is None
     assert sum('valid_mask' in r.getMessage() for r in caplog.records) == 1
+
+
+def _rhs_basic(s, y):
+    """Basic-node entropy that the right-hand side gives the basic phase evaluator for ``y``."""
+    s._dSdt_single(0.0, np.asarray(y, dtype=float))
+    return np.array(s.state._entropy_basic, dtype=float)
+
+
+@pytest.mark.parametrize('core', ['energy_balance', 'core_module'])
+def test_the_cmb_node_is_judged_at_the_entropy_of_the_state_gradient(core):
+    """With the CMB gradient in the state, the bottom basic node is the bottom cell carried by
+    that gradient, not the mesh extrapolation: a steep gradient takes it out of the window, and
+    the check names it at the entropy the right-hand side reads."""
+    from aragog.eos.domain import TableDomain
+
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos, core=core)
+    cells = _uniform_melt(s, eos, 0.0)
+    w = eos.domain.melt
+    y = np.array(s._S0, dtype=float)
+    y[: s._n_stag] = cells
+    y[s._n_stag] = 0.0
+    assert s._eos_domain_failure(_states(y, y)) is None
+    r_b = s._r_basic_flat
+    y[s._n_stag] = 40.0 * w.dS / (r_b[0] - 0.5 * (r_b[0] + r_b[1]))  # 40 cells above the cells
+    S_b = _rhs_basic(s, y)
+    assert S_b[0] == pytest.approx(cells[0] + 40.0 * w.dS) and np.all(S_b[1:] == cells[0])
+    eos.domain = TableDomain(melt=w, solid=w)
+    msg = s._eos_domain_failure(_states(y, y))
+    assert 'basic node 0 ' in msg and f'S={S_b[0]:.6f} J/kg/K' in msg
+    assert '40.00 cells outside' in msg and msg.startswith(
+        f'{_MSG}: 2 lookup points over the 2 '
+    )
+
+
+def test_a_steep_bottom_with_no_state_gradient_is_not_reported():
+    """energy_balance with a zero CMB gradient: the mesh extrapolation of 2 steep bottom cells
+    lies more than 5 cells outside, but the solver reads the bottom cell itself there, inside."""
+    from aragog.eos.domain import TableDomain
+
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos, core='energy_balance')
+    cells = _uniform_melt(s, eos, 0.0)
+    w = eos.domain.melt
+    cells[1:] = cells[0] - 20.0 * w.dS  # the bottom cell 20 cells above the next one
+    assert cells.min() > np.max(eos.liquidus_entropy(s._P_basic_flat))  # all melt
+    extrap = np.ravel(s.evaluator.mesh.entropy_at_basic_nodes(cells))[0]
+    hi = cells[0] + 1.0 * w.dS
+    assert (extrap - hi) / w.dS > 5.0  # the mesh node would be reported
+    win = _flat_window(w.P, 0.0, hi, w.dS)
+    eos.domain = TableDomain(melt=win, solid=win)
+    y = np.append(cells, 0.0)
+    assert _rhs_basic(s, y)[0] == cells[0]
+    assert s._eos_domain_failure(_states(y, y)) is None
+
+
+@pytest.mark.parametrize(
+    'core, bc',
+    [
+        ('quasi_steady', 4),
+        ('energy_balance', 4),
+        ('core_module', 4),
+        ('gradient', 4),
+        ('quasi_steady', 5),
+        ('energy_balance', 5),
+    ],
+)
+def test_the_check_reads_the_basic_entropy_of_the_right_hand_side(core, bc, monkeypatch):
+    """For each core layout and both a flux and a set-temperature surface, the basic-node
+    entropy that the check judges equals the one the right-hand side gives the EOS."""
+    from aragog.eos import domain as dom_mod
+
+    eos = entropy_eos_copy(EOS_DIR)
+    p = _build_mushy_parameters(solver_method='bdf', end_time=5.0)
+    p.boundary_conditions.core_bc = core
+    p.boundary_conditions.outer_boundary_condition = bc
+    p.boundary_conditions.outer_boundary_value = 2000.0 if bc == 5 else 1.0e5
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(_pick_mushy_S(eos))
+    eos.domain = _tight(eos)
+    y = np.array(s._S0, dtype=float)
+    if core in ('energy_balance', 'core_module'):
+        y[s._n_stag] = 3.0e-3  # a CMB gradient that moves the bottom node
+    seen = []
+    real = dom_mod.TableDomain.lookup_distances
+
+    def record(self, eos_, P, S):
+        seen.append(np.array(S, dtype=float))
+        return real(self, eos_, P, S)
+
+    monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', record)
+    assert s._eos_domain_failure(_states(y)) is not None
+    np.testing.assert_array_equal(seen[1], _rhs_basic(s, y))
+    np.testing.assert_array_equal(seen[0], s._stag_entropy(y))
+    if bc == 5:
+        assert seen[1][-1] == s.state._surface_temperature_bc[0]
+
+
+def _states(*ys, t=None):
+    return OptimizeResult(
+        t=np.arange(len(ys), dtype=float) if t is None else np.asarray(t, float),
+        y=np.column_stack(ys),
+        status=0,
+    )
+
+
+def test_the_window_is_read_at_the_pressure_of_each_node():
+    """A window whose upper end falls with pressure: uniform melt cells are outside only at the
+    deep nodes, each by the distance of the window end at its own pressure."""
+    from aragog.eos.domain import PhaseWindow, TableDomain
+
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    cells = _uniform_melt(s, eos, 0.0)
+    dS = eos.domain.melt.dS
+    P_s, P_b = s._P_stag_flat, s._P_basic_flat
+    P_lo, P_hi = float(min(P_s.min(), P_b.min())), float(max(P_s.max(), P_b.max()))
+    hi_end = np.array([cells[0] + 4.0 * dS, cells[0] - 20.0 * dS])  # at P_lo and P_hi
+    w = PhaseWindow(P=np.array([P_lo, P_hi]), lo=np.zeros(2), hi=hi_end, dS=dS)
+    eos.domain = TableDomain(melt=w, solid=w)
+    msg = s._eos_domain_failure(_two_states(cells))
+    d_s = (cells - np.interp(P_s, w.P, w.hi)) / dS
+    d_b = (cells[0] - np.interp(P_b, w.P, w.hi)) / dS
+    n = int((d_s > 5.0).sum() + (d_b > 5.0).sum())
+    assert 0 < n < 2 * (P_s.size + P_b.size)  # some nodes inside, some outside
+    k = int(np.argmax(d_b)) if d_b.max() > d_s.max() else int(np.argmax(d_s))
+    kind = 'basic' if d_b.max() > d_s.max() else 'staggered'
+    assert f'{2 * n} lookup points' in msg and f'{kind} node {k} ' in msg
+    assert f'{max(d_b.max(), d_s.max()):.2f} cells outside' in msg
+
+
+def test_the_worst_state_of_the_call_is_named_with_its_time():
+    """3 output states, the middle one farthest out: the message names its time, and the count
+    sums the points outside over the states."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    a = _uniform_melt(s, eos, 0.0)
+    dS = eos.domain.melt.dS
+    msg = s._eos_domain_failure(_states(a + 6.0 * dS, a + 9.0 * dS, a, t=[1.0, 2.5, 4.0]))
+    n_pts = 2 * s._n_stag + 1
+    assert f'{2 * n_pts} lookup points over the 3 output states' in msg
+    assert 'worst at t=2.500000e+00 yr' in msg and '9.00 cells outside' in msg
+
+
+def test_the_message_temperature_is_the_table_value_and_reads_no_range_warning():
+    """T in the message is the temperature the melt table returns at the lookup, clipped to the
+    table, and the check leaves the EOS range-warning counts unchanged."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    cells = _uniform_melt(s, eos, 50.0)
+    S_max = float(eos._tables['temperature_melt']['S'][-1])
+    cells[-1] = S_max + 500.0  # beyond the table: a range warning if read through temperature()
+    before = dict(eos._range_warning_counts)
+    msg = s._eos_domain_failure(_two_states(cells))
+    assert eos._range_warning_counts == before
+    k = int(msg.split(' node ')[1].split(' ')[0])
+    kind = msg.split('worst at ')[1].split(': ')[1].split(' node')[0]
+    P = (s._P_basic_flat if kind == 'basic' else s._P_stag_flat)[k]
+    S = float(msg.split('table at S=')[1].split(' ')[0])
+    T = eos.domain.lookup_temperature(eos, P, S, True)
+    assert msg.endswith(f'T={T:.6f} K')
+    tbl = eos._tables['temperature_melt']
+    P_c = np.clip(P, tbl['P'][0], tbl['P'][-1])
+    assert S > S_max and T == float(tbl['interp']([[P_c, S_max]])[0])
+
+
+def test_a_failed_call_is_not_judged(monkeypatch, caplog):
+    """A call that the table guard fails (status -1) writes no domain warning, even with every
+    point outside."""
+    eos = entropy_eos_copy(EOS_DIR)
+    eos.domain = _tight(eos)
+    s = _solver(eos)
+    monkeypatch.setattr(EntropySolver, '_eos_table_failure', lambda self, sol: (sol.t[-1], 'x'))
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
+        s.solve()
+    assert s._solution.status == -1 and _messages(caplog) == []
+
+
+def test_raise_on_the_first_call_holds_no_solution():
+    """'raise' on the first call: there is no earlier result, so the solver holds none."""
+    from aragog.eos.domain import EOSDomainError
+
+    eos = entropy_eos_copy(EOS_DIR)
+    eos.domain = _tight(eos)
+    s = _solver(eos, mode='raise')
+    with pytest.raises(EOSDomainError):
+        s.solve()
+    assert s._solution is None
+
+
+def test_raise_after_a_floor_re_entry_holds_the_solution_of_the_outer_call_start(monkeypatch):
+    """A floor discard solves the call again; when that solve raises, the solver holds the
+    result of the outer call start, not the discarded states."""
+    from aragog.eos.domain import EOSDomainError
+
+    from .test_eos_floor import _drained, _mid_cell_at, _scipy_stop_below
+
+    eos = entropy_eos_copy(EOS_DIR)
+    _scipy_stop_below(monkeypatch)
+    starts, solvers, solve = [], [], EntropySolver.solve
+
+    def counted(self, *args, **kwargs):
+        self.parameters.solver.eos_domain_check = 'raise'
+        self.entropy_eos.domain = _tight(self.entropy_eos)
+        solvers.append(self)
+        starts.append(kwargs.get('_start', 'outer'))
+        return solve(self, *args, **kwargs)
+
+    monkeypatch.setattr(EntropySolver, 'solve', counted)
+    with pytest.raises(EOSDomainError):
+        _drained(eos, _mid_cell_at(eos, 1e-6), method='bdf')
+    assert starts == ['outer', None] and solvers[0]._solution is None
+
+
+def test_an_unknown_mode_set_after_construction_is_refused():
+    """A mode or tolerance set on the parameters after construction is checked at the call."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    cells = _uniform_melt(s, eos, 50.0)
+    s.parameters.solver.eos_domain_check = 'error'
+    with pytest.raises(ValueError, match='eos_domain_check must be one of'):
+        s._eos_domain_failure(_two_states(cells))
+    s.parameters.solver.eos_domain_check = 'warn'
+    s.parameters.solver.eos_domain_tolerance_cells = float('nan')
+    with pytest.raises(ValueError, match='finite and > 0'):
+        s._eos_domain_failure(_two_states(cells))
+
+
+def test_off_mode_does_not_read_a_malformed_mask(tmp_path):
+    """The masks are read at the first check: with the check off, an EOS whose mask has an empty
+    column loads and solves; with the check on, the first call names the fault."""
+    ref = entropy_eos_copy(EOS_DIR)
+    d = _masked_dir(tmp_path, ref, slice(0, 2))
+    m = np.loadtxt(d / 'valid_mask_melt.dat', ndmin=2)
+    m[:, 0] = 0
+    (d / 'valid_mask_melt.dat').unlink()
+    np.savetxt(d / 'valid_mask_melt.dat', m, fmt='%d')
+    s = _solver(EntropyEOS(d), mode='off')
+    s.solve()
+    assert s._solution.status == 0 and not s.entropy_eos._domain_read
+    s = _solver(EntropyEOS(d))
+    with pytest.raises(ValueError, match='column 0 holds no valid node'):
+        s.solve()
