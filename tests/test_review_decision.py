@@ -176,12 +176,15 @@ def test_same_finding_with_an_open_thread_gets_no_second_thread():
         ('vendor/sub', '160000'),
     ],
 )
-def test_protected_change_withholds_approval(path, mode):
+def test_protected_change_fails_the_status_and_withholds_approval(path, mode):
     files = [{'path': path, 'old_mode': '100644', 'new_mode': mode}]
     p = _plan(files=files)
-    assert p['state'] == 'success'  # the status follows the findings only
+    assert p['state'] == 'failure' and 'protected path' in p['description']
     assert p['event'] == 'COMMENT'
-    assert 'approval withheld' in p['body'] and path in p['body']
+    assert 'approval withheld' not in p['body'] and path in p['body']
+    src = {'path': 'src/aragog/x.py', 'old_mode': '100644', 'new_mode': '100644'}
+    blocked = _plan(findings=[_finding()], files=[*files, src])
+    assert blocked['state'] == 'failure' and 'blocking finding' in blocked['description']
 
 
 def test_policy_off_missing_or_broken_withholds_approval():
@@ -205,13 +208,9 @@ def test_policy_deny_glob_wins_over_allow():
     assert _plan(policy=deny, files=docs)['event'] == 'APPROVE'
 
 
-def test_no_approve_flag_withholds_approval():
-    assert _plan(no_approve=True)['event'] == 'COMMENT'
-
-
 def test_a_failed_or_withheld_run_dismisses_own_earlier_approvals():
     assert _plan(findings=[_finding()], approvals=[7, 9])['dismiss'] == [7, 9]
-    assert _plan(no_approve=True, approvals=[7])['dismiss'] == [7]
+    assert _plan(policy=None, approvals=[7])['dismiss'] == [7]
     assert _plan(approvals=[7])['dismiss'] == []
 
 
@@ -312,7 +311,9 @@ class _Gh:
 
     def __call__(self, args, data=None):
         self.calls.append((args, data))
-        return self.head + '\n' if args[:2] == ['pr', 'view'] else '{}'
+        if args[:2] == ['pr', 'view']:
+            return self.head + '\n'
+        return '{"id": 42}' if args[-1].endswith('/reviews') else '{}'
 
 
 def _plan_file(tmp_path, **kw):
@@ -456,11 +457,27 @@ def test_own_threads_carry_the_text_of_the_finding_without_the_marker():
 
 
 @pytest.mark.parametrize(
-    'path', ['CLAUDE.md', 'tests/CLAUDE.md', '.claude/settings.json', 'tools/agents/sync.py']
+    'path',
+    [
+        'CLAUDE.md',
+        'tests/CLAUDE.md',
+        '.claude/settings.json',
+        'tools/agents/sync.py',
+        'src/.claude/settings.json',
+        'src/.mcp.json',
+        'src/CLAUDE.local.md',
+        'GEMINI.md',
+        'docs/GEMINI.md',
+        'pyproject.toml',
+        'conftest.py',
+        'tests/conftest.py',
+        '.pre-commit-config.yaml',
+    ],
 )
-def test_agent_instruction_files_are_protected(path):
+def test_agent_instruction_and_build_entry_files_are_protected(path):
     files = [{'path': path, 'old_mode': '100644', 'new_mode': '100644'}]
-    assert _plan(files=files)['event'] == 'COMMENT'
+    p = _plan(files=files)
+    assert p['event'] == 'COMMENT' and p['state'] == 'failure'
 
 
 def test_the_approval_marker_survives_a_long_body():
@@ -563,7 +580,7 @@ def test_collect_pages_through_all_threads_and_keeps_only_own_approvals():
 
 def test_apply_resolves_and_dismisses_before_the_review():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(threads=[_thread(key)], fixed=[key], no_approve=True, approvals=[7])
+    p = _plan(threads=[_thread(key)], fixed=[key], policy=None, approvals=[7])
     gh = _Gh(HEAD)
     rd.apply(p, 'o/r', '5', 'url', gh)
     order = [
@@ -824,3 +841,68 @@ def test_a_fix_claim_on_a_fixed_or_dismissed_thread_is_not_sent_to_verify(resolv
     own = rd.own_threads([_thread(key, resolved=True, resolver=resolver)], AUTHOR)
     c = rd.prep({'summary': 's', 'findings': [], 'fixed': [key]}, own)
     assert c['verify_in']['fixed'] == []
+
+
+class _Moving(_Gh):
+    """The head is HEAD for the first read and another commit for every later read."""
+
+    def __call__(self, args, data=None):
+        out = super().__call__(args, data)
+        if out == HEAD + '\n':
+            self.head = 'b' * 40
+        return out
+
+
+def test_an_approval_on_a_head_that_moved_during_the_post_is_dismissed():
+    gh = _Moving(HEAD)
+    rd.apply(_plan(), 'o/r', '5', 'url', gh)
+    writes = [(a[-1], d) for a, d in gh.calls if a[0] == 'api']
+    assert writes[0][1]['event'] == 'APPROVE'
+    assert writes[1][0] == 'repos/o/r/pulls/5/reviews/42/dismissals'
+    assert writes[-1][1]['state'] == 'failure' and 'head moved' in writes[-1][1]['description']
+
+
+def test_an_approval_on_a_head_that_stayed_is_kept():
+    gh = _Gh(HEAD)
+    rd.apply(_plan(), 'o/r', '5', 'url', gh)
+    assert not any('dismissals' in a[-1] for a, _ in gh.calls)
+    assert sum(a[:2] == ['pr', 'view'] for a, _ in gh.calls) == 2
+    assert gh.calls[-1][1]['state'] == 'success'
+
+
+def test_the_base_branch_agent_instructions_replace_those_of_the_pull_request():
+    step = _step('Replace the agent files of the pull request with those of the base branch')
+    for name in (
+        '.claude',
+        '.mcp.json',
+        'CLAUDE.local.md',
+        'CLAUDE.md',
+        'AGENTS.md',
+        'GEMINI.md',
+    ):
+        assert f'-name {name}' in step
+    assert '-path ./.review_base -prune' in step and 'cp -P ".review_base/' in step
+    assert _WORKFLOW.index(step) < _WORKFLOW.index(_step('Find'))
+    assert 'read ./.review_base/AGENTS.md and ./.review_base/tests/AGENTS.md' in _step('Find')
+
+
+def test_workflow_files_for_the_model_live_outside_the_checkout():
+    assert re.search(r'\.review_(lint|threads|diff|verify)', _WORKFLOW) is None
+    for name in ('Find', 'Verify'):
+        args = _step(name)
+        assert '${{ runner.temp }}/review_in/diff.patch' in args
+        assert '--add-dir ${{ runner.temp }}/review_in' in args
+        assert (
+            '--allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"'
+            in args
+        )
+        assert 'Bash(' not in args
+    merge = _step('Check that the merge commit holds the head')
+    assert "git ls-tree -z --name-only HEAD | grep -qz '^\\.review_'" in merge
+
+
+def test_no_review_without_the_decision_script_on_the_default_branch():
+    gate = _step('Skip closed, draft, fork and bot pull requests')
+    assert 'contents/.github/scripts/review_decision.py?ref=$DEFAULT_BRANCH' in gate
+    copy = _step('Collect the review threads of this workflow')
+    assert 'cp .github/scripts' not in copy and 'no-approve' not in _WORKFLOW
