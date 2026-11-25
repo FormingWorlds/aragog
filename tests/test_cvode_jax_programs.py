@@ -429,7 +429,8 @@ def test_clear_jit_cache_drops_the_traced_programs(eos):
 
 def test_a_by_value_holder_keeps_a_read_only_copy_of_its_source():
     """A holder copies its leaves: the source stays writable, a later change of the source does
-    not reach the holder, and the holder equals a new holder of the first values."""
+    not reach the holder, the holder refuses a new attribute, and it equals itself and a new
+    holder of the first values."""
     from aragog.solver import cvode_jax
 
     source = np.array([1.0, 2.0])
@@ -439,6 +440,9 @@ def test_a_by_value_holder_keeps_a_read_only_copy_of_its_source():
     assert held.tree[0][0] == 1.0
     assert held == cvode_jax._ByValue((np.array([1.0, 2.0]),))
     assert held != cvode_jax._ByValue((source,))
+    assert held == held
+    with pytest.raises(AttributeError, match='cannot change'):
+        held.tree = (source,)
 
 
 def _rhs_at(eos, n):

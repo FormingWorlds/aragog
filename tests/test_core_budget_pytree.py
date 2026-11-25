@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from aragog.core._pytree import register_pytree
+from aragog.core._pytree import _Same, register_pytree
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
@@ -248,3 +248,26 @@ def test_a_callable_that_shadows_a_method_stops_the_flatten():
     obj.f = lambda x: 2.0 * x
     with pytest.raises(ValueError, match='shadows'):
         jax.tree_util.tree_flatten(obj)
+
+
+def test_two_holders_of_one_static_object_hash_alike():
+    """Holders of one object compare equal and hash alike, as a treedef hash needs."""
+    obj = object()
+    assert _Same(obj) == _Same(obj) and hash(_Same(obj)) == hash(_Same(obj))
+    assert _Same(obj) != _Same(object())
+
+
+@register_pytree
+class _OwnHook:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls.tag = 'own'
+
+
+def test_a_class_with_its_own_subclass_hook_keeps_it():
+    """The registration adds its subclass hook only to a class that defines none of its own."""
+
+    class Sub(_OwnHook):
+        pass
+
+    assert getattr(Sub, 'tag', None) == 'own'
