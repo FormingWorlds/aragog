@@ -6537,20 +6537,22 @@ class EntropySolver:
             _eos_domain_of(self.entropy_eos)
 
     def _eos_domain_failure(self, sol) -> str | None:
-        """Judge the EOS lookup points of a call's output states against the valid table window.
+        """Judge the EOS lookup points of a call's accepted states against the valid table window.
 
         The points are those the EOS reads in the right-hand side: each staggered node at its
         phase lookups and each basic node at the mesh pressure and the entropy that
         ``EntropyState.basic_entropy`` gives it (the CMB node from the state's CMB gradient in
-        energy_balance and core_module, the top node at the surface entropy with BC 5); see
-        ``TableDomain.lookup_distances``. Only the output states ``sol.y`` count, so a state
-        that leaves the window and returns between 2 output points is not seen. Off with
-        ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties.
+        energy_balance and core_module, the top node at the surface entropy with BC 5), with the
+        phase-boundary lookups of the smoothing band; see ``TableDomain.lookup_distances``. The
+        states are those of the call's energy trace (accepted steps and root-search points);
+        without a trace only the output states ``sol.y`` count, with 1 info line per solver, and
+        a state that leaves the window and returns between 2 output points is not seen. Off
+        with ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties.
 
         Parameters
         ----------
         sol : OptimizeResult
-            Result of the call.
+            Result of the call, with ``energy_trace`` when the call kept it.
 
         Returns
         -------
@@ -6568,8 +6570,21 @@ class EntropySolver:
         tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
         slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
         k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
+        trace = sol.get('energy_trace')
+        if trace is None:
+            self._warn_once(
+                'eos_domain_output_states',
+                'EOS domain check: the calls keep no energy trace, so the check judges their '
+                'output states only',
+                logging.INFO,
+            )
+        t_pts, y_pts = trace or (sol.t, sol.y)
+        widths = (
+            float(self.state.phase_staggered._matprop_smooth_width),
+            float(self.state.phase_basic._matprop_smooth_width),
+        )
         n_out, worst = 0, None
-        for t, y in zip(sol.t, np.asarray(sol.y, dtype=float).T):
+        for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
             S_s = self._stag_entropy(y)
             if self._core_bc == 'gradient':
                 n_b = self._n_stag + 1
@@ -6578,12 +6593,12 @@ class EntropySolver:
                 )
             else:
                 S_b = self.state.basic_entropy(S_s, None if k_cmb is None else y[k_cmb])
-            for kind, P, S, r in (
-                ('staggered', self._P_stag_flat, S_s, self._r_stag_flat),
-                ('basic', self._P_basic_flat, S_b, self._r_basic_flat),
+            for kind, P, S, r, width in (
+                ('staggered', self._P_stag_flat, S_s, self._r_stag_flat, widths[0]),
+                ('basic', self._P_basic_flat, S_b, self._r_basic_flat, widths[1]),
             ):
-                d, melt, s_look = domain.lookup_distances(eos, P, S)
-                d = np.nan_to_num(d, nan=math.inf)  # a non-finite point counts as outside
+                d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
+                d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
                 k = int(np.argmax(d))
                 if not d[k] > tol:
                     continue
@@ -6596,14 +6611,19 @@ class EntropySolver:
         window = domain.melt if melt else domain.solid
         lo, hi = window.ends(P)
         T = domain.lookup_temperature(eos, P, s_look, melt)
+        if not (math.isfinite(P) and math.isfinite(S)):
+            how = 'not a finite point'
+        elif math.isinf(d_k):
+            how = 'no valid window at this pressure (a mask column with no valid node)'
+        else:
+            how = f'{d_k:.2f} cells outside'
+        states = 'accepted' if trace is not None else 'output'
         return (
-            f'EOS domain check: {n_out} lookup points over the {np.size(sol.t)} output states of the '
-            f'call more than {tol:g} table S cells outside the valid window; worst at '
+            f'EOS domain check: {n_out} lookup points over the {np.size(t_pts)} {states} states of '
+            f'the call more than {tol:g} table S cells outside the valid window; worst at '
             f't={t:.6e} yr: {kind} node {k} (r={r:.6e} m), P={P:.6e} Pa, S={S:.6f} J/kg/K, '
             f'read on the {"melt" if melt else "solid"} table at S={s_look:.6f} J/kg/K, window '
-            f'[{lo:.6f}, {hi:.6f}] J/kg/K, '
-            + (f'{d_k:.2f} cells outside' if math.isfinite(d_k) else 'not a finite point')
-            + f', T={T:.6f} K'
+            f'[{lo:.6f}, {hi:.6f}] J/kg/K, ' + how + f', T={T:.6f} K'
         )
 
     def _log_solution_outcome(self, end_time: float) -> None:

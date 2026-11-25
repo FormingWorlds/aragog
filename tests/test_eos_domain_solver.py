@@ -328,9 +328,9 @@ def test_the_check_reads_the_basic_entropy_of_the_right_hand_side(core, bc, monk
     seen = []
     real = dom_mod.TableDomain.lookup_distances
 
-    def record(self, eos_, P, S):
+    def record(self, eos_, P, S, **kw):
         seen.append(np.array(S, dtype=float))
-        return real(self, eos_, P, S)
+        return real(self, eos_, P, S, **kw)
 
     monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', record)
     assert returns(s._eos_domain_failure, _states(y)) is not None
@@ -471,19 +471,19 @@ def test_an_unknown_mode_set_after_construction_is_refused():
 
 
 def test_off_mode_does_not_read_a_malformed_mask(tmp_path):
-    """The masks are read at the first check: with the check off, an EOS whose mask has an empty
-    column loads and solves; with the check on, the first call names the fault."""
+    """The masks are read at the first check: with the check off, an EOS whose mask holds a value
+    other than 0 and 1 loads and solves; with the check on, the first call names the fault."""
     ref = entropy_eos_copy(EOS_DIR)
     d = _masked_dir(tmp_path, ref, slice(0, 2))
     m = np.loadtxt(d / 'valid_mask_melt.dat', ndmin=2)
-    m[:, 0] = 0
+    m[0, 0] = 2
     (d / 'valid_mask_melt.dat').unlink()
     np.savetxt(d / 'valid_mask_melt.dat', m, fmt='%d')
     s = _solver(EntropyEOS(d), mode='off')
     s.solve()
     assert s._solution.status == 0 and 'domain' not in vars(s.entropy_eos)
     s = _solver(EntropyEOS(d))
-    with pytest.raises(ValueError, match='column 0 holds no valid node'):
+    with pytest.raises(ValueError, match='0 and 1'):
         s.solve()
     assert getattr(s, '_solution', None) is None  # raised before the call integrated
 
@@ -531,15 +531,20 @@ def _parse(msg):
 @pytest.mark.parametrize('where', ['solid', 'mush'])
 def test_a_solid_or_mush_worst_point_names_the_solid_table_lookup(where, monkeypatch):
     """With the solid window cut below the solidus and the melt window whole, the worst point
-    is read on the solid table: at its own entropy for a solid cell, at the solidus entropy for
-    a mush cell. The message gives that entropy, the solid window ends at its pressure and the
-    solid-table temperature there."""
+    is read on the solid table: at its own entropy for a solid cell outside the smoothing band,
+    at the solidus entropy for a mush cell. The message gives that entropy, the solid window
+    ends at its pressure and the solid-table temperature there."""
     eos = entropy_eos_copy(EOS_DIR)
     s = _solver(eos)
     solid, s_sol_min, dS_s = _solid_window_case(s, eos, 12.0)
     P_s = s._P_stag_flat
-    if where == 'solid':
-        cells = np.full(s._n_stag, s_sol_min - 1.0 * dS_s)
+    if where == 'solid':  # 0.3 of the mush width below the solidus: blend weight 0
+        s_sol, s_liq = eos.solidus_entropy(P_s), eos.liquidus_entropy(P_s)
+        cells = s_sol - 0.3 * (s_liq - s_sol)
+        solid = _flat_window(
+            eos._tables['temperature_solid']['P'], 0.0, cells.min() - 8 * dS_s, dS_s
+        )
+        eos.domain = type(eos.domain)(melt=eos.domain.melt, solid=solid)
     else:
         cells = 0.5 * (eos.solidus_entropy(P_s) + eos.liquidus_entropy(P_s))
     from aragog.eos.domain import TableDomain
@@ -556,7 +561,8 @@ def test_a_solid_or_mush_worst_point_names_the_solid_table_lookup(where, monkeyp
     )
     P = (s._P_basic_flat if kind == 'basic' else P_s)[k]
     if where == 'solid':
-        assert s_look == pytest.approx(s_sol_min - dS_s, abs=1e-6)
+        assert s_look == pytest.approx(float(msg.split(', S=')[1].split(' ')[0]), abs=1e-6)
+        assert s_look < float(eos.solidus_entropy(np.array([P]))[0]) - 0.25 * dS_s
     else:
         assert s_look == pytest.approx(float(eos.solidus_entropy(np.array([P]))[0]), abs=1e-6)
         assert f'S={s_look:.6f}' not in msg.split(', read on')[0]  # the cell is not at S_sol
