@@ -18,7 +18,7 @@ from scipy.optimize import OptimizeResult
 from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
 
-from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
+from .conftest import EOS_DIR, entropy_eos_copy, needs_eos, returns
 from .test_eos_floor import CVODE_BDF
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
@@ -299,6 +299,7 @@ def test_a_steep_bottom_with_no_state_gradient_is_not_reported():
         ('energy_balance', 4),
         ('core_module', 4),
         ('gradient', 4),
+        ('bower2018', 4),
         ('quasi_steady', 5),
         ('energy_balance', 5),
     ],
@@ -328,7 +329,7 @@ def test_the_check_reads_the_basic_entropy_of_the_right_hand_side(core, bc, monk
         return real(self, eos_, P, S)
 
     monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', record)
-    assert s._eos_domain_failure(_states(y)) is not None
+    assert returns(s._eos_domain_failure, _states(y)) is not None
     np.testing.assert_array_equal(seen[1], _rhs_basic(s, y))
     np.testing.assert_array_equal(seen[0], s._stag_entropy(y))
     if bc == 5:
@@ -579,3 +580,20 @@ def test_the_table_temperature_equals_the_eos_temperature_of_a_single_phase_poin
         for j in range(P.size):
             T = TableDomain.lookup_temperature(eos, P[j], S[j], melt)
             assert T == pytest.approx(float(T_eos[j]), rel=1e-12)
+
+
+@pytest.mark.parametrize('mode', ['warn', 'off'])
+@pytest.mark.parametrize('tol', [-1.0, 0.0, float('nan'), float('inf'), 'a', True])
+def test_a_bad_tolerance_raises_at_the_call_start_and_keeps_the_state(mode, tol):
+    """A bad tolerance set after a good call raises when the next call starts, in any mode,
+    before the call changes the solution or the CMB ledger."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    s.solve()
+    first, marker = s._solution, object()
+    s.cmb_ledger = marker
+    s.parameters.solver.eos_domain_check = mode
+    s.parameters.solver.eos_domain_tolerance_cells = tol
+    with pytest.raises((TypeError, ValueError), match='eos_domain_tolerance_cells must be'):
+        s.solve()
+    assert s._solution is first and s.cmb_ledger is marker

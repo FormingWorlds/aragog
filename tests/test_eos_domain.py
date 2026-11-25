@@ -281,3 +281,40 @@ def test_settings_refuse_a_tolerance_that_is_not_finite_and_positive(bad):
         ).eos_domain_tolerance_cells
         == 3.0
     )
+
+
+@pytest.mark.parametrize('tol', [np.int64(5), np.float32(2.5), 0.5, 3])
+def test_a_real_number_tolerance_is_taken_as_a_float(tol):
+    """Any real number type is taken and returned as a float."""
+    from fractions import Fraction
+
+    from aragog.config.solver import check_eos_domain_tolerance
+
+    from .conftest import returns
+
+    for value in (tol, Fraction(1, 2)):
+        out = returns(check_eos_domain_tolerance, value)
+        assert type(out) is float and out == float(value)
+
+
+@pytest.mark.parametrize('tol', [True, np.bool_(True), '5', None])
+def test_a_tolerance_that_is_not_a_real_number_is_refused(tol):
+    """A bool, a numpy bool, a string or None is refused with TypeError."""
+    from aragog.config.solver import check_eos_domain_tolerance
+
+    with pytest.raises(TypeError, match='must be a number'):
+        check_eos_domain_tolerance(tol)
+
+
+def test_the_reader_counts_the_zero_nodes_inside_the_windows(caplog):
+    """3 nodes marked 0 between valid nodes: the reader logs that count once."""
+    import logging
+
+    from aragog.eos.domain import PhaseWindow
+
+    m = _mask((2, 3, 4), (6, 7, 8))
+    m[4, 0] = m[5, 1] = m[6, 2] = 0.0
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
+        PhaseWindow.from_mask(P, S, m)
+    lines = [r.getMessage() for r in caplog.records if 'mask nodes marked 0' in r.getMessage()]
+    assert lines == ['3 mask nodes marked 0 lie inside the window, not judged']
