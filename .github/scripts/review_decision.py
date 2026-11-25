@@ -11,14 +11,19 @@ Subcommands
 collect   the threads and approvals of this workflow -> JSON
 prep      check the find output, number the candidates and write the verify input -> JSON
 plan      the action plan from the find, verify and collect outputs -> JSON
-apply     carry out a plan; posts nothing when the head moved since the review started
+apply     carry out a plan; posts nothing when the head moved since the review started. Order:
+          the review with its line comments in one POST, file comments, resolved threads, the
+          status, then the dismissal of earlier approvals. A failed gh call sets a failure status.
 
 Rules
 -----
 - Severities: ``important`` and ``pre_existing`` block (status failure, inline thread);
-  ``nit`` goes in the summary only. A change to a protected path (PROTECTED, a symlink, a
-  submodule, or a path with a control character) also sets the status to failure. Only findings the verify pass confirmed count, and a
-  verify output without exactly one verdict per candidate is an error, not a pass.
+  ``nit`` goes in the summary only. In a file the pull request does not change, no thread is
+  possible: a ``pre_existing`` finding goes in the summary and does not block, an ``important``
+  one blocks and the review body names its key; it clears when a later run no longer reports it.
+  A change to a protected path (PROTECTED, a symlink, a submodule, or a path with a control
+  character) also sets the status to failure. Only findings the verify pass confirmed count,
+  and a verify output without exactly one verdict per candidate is an error, not a pass.
 - The workflow's own threads are written by github-actions[bot] and end with
   ``<!-- claude-review:finding key=... severity=... -->``. A thread is resolved only when the
   find pass claims the fix and the verify pass confirms it; no other thread is ever resolved.
@@ -46,6 +51,7 @@ BLOCKING = ('important', 'pre_existing')
 SEVERITIES = (*BLOCKING, 'nit')
 LABEL = {'important': 'Important', 'pre_existing': 'Pre-existing', 'nit': 'Nit'}
 APPROVAL_MARK = '<!-- claude-review:approval -->'
+MOVED = 'head moved during the review; comment @claude review'
 PROTECTED = (
     '.github/**',
     '**/AGENTS.md',
@@ -303,7 +309,7 @@ def plan(
     blocking = [c for c in found if c['severity'] in BLOCKING]
     changed = {f['path'] for f in files}
 
-    comments, outside = [], []
+    comments, outside, unthreaded = [], [], []
     for c in blocking:
         body = (
             neutralise(f'**{LABEL[c["severity"]]}**: {c["title"]}\n\n{c["body"]}')[:59000]
@@ -316,10 +322,12 @@ def plan(
             )
         elif c['path'] in changed:
             comments.append({'path': c['path'], 'subject_type': 'file', 'body': body})
-        else:
+        elif c['severity'] == 'pre_existing':
             outside.append(c)
+        else:
+            unthreaded.append(c)
 
-    n_block = len(blocking) + len(still_open)
+    n_block = len(comments) + len(unthreaded) + len(still_open)
     prot = _protected(files)
     why = n_block or prot or _withheld(policy_text, files)
     event = 'COMMENT' if why else 'APPROVE'
@@ -340,6 +348,13 @@ def plan(
                 f'- {LABEL[c["severity"]]}: `{c["path"]}:{c["line"]}` {c["title"]}: {c["body"]}'
             )
             for c in nits
+        ]
+    if unthreaded:
+        lines += ['', '**Blocking findings in files this pull request does not change**'] + [
+            neutralise(
+                f'- `{c["path"]}:{c["line"]}` {c["title"]}: {c["body"]} (key {c["key"]})'
+            )
+            for c in unthreaded
         ]
     if still_open:
         lines += ['', f'{len(still_open)} earlier blocking thread(s) stay open.']
@@ -447,28 +462,39 @@ def _head(repo, pr, run):
 def apply(p, repo, pr, url, run=gh):
     """Carry out a plan; posts nothing but a failure status when the head moved.
 
-    An approval is dismissed again when the head moved while it was posted.
+    An approval is dismissed again when the head moved while it was posted. A failed gh call
+    sets a failure status with its error and is raised again.
     """
-    moved = 'head moved during the review; comment @claude review'
     if _head(repo, pr, run) != p['head']:
-        return set_status(repo, p['head'], 'failure', moved, url, run)
-    for c in p['comments']:
-        run(
-            ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/comments'],
-            {**c, 'commit_id': p['head']},
-        )
-    for tid in p['resolve']:
-        run(['api', 'graphql', '-f', f'query={_RESOLVE}', '-F', f't={tid}'])
-    for rid in p['dismiss']:
-        msg = 'A later review run did not approve this pull request.'
-        run(
-            ['api', '-X', 'PUT', f'repos/{repo}/pulls/{pr}/reviews/{rid}/dismissals'],
-            {'message': msg, 'event': 'DISMISS'},
-        )
+        return set_status(repo, p['head'], 'failure', MOVED, url, run)
+    try:
+        _post(p, repo, pr, url, run)
+    except subprocess.CalledProcessError as err:
+        cause = (err.stderr or '').strip().splitlines()[-1:] or [f'exit {err.returncode}']
+        with contextlib.suppress(subprocess.CalledProcessError):
+            set_status(repo, p['head'], 'failure', f'post failed: {cause[0]}', url, run)
+        raise
+
+
+def _post(p, repo, pr, url, run):
+    inline = [c for c in p['comments'] if 'line' in c]
     review = run(
         ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/reviews'],
-        {'commit_id': p['head'], 'event': p['event'], 'body': p['body'][:60000]},
+        {
+            'commit_id': p['head'],
+            'event': p['event'],
+            'body': p['body'][:60000],
+            'comments': inline,
+        },
     )
+    for c in p['comments']:
+        if 'line' not in c:
+            run(
+                ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/comments'],
+                {**c, 'commit_id': p['head']},
+            )
+    for tid in p['resolve']:
+        run(['api', 'graphql', '-f', f'query={_RESOLVE}', '-F', f't={tid}'])
     if p['event'] == 'APPROVE' and _head(repo, pr, run) != p['head']:
         run(
             [
@@ -479,8 +505,14 @@ def apply(p, repo, pr, url, run=gh):
             ],
             {'message': 'The pull request changed while it was approved.', 'event': 'DISMISS'},
         )
-        return set_status(repo, p['head'], 'failure', moved, url, run)
+        return set_status(repo, p['head'], 'failure', MOVED, url, run)
     set_status(repo, p['head'], p['state'], p['description'], url, run)
+    for rid in p['dismiss']:
+        msg = 'A later review run did not approve this pull request.'
+        run(
+            ['api', '-X', 'PUT', f'repos/{repo}/pulls/{pr}/reviews/{rid}/dismissals'],
+            {'message': msg, 'event': 'DISMISS'},
+        )
 
 
 def _read(path):
@@ -530,7 +562,7 @@ def main(argv=None):
                 a.head,
                 col['approvals'],
             )
-    except (OutputError, ValueError) as err:
+    except (OutputError, ValueError, subprocess.CalledProcessError) as err:
         print(f'review_decision: {err}', file=sys.stderr)
         return 2
     pathlib.Path(a.out).write_text(json.dumps(out), encoding='utf-8')

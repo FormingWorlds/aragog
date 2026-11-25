@@ -6,6 +6,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess
 
 import pytest
 from hypothesis import given
@@ -112,10 +113,19 @@ def test_line_outside_the_hunks_becomes_a_file_comment():
     assert p['comments'][0]['subject_type'] == 'file'
 
 
-def test_blocking_finding_in_a_file_outside_the_diff_stays_in_the_summary():
+def test_important_bug_in_an_unchanged_file_blocks_and_names_its_key():
     p = _plan(findings=[_finding(path='src/aragog/other.py')])
-    assert p['state'] == 'failure' and p['comments'] == []
-    assert 'src/aragog/other.py' in p['body']
+    key = rd.finding_key('src/aragog/other.py', 'Wrong sign')
+    assert p['state'] == 'failure' and p['description'] == '1 blocking finding(s)'
+    assert p['comments'] == [] and p['event'] == 'COMMENT'
+    assert f'`src/aragog/other.py:11` Wrong sign: b (key {key})' in p['body']
+
+
+def test_pre_existing_bug_in_an_unchanged_file_is_reported_but_does_not_block():
+    p = _plan(findings=[_finding('pre_existing', path='src/aragog/other.py')])
+    assert p['state'] == 'success' and p['comments'] == []
+    findings = p['body'].split('**Findings without a thread**')[1]
+    assert '`src/aragog/other.py:11` Wrong sign' in findings
 
 
 def test_thread_without_marker_is_never_resolved():
@@ -346,8 +356,8 @@ def test_apply_pins_the_review_to_the_head_and_sets_the_status_last(tmp_path):
     assert paths[-1].endswith('statuses/' + HEAD)
     review = [d for a, d in gh.calls if a[-1].endswith('/reviews')][0]
     assert review['commit_id'] == HEAD and review['event'] == 'COMMENT'
-    comment = [d for a, d in gh.calls if a[-1].endswith('/comments')][0]
-    assert comment['commit_id'] == HEAD and comment['line'] == 11
+    assert review['comments'][0]['line'] == 11
+    assert not [a for a, _ in gh.calls if a[-1].endswith('/comments')]
 
 
 def _verify_for(cands, **over):
@@ -580,7 +590,7 @@ def test_collect_pages_through_all_threads_and_keeps_only_own_approvals():
     assert out['approvals'] == [7]
 
 
-def test_apply_resolves_and_dismisses_before_the_review():
+def test_apply_posts_the_review_then_resolves_sets_the_status_and_dismisses_last():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
     p = _plan(threads=[_thread(key)], fixed=[key], policy=None, approvals=[7])
     gh = _Gh(HEAD)
@@ -589,13 +599,64 @@ def test_apply_resolves_and_dismisses_before_the_review():
         a[-1] if a[0] == 'api' and a[1] != 'graphql' else 'graphql' for a, _ in gh.calls[1:]
     ]
     assert order == [
-        'graphql',
-        'repos/o/r/pulls/5/reviews/7/dismissals',
         'repos/o/r/pulls/5/reviews',
+        'graphql',
         'repos/o/r/statuses/' + HEAD,
+        'repos/o/r/pulls/5/reviews/7/dismissals',
     ]
-    assert any('t=T1' in a for a in gh.calls[1][0])
-    assert gh.calls[2][1]['event'] == 'DISMISS'
+    assert any('t=T1' in a for a in gh.calls[2][0])
+    assert gh.calls[-1][1]['event'] == 'DISMISS'
+
+
+def test_apply_posts_line_comments_inside_the_review_and_file_comments_after_it():
+    p = _plan(findings=[_finding(), _finding(line=99, title='Other')])
+    gh = _Gh(HEAD)
+    rd.apply(p, 'o/r', '5', 'url', gh)
+    paths = [a[-1] for a, _ in gh.calls if a[0] == 'api']
+    review = [d for a, d in gh.calls if a[-1] == 'repos/o/r/pulls/5/reviews']
+    assert len(review) == 1 and [c['line'] for c in review[0]['comments']] == [11]
+    assert review[0]['comments'][0]['side'] == 'RIGHT'
+    files = [d for a, d in gh.calls if a[-1] == 'repos/o/r/pulls/5/comments']
+    assert len(files) == 1 and files[0]['subject_type'] == 'file'
+    assert files[0]['commit_id'] == HEAD
+    assert paths.index('repos/o/r/pulls/5/reviews') < paths.index('repos/o/r/pulls/5/comments')
+
+
+class _FailGh(_Gh):
+    """As _Gh, but the POST to a path ending in ``fail`` exits with an HTTP error."""
+
+    def __init__(self, head, fail):
+        super().__init__(head)
+        self.fail = fail
+
+    def __call__(self, args, data=None):
+        if args[:3] == ['api', '-X', 'POST'] and args[-1].endswith(self.fail):
+            self.calls.append((args, data))
+            raise subprocess.CalledProcessError(1, args, '', 'HTTP 422: Validation Failed\n')
+        return super().__call__(args, data)
+
+
+@pytest.mark.parametrize('fail', ['/reviews', '/comments'])
+def test_a_failed_post_sets_a_failure_status_with_the_cause_and_dismisses_nothing(fail):
+    p = _plan(
+        findings=[_finding(), _finding(line=99, title='Other')], policy=None, approvals=[7]
+    )
+    gh = _FailGh(HEAD, fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        rd.apply(p, 'o/r', '5', 'url', gh)
+    paths = [a[-1] for a, _ in gh.calls if a[0] == 'api']
+    assert not any(x.endswith('/dismissals') for x in paths)
+    assert paths[-1] == 'repos/o/r/statuses/' + HEAD
+    status = gh.calls[-1][1]
+    assert status['state'] == 'failure' and 'HTTP 422' in status['description']
+    if fail == '/reviews':
+        assert 'repos/o/r/pulls/5/comments' not in paths
+
+
+def test_cli_apply_returns_2_when_a_post_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(rd, 'gh', _FailGh(HEAD, '/reviews'))
+    args = ['apply', '--plan', str(_plan_file(tmp_path)), '--repo', 'o/r', '--pr', '5']
+    assert rd.main([*args, '--url', 'u']) == 2
 
 
 def test_set_status_cuts_the_description_to_140_characters():
@@ -675,7 +736,8 @@ def test_cli_prep_plan_and_apply(tmp_path, monkeypatch):
         )
         == 0
     )
-    assert gh.calls[-1][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-2][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-1][0][-1] == 'repos/o/r/pulls/5/reviews/3/dismissals'
     (w / 'bad.json').write_text('{}')
     assert (
         rd.main(
