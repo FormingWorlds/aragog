@@ -266,20 +266,21 @@ class CoreEnergyBudget:
     @functools.cached_property
     def _root_steps(self):
         """Condition and step of the boundary root search, built once per budget so that the
-        loop compiles once. The search stops when its bracket is at most 2 eps wide, as in
-        Algorithm 1; an array of temperatures steps until its slowest entry stops."""
+        loop compiles once. An entry steps while its bracket is wider than 2 eps, as in
+        Algorithm 1; an array of temperatures loops until its slowest entry stops, and the
+        entries that have stopped are held."""
         r_cmb = self.profiles.r_cmb
 
         def cond(carry):
-            return jnp.any(carry[-1]) & (carry[0] < _ITP_STEPS)
+            k, a, b = carry[:3]
+            return jnp.any(b - a > 2.0 * _ITP_EPS) & (k < _ITP_STEPS)
 
         def body(carry):
-            k, a, b, f_a, f_b, kept, t_cmb, _ = carry
+            k, a, b, f_a, f_b, kept, t_cmb = carry
             mid = (a + b) / 2.0
-            den = f_b - f_a
-            x_f = jnp.where(
-                den > 0.0, (f_b * a - f_a * b) / jnp.where(den > 0.0, den, 1.0), mid
-            )
+            # the secant needs a sign change; with a frozen b end (f_b < 0) the step bisects
+            sign = (f_b >= 0.0) & (f_b > f_a)
+            x_f = jnp.where(sign, (f_b * a - f_a * b) / jnp.where(sign, f_b - f_a, 1.0), mid)
             sigma = jnp.sign(mid - x_f)
             delta = _ITP_K1 * (b - a) ** _ITP_K2
             x_t = jnp.where(delta <= jnp.abs(mid - x_f), x_f + sigma * delta, mid)
@@ -288,37 +289,33 @@ class CoreEnergyBudget:
             x = jnp.where((x > a) & (x < b), x, mid)
             f_x = self.superheat(x * r_cmb, t_cmb)
             frozen = f_x < 0.0
-            # Illinois: the stored superheat of an end kept twice in a row is halved
-            f_a = jnp.where(frozen, f_x, jnp.where(kept == -1, f_a / 2.0, f_a))
-            f_b = jnp.where(frozen, jnp.where(kept == 1, f_b / 2.0, f_b), f_x)
-            new_a, new_b = jnp.where(frozen, x, a), jnp.where(frozen, b, x)
-            kept = jnp.where(frozen, 1, -1).astype(kept.dtype)
-            return k + 1, new_a, new_b, f_a, f_b, kept, t_cmb, new_b - new_a > 2.0 * _ITP_EPS
+            new = (
+                jnp.where(frozen, x, a),
+                jnp.where(frozen, b, x),
+                # Illinois: the stored superheat of an end kept twice in a row is halved
+                jnp.where(frozen, f_x, jnp.where(kept == -1, f_a / 2.0, f_a)),
+                jnp.where(frozen, jnp.where(kept == 1, f_b / 2.0, f_b), f_x),
+                jnp.where(frozen, 1, -1).astype(kept.dtype),
+            )
+            go = b - a > 2.0 * _ITP_EPS
+            held = (
+                jnp.where(go, n, o) for n, o in zip(new, (a, b, f_a, f_b, kept), strict=True)
+            )
+            return (k + 1, *held, t_cmb)
 
         return cond, body
 
     def _r_icb_bracket(self, t_cmb):
-        """Steps, final bracket [m] and the end superheats [K] as the search stored them."""
+        """Steps, final bracket [m] and end superheats [K] as the search stored them; the stored
+        superheats bracket a sign change only for an inner core."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
         f_0, f_c = self.superheat(0.0, t_cmb), self.superheat(p.r_cmb, t_cmb)
-        # A liquid centre gives [0, 0] with no step. With a frozen CMB both ends are negative:
-        # the secant point falls outside, and the projection and the inside guard pick the step
-        # until a liquid point is found; if none is, the core is frozen throughout: [1, 1].
-        b = jnp.where(f_0 > 0.0, 0.0, jnp.ones_like(t))
-        init = (
-            0,
-            jnp.zeros_like(t),
-            b,
-            f_0,
-            f_c,
-            jnp.zeros(jnp.shape(t), jnp.int32),
-            t,
-            b > 0.0,
-        )
+        b = jnp.where(f_0 > 0.0, 0.0, jnp.ones_like(t))  # a liquid centre: [0, 0], no step
+        init = (0, jnp.zeros_like(t), b, f_0, f_c, jnp.zeros(jnp.shape(t), jnp.int32), t)
         k, a, b, f_a, f_b, *_ = jax.lax.while_loop(*self._root_steps, init)
-        frozen = (b == 1.0) & (f_c < 0.0)
+        frozen = (b == 1.0) & (f_c < 0.0)  # no liquid point found: frozen throughout
         return k, jnp.where(frozen, p.r_cmb, a * p.r_cmb), b * p.r_cmb, f_a, f_b
 
     def _r_icb_solve(self, t_cmb):
@@ -333,19 +330,23 @@ class CoreEnergyBudget:
         (Oliveira & Takahashi 2020, Algorithm 1, p. 5:21,
         https://doi.org/10.1145/3423597) with k1 = 0.2, k2 = 2, n0 = 5 and
         eps = 2^-54: at most n_1/2 + n0 = 58 steps, and a final bracket of at
-        most 2 eps r_cmb plus 1 ulp of r_cmb (8.5e-10 m for r_cmb = 3480 km). The interpolation
-        step is modified: its regula falsi point uses the stored superheats,
-        and the stored superheat of an end kept twice in a row is halved (the
-        Illinois rule, Dowell & Jarratt 1971, https://doi.org/10.1007/BF01934364).
-        Truncation and projection are those of Algorithm 1, so the evaluated
-        point stays in the minmax interval of Theorem 2.1 (p. 5:6) and the
-        bound holds. A liquid centre returns zero with no step, and a core
-        frozen throughout returns r_cmb; a frozen CMB above a liquid layer
-        keeps the inner-core crossing below it. Zero
-        holds regardless of frozen shells above the centre (the top-down
-        and snow topologies have no inner core in the bottom-up sense);
-        the boundary terms drop to zero there, and the solver refuses those
-        states (``aragog.core.regime.refuse_unmodelled_regime``).
+        most 2 eps r_cmb plus 1 ulp of r_cmb (8.5e-10 m for r_cmb = 3480 km).
+        The interpolation step is modified: its regula falsi point uses the
+        stored superheats, and the stored superheat of an end kept twice in a
+        row is halved (the Illinois rule, Dowell & Jarratt 1971,
+        https://doi.org/10.1007/BF01934364). Truncation and projection are
+        those of Algorithm 1, so the evaluated point stays in the minmax
+        interval of Theorem 2.1 (p. 5:6) and the bound holds.
+
+        With a frozen CMB the bracket has no sign change, and the search
+        bisects until it finds a liquid point: it finds an inner-core crossing
+        under a frozen CMB where a bisection finds one, and returns r_cmb when
+        it finds no liquid point (a core frozen throughout, up to 58 steps). A
+        liquid centre returns zero with no step, whatever lies above it (a
+        top-down or snow topology with a liquid centre has no inner core in
+        the bottom-up sense); the boundary terms drop to zero there, and the
+        solver refuses those states
+        (``aragog.core.regime.refuse_unmodelled_regime``).
 
         The derivative is the implicit-function sensitivity attached as a
         custom JVP: a comparison-driven search carries no gradient of
