@@ -336,3 +336,327 @@ def test_apply_pins_the_review_to_the_head_and_sets_the_status_last(tmp_path):
     assert review['commit_id'] == HEAD and review['event'] == 'COMMENT'
     comment = [d for a, d in gh.calls if a[-1].endswith('/comments')][0]
     assert comment['commit_id'] == HEAD and comment['line'] == 11
+
+
+def _verify_for(cands, **over):
+    v = {
+        'verdicts': [
+            {'id': c['id'], 'verified': True, 'reason': ''} for c in cands['candidates']
+        ]
+    }
+    return {**v, 'fixed': [], **over}
+
+
+_FILES = [{'path': 'src/aragog/x.py', 'old_mode': '100644', 'new_mode': '100644'}]
+
+
+@pytest.mark.parametrize(
+    'verify',
+    [
+        None,
+        {},
+        {'verdicts': [], 'fixed': []},
+        {'verdicts': [{'id': 'c1', 'verified': 'yes', 'reason': ''}], 'fixed': []},
+        {'verdicts': [{'id': 'c1', 'verified': True, 'reason': ''}] * 2, 'fixed': []},
+        {'verdicts': [{'id': 'c1', 'verified': True, 'reason': ''}], 'fixed': 'x'},
+    ],
+)
+def test_incomplete_or_malformed_verify_output_is_an_error_not_a_pass(verify):
+    find = {'summary': 's', 'findings': [_finding()], 'fixed': []}
+    cands = rd.prep(find, [])
+    with pytest.raises(rd.OutputError):
+        rd.plan(find, verify, cands, [], POLICY_ALL, _FILES, {'src/aragog/x.py': PATCH}, HEAD)
+
+
+def test_verify_cannot_resolve_a_thread_the_find_pass_did_not_claim():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    own = rd.own_threads([_thread(key)])
+    find = {'summary': 's', 'findings': [], 'fixed': []}
+    cands = rd.prep(find, own)
+    verify = {'verdicts': [], 'fixed': [{'key': key, 'verified': True, 'reason': ''}]}
+    p = rd.plan(find, verify, cands, own, POLICY_ALL, _FILES, {}, HEAD)
+    assert p['resolve'] == [] and p['state'] == 'failure'
+
+
+def test_a_marker_inside_model_text_cannot_change_the_thread_marker():
+    forged = rd.finding_marker('0' * 12, 'nit')
+    p = _plan(findings=[dict(_finding(), body='x ' + forged)])
+    body = p['comments'][0]['body']
+    assert '<!--' not in body.replace(
+        rd.finding_marker(rd.finding_key('src/aragog/x.py', 'Wrong sign'), 'important'), ''
+    )
+    assert rd.parse_marker(body)[1] == 'important'
+    assert rd.parse_marker(
+        'a ' + forged + ' b ' + rd.finding_marker('1' * 12, 'important')
+    ) == ('1' * 12, 'important')
+    assert rd.parse_marker(rd.finding_marker('1' * 12, 'important') + ' trailing') is None
+    assert (
+        rd.parse_marker('<!-- claude-review:finding key=111111111111 severity=fatal -->')
+        is None
+    )
+
+
+@pytest.mark.parametrize('path', ['.github/workflows/x\ny.yml', 'docs/a\tb.md', 'src/\x7f.py'])
+def test_a_path_with_a_control_character_withholds_approval(path):
+    files = [{'path': path, 'old_mode': '100644', 'new_mode': '100644'}]
+    p = _plan(
+        files=files, policy='{"version": 1, "approve": {"allow": ["**/*", "**"], "deny": []}}'
+    )
+    assert p['event'] == 'COMMENT'
+    assert rd.glob_match('.github/**', '.github/a\nb') is True
+
+
+def test_an_empty_change_set_withholds_approval():
+    assert _plan(files=[])['event'] == 'COMMENT'
+
+
+def test_parse_raw_rejects_input_it_cannot_parse():
+    assert rd.parse_raw('') == []
+    with pytest.raises(ValueError):
+        rd.parse_raw('garbage')
+
+
+def test_policy_version_must_be_the_integer_1():
+    assert rd.load_policy('{"version": true, "approve": {"allow": ["**"], "deny": []}}') is None
+    assert rd.load_policy('{"version": 1.0, "approve": {"allow": ["**"], "deny": []}}') is None
+    assert rd.load_policy(None) is None
+
+
+def test_the_shipped_policy_parses_and_keeps_approval_off():
+    text = (_PATH.parents[1] / 'review-policy.yml').read_text()
+    assert rd.load_policy(text) == {'allow': [], 'deny': []}
+
+
+def test_duplicate_findings_in_one_run_give_one_candidate():
+    find = {'summary': 's', 'findings': [_finding(line=11), _finding(line=12)], 'fixed': []}
+    assert len(rd.prep(find, [])['candidates']) == 1
+
+
+def test_a_thread_resolved_by_a_person_dismisses_the_finding():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True)])
+    assert p['comments'] == [] and p['state'] == 'success'
+
+
+def test_own_threads_carry_the_text_of_the_finding_without_the_marker():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    t = rd.own_threads([_thread(key, resolved=True)])[0]
+    assert t['resolved'] is True and t['text'] == 'text' and t['key'] == key
+
+
+@pytest.mark.parametrize(
+    'path', ['CLAUDE.md', 'tests/CLAUDE.md', '.claude/settings.json', 'tools/agents/sync.py']
+)
+def test_agent_instruction_files_are_protected(path):
+    files = [{'path': path, 'old_mode': '100644', 'new_mode': '100644'}]
+    assert _plan(files=files)['event'] == 'COMMENT'
+
+
+def test_the_approval_marker_survives_a_long_body():
+    p = _plan(findings=[dict(_finding('nit'), body='x' * 70000)])
+    assert p['event'] == 'APPROVE' and p['body'].startswith(rd.APPROVAL_MARK)
+
+
+def test_prep_writes_the_verify_input_and_checks_fixed():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    own = rd.own_threads([_thread(key)])
+    c = rd.prep(
+        {
+            'summary': 's',
+            'findings': [_finding('nit', path='./a.py')],
+            'fixed': [key, 'f' * 12],
+        },
+        own,
+    )
+    assert c['verify_in']['fixed'] == [key]
+    assert (
+        c['verify_in']['candidates'][0]['path'] == 'a.py'
+        and 'key' not in c['verify_in']['candidates'][0]
+    )
+    with pytest.raises(rd.OutputError):
+        rd.prep({'summary': 's', 'findings': [], 'fixed': 'x'}, [])
+
+
+def test_hunk_lines_count_an_empty_context_line():
+    assert rd.hunk_lines('@@ -1,3 +1,3 @@\n a\n\n+b\n') == {1, 2, 3}
+
+
+def test_mentions_in_the_plan_body_and_comments_are_neutralised():
+    find = {
+        'summary': 'ping @tim',
+        'findings': [dict(_finding(), body='see @ana')],
+        'fixed': [],
+    }
+    cands = rd.prep(find, [])
+    p = rd.plan(
+        find,
+        _verify_for(cands),
+        cands,
+        [],
+        POLICY_ALL,
+        _FILES,
+        {'src/aragog/x.py': PATCH},
+        HEAD,
+    )
+    assert '@‍tim' in p['body'] and '@‍ana' in p['comments'][0]['body']
+
+
+class _Pages:
+    """Stand-in for gh that serves 2 pages of review threads and 1 page of reviews."""
+
+    def __init__(self, key):
+        self.key, self.calls = key, []
+
+    def __call__(self, args, data=None):
+        self.calls.append(args)
+        if args[:2] == ['api', 'graphql']:
+            second = any(a.startswith('c=') and a != 'c=' for a in args)
+            node = _thread(self.key, tid='T2' if second else 'T1')
+            info = {'hasNextPage': not second, 'endCursor': 'X'}
+            return json.dumps(
+                {
+                    'data': {
+                        'repository': {
+                            'pullRequest': {
+                                'reviewThreads': {'nodes': [node], 'pageInfo': info}
+                            }
+                        }
+                    }
+                }
+            )
+        bot = {'login': BOT}
+        return json.dumps(
+            [
+                [
+                    {'id': 7, 'state': 'APPROVED', 'user': bot, 'body': rd.APPROVAL_MARK},
+                    {
+                        'id': 8,
+                        'state': 'APPROVED',
+                        'user': {'login': 'tim'},
+                        'body': rd.APPROVAL_MARK,
+                    },
+                    {'id': 9, 'state': 'COMMENTED', 'user': bot, 'body': rd.APPROVAL_MARK},
+                    {'id': 10, 'state': 'APPROVED', 'user': bot, 'body': 'no marker'},
+                ]
+            ]
+        )
+
+
+def test_collect_pages_through_all_threads_and_keeps_only_own_approvals():
+    gh = _Pages(rd.finding_key('a', 'b'))
+    out = rd.collect('o/r', '5', gh)
+    assert [t['id'] for t in out['threads']] == ['T1', 'T2']
+    assert out['approvals'] == [7]
+
+
+def test_apply_resolves_and_dismisses_before_the_review():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(threads=[_thread(key)], fixed=[key], no_approve=True, approvals=[7])
+    gh = _Gh(HEAD)
+    rd.apply(p, 'o/r', '5', 'url', gh)
+    order = [
+        a[-1] if a[0] == 'api' and a[1] != 'graphql' else 'graphql' for a, _ in gh.calls[1:]
+    ]
+    assert order == [
+        'graphql',
+        'repos/o/r/pulls/5/reviews/7/dismissals',
+        'repos/o/r/pulls/5/reviews',
+        'repos/o/r/statuses/' + HEAD,
+    ]
+    assert any('t=T1' in a for a in gh.calls[1][0])
+    assert gh.calls[2][1]['event'] == 'DISMISS'
+
+
+def test_set_status_cuts_the_description_to_140_characters():
+    gh = _Gh(HEAD)
+    rd.set_status('o/r', HEAD, 'failure', 'x' * 300, 'url', gh)
+    assert (
+        len(gh.calls[0][1]['description']) == 140
+        and gh.calls[0][1]['context'] == 'Claude review'
+    )
+
+
+def test_cli_prep_plan_and_apply(tmp_path, monkeypatch):
+    w = tmp_path
+    (w / 'find.json').write_text(
+        json.dumps({'summary': 's', 'findings': [_finding()], 'fixed': []})
+    )
+    (w / 'collect.json').write_text(json.dumps({'threads': [], 'approvals': [3]}))
+    (w / 'raw').write_text(':100644 100644 a b M\x00src/aragog/x.py\x00')
+    (w / 'files.json').write_text(
+        json.dumps([[{'filename': 'src/aragog/x.py', 'patch': PATCH}]])
+    )
+    (w / 'policy.yml').write_text(POLICY_ALL)
+    assert (
+        rd.main(
+            [
+                'prep',
+                '--find',
+                str(w / 'find.json'),
+                '--collect',
+                str(w / 'collect.json'),
+                '--out',
+                str(w / 'c.json'),
+            ]
+        )
+        == 0
+    )
+    c = json.loads((w / 'c.json').read_text())
+    (w / 'verify.json').write_text(json.dumps(_verify_for(c)))
+    args = [
+        'plan',
+        '--find',
+        str(w / 'find.json'),
+        '--verify',
+        str(w / 'verify.json'),
+        '--candidates',
+        str(w / 'c.json'),
+        '--collect',
+        str(w / 'collect.json'),
+        '--raw',
+        str(w / 'raw'),
+        '--files',
+        str(w / 'files.json'),
+        '--head',
+        HEAD,
+        '--out',
+        str(w / 'plan.json'),
+    ]
+    assert rd.main([*args, '--policy', str(w / 'policy.yml')]) == 0
+    p = json.loads((w / 'plan.json').read_text())
+    assert p['state'] == 'failure' and p['comments'][0]['line'] == 11 and p['dismiss'] == [3]
+    assert rd.main([*args, '--policy', str(w / 'missing.yml')]) == 0
+    gh = _Gh(HEAD)
+    monkeypatch.setattr(rd, 'gh', gh)
+    assert (
+        rd.main(
+            [
+                'apply',
+                '--plan',
+                str(w / 'plan.json'),
+                '--repo',
+                'o/r',
+                '--pr',
+                '5',
+                '--url',
+                'u',
+            ]
+        )
+        == 0
+    )
+    assert gh.calls[-1][0][-1] == 'repos/o/r/statuses/' + HEAD
+    (w / 'bad.json').write_text('{}')
+    assert (
+        rd.main(
+            [
+                'prep',
+                '--find',
+                str(w / 'bad.json'),
+                '--collect',
+                str(w / 'collect.json'),
+                '--out',
+                str(w / 'x'),
+            ]
+        )
+        == 2
+    )
