@@ -1028,3 +1028,81 @@ def test_the_failure_report_finds_its_status_among_many_contexts():
     page = json.dumps({'state': 'failure', 'statuses': [*others, own]})
     out = subprocess.run(['jq', '-c', m.group(1)], input=page, capture_output=True, text=True)
     assert json.loads(out.stdout) == own
+
+
+DENIED = (
+    'Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,'
+    'RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,'
+    'EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,'
+    'Edit,Write,NotebookEdit'
+)
+
+
+def test_the_model_passes_have_read_only():
+    for name in ('Find', 'Verify'):
+        args = _step(name)
+        assert '--tools Read\n' in args
+        assert f'--disallowedTools "{DENIED}"\n' in args
+
+
+def test_a_tool_check_follows_each_pass_and_keeps_its_execution_file():
+    for kind in ('find', 'verify'):
+        assert f'- name: Check the tools of the {kind} pass' in _WORKFLOW
+    order = [_WORKFLOW.index(_step(n)) for n in ('Find', 'Check the tools of the find pass')]
+    order += [
+        _WORKFLOW.index(_step(n)) for n in ('Verify', 'Check the tools of the verify pass')
+    ]
+    order.append(_WORKFLOW.index(_step('Decide and post')))
+    assert order == sorted(order)
+    for kind in ('find', 'verify'):
+        check = _step(f'Check the tools of the {kind} pass')
+        assert f'id: {kind}_tools' in check and f'steps.{kind}.outputs.execution_file' in check
+        assert f'cp "$EXEC" "$RUNNER_TEMP/exec_{kind}.json"' in check
+    report = _step('Report a failed review')
+    assert 'find_tools|verify_tools) cause="the model had tools beyond Read" ;;' in report
+
+
+def _beyond_read(execution):
+    m = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
+    assert m
+    out = subprocess.run(
+        ['jq', '-r', m.group(1)], input=json.dumps(execution), capture_output=True, text=True
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def _execution(tools, used):
+    calls = [{'type': 'tool_use', 'name': n, 'input': {}} for n in used]
+    init = [{'type': 'system', 'subtype': 'init', 'tools': tools}] if tools is not None else []
+    return [*init, {'type': 'assistant', 'message': {'content': calls}}, {'type': 'result'}]
+
+
+@pytest.mark.parametrize(
+    ('tools', 'used', 'beyond'),
+    [
+        (['Read', 'StructuredOutput'], ['Read', 'StructuredOutput'], ''),
+        (['Read', 'StructuredOutput', 'Bash'], ['Read'], 'Bash'),
+        (['Read', 'StructuredOutput'], ['Read', 'Bash'], 'Bash'),
+        (None, ['Read'], '<no init>'),
+    ],
+)
+def test_the_tool_check_names_every_tool_beyond_read(tools, used, beyond):
+    assert _beyond_read(_execution(tools, used)) == beyond
+
+
+@pytest.mark.parametrize(('used', 'code'), [(['Read'], 0), (['Read', 'Bash'], 1)])
+def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, used, code):
+    jq = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
+    assert jq
+    run = tmp_path / 'execution.json'
+    run.write_text(json.dumps(_execution(['Read', 'StructuredOutput'], used)))
+    env = {
+        **os.environ,
+        'EXEC': str(run),
+        'RUNNER_TEMP': str(tmp_path),
+        'TOOLS_BEYOND_READ': jq[1],
+    }
+    step = _run_block(_step('Check the tools of the find pass'))
+    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == code
+    assert (tmp_path / 'exec_find.json').read_text() == run.read_text()
