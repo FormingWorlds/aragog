@@ -408,7 +408,9 @@ def test_a_marker_inside_model_text_cannot_change_the_thread_marker():
     )
 
 
-@pytest.mark.parametrize('path', ['.github/workflows/x\ny.yml', 'docs/a\tb.md', 'src/\x7f.py'])
+@pytest.mark.parametrize(
+    'path', ['.github/workflows/x\ny.yml', 'src/a\nb.py', 'docs/a\tb.md', 'src/\x7f.py']
+)
 def test_a_path_with_a_control_character_withholds_approval(path):
     files = [{'path': path, 'old_mode': '100644', 'new_mode': '100644'}]
     p = _plan(
