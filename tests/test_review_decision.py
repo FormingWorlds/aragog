@@ -808,3 +808,19 @@ def test_collect_passes_the_pull_request_author_to_the_thread_state(resolver, st
 
     out = rd.collect('o/r', '5', _Resolved(rd.finding_key('a', 'b')))
     assert {t['state'] for t in out['threads']} == {state}
+
+
+def test_a_verdict_must_be_a_boolean_not_an_integer():
+    find = {'summary': 's', 'findings': [_finding()], 'fixed': []}
+    cands = rd.prep(find, [])
+    verify = {'verdicts': [{'id': 'c1', 'verified': 1, 'reason': ''}], 'fixed': []}
+    with pytest.raises(rd.OutputError):
+        rd.plan(find, verify, cands, [], POLICY_ALL, _FILES, {'src/aragog/x.py': PATCH}, HEAD)
+
+
+@pytest.mark.parametrize('resolver', [GQL, 'ana'])
+def test_a_fix_claim_on_a_fixed_or_dismissed_thread_is_not_sent_to_verify(resolver):
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    own = rd.own_threads([_thread(key, resolved=True, resolver=resolver)], AUTHOR)
+    c = rd.prep({'summary': 's', 'findings': [], 'fixed': [key]}, own)
+    assert c['verify_in']['fixed'] == []
