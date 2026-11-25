@@ -33,6 +33,7 @@ import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 
+from aragog.eos.domain import TableDomain
 from aragog.eos.table_cache import read_cached_table
 
 logger = logging.getLogger('fwl.' + __name__)
@@ -361,6 +362,12 @@ class EntropyEOS:
         outside a phase table's own S range (or is non-finite),
         instead of only logging a warning and clamping to the table
         edge.
+
+    Attributes
+    ----------
+    domain : TableDomain or None
+        Valid windows of the melt and solid tables from the ``valid_mask_*.dat`` files in
+        ``eos_dir``; None without mask files.
     """
 
     def __init__(self, eos_dir: Path | str, strict_range: bool = False):
@@ -406,6 +413,9 @@ class EntropyEOS:
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
+        self.domain = TableDomain.from_dir(
+            eos_dir, {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')}
+        )
 
         # Store P and S ranges. P uses the temperature tables only (grid
         # shape reference for callers). S is the union across every
