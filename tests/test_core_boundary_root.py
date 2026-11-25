@@ -325,3 +325,23 @@ def test_the_projection_moves_the_point_towards_the_interpolation():
         (45, *ends, jnp.asarray(0, jnp.int32), jnp.asarray(4000.0))
     )
     assert (float(a), float(b)) == (0.5 - w / 6.0, 0.5 + w / 2.0)
+
+
+class _RoundOffSlope(CoreEnergyBudget):
+    """A superheat whose values rise through zero at u = 0.5 while its autodiff slope in r is
+    negative, as the computed slope can be at round-off inside the onset band."""
+
+    def superheat(self, r, t_cmb):
+        u = r / self.profiles.r_cmb - 0.5
+        rising = jax.lax.stop_gradient(1.001 * u)
+        return rising - 1e-3 * u + 1e-6 * (t_cmb - 4000.0)
+
+
+@pytest.mark.physics_invariant
+def test_the_boundary_moves_inwards_on_heating_when_the_slope_is_round_off():
+    """dr_icb/dT_cmb < 0 for a crossing from frozen below to liquid above: where the computed
+    slope dS/dr has the wrong sign, the derivative keeps the physical sign."""
+    prof = GaussianCoreProfiles(**EARTH)
+    budget = _RoundOffSlope(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
+    assert abs(float(budget.r_icb(4000.0)) - 0.5 * R_CMB) <= WIDTH
+    assert float(jax.grad(budget.r_icb)(4000.0)) < 0.0
