@@ -355,7 +355,9 @@ class CoreEnergyBudget:
         custom JVP: a comparison-driven search carries no gradient of
         its own (autodiff sees only the converged constant trace), so
         without this rule anything differentiating through the boundary
-        would silently read zero.
+        would silently read zero. The rule divides by the magnitude of
+        dS/dr: a crossing from frozen below to liquid above has dS/dr >= 0,
+        and a negative computed slope is round-off inside the onset band.
         """
         if isinstance(t_cmb, jax.core.Tracer) or isinstance(
             self.profiles.r_cmb, jax.core.Tracer
@@ -405,7 +407,7 @@ class CoreEnergyBudget:
             radius = self._r_icb_solve(t_cmb)
             d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
             d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
-            safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
+            safe = jnp.where(jnp.abs(d_dr) > 0.0, jnp.abs(d_dr), 1.0)
             # Interior boundary: dr/dT from the implicit function theorem;
             # pinned at the domain ends where the root does not move.
             interior = (radius > 0.0) & (radius < self.profiles.r_cmb)
