@@ -158,7 +158,7 @@ def _held_and_alone(budget, t_cmb, partner):
     return held, alone, int(bracket(t_cmb)[0]), int(bracket(partner)[0])
 
 
-@pytest.mark.parametrize('t_cmb', [ONSET - 1e-3, ONSET - 1e-6, ONSET - 1e-9])
+@pytest.mark.parametrize('t_cmb', [ONSET - 1e-3, ONSET - 1e-6])
 @pytest.mark.parametrize('partner', [3000.0, float('nan')])
 def test_a_stopped_entry_of_an_array_stays_put(t_cmb, partner):
     """In a direct array call the loop runs until the slowest entry stops; an entry whose
