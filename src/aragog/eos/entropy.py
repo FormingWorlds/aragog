@@ -367,7 +367,7 @@ class EntropyEOS:
     ----------
     domain : TableDomain or None
         Valid windows of the melt and solid tables from the ``valid_mask_*.dat`` files in
-        ``eos_dir``; None without mask files.
+        ``eos_dir``, read at the first access; None without mask files.
     """
 
     def __init__(self, eos_dir: Path | str, strict_range: bool = False):
@@ -413,9 +413,7 @@ class EntropyEOS:
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
-        self.domain = TableDomain.from_dir(
-            eos_dir, {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')}
-        )
+        self._domain_dir, self._domain_read, self._domain = eos_dir, False, None
 
         # Store P and S ranges. P uses the temperature tables only (grid
         # shape reference for callers). S is the union across every
@@ -795,6 +793,21 @@ class EntropyEOS:
         dS = np.maximum(S_liq - S_sol, 1e-10)
         phi = np.clip((S - S_sol) / dS, 0.0, 1.0)
         return phi
+
+    @property
+    def domain(self) -> TableDomain | None:
+        """Valid table windows, read from the mask files at the first access (see class doc)."""
+        if not self._domain_read:
+            self._domain = TableDomain.from_dir(
+                self._domain_dir,
+                {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')},
+            )
+            self._domain_read = True
+        return self._domain
+
+    @domain.setter
+    def domain(self, value: TableDomain | None) -> None:
+        self._domain, self._domain_read = value, True
 
     def _check_entropy_range(
         self,

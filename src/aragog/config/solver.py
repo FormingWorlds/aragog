@@ -59,9 +59,11 @@ class SolverConfig:
     eos_domain_check : str
         Check of the EOS lookup points of each call against the valid window of the tables
         (``valid_mask_*.dat``): ``'off'``, ``'warn'`` (1 warning per call, the default) or
-        ``'raise'`` (``EOSDomainError``). Off for tables without mask files.
+        ``'raise'`` (``EOSDomainError``). Off for tables with neither mask file; with only one,
+        the first check raises ``FileNotFoundError``.
     eos_domain_tolerance_cells : float
-        Distance outside the window, in table entropy cells, at which a point counts. Default 5.
+        Distance outside the window, in table entropy cells, beyond which a point counts.
+        Default 5.
     """
 
     start_time: float
@@ -103,5 +105,5 @@ class SolverConfig:
         default='warn', validator=lambda _inst, _attr, v: check_eos_domain_mode(v)
     )
     eos_domain_tolerance_cells: float = attrs.field(
-        default=5.0, validator=lambda _inst, _attr, v: check_eos_domain_tolerance(v)
+        default=5.0, converter=check_eos_domain_tolerance
     )
