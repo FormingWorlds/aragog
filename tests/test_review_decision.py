@@ -767,14 +767,6 @@ def test_the_script_and_policy_come_from_the_default_branch_by_name():
     assert '.review_base/.github' not in copy
 
 
-def test_the_model_passes_have_no_shell_and_read_the_diff_from_a_file():
-    for name in ('Find', 'Verify'):
-        args = _step(name)
-        assert '--allowedTools "Read(./**),Grep,Glob"' in args
-        assert 'Bash(' not in args and '.review_diff.patch' in args
-    assert 'gh pr diff "$PR_NUMBER"' in _step('Write the diff for the model passes')
-
-
 def test_a_base_change_sets_pending_and_dismisses_own_approvals():
     assert 'types: [opened, reopened, ready_for_review, synchronize, edited]' in _WORKFLOW
     pending = _block(_WORKFLOW, '  pending:', 2)
@@ -797,9 +789,7 @@ def test_a_comment_enters_the_concurrency_group_only_after_the_exact_check():
     assert 'startsWith(github.event.comment.body' not in review.split('concurrency:')[0]
 
 
-def test_agent_settings_are_removed_in_every_folder_and_ruff_is_pinned():
-    rm = _step('Remove the agent settings of the pull request')
-    assert 'find . ' in rm and '-name .claude' in rm and '-name CLAUDE.local.md' in rm
+def test_ruff_is_pinned():
     assert re.search(r'ruff==\d+\.\d+\.\d+', _WORKFLOW)
 
 
@@ -881,7 +871,8 @@ def test_the_base_branch_agent_instructions_replace_those_of_the_pull_request():
         'GEMINI.md',
     ):
         assert f'-name {name}' in step
-    assert '-path ./.review_base -prune' in step and 'cp -P ".review_base/' in step
+    assert 'find . ' in step and '-path ./.review_base -prune' in step
+    assert 'cp -P ".review_base/' in step
     assert _WORKFLOW.index(step) < _WORKFLOW.index(_step('Find'))
     assert 'read ./.review_base/AGENTS.md and ./.review_base/tests/AGENTS.md' in _step('Find')
 
@@ -897,6 +888,7 @@ def test_workflow_files_for_the_model_live_outside_the_checkout():
             in args
         )
         assert 'Bash(' not in args
+    assert 'gh pr diff "$PR_NUMBER"' in _step('Write the diff for the model passes')
     merge = _step('Check that the merge commit holds the head')
     assert "git ls-tree -z --name-only HEAD | grep -qz '^\\.review_'" in merge
 

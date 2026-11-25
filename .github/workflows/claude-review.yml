@@ -1,8 +1,8 @@
 name: Claude PR review
 
 # Reviews a pull request into the default branch when it opens, reopens or becomes ready for review,
-# and on a PR comment whose first line is "@claude review" ("@claude deep-review" runs the larger
-# model). A find pass and a verify pass return findings; .github/scripts/review_decision.py posts them.
+# and on a PR comment whose first line is "@claude review" or "@claude deep-review". The status is
+# advisory: a pull_request run uses this file from the pull request (.github/scripts/review_decision.py).
 
 on:
   pull_request:
@@ -111,6 +111,11 @@ jobs:
             echo "No review: the pull request does not target the default branch $DEFAULT_BRANCH." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/contents/.github/scripts/review_decision.py?ref=$DEFAULT_BRANCH" --silent; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No review: the default branch has no .github/scripts/review_decision.py." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if ! sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" --jq .object.sha); then
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No review: GitHub has no merge commit for this pull request (merge conflict, or not yet computed); comment @claude review to retry." >> "$GITHUB_STEP_SUMMARY"
@@ -145,6 +150,11 @@ jobs:
             echo "::error::the merge commit of the pull request is not built on its head $HEAD_SHA yet"
             exit 1
           fi
+          if git ls-tree -z --name-only HEAD | grep -qz '^\.review_'; then
+            echo "::error::the pull request adds a top-level .review_* path, which the workflow uses"
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/review_in"
           echo "base=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
 
       - name: Check out the base branch for reading
@@ -219,7 +229,7 @@ jobs:
           except Exception as err:
               out.append(f'lint step failed: {err!r}')
           text = '\n'.join(out) or 'no lint items in the changed lines'
-          with open('.review_lint.txt', 'w') as fh:
+          with open(os.path.join(os.environ['RUNNER_TEMP'], 'review_in', 'lint.txt'), 'w') as fh:
               fh.write(text + '\n')
           print(text)
           PY
@@ -240,29 +250,29 @@ jobs:
             if [ -f .review_trusted/.github/review-policy.yml ]; then
               cp .review_trusted/.github/review-policy.yml "$d/"
             fi
-          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            cp .github/scripts/review_decision.py "$d/"
-            echo "no_approve=--no-approve" >> "$GITHUB_OUTPUT"
           else
             echo "::error::the default branch has no .github/scripts/review_decision.py"
             exit 1
           fi
           echo "dir=$d" >> "$GITHUB_OUTPUT"
           python -I "$d/review_decision.py" collect --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --out "$d/collect.json"
-          jq '.threads' "$d/collect.json" | tee .review_threads.json
+          jq '.threads' "$d/collect.json" | tee "$RUNNER_TEMP/review_in/threads.json"
 
-      - name: Remove the agent settings of the pull request
+      - name: Replace the agent files of the pull request with those of the base branch
         if: steps.gate.outputs.run == 'true'
         run: |
+          set -o pipefail
           rm -rf .review_trusted
-          find . -path ./.git -prune -o \( -name .claude -o -name .mcp.json -o -name CLAUDE.local.md \) \
-            -prune -exec rm -rf {} +
+          find . -path ./.git -prune -o -path ./.review_base -prune -o \( -name .claude -o -name .mcp.json \
+            -o -name CLAUDE.local.md -o -name CLAUDE.md -o -name AGENTS.md -o -name GEMINI.md \) -prune -exec rm -rf {} +
+          (cd .review_base && find . -path ./.git -prune -o \( -name CLAUDE.md -o -name AGENTS.md \) -print0) \
+            | while IFS= read -r -d '' f; do mkdir -p "$(dirname "$f")" && cp -P ".review_base/$f" "$f"; done
 
       - name: Write the diff for the model passes
         if: steps.gate.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > .review_diff.patch
+        run: gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/review_in/diff.patch"
 
       - name: Find
         id: find
@@ -277,9 +287,10 @@ jobs:
             PR NUMBER: ${{ env.PR_NUMBER }}
 
             Review this pull request of aragog, the interior evolution module of PROTEUS.
-            First read AGENTS.md and tests/AGENTS.md of the repository. Then read the diff in
-            ./.review_diff.patch and the files it touches. The working tree is the merge
-            commit; ./.review_base/ holds the base branch.
+            First read ./.review_base/AGENTS.md and ./.review_base/tests/AGENTS.md (the rules of
+            the base branch). Then read the diff in ${{ runner.temp }}/review_in/diff.patch and the
+            files it touches. The working tree is the merge commit; ./.review_base/ holds the base
+            branch.
 
             Return every finding with one severity:
             - "important": a bug the pull request adds that must be fixed before merge: a wrong
@@ -290,15 +301,15 @@ jobs:
               the pull request touches or calls;
             - "nit": a minor item in the lines the pull request adds or changes: an unused import
               or variable, dead code, duplicated logic, an error-prone pattern, and each line of
-              ./.review_lint.txt (ruff violations and inline comment blocks longer than 3 lines).
-              If that file is missing or reports a failure, say in the summary that the lint did
-              not run.
+              ${{ runner.temp }}/review_in/lint.txt (ruff violations and inline comment blocks
+              longer than 3 lines). If that file is missing or reports a failure, say in the
+              summary that the lint did not run.
             Apart from those, do not comment on style, naming, formatting or comment length. Give
-            each finding the file path, the line as ./.review_diff.patch numbers it on the new side, a
+            each finding the file path, the line as diff.patch numbers it on the new side, a
             short title and a body with the concrete input or state that fails. At most 8 findings.
 
-            ./.review_threads.json lists the findings of earlier reviews (key, severity, path,
-            line, text, state). Do not report again a finding whose state is "open" or
+            ${{ runner.temp }}/review_in/threads.json lists the findings of earlier reviews (key,
+            severity, path, line, text, state). Do not report again a finding whose state is "open" or
             "dismissed"; report a "fixed" one again only if the bug is back. Put the key of each
             "open" one that the current code fixes into `fixed`.
 
@@ -307,7 +318,8 @@ jobs:
           claude_args: |
             --model ${{ env.MODEL }}
             --max-turns 30
-            --allowedTools "Read(./**),Grep,Glob"
+            --add-dir ${{ runner.temp }}/review_in
+            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
@@ -320,7 +332,7 @@ jobs:
         run: |
           printf '%s' "$FIND" > "$D/find.json"
           python -I "$D/review_decision.py" prep --find "$D/find.json" --collect "$D/collect.json" --out "$D/candidates.json"
-          jq '.verify_in' "$D/candidates.json" | tee .review_verify_in.json
+          jq '.verify_in' "$D/candidates.json" | tee "$RUNNER_TEMP/review_in/verify_in.json"
           echo "empty=$(jq '.verify_in | (.candidates | length) + (.fixed | length) == 0' "$D/candidates.json")" >> "$GITHUB_OUTPUT"
 
       - name: Verify
@@ -336,11 +348,11 @@ jobs:
             PR NUMBER: ${{ env.PR_NUMBER }}
 
             Check the candidate findings of a review of this pull request of aragog against the
-            code. ./.review_verify_in.json holds `candidates` (id, severity, path, line, title,
-            body) and `fixed` (keys of earlier findings in ./.review_threads.json, with their
-            text, that the reviewer says the current code fixes). The working tree is the merge
-            commit, ./.review_base/ holds the base branch, and ./.review_diff.patch shows the
-            change.
+            code. ${{ runner.temp }}/review_in/verify_in.json holds `candidates` (id, severity,
+            path, line, title, body) and `fixed` (keys of earlier findings in threads.json of the
+            same folder, with their text, that the reviewer says the current code fixes). The
+            working tree is the merge commit, ./.review_base/ holds the base branch, and
+            ${{ runner.temp }}/review_in/diff.patch shows the change.
 
             Give exactly one verdict for each candidate id. `verified` is true only when you can
             point to the code that makes the claim true and the severity is right: "important"
@@ -351,7 +363,8 @@ jobs:
           claude_args: |
             --model ${{ env.MODEL }}
             --max-turns 15
-            --allowedTools "Read(./**),Grep,Glob"
+            --add-dir ${{ runner.temp }}/review_in
+            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["id","verified","reason"]}},"fixed":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["key","verified","reason"]}}},"required":["verdicts","fixed"]}'
 
@@ -362,7 +375,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERIFY: ${{ steps.verify.outputs.structured_output }}
           D: ${{ steps.script.outputs.dir }}
-          NO_APPROVE: ${{ steps.script.outputs.no_approve }}
           HEAD_SHA: ${{ steps.gate.outputs.head }}
           EMPTY: ${{ steps.prep.outputs.empty }}
         run: |
@@ -373,7 +385,7 @@ jobs:
           python -I "$D/review_decision.py" plan --find "$D/find.json" --verify "$D/verify.json" \
             --candidates "$D/candidates.json" --collect "$D/collect.json" --raw "$D/raw" \
             --files "$D/files.json" --head "$HEAD_SHA" --policy "$D/review-policy.yml" \
-            --out "$D/plan.json" $NO_APPROVE
+            --out "$D/plan.json"
           jq '{state, description, event, resolve, dismiss, comments: (.comments | length)}' "$D/plan.json" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           python -I "$D/review_decision.py" apply --plan "$D/plan.json" --repo "$GITHUB_REPOSITORY" \
@@ -395,7 +407,7 @@ jobs:
           fi
           failed=$(jq -r 'to_entries | map(select(.value.outcome == "failure")) | first | .key // "job"' <<<"$STEPS")
           case "$failed" in
-            merge) cause="the merge commit is not built on the head yet" ;;
+            merge) cause="the merge commit is not built on the head yet, or the tree has a .review_* path" ;;
             find|verify) cause="the $failed pass failed (seat limit, timeout or no output)" ;;
             prep) cause="the find pass returned output that does not match its schema" ;;
             post) cause="the decision or post step failed" ;;

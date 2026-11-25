@@ -3,7 +3,8 @@
 The model passes return structured findings; this script decides everything that writes to
 GitHub: the commit status ``Claude review``, the review event (APPROVE or COMMENT), the inline
 threads, the threads to resolve and the earlier approvals to dismiss. The workflow runs the copy
-of this script from the default branch, so a pull request cannot change how it is judged.
+of this script from the default branch. The status is advisory: a pull_request run uses the
+workflow file of the pull request, which an author with write access can change.
 
 Subcommands
 -----------
@@ -15,7 +16,8 @@ apply     carry out a plan; posts nothing when the head moved since the review s
 Rules
 -----
 - Severities: ``important`` and ``pre_existing`` block (status failure, inline thread);
-  ``nit`` goes in the summary only. Only findings the verify pass confirmed count, and a
+  ``nit`` goes in the summary only. A change to a protected path (PROTECTED, a symlink, a
+  submodule, or a path with a control character) also sets the status to failure. Only findings the verify pass confirmed count, and a
   verify output without exactly one verdict per candidate is an error, not a pass.
 - The workflow's own threads are written by github-actions[bot] and end with
   ``<!-- claude-review:finding key=... severity=... -->``. A thread is resolved only when the
@@ -23,8 +25,7 @@ Rules
   A thread that a person other than the pull request author resolved dismisses its finding.
 - APPROVE needs: no blocking finding or open blocking thread, a valid policy file whose
   ``allow`` globs match every changed path and whose ``deny`` globs match none, at least one
-  changed path, and no change to a protected path (PROTECTED, a symlink, a submodule, or a
-  path with a control character).
+  changed path, and no change to a protected path.
 """
 
 from __future__ import annotations
@@ -49,7 +50,13 @@ PROTECTED = (
     '.github/**',
     '**/AGENTS.md',
     '**/CLAUDE.md',
-    '.claude/**',
+    '**/CLAUDE.local.md',
+    '**/GEMINI.md',
+    '**/.claude/**',
+    '**/.mcp.json',
+    '**/conftest.py',
+    'pyproject.toml',
+    '.pre-commit-config.yaml',
     'tools/agents/**',
     '**/CODEOWNERS',
     '**/.gitattributes',
@@ -249,29 +256,28 @@ def _verdicts(verify, cands):
     )
 
 
-def _withheld(policy_text, files, no_approve):
-    if no_approve:
-        return ['the decision script is not on the default branch yet']
+def _protected(files):
+    return [
+        f['path']
+        for f in files
+        if {f['old_mode'], f['new_mode']} & {'120000', '160000'}
+        or re.search(r'[\x00-\x1f\x7f]', f['path'])
+        or any(glob_match(g, f['path']) for g in PROTECTED)
+    ]
+
+
+def _withheld(policy_text, files):
     pol = load_policy(policy_text)
     if pol is None:
         return ['no valid .github/review-policy.yml on the default branch']
     if not files:
         return ['the pull request changes no file']
-    why = []
-    for f in files:
-        p = f['path']
-        special = {f['old_mode'], f['new_mode']} & {'120000', '160000'}
-        if (
-            special
-            or re.search(r'[\x00-\x1f\x7f]', p)
-            or any(glob_match(g, p) for g in PROTECTED)
-        ):
-            why.append(f'touches the protected path {p!r}')
-        elif not any(glob_match(g, p) for g in pol['allow']) or any(
-            glob_match(g, p) for g in pol['deny']
-        ):
-            why.append(f'the policy does not allow approval for {p}')
-    return why
+    return [
+        f'the policy does not allow approval for {f["path"]}'
+        for f in files
+        if not any(glob_match(g, f['path']) for g in pol['allow'])
+        or any(glob_match(g, f['path']) for g in pol['deny'])
+    ]
 
 
 def plan(
@@ -283,7 +289,6 @@ def plan(
     files,
     patches,
     head,
-    no_approve=False,
     approvals=(),
 ):
     """Return the action plan for one review run (see the module docstring)."""
@@ -315,7 +320,8 @@ def plan(
             outside.append(c)
 
     n_block = len(blocking) + len(still_open)
-    why = ['blocking findings'] if n_block else _withheld(policy_text, files, no_approve)
+    prot = _protected(files)
+    why = n_block or prot or _withheld(policy_text, files)
     event = 'COMMENT' if why else 'APPROVE'
 
     counts = {s: sum(c['severity'] == s for c in found) for s in SEVERITIES}
@@ -342,14 +348,25 @@ def plan(
             '',
             f'{rejected} candidate finding{" was" if rejected == 1 else "s were"} not verified and left out.',
         ]
+    if prot:
+        lines += [
+            '',
+            'A maintainer has to review the protected paths: '
+            + ', '.join(map(repr, prot))
+            + '.',
+        ]
     if event == 'APPROVE':
         lines += ['', 'Approved by the review workflow. A code owner still has to approve.']
-    elif not n_block:
+    elif not n_block and not prot:
         lines += ['', 'The status passes; approval withheld: ' + '; '.join(why) + '.']
+    if n_block:
+        desc = f'{n_block} blocking finding(s)'
+    else:
+        desc = 'protected path changed: maintainer review' if prot else 'no blocking findings'
     return {
         'head': head,
-        'state': 'failure' if n_block else 'success',
-        'description': f'{n_block} blocking finding(s)' if n_block else 'no blocking findings',
+        'state': 'failure' if n_block or prot else 'success',
+        'description': desc,
         'event': event,
         'body': '\n'.join(lines),
         'comments': comments,
@@ -421,14 +438,20 @@ def set_status(repo, sha, state, description, url, run=gh):
     run(['api', '-X', 'POST', f'repos/{repo}/statuses/{sha}'], data)
 
 
-def apply(p, repo, pr, url, run=gh):
-    """Carry out a plan; posts nothing but a failure status when the head moved."""
-    head = run(
+def _head(repo, pr, run):
+    return run(
         ['pr', 'view', pr, '--repo', repo, '--json', 'headRefOid', '--jq', '.headRefOid']
     ).strip()
-    if head != p['head']:
-        msg = 'head moved during the review; comment @claude review'
-        return set_status(repo, p['head'], 'failure', msg, url, run)
+
+
+def apply(p, repo, pr, url, run=gh):
+    """Carry out a plan; posts nothing but a failure status when the head moved.
+
+    An approval is dismissed again when the head moved while it was posted.
+    """
+    moved = 'head moved during the review; comment @claude review'
+    if _head(repo, pr, run) != p['head']:
+        return set_status(repo, p['head'], 'failure', moved, url, run)
     for c in p['comments']:
         run(
             ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/comments'],
@@ -442,10 +465,21 @@ def apply(p, repo, pr, url, run=gh):
             ['api', '-X', 'PUT', f'repos/{repo}/pulls/{pr}/reviews/{rid}/dismissals'],
             {'message': msg, 'event': 'DISMISS'},
         )
-    run(
+    review = run(
         ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/reviews'],
         {'commit_id': p['head'], 'event': p['event'], 'body': p['body'][:60000]},
     )
+    if p['event'] == 'APPROVE' and _head(repo, pr, run) != p['head']:
+        run(
+            [
+                'api',
+                '-X',
+                'PUT',
+                f'repos/{repo}/pulls/{pr}/reviews/{json.loads(review)["id"]}/dismissals',
+            ],
+            {'message': 'The pull request changed while it was approved.', 'event': 'DISMISS'},
+        )
+        return set_status(repo, p['head'], 'failure', moved, url, run)
     set_status(repo, p['head'], p['state'], p['description'], url, run)
 
 
@@ -467,7 +501,6 @@ def main(argv=None):
         for name in names:
             c.add_argument(name, required=True)
     sub.choices['plan'].add_argument('--policy')
-    sub.choices['plan'].add_argument('--no-approve', action='store_true')
     a = ap.parse_args(argv)
 
     try:
@@ -495,7 +528,6 @@ def main(argv=None):
                 files,
                 patches,
                 a.head,
-                a.no_approve,
                 col['approvals'],
             )
     except (OutputError, ValueError) as err:
