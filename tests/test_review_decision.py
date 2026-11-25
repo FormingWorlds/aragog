@@ -1085,14 +1085,16 @@ def _execution(tools, used):
         (['Read', 'StructuredOutput', 'Bash'], ['Read'], 'Bash'),
         (['Read', 'StructuredOutput'], ['Read', 'Bash'], 'Bash'),
         (None, ['Read'], '<no init>'),
+        (['Read', 'Bash', 'WebFetch'], ['Bash', 'Bash'], 'Bash,WebFetch'),
     ],
 )
 def test_the_tool_check_names_every_tool_beyond_read(tools, used, beyond):
     assert _beyond_read(_execution(tools, used)) == beyond
 
 
+@pytest.mark.parametrize('kind', ['find', 'verify'])
 @pytest.mark.parametrize(('used', 'code'), [(['Read'], 0), (['Read', 'Bash'], 1)])
-def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, used, code):
+def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, kind, used, code):
     jq = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
     assert jq
     run = tmp_path / 'execution.json'
@@ -1103,6 +1105,24 @@ def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, used,
         'RUNNER_TEMP': str(tmp_path),
         'TOOLS_BEYOND_READ': jq[1],
     }
-    step = _run_block(_step('Check the tools of the find pass'))
+    step = _run_block(_step(f'Check the tools of the {kind} pass'))
     assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == code
-    assert (tmp_path / 'exec_find.json').read_text() == run.read_text()
+    assert (tmp_path / f'exec_{kind}.json').read_text() == run.read_text()
+
+
+def _if_line(step):
+    return next(line.strip() for line in step.splitlines() if line.strip().startswith('if: '))
+
+
+def test_each_tool_check_runs_exactly_when_its_pass_ran():
+    for name, kind in (('Find', 'find'), ('Verify', 'verify')):
+        assert _if_line(_step(f'Check the tools of the {kind} pass')) == _if_line(_step(name))
+    assert "steps.prep.outputs.empty != 'true'" in _if_line(_step('Verify'))
+
+
+def test_the_run_report_reads_both_kept_execution_files():
+    report = _step('Report model, turns and time')
+    assert (
+        'for e in "$RUNNER_TEMP/exec_find.json" "$RUNNER_TEMP/exec_verify.json"; do' in report
+    )
+    assert 'if [ -f "$e" ]; then' in report
