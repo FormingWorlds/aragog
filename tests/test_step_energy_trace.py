@@ -145,11 +145,6 @@ def test_recording_a_firing_root_leaves_the_solution_unchanged():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason='scikits.odes loses an exception raised in a CVODE callback; egpbos/odes#1 '
-    'raises it out of solve unchanged',
-    strict=False,
-)
 def test_an_error_of_the_node_stream_is_raised_after_the_solve():
     """A sink that raises on its 3rd node, inside the CVODE root function, makes the call raise
     that KeyError once CVODE returns, not fail as "rootfinding function failed" (status -1)."""

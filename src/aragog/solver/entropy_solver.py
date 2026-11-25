@@ -5101,7 +5101,7 @@ class EntropySolver:
         # that scikits.odes CVODE expects. Count RHS calls for parity
         # with scipy's sol.nfev.
         _rhs = rhs if rhs is not None else self.dSdt
-        nfev_box, rhs_fault = [0], []
+        nfev_box, fault = [0], []
 
         if cvode_rhs_fn_override is not None:
             # Option Z: caller supplies a fully-formed CVODE RHS
@@ -5120,7 +5120,7 @@ class EntropySolver:
                 try:
                     ydot[:] = _rhs(t, y)
                 except CMBClosureError as err:  # CVODE can turn a raise into a failed step
-                    rhs_fault.append(err)
+                    fault.append(err)
                     return -1
                 nfev_box[0] += 1
                 return 0
@@ -5227,7 +5227,11 @@ class EntropySolver:
         n_user = int(cvode_options.get('nr_rootfns', 1)) if user_rootfn is not None else 1
 
         def rootfn(t, y, g):
-            call.record(t, y)
+            try:  # scikits-odes loses a raise in a callback; remove with #126
+                call.record(t, y)
+            except Exception as err:
+                fault.append(err)
+                return -1
             if user_rootfn is None:
                 g[0] = 1.0
                 rc = 0
@@ -5253,8 +5257,8 @@ class EntropySolver:
             tspan,
             np.asarray(y0, dtype=float).ravel(),
         )
-        if rhs_fault:
-            raise rhs_fault[0]
+        if fault:
+            raise fault[0]
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
