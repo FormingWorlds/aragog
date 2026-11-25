@@ -127,7 +127,13 @@ With the floor on, every state a call returns is inside the table when the call 
 
 A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables (format in [Reference: data](../Reference/data.md#validity-masks)). A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range from its lowest to its highest valid node; between 2 columns, the window ends are linear in pressure. One table entropy cell is the mean spacing of the entropy axis of the phase's temperature table [J kg$^{-1}$ K$^{-1}$]; it is not a cell of the solver mesh.
 
-**What it does.** After each call, the solver checks the lookup points of the output states. A lookup point is a cell or a basic node, at the pressure of the node and the entropy that the right-hand side gives the EOS there. For a cell this is its entropy. For a basic node it is the mesh transform of the cell entropies, with 3 exceptions: with `core_bc = "energy_balance"` or `"core_module"`, the CMB node is the bottom cell carried to the CMB by the CMB entropy gradient of the state; with `core_bc = "gradient"`, the basic-node entropies are rebuilt from the state; with `outer_boundary_condition = 5`, the top node holds the entropy of the set surface temperature. A point in the mush is read on the melt table at the liquidus entropy and on the solid table at the solidus entropy, and the larger of the 2 distances counts. A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table entropy cells outside its window. A non-finite point always counts.
+**What it does.** After each call, the solver checks the lookup points of the output states. A lookup point is a cell or a basic node, at the pressure of the node and the entropy that the right-hand side gives the EOS there:
+
+- A cell: its entropy.
+- A basic node: the mesh transform of the cell entropies, with 3 exceptions. With `core_bc = "energy_balance"` or `"core_module"`, the CMB node is the bottom cell carried to the CMB by the CMB entropy gradient of the state. With `core_bc = "gradient"`, the basic-node entropies are rebuilt from the state. With `outer_boundary_condition = 5`, the top node holds the entropy of the set surface temperature.
+- A point in the mush: read on the melt table at the liquidus entropy and on the solid table at the solidus entropy; the larger of the 2 distances counts.
+
+A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table entropy cells outside its window. A non-finite point always counts.
 
 **What you see.**
 
@@ -140,8 +146,10 @@ A table generator can fill the nodes of a P-S table where the EOS has no valid v
 
 - States between 2 output points of a call: only the output grid counts.
 - A call that fails (the [EOS table guard](#eos-table-guard) or the integrator).
-- A 0 node between 2 valid nodes of a column: it lies inside the window.
-- Tables with neither mask file (the check is off, and the EOS logs 1 INFO line when the first call reads the masks) and runs with constant properties. The first call reads the masks before it integrates: with only one of the 2 files it raises `FileNotFoundError`, and with a mask that breaks the rules of [Validity masks](../Reference/data.md#validity-masks) it raises `ValueError`, with the solver unchanged. `"off"` does not read the masks.
+- A 0 node between 2 valid nodes of a column: it lies inside the window. The EOS logs 1 INFO line with the count of such nodes when it reads the masks.
+- Tables with neither mask file: the check is off, and the EOS logs 1 INFO line when the first call looks for the masks.
+- Runs with constant properties.
+- A bad mask or setting: each call checks both settings before it integrates, and the first call reads the masks then. With only one of the 2 files it raises `FileNotFoundError`; with a mask that breaks the rules of [Validity masks](../Reference/data.md#validity-masks), or a bad setting, it raises `ValueError` (`TypeError` for a tolerance that is not a number). The solver keeps its last solution. `"off"` does not read the masks.
 - Points closer to the window than the tolerance. The phase boundaries of a table can lie just outside its windows, so the mush lookups of ordinary runs read nodes near the window; the default tolerance leaves these out.
 
 **Where the check runs.** Only `EntropySolver.solve` has the check. The direct JAX integration in `aragog.jax.solver` does not.

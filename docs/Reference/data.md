@@ -46,7 +46,7 @@ The grid must be rectangular: phase-filtered tables (where each phase's grid is 
 
 ### Validity masks
 
-In `eos_dir`, next to the tables, `valid_mask_melt.dat` and `valid_mask_solid.dat` mark each node of the phase's temperature table: 1 where the generator had a valid EOS value, 0 where it filled the node or a property had no finite value. Each file is a 2-D array of 0 and 1 with one row per entropy node and one column per pressure node, shape $(n_S, n_P)$, with `#` comment lines allowed. Every column needs at least 1 valid node, and the $P$ and $S$ axes of the temperature table must rise strictly; a mask that breaks one of these rules raises `ValueError` when the first call reads it. The masks are optional; the [EOS domain check](../How-to/solver-method-tuning.md#lookups-outside-the-valid-window-of-the-tables) reads them.
+In `eos_dir`, next to the tables, `valid_mask_melt.dat` and `valid_mask_solid.dat` mark each node of the phase's temperature table: 1 where the generator had a valid EOS value, 0 where it filled the node or a property had no finite value. Each file is a 2-D array of 0 and 1 with one row per entropy node and one column per pressure node, shape $(n_S, n_P)$, with `#` comment lines allowed. Every column needs at least 1 valid node, and the $P$ and $S$ axes of the temperature table must rise strictly. A mask that breaks a rule of this section (shape $(n_S, n_P)$, values 0 and 1 only, a valid node in every column, strictly rising axes) raises `ValueError` when the first call reads it. The masks are optional; the [EOS domain check](../How-to/solver-method-tuning.md#lookups-outside-the-valid-window-of-the-tables) reads them.
 
 ### Canonical source: PALEOS
 
