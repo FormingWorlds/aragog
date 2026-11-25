@@ -1156,8 +1156,9 @@ def test_the_post_step_hands_the_threads_to_resolve_out_and_never_to_apply():
     post = _step('Decide and post')
     assert 'jq \'.resolve = []\' "$D/plan.json" > "$D/apply.json"' in post
     assert '--plan "$D/apply.json"' in post and '--plan "$D/plan.json"' not in post
-    for key in ('resolve', 'state', 'description'):
+    for key in ('resolve', 'description'):
         assert f'echo "{key}=$(jq ' in post
+    assert 'echo "state=' not in post
     assert '2>"$RUNNER_TEMP/post_cause.txt"' in post
 
 
@@ -1169,31 +1170,35 @@ with open(os.environ['GH_LOG'], 'a') as f:
 if 'statuses' in ' '.join(args) and '-X' in args:
     sys.exit(0)
 if any('/status?' in a for a in args):
-    own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'], 'description': 'x'}
+    own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'],
+           'description': os.environ.get('LIVE_DESC', 'x')}
     page = json.dumps({'statuses': [own]})
     jq = args[args.index('--jq') + 1]
-    sys.stdout.write(subprocess.run(['jq', '-c', jq], input=page, capture_output=True, text=True).stdout)
+    sys.stdout.write(subprocess.run(['jq', '-r', jq], input=page, capture_output=True, text=True).stdout)
     sys.exit(0)
 print('[[]]')
 """
 
 
+CMD_LINE = "review_decision: Command '['api', '-X', 'POST']' returned non-zero exit status 1.\n"
+
+
 @pytest.mark.parametrize(
-    ('cause', 'posts'),
+    ('cause', 'live', 'posts', 'reads'),
     [
-        (
-            "review_decision: Command '['api', '-X', 'POST']' returned non-zero exit status 1.\n",
-            0,
-        ),
-        ('review_decision: no valid plan\n', 1),
-        (None, 1),
+        (CMD_LINE, 'post failed: gh: HTTP 422', 0, 1),
+        (CMD_LINE, 'review running', 1, 3),
+        ('review_decision: no valid plan\n', 'post failed: x', 1, 0),
+        (None, 'post failed: x', 1, 0),
     ],
 )
-def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts):
+def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, live, posts, reads):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     (bin_dir / 'gh').write_text(_FAKE_GH)
     (bin_dir / 'gh').chmod(0o755)
+    (bin_dir / 'sleep').write_text('#!/bin/sh\n')
+    (bin_dir / 'sleep').chmod(0o755)
     if cause is not None:
         (tmp_path / 'post_cause.txt').write_text(cause)
     steps = {'post': {'outcome': 'failure'}}
@@ -1207,6 +1212,7 @@ def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts
         'HEAD_SHA': HEAD,
         'PR_NUMBER': '5',
         'GITHUB_REPOSITORY': 'o/r',
+        'LIVE_DESC': live,
     }
     step = _run_block(_step('Report a failed review'))
     assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == 0
@@ -1215,7 +1221,7 @@ def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts
         c for c in calls if '-X' in c and c[c.index('-X') + 2].startswith('repos/o/r/statuses/')
     ]
     assert len(status) == posts
-    assert not any('/status?' in a for c in calls[1:] for a in c)
+    assert sum(any('/status?' in a for a in c) for c in calls[1:]) == reads
 
 
 def _job(name):
@@ -1229,7 +1235,7 @@ def test_only_the_resolve_job_can_write_contents_and_it_runs_no_pull_request_cod
     perms = _block(resolve, '    permissions:', 4).splitlines()[1:]
     assert sorted(p.split('#')[0].strip() for p in perms) == [
         'contents: write',
-        'pull-requests: read',
+        'pull-requests: write',
         'statuses: write',
     ]
     assert not any(s in resolve for s in ('actions/checkout', 'python', 'claude-code-action'))
@@ -1257,8 +1263,17 @@ if 'resolveReviewThread' in text:
         sys.exit(1)
     sys.exit(0)
 if 'query=' in text:
+    if os.environ.get('LOOKUP_FAILS'):
+        sys.stderr.write('gh: HTTP 502\\n')
+        sys.exit(1)
     print(os.environ['THREAD_JSON'])
     sys.exit(0)
+if '/status?' in text:
+    print(os.environ.get('OWNER_URL', os.environ['RUN_URL']))
+elif '--slurp' in args and text.endswith('/reviews'):
+    print(os.environ.get('APPROVALS', '[[]]'))
+elif '.head.sha' in args:
+    print(os.environ.get('PR_HEAD', os.environ['HEAD_SHA']))
 sys.exit(0)
 """
 OWN_BODY = 'text\n<!-- claude-review:finding key=0123456789ab severity=important -->'
@@ -1348,3 +1363,72 @@ def test_the_resolve_job_resolves_only_own_findings_and_reports_a_failure(
         desc = next(a for a in status[0] if a.startswith('description='))
         assert desc.startswith('description=protected path changed: maintainer review; ')
         assert cause in desc and len(desc) <= len('description=') + 140
+
+
+APPROVAL = {
+    'id': 7,
+    'state': 'APPROVED',
+    'user': {'login': 'github-actions[bot]'},
+    'body': '<!-- claude-review:approval -->',
+}
+
+
+def _run_resolve(tmp_path, **extra):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(_FAKE_RESOLVE_GH)
+    (bin_dir / 'gh').chmod(0o755)
+    node = {
+        'pullRequest': {'number': 5},
+        'comments': {'nodes': [{'body': OWN_BODY, 'author': {'login': 'github-actions'}}]},
+    }
+    env = {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'GH_LOG': str(tmp_path / 'log'),
+        'THREAD_JSON': json.dumps(node),
+        'THREADS': '["PRRT_ab-1"]',
+        'DESCRIPTION': 'desc',
+        'HEAD_SHA': HEAD,
+        'PR_NUMBER': '5',
+        'RUN_URL': 'RUN',
+        'GITHUB_REPOSITORY': 'o/r',
+        **extra,
+    }
+    step = _run_block(_step_in(_job('resolve'), 'Resolve the threads of fixed findings'))
+    rc = subprocess.run(['bash', '-e', '-c', step], env=env).returncode
+    log = tmp_path / 'log'
+    calls = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+    posts = [c for c in calls if f'repos/o/r/statuses/{HEAD}' in c]
+    dismissed = [c for c in calls if any(a.endswith('/dismissals') for a in c)]
+    resolved = sum('resolveReviewThread' in ' '.join(c) for c in calls)
+    return rc, posts, dismissed, resolved
+
+
+def test_a_failed_thread_lookup_sets_a_failure_status(tmp_path):
+    rc, posts, _, resolved = _run_resolve(tmp_path, LOOKUP_FAILS='1')
+    assert rc == 1 and resolved == 0 and len(posts) == 1
+    assert 'description=desc; thread lookup failed: gh: HTTP 502' in posts[0]
+
+
+def test_the_resolve_job_does_nothing_when_the_head_moved(tmp_path):
+    rc, posts, dismissed, resolved = _run_resolve(tmp_path, PR_HEAD='b' * 40)
+    assert (rc, posts, dismissed, resolved) == (0, [], [], 0)
+
+
+def test_a_failed_resolve_dismisses_the_approval_of_the_workflow(tmp_path):
+    other = {**APPROVAL, 'id': 8, 'user': {'login': 'egpbos'}}
+    rc, posts, dismissed, _ = _run_resolve(
+        tmp_path, RESOLVE_FAILS='1', APPROVALS=json.dumps([[APPROVAL, other]])
+    )
+    assert rc == 1 and len(posts) == 1
+    assert [c[c.index('-X') + 2] for c in dismissed] == [
+        'repos/o/r/pulls/5/reviews/7/dismissals'
+    ]
+
+
+def test_the_resolve_job_leaves_a_status_that_a_newer_run_owns(tmp_path):
+    rc, posts, dismissed, _ = _run_resolve(
+        tmp_path, RESOLVE_FAILS='1', OWNER_URL='NEWER', APPROVALS=json.dumps([[APPROVAL]])
+    )
+    assert rc == 1 and posts == [] and dismissed == []
