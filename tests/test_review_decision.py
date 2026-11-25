@@ -256,13 +256,16 @@ def test_mentions_are_neutralised_outside_code():
             'findings': [
                 {'severity': 'fatal', 'path': 'a', 'line': 1, 'title': 't', 'body': 'b'}
             ],
+            'fixed': [],
         },
         {
             'summary': 's',
             'findings': [
                 {'severity': 'nit', 'path': 'a', 'line': True, 'title': 't', 'body': 'b'}
             ],
+            'fixed': [],
         },
+        {'summary': 's', 'findings': [], 'fixed': [3]},
     ],
 )
 def test_malformed_find_output_is_rejected(find):
@@ -278,13 +281,15 @@ def test_property_approval_only_when_nothing_blocking_is_verified(sevs, oks):
     find = {
         'summary': 's',
         'findings': [_finding(s, title=f't{i}') for i, s in enumerate(sevs)],
+        'fixed': [],
     }
     cands = rd.prep(find, [])
     verify = {
         'verdicts': [
             {'id': c['id'], 'verified': ok, 'reason': ''}
             for c, ok in zip(cands['candidates'], oks)
-        ]
+        ],
+        'fixed': [],
     }
     files = [{'path': 'src/aragog/x.py', 'old_mode': '100644', 'new_mode': '100644'}]
     p = rd.plan(find, verify, cands, [], POLICY_ALL, files, {'src/aragog/x.py': PATCH}, HEAD)

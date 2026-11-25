@@ -7,27 +7,33 @@ of this script from the base branch, so a pull request cannot change how it is j
 
 Subcommands
 -----------
-collect   open threads and approvals of the workflow -> JSON
-prep      check the find output and number the candidates -> JSON
+collect   the threads and approvals of this workflow -> JSON
+prep      check the find output, number the candidates and write the verify input -> JSON
 plan      the action plan from the find, verify and collect outputs -> JSON
 apply     carry out a plan; posts nothing when the head moved since the review started
 
 Rules
 -----
 - Severities: ``important`` and ``pre_existing`` block (status failure, inline thread);
-  ``nit`` goes in the summary only. Only findings the verify pass confirmed count.
-- The workflow's own threads carry ``<!-- claude-review:finding key=... -->`` in the first
-  comment and are written by github-actions[bot]; no other thread is ever resolved.
+  ``nit`` goes in the summary only. Only findings the verify pass confirmed count, and a
+  verify output without exactly one verdict per candidate is an error, not a pass.
+- The workflow's own threads are written by github-actions[bot] and end with
+  ``<!-- claude-review:finding key=... severity=... -->``. A thread is resolved only when the
+  find pass claims the fix and the verify pass confirms it; no other thread is ever resolved.
+  A thread that a person resolved dismisses its finding.
 - APPROVE needs: no blocking finding or open blocking thread, a valid policy file whose
-  ``allow`` globs match every changed path and whose ``deny`` globs match none, and no change
-  to a protected path (PROTECTED, a symlink or a submodule).
+  ``allow`` globs match every changed path and whose ``deny`` globs match none, at least one
+  changed path, and no change to a protected path (PROTECTED, a symlink, a submodule, or a
+  path with a control character).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
+import pathlib
 import re
 import subprocess
 import sys
@@ -40,13 +46,22 @@ LABEL = {'important': 'Important', 'pre_existing': 'Pre-existing', 'nit': 'Nit'}
 APPROVAL_MARK = '<!-- claude-review:approval -->'
 PROTECTED = (
     '.github/**',
-    'AGENTS.md',
-    'tests/AGENTS.md',
+    '**/AGENTS.md',
+    '**/CLAUDE.md',
+    '.claude/**',
+    'tools/agents/**',
     '**/CODEOWNERS',
     '**/.gitattributes',
     '**/.gitmodules',
 )
-_MARK = re.compile(r'<!-- claude-review:finding key=([0-9a-f]{12}) severity=([a-z_]+) -->')
+_MARK = re.compile(
+    r'<!-- claude-review:finding key=([0-9a-f]{12}) severity=(important|pre_existing|nit) -->\s*\Z'
+)
+_RESOLVE = 'mutation($t: ID!) { resolveReviewThread(input: {threadId: $t}) { thread { id } } }'
+_THREADS = """query($o: String!, $r: String!, $n: Int!, $c: String) {
+  repository(owner: $o, name: $r) { pullRequest(number: $n) {
+    reviewThreads(first: 100, after: $c) { pageInfo { hasNextPage endCursor }
+      nodes { id isResolved path line comments(first: 1) { nodes { body author { login } } } } } } } }"""
 
 
 class OutputError(ValueError):
@@ -64,7 +79,7 @@ def finding_marker(key, severity):
 
 
 def parse_marker(body):
-    """Return (key, severity) of a finding marker in ``body``, or None."""
+    """Return (key, severity) of the finding marker that ends ``body``, or None."""
     m = _MARK.search(body or '')
     return (m[1], m[2]) if m else None
 
@@ -76,7 +91,7 @@ def glob_match(pattern, path):
         rx += {'**/': '(?:.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]'}.get(
             tok, re.escape(tok)
         )
-    return re.fullmatch(rx, path) is not None
+    return re.fullmatch(rx, path, re.S) is not None
 
 
 def hunk_lines(patch):
@@ -85,7 +100,7 @@ def hunk_lines(patch):
     for line in (patch or '').splitlines():
         if m := re.match(r'@@ -\S+ \+(\d+)', line):
             n = int(m[1])
-        elif n is not None and line[:1] in (' ', '+'):
+        elif n is not None and line[:1] in ('', ' ', '+'):
             lines.add(n)
             n += 1
     return lines
@@ -102,11 +117,15 @@ def parse_raw(raw):
             for p in parts[i + 1 : i + 1 + n]
         ]
         i += 1 + n
+    if any(parts[i:]):
+        raise ValueError(f'unparsed raw diff from entry {i}: {parts[i][:80]!r}')
     return files
 
 
 def neutralise(text):
-    """Break @mentions outside code spans so a summary notifies nobody."""
+    """Break @mentions outside code spans and drop HTML comments, so model text notifies
+    nobody and cannot carry a marker."""
+    text = text.replace('<!--', '').replace('-->', '')
     parts = re.split(r'(```.*?```|`[^`\n]*`)', text, flags=re.S)
     return ''.join(
         p if k % 2 else re.sub(r'(?<![\w.])@(?=[A-Za-z0-9_-])', '@‍', p)
@@ -125,78 +144,114 @@ def load_policy(text):
         allow, deny = pol['approve']['allow'], pol['approve']['deny']
     except (AttributeError, TypeError, KeyError, ValueError):
         return None
-    ok = pol.get('version') == 1 and all(
+    ok = type(pol.get('version')) is int and pol['version'] == 1
+    ok = ok and all(
         isinstance(g, list) and all(isinstance(x, str) for x in g) for g in (allow, deny)
     )
     return {'allow': allow, 'deny': deny} if ok else None
 
 
 def own_threads(nodes):
-    """Return the open threads of this workflow: bot-authored and carrying a finding marker."""
+    """Return the threads of this workflow: bot-authored and ending with a finding marker."""
     out = []
     for t in nodes:
         first = (t.get('comments', {}).get('nodes') or [{}])[0]
         mark = parse_marker(first.get('body'))
-        if not t.get('isResolved') and mark and (first.get('author') or {}).get('login') == BOT:
+        if mark and (first.get('author') or {}).get('login') == BOT:
+            text = _MARK.sub('', first['body']).strip()[:1500]
             out.append(
                 {
                     'id': t['id'],
                     'key': mark[0],
                     'severity': mark[1],
+                    'resolved': bool(t.get('isResolved')),
                     'path': t.get('path'),
                     'line': t.get('line'),
+                    'text': text,
                 }
             )
     return out
 
 
 def prep(find, threads):
-    """Check the find output and number its findings; drop those that already have a thread."""
+    """Check the find output, number its findings and write the verify input.
+
+    A finding that already has a thread of this workflow (open or resolved) is not a candidate.
+    """
     if (
         not isinstance(find, dict)
         or not isinstance(find.get('summary'), str)
         or not isinstance(find.get('findings'), list)
+        or not isinstance(find.get('fixed'), list)
+        or not all(isinstance(k, str) for k in find['fixed'])
     ):
         raise OutputError('the find pass returned no valid structured output')
-    open_keys, cands = {t['key'] for t in threads}, []
+    seen, cands = {t['key'] for t in threads}, []
     for f in find['findings']:
         ok = (
             isinstance(f, dict)
             and f.get('severity') in SEVERITIES
-            and isinstance(f.get('line'), int)
-            and not isinstance(f.get('line'), bool)
+            and type(f.get('line')) is int
             and all(isinstance(f.get(k), str) for k in ('path', 'title', 'body'))
         )
         if not ok:
             raise OutputError(f'the find pass returned a malformed finding: {str(f)[:200]}')
+        f = {**f, 'path': f['path'].removeprefix('./')}
         key = finding_key(f['path'], f['title'])
-        if key not in open_keys:
+        if key not in seen:
+            seen.add(key)
             cands.append({**f, 'key': key, 'id': f'c{len(cands) + 1}'})
-    return {'candidates': cands, 'threads': threads}
-
-
-def _verified(verify, field, name):
+    open_keys = {t['key'] for t in threads if not t['resolved']}
+    fixed = [k for k in dict.fromkeys(find['fixed']) if k in open_keys]
+    shown = ('id', 'severity', 'path', 'line', 'title', 'body')
     return {
-        v[name]
-        for v in (verify or {}).get(field) or []
-        if isinstance(v, dict) and v.get('verified') is True and name in v
+        'candidates': cands,
+        'threads': threads,
+        'verify_in': {'candidates': [{k: c[k] for k in shown} for c in cands], 'fixed': fixed},
     }
+
+
+def _verdicts(verify, cands):
+    """Return the candidate ids and fixed keys the verify pass confirmed; fail on a gap."""
+    if (
+        not isinstance(verify, dict)
+        or not isinstance(verify.get('verdicts'), list)
+        or not isinstance(verify.get('fixed'), list)
+    ):
+        raise OutputError('the verify pass returned no valid structured output')
+    rows = verify['verdicts'] + verify['fixed']
+    if not all(isinstance(v, dict) and type(v.get('verified')) is bool for v in rows):
+        raise OutputError('the verify pass returned a malformed verdict')
+    ids = [v.get('id') for v in verify['verdicts']]
+    want = [c['id'] for c in cands['candidates']]
+    if sorted(map(str, ids)) != sorted(want):
+        raise OutputError(
+            f'the verify pass gave verdicts for {ids}, expected one for each of {want}'
+        )
+    return (
+        {v['id'] for v in verify['verdicts'] if v['verified']},
+        {v.get('key') for v in verify['fixed'] if v['verified']},
+    )
 
 
 def _withheld(policy_text, files, no_approve):
     if no_approve:
         return ['the decision script is not on the base branch yet']
-    pol = load_policy(policy_text) if policy_text is not None else None
+    pol = load_policy(policy_text)
     if pol is None:
         return ['no valid .github/review-policy.yml on the base branch']
+    if not files:
+        return ['the pull request changes no file']
     why = []
     for f in files:
         p = f['path']
-        if any(glob_match(g, p) for g in PROTECTED) or {f['old_mode'], f['new_mode']} & {
-            '120000',
-            '160000',
-        }:
-            why.append(f'touches the protected path {p}')
+        special = {f['old_mode'], f['new_mode']} & {'120000', '160000'}
+        if (
+            special
+            or re.search(r'[\x00-\x1f\x7f]', p)
+            or any(glob_match(g, p) for g in PROTECTED)
+        ):
+            why.append(f'touches the protected path {p!r}')
         elif not any(glob_match(g, p) for g in pol['allow']) or any(
             glob_match(g, p) for g in pol['deny']
         ):
@@ -217,19 +272,23 @@ def plan(
     approvals=(),
 ):
     """Return the action plan for one review run (see the module docstring)."""
-    ids = _verified(verify, 'verdicts', 'id')
-    fixed = _verified(verify, 'fixed', 'key')
+    ids, fixed_ok = _verdicts(verify, cands)
+    fixed = fixed_ok & set(cands['verify_in']['fixed'])
     found = [c for c in cands['candidates'] if c['id'] in ids]
     rejected = len(cands['candidates']) - len(found)
-    still_open = [t for t in threads if t['key'] not in fixed and t['severity'] in BLOCKING]
+    open_threads = [t for t in threads if not t['resolved']]
+    still_open = [
+        t for t in open_threads if t['key'] not in fixed and t['severity'] in BLOCKING
+    ]
     blocking = [c for c in found if c['severity'] in BLOCKING]
     changed = {f['path'] for f in files}
 
     comments, outside = [], []
     for c in blocking:
-        body = neutralise(
-            f'**{LABEL[c["severity"]]}**: {c["title"]}\n\n{c["body"]}\n\n'
-            f'{finding_marker(c["key"], c["severity"])}'
+        body = (
+            neutralise(f'**{LABEL[c["severity"]]}**: {c["title"]}\n\n{c["body"]}')
+            + '\n\n'
+            + finding_marker(c['key'], c['severity'])
         )
         if c['line'] in hunk_lines(patches.get(c['path'])):
             comments.append(
@@ -241,16 +300,12 @@ def plan(
             outside.append(c)
 
     n_block = len(blocking) + len(still_open)
-    state = 'failure' if n_block else 'success'
-    why = (
-        _withheld(policy_text, files, no_approve)
-        if state == 'success'
-        else ['blocking findings']
-    )
-    event = 'APPROVE' if not why else 'COMMENT'
+    why = ['blocking findings'] if n_block else _withheld(policy_text, files, no_approve)
+    event = 'COMMENT' if why else 'APPROVE'
 
     counts = {s: sum(c['severity'] == s for c in found) for s in SEVERITIES}
-    lines = [
+    lines = [APPROVAL_MARK] if event == 'APPROVE' else []
+    lines += [
         neutralise(find['summary']),
         '',
         '| Important | Pre-existing | Nit |',
@@ -270,26 +325,20 @@ def plan(
     if rejected:
         lines += [
             '',
-            f'{rejected} candidate finding{" was" if rejected == 1 else "s were"} not verified '
-            'and left out.',
+            f'{rejected} candidate finding{" was" if rejected == 1 else "s were"} not verified and left out.',
         ]
     if event == 'APPROVE':
-        lines += [
-            '',
-            'Approved by the review workflow. A code owner still has to approve.',
-            APPROVAL_MARK,
-        ]
-    elif state == 'success':
+        lines += ['', 'Approved by the review workflow. A code owner still has to approve.']
+    elif not n_block:
         lines += ['', 'The status passes; approval withheld: ' + '; '.join(why) + '.']
-    desc = f'{n_block} blocking finding(s)' if n_block else 'no blocking findings'
     return {
         'head': head,
-        'state': state,
-        'description': desc,
+        'state': 'failure' if n_block else 'success',
+        'description': f'{n_block} blocking finding(s)' if n_block else 'no blocking findings',
         'event': event,
         'body': '\n'.join(lines),
         'comments': comments,
-        'resolve': sorted(t['id'] for t in threads if t['key'] in fixed),
+        'resolve': sorted(t['id'] for t in open_threads if t['key'] in fixed),
         'dismiss': [] if event == 'APPROVE' else list(approvals),
     }
 
@@ -307,31 +356,29 @@ def gh(args, data=None):
     return res.stdout
 
 
-_THREADS = """query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) {
-  pullRequest(number: $n) { reviewThreads(first: 100) { nodes { id isResolved path line
-    comments(first: 1) { nodes { body author { login } } } } } } } }"""
-
-
 def collect(repo, pr, run=gh):
-    """Return the open own threads and the ids of the earlier own approvals."""
+    """Return the threads of this workflow (all pages) and the ids of its earlier approvals."""
     owner, name = repo.split('/')
-    out = json.loads(
-        run(
-            [
-                'api',
-                'graphql',
-                '-f',
-                f'query={_THREADS}',
-                '-F',
-                f'o={owner}',
-                '-F',
-                f'r={name}',
-                '-F',
-                f'n={pr}',
-            ]
-        )
-    )
-    nodes = out['data']['repository']['pullRequest']['reviewThreads']['nodes']
+    nodes, cursor = [], None
+    while True:
+        args = [
+            'api',
+            'graphql',
+            '-f',
+            f'query={_THREADS}',
+            '-F',
+            f'o={owner}',
+            '-F',
+            f'r={name}',
+            '-F',
+            f'n={pr}',
+        ]
+        page = json.loads(run(args + (['-f', f'c={cursor}'] if cursor else [])))
+        threads = page['data']['repository']['pullRequest']['reviewThreads']
+        nodes += threads['nodes']
+        if not threads['pageInfo']['hasNextPage']:
+            break
+        cursor = threads['pageInfo']['endCursor']
     reviews = json.loads(
         run(['api', '--paginate', '--slurp', f'repos/{repo}/pulls/{pr}/reviews'])
     )
@@ -347,15 +394,13 @@ def collect(repo, pr, run=gh):
 
 
 def set_status(repo, sha, state, description, url, run=gh):
-    run(
-        ['api', '-X', 'POST', f'repos/{repo}/statuses/{sha}'],
-        {
-            'state': state,
-            'context': CONTEXT,
-            'description': description[:140],
-            'target_url': url,
-        },
-    )
+    data = {
+        'state': state,
+        'context': CONTEXT,
+        'description': description[:140],
+        'target_url': url,
+    }
+    run(['api', '-X', 'POST', f'repos/{repo}/statuses/{sha}'], data)
 
 
 def apply(p, repo, pr, url, run=gh):
@@ -364,38 +409,20 @@ def apply(p, repo, pr, url, run=gh):
         ['pr', 'view', pr, '--repo', repo, '--json', 'headRefOid', '--jq', '.headRefOid']
     ).strip()
     if head != p['head']:
-        set_status(
-            repo,
-            p['head'],
-            'failure',
-            'head moved during the review; comment @claude review',
-            url,
-            run,
-        )
-        return
+        msg = 'head moved during the review; comment @claude review'
+        return set_status(repo, p['head'], 'failure', msg, url, run)
     for c in p['comments']:
         run(
             ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/comments'],
             {**c, 'commit_id': p['head']},
         )
     for tid in p['resolve']:
-        run(
-            [
-                'api',
-                'graphql',
-                '-f',
-                'query=mutation($t: ID!) { resolveReviewThread(input: {threadId: $t}) { thread { id } } }',
-                '-F',
-                f't={tid}',
-            ]
-        )
+        run(['api', 'graphql', '-f', f'query={_RESOLVE}', '-F', f't={tid}'])
     for rid in p['dismiss']:
+        msg = 'A later review run did not approve this pull request.'
         run(
             ['api', '-X', 'PUT', f'repos/{repo}/pulls/{pr}/reviews/{rid}/dismissals'],
-            {
-                'message': 'A later review run did not approve this pull request.',
-                'event': 'DISMISS',
-            },
+            {'message': msg, 'event': 'DISMISS'},
         )
     run(
         ['api', '-X', 'POST', f'repos/{repo}/pulls/{pr}/reviews'],
@@ -405,61 +432,67 @@ def apply(p, repo, pr, url, run=gh):
 
 
 def _read(path):
-    with open(path, encoding='utf-8') as fh:
-        return json.load(fh)
+    return json.loads(pathlib.Path(path).read_text(encoding='utf-8'))
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
-    c = sub.add_parser('collect')
-    c.add_argument('--repo', required=True)
-    c.add_argument('--pr', required=True)
-    c = sub.add_parser('prep')
-    c.add_argument('--find', required=True)
-    c.add_argument('--collect', required=True)
-    c = sub.add_parser('plan')
-    for a in ('--find', '--verify', '--candidates', '--collect', '--raw', '--files', '--head'):
-        c.add_argument(a, required=True)
-    c.add_argument('--policy')
-    c.add_argument('--no-approve', action='store_true')
-    c = sub.add_parser('apply')
-    for a in ('--plan', '--repo', '--pr', '--url'):
-        c.add_argument(a, required=True)
+    args = {
+        'collect': ('--repo', '--pr', '--out'),
+        'prep': ('--find', '--collect', '--out'),
+        'plan': (
+            '--find',
+            '--verify',
+            '--candidates',
+            '--collect',
+            '--raw',
+            '--files',
+            '--head',
+            '--out',
+        ),
+        'apply': ('--plan', '--repo', '--pr', '--url'),
+    }
+    for cmd, names in args.items():
+        c = sub.add_parser(cmd)
+        for name in names:
+            c.add_argument(name, required=True)
+    sub.choices['plan'].add_argument('--policy')
+    sub.choices['plan'].add_argument('--no-approve', action='store_true')
     a = ap.parse_args(argv)
 
-    if a.cmd == 'collect':
-        out = collect(a.repo, a.pr)
-    elif a.cmd == 'prep':
-        out = prep(_read(a.find), _read(a.collect)['threads'])
-    elif a.cmd == 'plan':
-        col, cands = _read(a.collect), _read(a.candidates)
-        with open(a.raw, encoding='utf-8') as fh:
-            files = parse_raw(fh.read())
-        patches = {f['filename']: f.get('patch') for page in _read(a.files) for f in page}
-        policy = None
-        if a.policy:
-            try:
-                with open(a.policy, encoding='utf-8') as fh:
-                    policy = fh.read()
-            except OSError:
-                policy = None
-        out = plan(
-            _read(a.find),
-            _read(a.verify),
-            cands,
-            col['threads'],
-            policy,
-            files,
-            patches,
-            a.head,
-            a.no_approve,
-            col['approvals'],
-        )
-    else:
-        apply(_read(a.plan), a.repo, a.pr, a.url)
-        return 0
-    json.dump(out, sys.stdout)
+    try:
+        if a.cmd == 'apply':
+            apply(_read(a.plan), a.repo, a.pr, a.url, gh)
+            return 0
+        if a.cmd == 'collect':
+            out = collect(a.repo, a.pr, gh)
+        elif a.cmd == 'prep':
+            out = prep(_read(a.find), _read(a.collect)['threads'])
+        else:
+            col = _read(a.collect)
+            files = parse_raw(pathlib.Path(a.raw).read_text(encoding='utf-8'))
+            patches = {f['filename']: f.get('patch') for page in _read(a.files) for f in page}
+            policy = None
+            if a.policy:
+                with contextlib.suppress(OSError):
+                    policy = pathlib.Path(a.policy).read_text(encoding='utf-8')
+            out = plan(
+                _read(a.find),
+                _read(a.verify),
+                _read(a.candidates),
+                col['threads'],
+                policy,
+                files,
+                patches,
+                a.head,
+                a.no_approve,
+                col['approvals'],
+            )
+    except (OutputError, ValueError) as err:
+        print(f'review_decision: {err}', file=sys.stderr)
+        return 2
+    pathlib.Path(a.out).write_text(json.dumps(out), encoding='utf-8')
     return 0
 
 
