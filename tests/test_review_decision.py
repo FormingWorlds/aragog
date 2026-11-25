@@ -1126,3 +1126,92 @@ def test_the_run_report_reads_both_kept_execution_files():
         'for e in "$RUNNER_TEMP/exec_find.json" "$RUNNER_TEMP/exec_verify.json"; do' in report
     )
     assert 'if [ -f "$e" ]; then' in report
+
+
+def test_apply_with_no_resolve_still_sets_the_status_and_dismisses():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(threads=[_thread(key)], fixed=[key], policy=None, approvals=[7])
+    assert p['resolve'] == ['T1']
+    gh = _Gh(HEAD)
+    rd.apply({**p, 'resolve': []}, 'o/r', '5', 'url', gh)
+    assert not any(a[:2] == ['api', 'graphql'] for a, _ in gh.calls)
+    assert gh.calls[-2][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-1][0][-1] == 'repos/o/r/pulls/5/reviews/7/dismissals'
+
+
+def test_a_failed_post_prints_the_line_the_failure_report_looks_for(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(rd, 'gh', _FailGh(HEAD, '/reviews'))
+    args = ['apply', '--plan', str(_plan_file(tmp_path)), '--repo', 'o/r', '--pr', '5']
+    assert rd.main([*args, '--url', 'u']) == 2
+    assert capsys.readouterr().err.startswith("review_decision: Command '")
+    assert 'grep -q "^review_decision: Command \'" "$RUNNER_TEMP/post_cause.txt"' in _step(
+        'Report a failed review'
+    )
+
+
+def test_the_post_step_hands_the_threads_to_resolve_out_and_never_to_apply():
+    post = _step('Decide and post')
+    assert 'jq \'.resolve = []\' "$D/plan.json" > "$D/apply.json"' in post
+    assert '--plan "$D/apply.json"' in post and '--plan "$D/plan.json"' not in post
+    for key in ('resolve', 'state', 'description'):
+        assert f'echo "{key}=$(jq ' in post
+    assert '2>"$RUNNER_TEMP/post_cause.txt"' in post
+
+
+_FAKE_GH = """#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ['GH_LOG'], 'a') as f:
+    f.write(json.dumps(args) + '\\n')
+if 'statuses' in ' '.join(args) and '-X' in args:
+    sys.exit(0)
+if any('/status?' in a for a in args):
+    own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'], 'description': 'x'}
+    page = json.dumps({'statuses': [own]})
+    jq = args[args.index('--jq') + 1]
+    sys.stdout.write(subprocess.run(['jq', '-c', jq], input=page, capture_output=True, text=True).stdout)
+    sys.exit(0)
+print('[[]]')
+"""
+
+
+@pytest.mark.parametrize(
+    ('cause', 'posts'),
+    [
+        (
+            "review_decision: Command '['api', '-X', 'POST']' returned non-zero exit status 1.\n",
+            0,
+        ),
+        ('review_decision: no valid plan\n', 1),
+        (None, 1),
+    ],
+)
+def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'gh').write_text(_FAKE_GH)
+    (bin_dir / 'gh').chmod(0o755)
+    if cause is not None:
+        (tmp_path / 'post_cause.txt').write_text(cause)
+    steps = {'post': {'outcome': 'failure'}}
+    env = {
+        **os.environ,
+        'PATH': f'{bin_dir}:{os.environ["PATH"]}',
+        'GH_LOG': str(tmp_path / 'log'),
+        'RUN_URL': 'RUN',
+        'RUNNER_TEMP': str(tmp_path),
+        'STEPS': json.dumps(steps),
+        'HEAD_SHA': HEAD,
+        'PR_NUMBER': '5',
+        'GITHUB_REPOSITORY': 'o/r',
+    }
+    step = _run_block(_step('Report a failed review'))
+    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == 0
+    calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
+    status = [
+        c for c in calls if '-X' in c and c[c.index('-X') + 2].startswith('repos/o/r/statuses/')
+    ]
+    assert len(status) == posts
+    assert not any('/status?' in a for c in calls[1:] for a in c)
