@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import re
 
 import pytest
 from hypothesis import given
@@ -714,3 +715,96 @@ def test_collect_sends_owner_and_repository_as_strings():
     rd.collect('o/123', '5', gh)
     first = gh.calls[0]
     assert first[first.index('o=o') - 1] == '-f' and first[first.index('r=123') - 1] == '-f'
+
+
+_WORKFLOW = (_PATH.parents[1] / 'workflows' / 'claude-review.yml').read_text()
+
+
+def _block(text, header, indent):
+    """Return the YAML block that starts at ``header`` and ends at the next line of the same indent."""
+    start = text.index(header)
+    lines, out = text[start:].splitlines(), []
+    for i, line in enumerate(lines):
+        if i and line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        out.append(line)
+    return '\n'.join(out)
+
+
+def _step(name):
+    return _block(_WORKFLOW, f'      - name: {name}', 6)
+
+
+def test_the_gate_reviews_only_pull_requests_into_the_default_branch():
+    gate = _step('Skip closed, draft, fork and bot pull requests')
+    assert 'baseRefName' in gate and 'github.event.repository.default_branch' in gate
+    assert 'base=' not in gate  # the base comes from the merge commit, not from the gate
+
+
+def test_the_script_and_policy_come_from_the_default_branch_by_name():
+    trusted = _step('Check out the decision script and the policy of the default branch')
+    assert 'ref: ${{ github.event.repository.default_branch }}' in trusted
+    assert 'sparse-checkout' in trusted and 'persist-credentials: false' in trusted
+    copy = _step('Collect the review threads of this workflow')
+    assert '.review_trusted/.github/scripts/review_decision.py' in copy
+    assert '.review_base/.github' not in copy
+
+
+def test_the_model_passes_have_no_shell_and_read_the_diff_from_a_file():
+    for name in ('Find', 'Verify'):
+        args = _step(name)
+        assert '--allowedTools "Read(./**),Grep,Glob"' in args
+        assert 'Bash(' not in args and '.review_diff.patch' in args
+    assert 'gh pr diff "$PR_NUMBER"' in _step('Write the diff for the model passes')
+
+
+def test_a_base_change_sets_pending_and_dismisses_own_approvals():
+    assert 'types: [opened, reopened, ready_for_review, synchronize, edited]' in _WORKFLOW
+    pending = _block(_WORKFLOW, '  pending:', 2)
+    assert (
+        "github.event.action == 'edited'" in pending and 'github.event.changes.base' in pending
+    )
+    assert 'dismissals' in pending and 'pull-requests: write' in pending
+    review = _block(_WORKFLOW, '  review:', 2)
+    assert "github.event.action != 'edited'" in review
+
+
+def test_a_comment_enters_the_concurrency_group_only_after_the_exact_check():
+    check = _block(_WORKFLOW, '  command:', 2)
+    assert (
+        'concurrency' not in check
+        and "grep -qE '^@claude (deep-)?review[[:space:]]*$'" in check
+    )
+    review = _block(_WORKFLOW, '  review:', 2)
+    assert 'needs: command' in review and "needs.command.outputs.ok == 'true'" in review
+    assert 'startsWith(github.event.comment.body' not in review.split('concurrency:')[0]
+
+
+def test_agent_settings_are_removed_in_every_folder_and_ruff_is_pinned():
+    rm = _step('Remove the agent settings of the pull request')
+    assert 'find . ' in rm and '-name .claude' in rm and '-name CLAUDE.local.md' in rm
+    assert re.search(r'ruff==\d+\.\d+\.\d+', _WORKFLOW)
+
+
+def test_an_unknown_pull_request_author_keeps_resolved_threads_open():
+    key = rd.finding_key('a', 'b')
+    t = rd.own_threads([_thread(key, resolved=True, resolver='ana')], None)
+    assert t[0]['state'] == 'open'
+
+
+@pytest.mark.parametrize(
+    'resolver, state', [(AUTHOR, 'open'), ('ana', 'dismissed'), (GQL, 'fixed')]
+)
+def test_collect_passes_the_pull_request_author_to_the_thread_state(resolver, state):
+    class _Resolved(_Pages):
+        def __call__(self, args, data=None):
+            out = super().__call__(args, data)
+            if args[:2] == ['api', 'graphql']:
+                page = json.loads(out)
+                node = page['data']['repository']['pullRequest']['reviewThreads']['nodes'][0]
+                node.update(isResolved=True, resolvedBy={'login': resolver})
+                out = json.dumps(page)
+            return out
+
+    out = rd.collect('o/r', '5', _Resolved(rd.finding_key('a', 'b')))
+    assert {t['state'] for t in out['threads']} == {state}
