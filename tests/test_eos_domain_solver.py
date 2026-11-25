@@ -675,3 +675,124 @@ def test_the_table_temperature_of_a_non_finite_point_is_nan(bad):
     eos = entropy_eos_copy(EOS_DIR)
     for melt in (True, False):
         assert math.isnan(TableDomain.lookup_temperature(eos, *bad, melt))
+
+
+def test_the_accepted_states_of_the_energy_trace_are_judged():
+    """With the energy trace of the call, each accepted state counts: a state between 2 output
+    points that leaves the window is named with its time."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    a = _uniform_melt(s, eos, 0.0)
+    dS = eos.domain.melt.dS
+    sol = _states(a, a, t=[0.0, 2.0])
+    assert s._eos_domain_failure(sol) is None
+    sol['energy_trace'] = (
+        np.array([0.0, 0.7, 1.3, 2.0]),
+        np.column_stack([a, a, a + 8.0 * dS, a]),
+    )
+    msg = s._eos_domain_failure(sol)
+    assert msg is not None
+    n_pts = 2 * s._n_stag + 1
+    assert msg.startswith(f'{_MSG}: {n_pts} lookup points over the 4 accepted states')
+    assert 'worst at t=1.300000e+00 yr' in msg and '8.00 cells outside' in msg
+
+
+def test_without_a_trace_the_output_states_are_judged_with_one_info_line(caplog):
+    """A call with no energy trace is judged at its output states; the solver says so once."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    a = _uniform_melt(s, eos, 0.0)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
+        for _ in range(3):
+            assert s._eos_domain_failure(_states(a, a)) is None
+    assert sum('output states only' in r.getMessage() for r in caplog.records) == 1
+
+
+def test_the_check_reads_the_smoothing_width_of_the_phase_evaluators(monkeypatch):
+    """The check judges the phase-boundary lookups of the smoothing band with the width that the
+    staggered and basic phase evaluators of the solver use."""
+    from aragog.eos import domain as dom_mod
+
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    eos.domain = _tight(eos)
+    widths = []
+    real = dom_mod.TableDomain.lookup_distances
+
+    def record(self, eos_, P, S, **kw):
+        widths.append(kw.get('smooth_width', 0.0))
+        return real(self, eos_, P, S, **kw)
+
+    monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', record)
+    y = np.array(s._S0, dtype=float)
+    assert s._eos_domain_failure(_states(y)) is not None
+    expect = [
+        float(s.state.phase_staggered._matprop_smooth_width),
+        float(s.state.phase_basic._matprop_smooth_width),
+    ]
+    assert widths == expect and expect[0] > 0.0
+
+
+def test_a_point_at_an_empty_mask_column_is_named_as_having_no_window():
+    """An empty mask column at the pressure of every node: the check names the point as having
+    no valid window, not as a non-finite point."""
+    from aragog.eos.domain import PhaseWindow, TableDomain
+
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos)
+    cells = _uniform_melt(s, eos, 0.0)
+    w = eos.domain.melt
+    empty = PhaseWindow(P=w.P, lo=np.full(2, np.inf), hi=np.full(2, -np.inf), dS=w.dS)
+    eos.domain = TableDomain(melt=empty, solid=w)
+    msg = s._eos_domain_failure(_two_states(cells))
+    assert 'no valid window at this pressure' in msg and 'not a finite point' not in msg
+
+
+def test_the_check_reads_the_lookup_points_of_the_jax_rhs(monkeypatch):
+    """The JAX energy_balance right-hand side (the one CVODE integrates in a run) evaluates the
+    phases at the staggered and basic (P, S) points that the check judges, CMB node included."""
+    jax = pytest.importorskip('jax')
+    jnp = pytest.importorskip('jax.numpy')
+    pytest.importorskip('equinox')
+    from aragog.eos import domain as dom_mod
+    from aragog.jax import phase as jphase
+    from aragog.jax import solver as jsolver
+
+    from .test_cmb_closure_ledger import _jax_args
+    from .test_cmb_closure_ledger import _solver as _eb_solver
+
+    s = _eb_solver(0.5, solver_method='cvode')
+    args = _jax_args(s)
+    y = np.array(s._S0, dtype=float)
+    y[s._n_stag] = 3.0e-3  # a CMB gradient that moves the bottom node
+    seen_jax, seen_check = [], []
+    real_eval = jphase.evaluate_phase
+
+    def eval_rec(eos_, params, P, S, *a, **k):
+        seen_jax.append((np.array(P, dtype=float), np.array(S, dtype=float)))
+        return real_eval(eos_, params, P, S, *a, **k)
+
+    monkeypatch.setattr(jphase, 'evaluate_phase', eval_rec)
+    monkeypatch.setattr(jsolver, 'evaluate_phase', eval_rec)
+    with jax.disable_jit():
+        jsolver._dSdt_energy_balance_parts(0.0, jnp.asarray(y), args)
+    real_look = dom_mod.TableDomain.lookup_distances
+
+    def look_rec(self, eos_, P, S, **kw):
+        seen_check.append((np.array(P, dtype=float), np.array(S, dtype=float)))
+        return real_look(self, eos_, P, S, **kw)
+
+    monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', look_rec)
+    s.entropy_eos.domain = _tight(s.entropy_eos)
+    assert s._eos_domain_failure(_states(y)) is not None
+    assert len(seen_check) == 2 and len(seen_jax) >= 2
+    for P_c, S_c in seen_check:
+        match = [
+            (P_j, S_j)
+            for P_j, S_j in seen_jax
+            if P_j.shape == P_c.shape and np.allclose(P_j, P_c, rtol=1e-12, atol=0.0)
+        ]
+        assert match, 'no JAX evaluation at the pressures of the check'
+        for _, S_j in match:
+            np.testing.assert_allclose(S_j, S_c, rtol=1e-12, atol=0.0)
+    assert seen_check[1][1][0] != seen_check[0][1][0]  # the CMB node is not the bottom cell

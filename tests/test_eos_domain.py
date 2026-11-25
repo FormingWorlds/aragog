@@ -129,12 +129,10 @@ def test_a_non_finite_point_has_a_nan_distance():
         (np.ones((S.size, 2)), 'shape'),
         (_mask((2, 3, 4), (6, 7, 8))[:-1], 'shape'),
         (_mask((2, 3, 4), (6, 7, 8)) * 0.5, '0 and 1'),
-        (np.zeros((S.size, 3)), 'no valid'),
     ],
 )
 def test_from_mask_refuses_a_malformed_mask(mask, match):
-    """A mask of the wrong shape, with values other than 0 and 1, or with a column that holds no
-    valid node is refused."""
+    """A mask of the wrong shape or with values other than 0 and 1 is refused."""
     from aragog.eos.domain import PhaseWindow
 
     with pytest.raises(ValueError, match=match):
@@ -153,6 +151,144 @@ def test_a_gap_in_a_column_lies_inside_the_window():
     np.testing.assert_array_equal(gap.lo, whole.lo)
     np.testing.assert_array_equal(gap.hi, whole.hi)
     assert gap.distance(P[1:2], S[5:6])[0] == 0.0
+
+
+def _empty_column_mask(k):
+    m = _mask((2, 3, 4), (6, 7, 8))
+    m[:, k] = 0.0
+    return m
+
+
+def test_an_empty_column_has_no_window_and_every_point_there_is_outside():
+    """A column with no valid node (a fully filled column) has no window: a point at its pressure,
+    or between it and a neighbouring column, is infinitely outside; a point at the pressure of a
+    valid column keeps that column's window, also next to the empty one."""
+    from aragog.eos.domain import PhaseWindow
+
+    w = PhaseWindow.from_mask(P, S, _empty_column_mask(1))
+    d = w.distance(
+        np.array([1.0e9, 0.5e9, 1.5e9, 1.0e9]), np.array([1500.0, 1400.0, 1600.0, 1.0e6])
+    )
+    assert np.isposinf(d).all()
+    np.testing.assert_array_equal(
+        w.distance(
+            np.array([-1.0e9, 0.0, 2.0e9, 3.0e9]), np.array([1400.0, 1700.0, 1500.0, 1900.0])
+        ),
+        [0.0, 1.0, 0.0, 1.0],
+    )
+
+
+def test_an_all_zero_mask_is_read_and_puts_every_point_outside():
+    """A mask with no valid node is a valid file: every finite point is infinitely outside."""
+    from aragog.eos.domain import PhaseWindow
+
+    w = PhaseWindow.from_mask(P, S, np.zeros((S.size, P.size)))
+    assert np.isposinf(
+        w.distance(np.array([0.0, 0.7e9, 2.0e9]), np.array([1000.0, 1500.0, 1900.0]))
+    ).all()
+    assert np.isnan(w.distance(np.array([np.nan]), np.array([1500.0])))[0]
+
+
+def test_an_empty_end_column_beyond_the_points_changes_no_distance():
+    """An empty column above the pressure of every point leaves the distances of the points
+    between the valid columns as they are without it."""
+    from aragog.eos.domain import PhaseWindow
+
+    full = PhaseWindow.from_mask(P, S, _mask((2, 3, 4), (6, 7, 8)))
+    cut = PhaseWindow.from_mask(P, S, _empty_column_mask(2))
+    p = np.array([0.0, 0.25e9, 0.5e9, 1.0e9, 1.0e9])
+    s = np.array([1000.0, 1300.0, 1950.0, 1250.0, 1800.0])
+    np.testing.assert_array_equal(cut.distance(p, s), full.distance(p, s))
+
+
+def test_a_mask_with_an_empty_column_from_the_zalmoxis_writer(tmp_path):
+    """Masks written by the Zalmoxis writer (``eos_export._write_valid_mask``), melt column 1
+    empty: the reader takes them, and the melt lookups at that pressure are outside."""
+    import shutil
+    from pathlib import Path
+
+    from aragog.eos.domain import TableDomain
+
+    ref = Path(__file__).parent / 'reference' / 'eos_domain_writer'
+    for ph in ('melt', 'solid'):
+        shutil.copy(ref / f'valid_mask_{ph}.dat', tmp_path / f'valid_mask_{ph}.dat')
+    dom = TableDomain.from_dir(tmp_path, {'melt': _tables('melt'), 'solid': _tables('solid')})
+    np.testing.assert_array_equal(dom.melt.lo[[0, 2]], [1500.0, 1500.0])
+    d, melt_table, _ = dom.lookup_distances(
+        _StubEOS(), np.array([0.0, 1.0e9, 2.0e9]), np.full(3, 1800.0)
+    )
+    assert melt_table.all() and d[0] == 0.0 and d[2] == 0.0 and np.isposinf(d[1])
+    d, melt_table, _ = dom.lookup_distances(_StubEOS(), np.array([1.0e9]), np.array([1100.0]))
+    assert not melt_table[0] and d[0] == 0.0  # a solid point reads only the solid table
+
+
+def test_the_distance_unit_is_the_mean_spacing_of_a_non_uniform_axis():
+    """S nodes 10, 20, 40, 80, 160, 320 J/kg/K apart (mean 105 J/kg/K), window 1010 to 1150 J/kg/K:
+    210 J/kg/K above is 2 cells and 52.5 J/kg/K below is 0.5 cells."""
+    from aragog.eos.domain import PhaseWindow
+
+    S_nu = np.array([1000.0, 1010.0, 1030.0, 1070.0, 1150.0, 1310.0, 1630.0])
+    m = np.zeros((S_nu.size, P.size))
+    m[1:5, :] = 1.0
+    w = PhaseWindow.from_mask(P, S_nu, m)
+    assert w.dS == 105.0
+    np.testing.assert_allclose(
+        w.distance(np.full(3, 1.0e9), np.array([1360.0, 957.5, 1100.0])),
+        [2.0, 0.5, 0.0],
+        rtol=0,
+        atol=1e-12,
+    )
+
+
+def test_a_single_phase_point_in_the_smoothing_band_reads_its_phase_boundaries():
+    """With a smoothing width the blend reads the phase-boundary lookups at a melt point near the
+    liquidus with a weight above 0: the solidus lookup, 2 cells above the solid window, counts.
+    Without smoothing, and far from the boundary where the weight is exactly 0, it does not."""
+    from aragog.utilities import blend_weight
+
+    dom = _domain(solid=((0, 0, 0), (1, 1, 1)))
+    eos, p = _StubEOS(), np.zeros(1)
+    near, far = np.array([1520.0]), np.array([1900.0])  # melt coordinate 1.1 and 3.0
+    assert dom.lookup_distances(eos, p, near)[0][0] == 0.0
+    d, melt_table, s_look = dom.lookup_distances(eos, p, near, smooth_width=0.1)
+    assert d[0] == pytest.approx(2.0) and not melt_table[0] and s_look[0] == 1300.0
+    assert blend_weight(np.array([3.0]), 0.1)[0] == 0.0
+    assert dom.lookup_distances(eos, p, far, smooth_width=0.1)[0][0] == 0.0
+
+
+def test_blend_weight_is_the_mixed_phase_weight_of_the_phase_evaluator():
+    """1 inside the mush and 0 outside for width 0; for width w the SPIDER two-branch tanh."""
+    from aragog.utilities import blend_weight, tanh_weight
+
+    g = np.array([-0.5, -0.01, 0.0, 0.3, 0.7, 1.0, 1.01, 1.5])
+    np.testing.assert_array_equal(blend_weight(g, 0.0), [0, 0, 1, 1, 1, 1, 0, 0])
+    w = 0.05
+    np.testing.assert_array_equal(
+        blend_weight(g, w),
+        np.where(g > 0.5, 1.0 - tanh_weight(g, 1.0, w), tanh_weight(g, 0.0, w)),
+    )
+
+
+def test_the_phase_boundaries_of_real_tables_stay_inside_5_cells():
+    """A real mask pair of Zalmoxis PALEOS tables (1 M_E run, low-T extension): the solidus read on
+    the solid table and the liquidus read on the melt table over 0.545 to 100.9 GPa lie at most
+    1.119 and 2.287 cells outside their windows (``reference/eos_domain_real_masks.npz``)."""
+    from pathlib import Path
+
+    from aragog.eos.domain import PhaseWindow
+
+    z = np.load(Path(__file__).parent / 'reference' / 'eos_domain_real_masks.npz')
+
+    def window(ph):
+        shape = tuple(z[f'{ph}_mask_shape'])
+        mask = np.unpackbits(z[f'{ph}_mask_bits'])[: shape[0] * shape[1]].reshape(shape)
+        return PhaseWindow.from_mask(z[f'{ph}_P'], z[f'{ph}_S'], mask)
+
+    p = np.linspace(0.545e9, 100.896e9, 4001)
+    d_sol = window('solid').distance(p, np.interp(p, z['solidus_P'], z['solidus_S']))
+    d_liq = window('melt').distance(p, np.interp(p, z['liquidus_P'], z['liquidus_S']))
+    assert d_sol.max() == pytest.approx(1.119, abs=1e-3)
+    assert d_liq.max() == pytest.approx(2.287, abs=1e-3)
 
 
 @pytest.mark.parametrize('axis', ['P', 'S'])
