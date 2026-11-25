@@ -129,10 +129,12 @@ def test_a_non_finite_point_has_a_nan_distance():
         (np.ones((S.size, 2)), 'shape'),
         (_mask((2, 3, 4), (6, 7, 8))[:-1], 'shape'),
         (_mask((2, 3, 4), (6, 7, 8)) * 0.5, '0 and 1'),
+        (np.zeros((S.size, 3)), 'no valid node in any column'),
     ],
 )
 def test_from_mask_refuses_a_malformed_mask(mask, match):
-    """A mask of the wrong shape or with values other than 0 and 1 is refused."""
+    """A mask of the wrong shape, with values other than 0 and 1, or with no valid node at all
+    (a broken or inverted file) is refused."""
     from aragog.eos.domain import PhaseWindow
 
     with pytest.raises(ValueError, match=match):
