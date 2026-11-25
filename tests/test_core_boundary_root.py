@@ -87,6 +87,7 @@ def _counted(monkeypatch):
     return calls
 
 
+@pytest.mark.physics_invariant
 @settings(max_examples=80, deadline=None)
 @given(t_cmb=_TEMPERATURES)
 @example(t_cmb=3689.4)
@@ -150,6 +151,7 @@ def test_r_icb_on_an_array_equals_r_icb_of_each_entry(order, flip):
             assert _close(g, w, t)
 
 
+@pytest.mark.physics_invariant
 @settings(max_examples=80, deadline=None)
 @given(t_cmb=_TEMPERATURES)
 @example(t_cmb=4100.0)
