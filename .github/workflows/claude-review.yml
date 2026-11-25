@@ -1,12 +1,12 @@
 name: Claude PR review
 
-# Reviews a pull request when it opens, reopens or becomes ready for review, and on a PR comment
-# whose first line is "@claude review" ("@claude deep-review" runs the larger model). A find pass
-# and a verify pass return findings; .github/scripts/review_decision.py posts them and sets the status.
+# Reviews a pull request into the default branch when it opens, reopens or becomes ready for review,
+# and on a PR comment whose first line is "@claude review" ("@claude deep-review" runs the larger
+# model). A find pass and a verify pass return findings; .github/scripts/review_decision.py posts them.
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review, synchronize, edited]
   issue_comment:
     types: [created]
 
@@ -14,37 +14,70 @@ permissions: {}
 
 jobs:
   pending:
-    name: Mark new commits as not reviewed
-    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    name: Mark a changed pull request as not reviewed
+    if: >-
+      github.event_name == 'pull_request'
+        && (github.event.action == 'synchronize'
+          || (github.event.action == 'edited' && github.event.changes.base))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      pull-requests: write
       statuses: write
     steps:
-      - name: Set Claude review to pending on the new head
-        continue-on-error: true  # the token of a fork or bot pull request cannot write statuses
+      - name: Set Claude review to pending and dismiss the workflow's approval
+        continue-on-error: true  # the token of a fork or bot pull request cannot write
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WHY: ${{ github.event.action == 'edited' && 'base branch changed' || 'new commits' }}
         run: |
+          set -o pipefail
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending \
-            -f context='Claude review' -f description='new commits: comment @claude review' \
+            -f context='Claude review' -f description="$WHY: comment @claude review" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
+                and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id' \
+            | while read -r id; do
+                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$id/dismissals" \
+                  -f message="The pull request changed ($WHY)." -f event=DISMISS
+              done
+
+  command:
+    name: Check the comment command
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - name: Match the first line of the comment exactly
+        id: check
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          if head -n 1 <<<"$BODY" | grep -qE '^@claude (deep-)?review[[:space:]]*$'; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
 
   review:
     name: Claude PR review
+    needs: command
     if: >-
-      (github.event_name == 'pull_request'
+      !cancelled()
+      && ((github.event_name == 'pull_request'
         && github.event.action != 'synchronize'
+        && github.event.action != 'edited'
         && !github.event.pull_request.draft
         && github.event.pull_request.head.repo.full_name == github.repository
         && github.event.pull_request.user.type != 'Bot')
       || (github.event_name == 'issue_comment'
-        && github.event.issue.pull_request
-        && (startsWith(github.event.comment.body, '@claude review')
-          || startsWith(github.event.comment.body, '@claude deep-review'))
+        && needs.command.outputs.ok == 'true'
         && github.event.comment.user.type != 'Bot'
-        && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+        && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
     concurrency:
       group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -64,17 +97,18 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          BODY: ${{ github.event.comment.body }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = issue_comment ] && ! head -n 1 <<<"$BODY" | grep -qE '^@claude (deep-)?review[[:space:]]*$'; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,headRefOid,baseRefOid,author)
+          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,headRefOid,baseRefName,author)
           echo "$pr"
           if [ "$(jq -r '.state != "OPEN" or .isDraft or .isCrossRepository or .author.is_bot' <<<"$pr")" = true ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No review: the pull request is closed, a draft, from a fork or by a bot." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$(jq -r .baseRefName <<<"$pr")" != "$DEFAULT_BRANCH" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No review: the pull request does not target the default branch $DEFAULT_BRANCH." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if ! sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/pull/$PR_NUMBER/merge" --jq .object.sha); then
@@ -82,7 +116,7 @@ jobs:
             echo "No review: GitHub has no merge commit for this pull request (merge conflict, or not yet computed); comment @claude review to retry." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          { echo "run=true"; echo "sha=$sha"; jq -r '"head=\(.headRefOid)\nbase=\(.baseRefOid)"' <<<"$pr"; } >> "$GITHUB_OUTPUT"
+          { echo "run=true"; echo "sha=$sha"; jq -r '"head=\(.headRefOid)"' <<<"$pr"; } >> "$GITHUB_OUTPUT"
 
       - name: Mark the head as under review
         if: steps.gate.outputs.run == 'true'
@@ -121,6 +155,15 @@ jobs:
           path: .review_base
           persist-credentials: false
 
+      - name: Check out the decision script and the policy of the default branch
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review_trusted
+          sparse-checkout: .github
+          persist-credentials: false
+
       - name: Set up Python
         if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
@@ -131,7 +174,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         continue-on-error: true
         run: |
-          (cd "$RUNNER_TEMP" && python -I -m pip install --quiet ruff)
+          (cd "$RUNNER_TEMP" && python -I -m pip install --quiet ruff==0.15.16)
           python -I - <<'PY'
           import os, re, subprocess
           added, out = {}, []
@@ -181,7 +224,7 @@ jobs:
           print(text)
           PY
 
-      - name: Install the sandbox of the agent's shell
+      - name: Install bubblewrap and socat for the Claude Code sandbox
         if: steps.gate.outputs.run == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends bubblewrap socat
 
@@ -192,16 +235,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           d=$(mktemp -d "$RUNNER_TEMP/review.XXXXXX")
-          if [ -f .review_base/.github/scripts/review_decision.py ]; then
-            cp .review_base/.github/scripts/review_decision.py "$d/"
-            if [ -f .review_base/.github/review-policy.yml ]; then
-              cp .review_base/.github/review-policy.yml "$d/"
+          if [ -f .review_trusted/.github/scripts/review_decision.py ]; then
+            cp .review_trusted/.github/scripts/review_decision.py "$d/"
+            if [ -f .review_trusted/.github/review-policy.yml ]; then
+              cp .review_trusted/.github/review-policy.yml "$d/"
             fi
           elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             cp .github/scripts/review_decision.py "$d/"
             echo "no_approve=--no-approve" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::the base branch has no .github/scripts/review_decision.py"
+            echo "::error::the default branch has no .github/scripts/review_decision.py"
             exit 1
           fi
           echo "dir=$d" >> "$GITHUB_OUTPUT"
@@ -210,7 +253,16 @@ jobs:
 
       - name: Remove the agent settings of the pull request
         if: steps.gate.outputs.run == 'true'
-        run: rm -rf .claude .mcp.json CLAUDE.local.md
+        run: |
+          rm -rf .review_trusted
+          find . -path ./.git -prune -o \( -name .claude -o -name .mcp.json -o -name CLAUDE.local.md \) \
+            -prune -exec rm -rf {} +
+
+      - name: Write the diff for the model passes
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > .review_diff.patch
 
       - name: Find
         id: find
@@ -225,9 +277,9 @@ jobs:
             PR NUMBER: ${{ env.PR_NUMBER }}
 
             Review this pull request of aragog, the interior evolution module of PROTEUS.
-            First read AGENTS.md and tests/AGENTS.md of the repository. Then read the diff
-            with `gh pr diff ${{ env.PR_NUMBER }}` and the files it touches. The working tree
-            is the merge commit; ./.review_base/ holds the base branch.
+            First read AGENTS.md and tests/AGENTS.md of the repository. Then read the diff in
+            ./.review_diff.patch and the files it touches. The working tree is the merge
+            commit; ./.review_base/ holds the base branch.
 
             Return every finding with one severity:
             - "important": a bug the pull request adds that must be fixed before merge: a wrong
@@ -242,7 +294,7 @@ jobs:
               If that file is missing or reports a failure, say in the summary that the lint did
               not run.
             Apart from those, do not comment on style, naming, formatting or comment length. Give
-            each finding the file path, the line as `gh pr diff` numbers it on the new side, a
+            each finding the file path, the line as ./.review_diff.patch numbers it on the new side, a
             short title and a body with the concrete input or state that fails. At most 8 findings.
 
             ./.review_threads.json lists the findings of earlier reviews (key, severity, path,
@@ -255,7 +307,7 @@ jobs:
           claude_args: |
             --model ${{ env.MODEL }}
             --max-turns 30
-            --allowedTools "Read(./**),Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Read(./**),Grep,Glob"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
@@ -287,8 +339,8 @@ jobs:
             code. ./.review_verify_in.json holds `candidates` (id, severity, path, line, title,
             body) and `fixed` (keys of earlier findings in ./.review_threads.json, with their
             text, that the reviewer says the current code fixes). The working tree is the merge
-            commit, ./.review_base/ holds the base branch, and `gh pr diff ${{ env.PR_NUMBER }}`
-            shows the change.
+            commit, ./.review_base/ holds the base branch, and ./.review_diff.patch shows the
+            change.
 
             Give exactly one verdict for each candidate id. `verified` is true only when you can
             point to the code that makes the claim true and the severity is right: "important"
@@ -299,7 +351,7 @@ jobs:
           claude_args: |
             --model ${{ env.MODEL }}
             --max-turns 15
-            --allowedTools "Read(./**),Grep,Glob,Bash(gh pr diff:*)"
+            --allowedTools "Read(./**),Grep,Glob"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["id","verified","reason"]}},"fixed":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["key","verified","reason"]}}},"required":["verdicts","fixed"]}'
 

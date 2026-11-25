@@ -3,7 +3,7 @@
 The model passes return structured findings; this script decides everything that writes to
 GitHub: the commit status ``Claude review``, the review event (APPROVE or COMMENT), the inline
 threads, the threads to resolve and the earlier approvals to dismiss. The workflow runs the copy
-of this script from the base branch, so a pull request cannot change how it is judged.
+of this script from the default branch, so a pull request cannot change how it is judged.
 
 Subcommands
 -----------
@@ -157,9 +157,9 @@ def load_policy(text):
 def own_threads(nodes, pr_author):
     """Return the threads of this workflow: bot-authored and ending with a finding marker.
 
-    ``state`` is ``open`` when the thread is unresolved or resolved by the pull request author or
-    an unknown actor, ``fixed`` when the workflow resolved it, and ``dismissed`` when another
-    person resolved it.
+    ``state`` is ``open`` when the thread is unresolved, or resolved by the pull request author,
+    by an unknown actor or while the author is unknown; ``fixed`` when the workflow resolved it;
+    ``dismissed`` when another person resolved it.
     """
     out = []
     for t in nodes:
@@ -170,7 +170,7 @@ def own_threads(nodes, pr_author):
             state = 'open'
             if t.get('isResolved') and by == BOT_GRAPHQL:
                 state = 'fixed'
-            elif t.get('isResolved') and by and by != pr_author:
+            elif t.get('isResolved') and by and pr_author and by != pr_author:
                 state = 'dismissed'
             out.append(
                 {
@@ -251,10 +251,10 @@ def _verdicts(verify, cands):
 
 def _withheld(policy_text, files, no_approve):
     if no_approve:
-        return ['the decision script is not on the base branch yet']
+        return ['the decision script is not on the default branch yet']
     pol = load_policy(policy_text)
     if pol is None:
-        return ['no valid .github/review-policy.yml on the base branch']
+        return ['no valid .github/review-policy.yml on the default branch']
     if not files:
         return ['the pull request changes no file']
     why = []

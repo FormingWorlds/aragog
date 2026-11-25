@@ -1,4 +1,4 @@
 # Where the Claude review workflow may approve a pull request. The workflow reads this file from
-# the base branch. It approves only when every changed path matches an allow glob and no deny glob.
+# the default branch. It approves only when every changed path matches an allow glob and no deny glob.
 # Changes to .github/, AGENTS.md, CODEOWNERS, .gitattributes, .gitmodules, symlinks or submodules: never.
 {"version": 1, "approve": {"allow": [], "deny": []}}
