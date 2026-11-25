@@ -55,8 +55,8 @@ class PhaseWindow:
         Raises
         ------
         ValueError
-            When an axis does not rise strictly, the mask shape is not (n_S, n_P), or a value is
-            not 0 or 1.
+            When an axis does not rise strictly, the mask shape is not (n_S, n_P), a value is
+            not 0 or 1, or no column holds a valid node.
         """
         P, S, mask = np.asarray(P, float), np.asarray(S, float), np.asarray(mask, float)
         if not (np.all(np.diff(P) > 0.0) and np.all(np.diff(S) > 0.0)):
@@ -67,6 +67,8 @@ class PhaseWindow:
             raise ValueError('mask values must be 0 and 1')
         valid = mask.astype(bool)
         empty = ~valid.any(axis=0)
+        if empty.all():
+            raise ValueError('the mask holds no valid node in any column')
         i_lo, i_hi = valid.argmax(axis=0), S.size - 1 - valid[::-1].argmax(axis=0)
         n_inside_0 = int(np.where(empty, 0, i_hi - i_lo + 1 - valid.sum(axis=0)).sum())
         if n_inside_0:
@@ -148,7 +150,9 @@ class TableDomain:
         A single phase is read at (P, S) on its own table; a mush point on the melt table at
         (P, S_liq(P)) and on the solid table at (P, S_sol(P)). A single-phase point where the
         phase blend weight (``aragog.utilities.blend_weight``) is above 0 also reads those 2
-        phase-boundary lookups. The worst lookup of a point counts.
+        phase-boundary lookups. The worst lookup of a point counts. The band is that of the
+        NumPy phase evaluator; the mixing flux, which floors the phase gap at 1 J/kg/K, and the
+        JAX band edge can read boundary lookups outside it.
 
         Parameters
         ----------

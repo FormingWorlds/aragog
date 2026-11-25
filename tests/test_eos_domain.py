@@ -184,17 +184,6 @@ def test_an_empty_column_has_no_window_and_every_point_there_is_outside(caplog):
     )
 
 
-def test_an_all_zero_mask_is_read_and_puts_every_point_outside():
-    """A mask with no valid node is a valid file: every finite point is infinitely outside."""
-    from aragog.eos.domain import PhaseWindow
-
-    w = PhaseWindow.from_mask(P, S, np.zeros((S.size, P.size)))
-    assert np.isposinf(
-        w.distance(np.array([0.0, 0.7e9, 2.0e9]), np.array([1000.0, 1500.0, 1900.0]))
-    ).all()
-    assert np.isnan(w.distance(np.array([np.nan]), np.array([1500.0])))[0]
-
-
 def test_an_empty_end_column_beyond_the_points_changes_no_distance():
     """An empty column above the pressure of every point leaves the distances of the points
     between the valid columns as they are without it."""
