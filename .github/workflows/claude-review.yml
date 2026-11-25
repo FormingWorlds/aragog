@@ -446,5 +446,8 @@ jobs:
               jq -r --arg m "$MODEL" '[.[] | select(.type == "result")] | last
                 | "model \($m), turns \(.num_turns), wall \(.duration_ms / 1000) s, API \(.duration_api_ms / 1000) s"' "$e" \
                 | tee -a "$GITHUB_STEP_SUMMARY"
+              jq -c '[.[] | select(.type == "system" and .subtype == "init")][0] | {tools, permissionMode, claude_code_version}' "$e"
+              jq -c '[.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | {name, input}]' "$e"
+              jq -c '[.[] | select(.type == "result")] | last | .permission_denials' "$e"
             fi
           done
