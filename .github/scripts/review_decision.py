@@ -218,7 +218,7 @@ def plan(
 ):
     """Return the action plan for one review run (see the module docstring)."""
     ids = _verified(verify, 'verdicts', 'id')
-    fixed = _verified(verify, 'fixed', 'key') & {t['key'] for t in threads}
+    fixed = _verified(verify, 'fixed', 'key')
     found = [c for c in cands['candidates'] if c['id'] in ids]
     rejected = len(cands['candidates']) - len(found)
     still_open = [t for t in threads if t['key'] not in fixed and t['severity'] in BLOCKING]

@@ -124,6 +124,12 @@ def test_marked_thread_of_a_person_is_never_resolved():
     assert p['resolve'] == []
 
 
+def test_resolved_own_thread_is_neither_resolved_again_nor_blocking():
+    key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
+    p = _plan(threads=[_thread(key, resolved=True)], fixed=[key])
+    assert p['resolve'] == [] and p['state'] == 'success'
+
+
 def test_verified_fix_resolves_own_thread_and_passes():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
     p = _plan(threads=[_thread(key)], fixed=[key])
@@ -180,6 +186,8 @@ def test_policy_off_missing_or_broken_withholds_approval():
         '{"version": 2}',
         'not json',
         '{"version": 1, "approve": {"allow": "**"}}',
+        '{"version": 2, "approve": {"allow": ["**"], "deny": []}}',
+        '{"version": 1, "approve": {"allow": ["**", 1], "deny": []}}',
     ):
         assert _plan(policy=policy)['event'] == 'COMMENT', policy
 
@@ -212,6 +220,8 @@ def test_a_failed_or_withheld_run_dismisses_own_earlier_approvals():
         ('*.md', 'docs/a.md', False),
         ('docs/*.md', 'docs/a.md', True),
         ('docs/?.md', 'docs/ab.md', False),
+        ('docs?a.md', 'docs/a.md', False),
+        ('docs/?.md', 'docs/a.md', True),
     ],
 )
 def test_glob_match(pattern, path, hit):
