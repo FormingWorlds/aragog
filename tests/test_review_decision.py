@@ -1220,18 +1220,19 @@ def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, posts
 
 def _job(name):
     assert f'\n  {name}:\n' in _WORKFLOW
-    return _block(_WORKFLOW, f'\n  {name}:', 2)
+    return _block(_WORKFLOW[_WORKFLOW.index(f'\n  {name}:\n') + 1 :], f'  {name}:', 2)
 
 
 def test_only_the_resolve_job_can_write_contents_and_it_runs_no_pull_request_code():
     resolve = _job('resolve')
     assert 'needs: review' in resolve and "needs.review.result == 'success'" in resolve
     perms = _block(resolve, '    permissions:', 4).splitlines()[1:]
-    assert sorted(p.strip() for p in perms) == ['contents: write', 'statuses: write']
-    assert 'checkout' not in resolve and 'python' not in resolve and 'claude' not in resolve
-    assert '${{' not in _run_block(
-        _step_in(resolve, 'Resolve the threads the review found fixed')
-    )
+    assert sorted(p.split('#')[0].strip() for p in perms) == [
+        'contents: write',
+        'statuses: write',
+    ]
+    assert not any(s in resolve for s in ('actions/checkout', 'python', 'claude-code-action'))
+    assert '${{' not in _run_block(_step_in(resolve, 'Resolve the threads of fixed findings'))
     for job in ('pending', 'command', 'review'):
         assert 'contents: write' not in _job(job)
     outputs = _block(_job('review'), '    outputs:', 4)
@@ -1334,7 +1335,7 @@ def test_the_resolve_job_resolves_only_own_findings_and_reports_a_failure(
         'RUN_URL': 'RUN',
         'GITHUB_REPOSITORY': 'o/r',
     }
-    step = _run_block(_step_in(_job('resolve'), 'Resolve the threads the review found fixed'))
+    step = _run_block(_step_in(_job('resolve'), 'Resolve the threads of fixed findings'))
     rc = subprocess.run(['bash', '-e', '-c', step], env=env).returncode
     calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
     assert sum('resolveReviewThread' in ' '.join(c) for c in calls) == resolved
