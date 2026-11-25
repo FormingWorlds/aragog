@@ -26,6 +26,7 @@ from __future__ import annotations
 import bisect
 import logging
 import math
+from functools import cached_property
 from pathlib import Path
 
 import numpy as np
@@ -413,7 +414,7 @@ class EntropyEOS:
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
-        self._domain_dir, self._domain_read, self._domain = eos_dir, False, None
+        self._domain_dir = eos_dir.resolve()
 
         # Store P and S ranges. P uses the temperature tables only (grid
         # shape reference for callers). S is the union across every
@@ -794,20 +795,16 @@ class EntropyEOS:
         phi = np.clip((S - S_sol) / dS, 0.0, 1.0)
         return phi
 
-    @property
+    @cached_property
     def domain(self) -> TableDomain | None:
-        """Valid table windows, read from the mask files at the first access (see class doc)."""
-        if not self._domain_read:
-            self._domain = TableDomain.from_dir(
-                self._domain_dir,
-                {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')},
-            )
-            self._domain_read = True
-        return self._domain
+        """Valid table windows, read from the mask files at the first access (see class doc).
 
-    @domain.setter
-    def domain(self, value: TableDomain | None) -> None:
-        self._domain, self._domain_read = value, True
+        An assignment sets it; a read that raises is not stored, so the next access reads again.
+        """
+        return TableDomain.from_dir(
+            self._domain_dir,
+            {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')},
+        )
 
     def _check_entropy_range(
         self,

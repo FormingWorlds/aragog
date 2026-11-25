@@ -61,13 +61,14 @@ class PhaseWindow:
         if not np.isin(mask, (0.0, 1.0)).all():
             raise ValueError('mask values must be 0 and 1')
         valid = mask.astype(bool)
-        lo, hi = np.empty(P.size), np.empty(P.size)
-        for k in range(P.size):
-            idx = np.flatnonzero(valid[:, k])
-            if idx.size == 0:
-                raise ValueError(f'mask column {k} holds no valid node')
-            lo[k], hi[k] = S[idx[0]], S[idx[-1]]
-        return cls(P=P, lo=lo, hi=hi, dS=float(np.mean(np.diff(S))))
+        empty = ~valid.any(axis=0)
+        if empty.any():
+            raise ValueError(f'mask column {np.argmax(empty)} holds no valid node')
+        i_lo, i_hi = valid.argmax(axis=0), S.size - 1 - valid[::-1].argmax(axis=0)
+        n_inside_0 = int((i_hi - i_lo + 1 - valid.sum(axis=0)).sum())
+        if n_inside_0:
+            logger.info('%d mask nodes marked 0 lie inside the window, not judged', n_inside_0)
+        return cls(P=P, lo=S[i_lo], hi=S[i_hi], dS=float(np.mean(np.diff(S))))
 
     def ends(self, P: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """Window ends at ``P``, linear between columns and held at the end columns."""
@@ -149,11 +150,6 @@ class TableDomain:
         """
         if not (np.isfinite(P) and np.isfinite(S)):
             return math.nan
-        table = eos._tables[f'temperature_{"melt" if melt else "solid"}']
-        pt = [
-            [
-                np.clip(P, table['P'][0], table['P'][-1]),
-                np.clip(S, table['S'][0], table['S'][-1]),
-            ]
-        ]
-        return float(np.ravel(table['interp'](pt))[0])
+        return eos._lookup_scalar(
+            'temperature', 'melt' if melt else 'solid', float(P), float(S)
+        )

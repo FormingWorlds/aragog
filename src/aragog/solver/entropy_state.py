@@ -534,11 +534,10 @@ class EntropyState:
         """
         mesh = self._evaluator.mesh
         S = np.asarray(entropy).ravel()
-        if entropy_basic is not None:
-            S_b = np.array(entropy_basic, dtype=float).ravel()
-        else:
+        if entropy_basic is None:
             basic = getattr(mesh, 'entropy_at_basic_nodes', mesh.quantity_at_basic_nodes)
-            S_b = np.array(np.ravel(basic(S)), dtype=float)
+            entropy_basic = basic(S)
+        S_b = np.array(entropy_basic, dtype=float).ravel()
         if dSdr_cmb is not None:
             r_basic = np.asarray(mesh.basic.radii).ravel()
             dr_offset = r_basic[0] - 0.5 * (r_basic[0] + r_basic[1])

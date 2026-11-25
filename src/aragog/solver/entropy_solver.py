@@ -163,7 +163,7 @@ class CMBClosureError(RuntimeError):
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
-_CALL_START = 'call start'  # solve() reads the call-start solution itself
+_CALL_START = object()  # solve() reads the call-start solution itself
 
 
 @dataclass(frozen=True)
@@ -5608,7 +5608,7 @@ class EntropySolver:
             self._warned.add(key)
             logger.log(level, message)
 
-    def solve(self, _floor_discard: str | None = None, _start=_CALL_START) -> None:
+    def solve(self, _floor_discard: str | None = None, _start: object = _CALL_START) -> None:
         """Run the BDF time integration.
 
         A successful solve also stores the per-call energy integrals on the result as
@@ -5624,6 +5624,7 @@ class EntropySolver:
         wall_start = time.perf_counter()
         self.cmb_ledger = None
         last_accepted = getattr(self, '_solution', None) if _start is _CALL_START else _start
+        self._eos_domain_prepare()
         s0 = getattr(self, '_S0', None)
         if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
@@ -6521,6 +6522,15 @@ class EntropySolver:
                 return float(t), msg
         return None
 
+    def _eos_domain_prepare(self) -> None:
+        """Check the domain settings and read the masks before a call integrates, so that a bad
+        setting or mask file raises with the solver state unchanged."""
+        cfg = self.parameters.solver
+        check_eos_domain_mode(cfg.eos_domain_check)
+        check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
+        if cfg.eos_domain_check != 'off' and not self.parameters.phase_mixed.const_properties:
+            getattr(self.entropy_eos, 'domain', None)
+
     def _eos_domain_failure(self, sol) -> str | None:
         """Judge the EOS lookup points of a call's output states against the valid table window.
 
@@ -6551,7 +6561,8 @@ class EntropySolver:
         if domain is None:
             return None
         tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
-        cmb_slot = self._core_bc in ('energy_balance', 'core_module')
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
         n_out, worst = 0, None
         for t, y in zip(sol.t, np.asarray(sol.y, dtype=float).T):
             S_s = self._stag_entropy(y)
@@ -6561,9 +6572,7 @@ class EntropySolver:
                     S_s, entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1]
                 )
             else:
-                S_b = self.state.basic_entropy(
-                    S_s, float(y[self._n_stag]) if cmb_slot else None
-                )
+                S_b = self.state.basic_entropy(S_s, None if k_cmb is None else y[k_cmb])
             for kind, P, S, r in (
                 ('staggered', self._P_stag_flat, S_s, self._r_stag_flat),
                 ('basic', self._P_basic_flat, S_b, self._r_basic_flat),

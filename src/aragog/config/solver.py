@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import numbers
 
 import attrs
 
@@ -19,7 +20,7 @@ def check_eos_domain_mode(mode) -> None:
 
 def check_eos_domain_tolerance(tol) -> float:
     """Return ``eos_domain_tolerance_cells`` as a float; refuse one not finite and > 0."""
-    if isinstance(tol, bool) or not isinstance(tol, (int, float)):
+    if isinstance(tol, bool) or not isinstance(tol, numbers.Real):
         raise TypeError(f'eos_domain_tolerance_cells must be a number, got {tol!r}')
     if not 0.0 < tol < float('inf'):
         raise ValueError(f'eos_domain_tolerance_cells must be finite and > 0, got {tol!r}')
@@ -60,7 +61,7 @@ class SolverConfig:
         Check of the EOS lookup points of each call against the valid window of the tables
         (``valid_mask_*.dat``): ``'off'``, ``'warn'`` (1 warning per call, the default) or
         ``'raise'`` (``EOSDomainError``). Off for tables with neither mask file; with only one,
-        the first check raises ``FileNotFoundError``.
+        the first call raises ``FileNotFoundError``.
     eos_domain_tolerance_cells : float
         Distance outside the window, in table entropy cells, beyond which a point counts.
         Default 5.
