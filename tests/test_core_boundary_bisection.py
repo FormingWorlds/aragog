@@ -80,7 +80,8 @@ def test_the_bisection_stops_at_its_fixed_point(monkeypatch, t_cmb, most):
     1 above the measured count: 1 for a liquid centre (above the onset near 4147 K), 55 to 58
     for a frozen core or an inner core of 0.27e6 m or more, 72 at 10 m (steps grow as about
     54 + log2(r_cmb / r_icb)), all 81 for NaN, and for an array the count of its slowest entry
-    (a liquid entry adds none); the root is unchanged."""
+    (a liquid entry adds none). The callback makes a new compiled program, so the bits of
+    the root are left to the tests below."""
     calls = []
     original = CoreEnergyBudget.superheat
 
@@ -90,11 +91,9 @@ def test_the_bisection_stops_at_its_fixed_point(monkeypatch, t_cmb, most):
 
     monkeypatch.setattr(CoreEnergyBudget, 'superheat', counted)
     budget = _pair()
-    radius = jax.jit(budget._r_icb_bisect)(t_cmb)
+    jax.jit(budget._r_icb_bisect)(t_cmb)
     jax.effects_barrier()
     assert most[0] <= len(calls) <= most[1]
-    monkeypatch.setattr(CoreEnergyBudget, 'superheat', original)
-    assert _bits(radius, jax.jit(_pair(_FixedSteps)._r_icb_bisect)(t_cmb))
 
 
 @pytest.mark.parametrize(
