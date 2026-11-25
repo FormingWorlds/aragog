@@ -159,13 +159,17 @@ def _empty_column_mask(k):
     return m
 
 
-def test_an_empty_column_has_no_window_and_every_point_there_is_outside():
+def test_an_empty_column_has_no_window_and_every_point_there_is_outside(caplog):
     """A column with no valid node (a fully filled column) has no window: a point at its pressure,
     or between it and a neighbouring column, is infinitely outside; a point at the pressure of a
     valid column keeps that column's window, also next to the empty one."""
     from aragog.eos.domain import PhaseWindow
 
-    w = PhaseWindow.from_mask(P, S, _empty_column_mask(1))
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
+        w = PhaseWindow.from_mask(P, S, _empty_column_mask(1))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not any('mask nodes marked 0' in m for m in msgs)  # an empty column has no inside
+    assert sum('1 mask columns hold no valid node' in m for m in msgs) == 1
     d = w.distance(
         np.array([1.0e9, 0.5e9, 1.5e9, 1.0e9]), np.array([1500.0, 1400.0, 1600.0, 1.0e6])
     )

@@ -288,3 +288,30 @@ def test_relative_velocity_scales_with_viscosity_val_not_fixed_liquid_field():
     assert float(v1.item()) != float(v2.item())
     ratio = float(v1.item()) / float(v2.item())
     assert ratio == pytest.approx(1.0e4 / 1.0e2, rel=1e-10)
+
+
+@needs_eos
+def test_the_smoothing_width_sets_the_mixed_phase_weight_outside_the_mush():
+    """With ``matprop_smooth_width`` above 0 the blend gives the mixed-phase properties the weight
+    ``blend_weight`` just above the liquidus, which changes the density; with width 0 it is 0."""
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.utilities import blend_weight
+
+    eos = entropy_eos_copy(EOS_DIR)
+    P = np.array([5.0e10])
+    s_sol, s_liq = float(eos.solidus_entropy(P).item()), float(eos.liquidus_entropy(P).item())
+    S = np.array([s_liq + 0.02 * (s_liq - s_sol)])  # melt coordinate 1.02
+    out = {}
+    for w in (0.0, 0.1):
+        ev = EntropyPhaseEvaluator(
+            entropy_eos=eos, gravitational_acceleration=10.0, matprop_smooth_width=w
+        )
+        ev.set_pressure(P)
+        ev.set_entropy(S)
+        ev.update()
+        out[w] = (float(ev._smth_val[0]), float(np.ravel(ev.density())[0]))
+    expect = float(blend_weight(np.array([1.02]), 0.1)[0])
+    assert (
+        out[0.0][0] == 0.0 and out[0.1][0] == pytest.approx(expect, rel=1e-6) and expect > 0.1
+    )
+    assert out[0.1][1] != out[0.0][1]

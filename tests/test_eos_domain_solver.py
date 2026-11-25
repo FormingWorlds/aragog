@@ -384,6 +384,7 @@ def test_the_worst_state_of_the_call_is_named_with_its_time():
     n_pts = 2 * s._n_stag + 1
     assert f'{2 * n_pts} lookup points over the 3 output states' in msg
     assert 'worst at t=2.500000e+00 yr' in msg and '9.00 cells outside' in msg
+    assert f'S={a[0] + 9.0 * dS:.6f} J/kg/K' in msg  # the entropy of the worst state
 
 
 def test_the_message_temperature_is_the_table_value_and_reads_no_range_warning():
