@@ -400,8 +400,8 @@ jobs:
         run: |
           set -o pipefail
           last=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" \
-            --jq '[.[] | select(.context == "Claude review")][0].target_url')
-          if [ "$last" != "$RUN_URL" ]; then
+            --jq '[.[] | select(.context == "Claude review")][0]')
+          if [ "$(jq -r .target_url <<<"$last")" != "$RUN_URL" ]; then
             echo "A newer run owns the status of $HEAD_SHA; nothing to report."
             exit 0
           fi
@@ -413,9 +413,13 @@ jobs:
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac
-          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
-            -f context='Claude review' -f description="$cause; comment @claude review to retry" \
-            -f target_url="$RUN_URL"
+          if [ "$failed" = post ] && jq -e '.description | startswith("post failed:")' <<<"$last" >/dev/null; then
+            echo "The post step set the status with its cause."
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
+              -f context='Claude review' -f description="$cause; comment @claude review to retry" \
+              -f target_url="$RUN_URL"
+          fi
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
                 and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id' \
