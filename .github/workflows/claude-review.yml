@@ -423,8 +423,17 @@ jobs:
             --out "$D/plan.json"
           jq '{state, description, event, resolve, dismiss, comments: (.comments | length)}' "$D/plan.json" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          python -I "$D/review_decision.py" apply --plan "$D/plan.json" --repo "$GITHUB_REPOSITORY" \
-            --pr "$PR_NUMBER" --url "$RUN_URL"
+          {
+            echo "resolve=$(jq -c .resolve "$D/plan.json")"
+            echo "state=$(jq -r .state "$D/plan.json")"
+            echo "description=$(jq -r .description "$D/plan.json")"
+          } >> "$GITHUB_OUTPUT"
+          jq '.resolve = []' "$D/plan.json" > "$D/apply.json"
+          if ! python -I "$D/review_decision.py" apply --plan "$D/apply.json" --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" --url "$RUN_URL" 2>"$RUNNER_TEMP/post_cause.txt"; then
+            cat "$RUNNER_TEMP/post_cause.txt" >&2
+            exit 1
+          fi
 
       - name: Report a failed review
         if: (failure() || cancelled()) && steps.gate.outputs.run == 'true'
@@ -449,7 +458,7 @@ jobs:
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac
-          if [ "$failed" = post ] && jq -e '.description | startswith("post failed:")' <<<"$last" >/dev/null; then
+          if [ "$failed" = post ] && grep -q "^review_decision: Command '" "$RUNNER_TEMP/post_cause.txt" 2>/dev/null; then
             echo "The post step set the status with its cause."
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \

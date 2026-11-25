@@ -966,8 +966,9 @@ def test_no_review_without_the_decision_script_on_the_default_branch():
 
 def test_the_failure_report_keeps_the_cause_that_the_post_step_set():
     report = _step('Report a failed review')
-    assert 'startswith("post failed:")' in report
-    check = report.index('startswith("post failed:")')
+    rule = 'grep -q "^review_decision: Command \'" "$RUNNER_TEMP/post_cause.txt"'
+    assert rule in report and 'startswith("post failed:")' not in report
+    check = report.index(rule)
     status = report.index("-f context='Claude review' -f description=\"$cause")
     assert '"$failed" = post' in report and check < report.index('else', check) < status
     assert "f'post failed: {cause[0]}'" in _PATH.read_text()
