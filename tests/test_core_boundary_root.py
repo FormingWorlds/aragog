@@ -56,7 +56,7 @@ def _pair(cls=CoreEnergyBudget):
 BUDGET, REFERENCE = _pair(), _pair(_FixedSteps)
 ONSET, FREEZE = BUDGET.t_onset, BUDGET.t_freeze
 R_CMB = EARTH['r_cmb']
-WIDTH = 2.0 * EPS * R_CMB
+WIDTH = 2.0 * EPS * R_CMB + float(np.spacing(R_CMB))  # u-width in metres, product rounded
 SWEEP = np.linspace(FREEZE + 0.5, ONSET - 0.5, 41)
 _TEMPERATURES = st.one_of(
     st.floats(min_value=1.0, max_value=8000.0),
@@ -95,7 +95,8 @@ def _counted(monkeypatch):
 @example(t_cmb=ONSET - 1e-9)
 def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     """The bracket [lo, hi] keeps superheat(lo) < 0 <= superheat(hi) as the search saw them and
-    ends with hi - lo <= 2 eps r_cmb in at most n_1/2 + n0 steps (Theorem 2.1 of Oliveira &
+    ends with hi - lo <= 2 eps r_cmb (plus 1 ulp of r_cmb, as each end is u r_cmb rounded) in
+    at most n_1/2 + n0 steps (Theorem 2.1 of Oliveira &
     Takahashi 2020); a liquid centre gives [0, 0] and a frozen CMB [r_cmb, r_cmb] with no step;
     a NaN temperature (no sign) shrinks to a radius of at most the width above 0. The case is
     read from end superheats more than 1e-6 K from 0, so that an ulp at the onset cannot put
@@ -117,7 +118,9 @@ def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
 def test_the_search_makes_few_calls(monkeypatch):
     """Superheat calls of one boundary solve (the 2 ends + 1 per step): 2 for a liquid centre
     and for a frozen CMB, at most 2 + n_1/2 + n0 at any temperature, and a mean of at most 25
-    over 41 temperatures from freeze-out to the onset (the 80-step bisection needs 56)."""
+    and a maximum of at most 45 over 41 temperatures from freeze-out to the onset (a bisection
+    that stops at its fixed point needs 55 on mean, the 80-step bisection 81). The maximum holds by the Illinois halving: without it, the search keeps
+    one end near freeze-out until the projection ends it at the bound."""
     calls = _counted(monkeypatch)
     solve = jax.jit(_pair().r_icb)
     counts = []
@@ -128,7 +131,7 @@ def test_the_search_makes_few_calls(monkeypatch):
         counts.append(len(calls))
     assert counts[:2] == [2, 2]
     assert max(counts) <= 2 + STEPS
-    assert np.mean(counts[2:-1]) <= 25.0
+    assert np.mean(counts[2:-1]) <= 25.0 and max(counts[2:-1]) <= 45
 
 
 @pytest.mark.parametrize(

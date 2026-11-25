@@ -12,7 +12,7 @@ of the isothermal-reservoir factor. The contract clauses exercised here:
   integrator precision, component by component, including both boundary
   slots (the check that keeps CVODE's Newton iteration consistent);
 - the analytic Jacobian is finite and carries the boundary couplings
-  the FD path resolves (the custom JVP through the inner-core bisection
+  the FD path resolves (the custom JVP through the inner-core root search
   must survive ``jacrev``).
 """
 

@@ -36,7 +36,10 @@ _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
-_BISECT_ITERS = 80  # r_icb: at most this many steps; _kinks: exactly this many
+_BISECT_ITERS = 80  # steps of the kink bisection
+# ITP search of the boundary on u = r / r_cmb in [0, 1] (Oliveira & Takahashi 2020, Algorithm 1):
+# eps = 2^-54 is half the float spacing at u = 1, so n_1/2 = 53, and n0 = 5 gives the slack.
+_ITP_EPS, _ITP_STEPS, _ITP_K1, _ITP_K2 = 2.0**-54, 53 + 5, 0.2, 2.0
 
 
 @register_pytree
@@ -261,57 +264,89 @@ class CoreEnergyBudget:
         return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
 
     @functools.cached_property
-    def _bisect_steps(self):
-        """Condition and step of the bisection, built once per budget so that the loop compiles
-        once. A step that leaves the bracket unchanged ends the loop: every later step would
-        leave it unchanged too, so the root has the bits of all ``_BISECT_ITERS`` steps of the
-        same compiled program. An array of temperatures steps until its slowest entry stops."""
+    def _root_steps(self):
+        """Condition and step of the boundary root search, built once per budget so that the
+        loop compiles once. A step that leaves the bracket unchanged ends the loop: its ends are
+        then adjacent floats, so every later step would leave it unchanged too. An array of
+        temperatures steps until its slowest entry stops."""
+        r_cmb = self.profiles.r_cmb
 
         def cond(carry):
-            i, _, _, _, moving = carry
-            return jnp.any(moving) & (i < _BISECT_ITERS)
+            return jnp.any(carry[-1]) & (carry[0] < _ITP_STEPS)
 
         def body(carry):
-            i, lo, hi, t_cmb, _ = carry
-            mid = (lo + hi) / 2.0
-            frozen = self.superheat(mid, t_cmb) < 0.0
-            new_lo, new_hi = jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
-            return i + 1, new_lo, new_hi, t_cmb, (new_lo != lo) | (new_hi != hi)
+            k, a, b, f_a, f_b, kept, t_cmb, _ = carry
+            mid = (a + b) / 2.0
+            den = f_b - f_a
+            x_f = jnp.where(
+                den > 0.0, (f_b * a - f_a * b) / jnp.where(den > 0.0, den, 1.0), mid
+            )
+            sigma = jnp.sign(mid - x_f)
+            delta = _ITP_K1 * (b - a) ** _ITP_K2
+            x_t = jnp.where(delta <= jnp.abs(mid - x_f), x_f + sigma * delta, mid)
+            reach = jnp.maximum(_ITP_EPS * 2.0 ** (_ITP_STEPS - k) - (b - a) / 2.0, 0.0)
+            x = jnp.where(jnp.abs(x_t - mid) <= reach, x_t, mid - sigma * reach)
+            x = jnp.where((x > a) & (x < b), x, mid)
+            f_x = self.superheat(x * r_cmb, t_cmb)
+            frozen = f_x < 0.0
+            # Illinois: the stored superheat of an end kept twice in a row is halved
+            f_a = jnp.where(frozen, f_x, jnp.where(kept == -1, f_a / 2.0, f_a))
+            f_b = jnp.where(frozen, jnp.where(kept == 1, f_b / 2.0, f_b), f_x)
+            new_a, new_b = jnp.where(frozen, x, a), jnp.where(frozen, b, x)
+            kept = jnp.where(frozen, 1, -1).astype(kept.dtype)
+            return k + 1, new_a, new_b, f_a, f_b, kept, t_cmb, (new_a != a) | (new_b != b)
 
         return cond, body
 
-    def _r_icb_bisect(self, t_cmb):
-        """Primal bisection for the boundary radius; see :meth:`r_icb`."""
+    def _r_icb_bracket(self, t_cmb):
+        """Steps, final bracket [m] and the end superheats [K] as the search stored them."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
-        # All-liquid guard: with positive centre superheat there is no root; the bracket
-        # [0, 0] of a liquid entry does not move, so it never holds an array loop open.
-        liquid = self.superheat(0.0, t_cmb) > 0.0
+        f_0 = self.superheat(0.0, t_cmb) * jnp.ones_like(t)
+        f_c = self.superheat(p.r_cmb, t_cmb) * jnp.ones_like(t)
+        # A liquid centre gives [0, 0] and a frozen CMB [1, 1]: no root, no step.
+        liquid, frozen = f_0 > 0.0, (f_c < 0.0) & ~(f_0 > 0.0)
         init = (
             0,
-            jnp.zeros_like(t),
-            jnp.where(liquid, 0.0, jnp.full_like(t, p.r_cmb)),
+            jnp.where(frozen, 1.0, jnp.zeros_like(t)),
+            jnp.where(liquid, 0.0, jnp.ones_like(t)),
+            f_0,
+            f_c,
+            jnp.zeros(jnp.shape(t), jnp.int32),
             t,
-            ~liquid,
+            ~liquid & ~frozen,
         )
-        _, lo, hi, _, _ = jax.lax.while_loop(*self._bisect_steps, init)
-        return jnp.where(liquid, 0.0, (lo + hi) / 2.0)
+        k, a, b, f_a, f_b, *_ = jax.lax.while_loop(*self._root_steps, init)
+        return k, a * p.r_cmb, b * p.r_cmb, f_a, f_b
+
+    def _r_icb_solve(self, t_cmb):
+        """Boundary radius [m] of the root search; see :meth:`r_icb`."""
+        _, lo, hi, _, _ = self._r_icb_bracket(t_cmb)
+        return (lo + hi) / 2.0
 
     def r_icb(self, t_cmb):
         """Inner-core boundary radius [m] at ``t_cmb``.
 
-        Bisection of the superheat on [0, r_cmb] that stops when its bracket
-        no longer changes (at most 80 steps); with no crossing it converges to
-        0 (fully liquid) or r_cmb (fully frozen), so the value is always defined
-        and trace-safe. A liquid centre returns zero with no step, regardless
-        of frozen shells above it (the top-down
+        ITP root search of the superheat on u = r / r_cmb in [0, 1]
+        (Oliveira & Takahashi 2020, Algorithm 1, p. 5:21,
+        https://doi.org/10.1145/3423597) with k1 = 0.2, k2 = 2, n0 = 5 and
+        eps = 2^-54: at most n_1/2 + n0 = 58 steps, and a final bracket of at
+        most 2 eps r_cmb (3.9e-10 m for r_cmb = 3480 km). The interpolation
+        step is modified: its regula falsi point uses the stored superheats,
+        and the stored superheat of an end kept twice in a row is halved (the
+        Illinois rule, Dowell & Jarratt 1971, https://doi.org/10.1007/BF01934364).
+        Truncation and projection are those of Algorithm 1, so the evaluated
+        point stays in the minmax interval of Theorem 2.1 (p. 5:6) and the
+        bound holds. The search stops when its bracket no longer changes. A liquid centre
+        returns zero and a frozen CMB returns r_cmb, both with no step; zero
+        holds regardless of frozen shells above the centre (the top-down
         and snow topologies have no inner core in the bottom-up sense);
         the boundary terms drop to zero there, and the solver refuses those
         states (``aragog.core.regime.refuse_unmodelled_regime``).
 
         The derivative is the implicit-function sensitivity attached as a
-        custom JVP: a comparison-driven bisection carries no gradient of
+        custom JVP: a comparison-driven search carries no gradient of
         its own (autodiff sees only the converged constant trace), so
         without this rule anything differentiating through the boundary
         would silently read zero.
@@ -355,13 +390,13 @@ class CoreEnergyBudget:
 
         @jax.custom_jvp
         def root(t_cmb):
-            return self._r_icb_bisect(t_cmb)
+            return self._r_icb_solve(t_cmb)
 
         @root.defjvp
         def root_jvp(primals, tangents):
             (t_cmb,) = primals
             (t_dot,) = tangents
-            radius = self._r_icb_bisect(t_cmb)
+            radius = self._r_icb_solve(t_cmb)
             d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
             d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
             safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
