@@ -499,6 +499,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write  # resolveReviewThread needs it; pull-requests: write is not enough
+      pull-requests: read
       statuses: write
     steps:
       - name: Resolve the threads of fixed findings
