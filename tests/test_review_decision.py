@@ -355,8 +355,8 @@ def test_apply_pins_the_review_to_the_head_and_sets_the_status_last(tmp_path):
     assert paths[-1].endswith('statuses/' + HEAD)
     review = [d for a, d in gh.calls if a[-1].endswith('/reviews')][0]
     assert review['commit_id'] == HEAD and review['event'] == 'COMMENT'
-    comment = [d for a, d in gh.calls if a[-1].endswith('/comments')][0]
-    assert comment['commit_id'] == HEAD and comment['line'] == 11
+    assert review['comments'][0]['line'] == 11
+    assert not [a for a, _ in gh.calls if a[-1].endswith('/comments')]
 
 
 def _verify_for(cands, **over):
@@ -735,7 +735,8 @@ def test_cli_prep_plan_and_apply(tmp_path, monkeypatch):
         )
         == 0
     )
-    assert gh.calls[-1][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-2][0][-1] == 'repos/o/r/statuses/' + HEAD
+    assert gh.calls[-1][0][-1] == 'repos/o/r/pulls/5/reviews/3/dismissals'
     (w / 'bad.json').write_text('{}')
     assert (
         rd.main(
