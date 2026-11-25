@@ -193,6 +193,50 @@ def _compared_per_call(mode, rhs, jac, monkeypatch):
     return compared
 
 
+@pytest.mark.parametrize('first', ['rhs', 'jac'])
+def test_a_build_puts_its_leaves_on_the_device_at_its_first_call_only(eos, first, monkeypatch):
+    """A build leaves its traced leaves as they are; its first call, RHS or Jacobian, puts them
+    all on the device, and every later call converts only the state."""
+    _evaluate('core_module', eos, PhaseParams(), _budget())
+    seen, real = [], jax.numpy.asarray
+    monkeypatch.setattr(
+        jax.numpy, 'asarray', lambda x, *a, **k: seen.append(1) or real(x, *a, **k)
+    )
+    rhs, jac = _factory('core_module', _copy(eos), PhaseParams(), _budget())
+    leaves = rhs.__closure__[rhs.__code__.co_freevars.index('leaves')].cell_contents
+    assert not all(isinstance(x, jax.Array) for x in leaves)
+    n = N + EXTRA['core_module']
+    f, J = np.zeros(n), np.zeros((n, n))
+    calls = {
+        'rhs': lambda: rhs(0.0, _state('core_module'), f) == 0,
+        'jac': lambda: jac(0.0, _state('core_module'), None, J) == 0,
+    }
+    second = 'jac' if first == 'rhs' else 'rhs'
+
+    def conversions(name):
+        before = len(seen)
+        assert calls[name]()
+        return len(seen) - before
+
+    assert conversions(first) > 1
+    assert all(isinstance(x, jax.Array) for x in leaves)
+    assert [conversions(name) for name in (second, first, second)][1:] == [1, 1]
+
+
+def test_every_budget_constant_names_a_leaf_of_a_budget():
+    """Each attribute path of ``_BUDGET_CONSTANTS`` is a leaf path of one of the budgets of
+    ``CURVES``, so a renamed field cannot leave the set without a test failing."""
+    from aragog.solver import cvode_jax
+
+    names = {
+        tuple(k.name for k in path)
+        for curve in CURVES
+        for path, _ in jax.tree_util.tree_flatten_with_path(_fitted(0, curve))[0]
+    }
+    assert cvode_jax._BUDGET_CONSTANTS <= names
+    assert STRUCTURE <= names
+
+
 def test_a_rebuild_after_a_bound_clear_calls_the_programs_by_identity(eos, monkeypatch):
     """After a new form past ``MAX_FORMS`` clears the programs, a factory built again from equal
     inputs in new objects matches the program of that form by identity."""
@@ -376,7 +420,8 @@ def test_clear_jit_cache_drops_the_traced_programs(eos):
 
     _evaluate('quasi_steady', eos, PhaseParams())
     clear_jit_cache()
-    assert cvode_jax._HELD == {} and cvode_jax._FORMS == set()
+    assert cvode_jax._HELD == {}
+    assert cvode_jax._FORMS == set()
     _evaluate('quasi_steady', eos, PhaseParams())
     assert _TRACE_COUNTERS['rhs'] == 1
     assert _TRACE_COUNTERS['jac'] == 1
