@@ -798,7 +798,7 @@ def test_collect_sends_owner_and_repository_as_strings():
 
 
 def _live_thread(key, resolver):
-    """A review thread as GraphQL returns it on aragog PR 130 (2026-11-25)."""
+    """A review thread as the GraphQL API returns it for a thread the workflow resolved."""
     return {
         'id': 'PRRT_kwDOO5J5KM68FM5B',
         'isResolved': True,
@@ -818,7 +818,12 @@ def _live_thread(key, resolver):
 
 @pytest.mark.parametrize(
     ('resolver', 'state'),
-    [('github-actions[bot]', 'fixed'), ('egpbos', 'dismissed'), ('timlichtenberg', 'open')],
+    [
+        ('github-actions[bot]', 'fixed'),
+        ('github-actions', 'dismissed'),
+        ('egpbos', 'dismissed'),
+        ('timlichtenberg', 'open'),
+    ],
 )
 def test_the_resolver_logins_of_the_live_payload_give_the_thread_state(resolver, state):
     key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
