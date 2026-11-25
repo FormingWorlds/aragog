@@ -319,7 +319,7 @@ jobs:
             --model ${{ env.MODEL }}
             --max-turns 30
             --add-dir ${{ runner.temp }}/review_in
-            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"
+            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
@@ -364,7 +364,7 @@ jobs:
             --model ${{ env.MODEL }}
             --max-turns 15
             --add-dir ${{ runner.temp }}/review_in
-            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**),Grep,Glob"
+            --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --disallowedTools "Edit,Write,NotebookEdit"
             --json-schema '{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["id","verified","reason"]}},"fixed":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["key","verified","reason"]}}},"required":["verdicts","fixed"]}'
 
