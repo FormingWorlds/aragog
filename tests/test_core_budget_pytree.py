@@ -170,6 +170,15 @@ def test_a_given_latent_heat_and_a_quadratic_curve_reach_the_program():
         np.testing.assert_allclose(np.asarray(a), np.asarray(w), rtol=1e-12, atol=0.0)
 
 
+def test_the_paths_of_a_budget_name_its_attributes():
+    """Every key of a budget leaf path is an attribute key, so a path names the field (the
+    CVODE factory selects its compile-time constants by these names)."""
+    paths = [p for p, _ in jax.tree_util.tree_flatten_with_path(_Form().budget())[0]]
+    assert all(isinstance(k, jax.tree_util.GetAttrKey) for p in paths for k in p)
+    names = {tuple(k.name for k in p) for p in paths}
+    assert {('profiles', 'rho_cen'), ('melting_curve', 'depression'), ('ds_fusion',)} <= names
+
+
 def test_no_leaf_of_the_budget_is_weak_typed():
     """Every leaf of the budget pytree is a strong float64 or integer array, and the tree holds
     the profile and melting-curve values."""

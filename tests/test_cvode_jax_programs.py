@@ -349,11 +349,28 @@ def test_no_argument_of_the_programs_is_weak_typed(eos, mode):
 def test_clear_jit_cache_drops_the_traced_programs(eos):
     """After ``clear_jit_cache`` a build of the same form traces its programs again, so a test
     that counts traces does not depend on the tests before it."""
+    from aragog.solver import cvode_jax
+
     _evaluate('quasi_steady', eos, PhaseParams())
     clear_jit_cache()
+    assert cvode_jax._HELD == {} and cvode_jax._FORMS == set()
     _evaluate('quasi_steady', eos, PhaseParams())
     assert _TRACE_COUNTERS['rhs'] == 1
     assert _TRACE_COUNTERS['jac'] == 1
+
+
+def test_a_by_value_holder_keeps_a_read_only_copy_of_its_source():
+    """A holder copies its leaves: the source stays writable, a later change of the source does
+    not reach the holder, and the holder equals a new holder of the first values."""
+    from aragog.solver import cvode_jax
+
+    source = np.array([1.0, 2.0])
+    held = cvode_jax._ByValue((source,))
+    assert source.flags.writeable and not held.tree[0].flags.writeable
+    source[0] = 5.0
+    assert held.tree[0][0] == 1.0
+    assert held == cvode_jax._ByValue((np.array([1.0, 2.0]),))
+    assert held != cvode_jax._ByValue((source,))
 
 
 def _rhs_at(eos, n):
