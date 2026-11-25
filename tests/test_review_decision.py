@@ -1010,7 +1010,7 @@ def test_the_tree_for_the_model_has_no_symlink_and_no_runtime_config(tmp_path):
     for name in ('bunfig.toml', '.bunfig.toml', '.npmrc'):
         (t / name).write_text('x')
     (t / 'src' / '.npmrc').write_text('nested')
-    subprocess.run(['bash', '-c', _run_block(step)], cwd=t, check=True)
+    subprocess.run(['bash', '-e', '-c', _run_block(step)], cwd=t, check=True)
     walk = [(pathlib.Path(d), n) for d, ds, fs in os.walk(t) for n in ds + fs]
     inside = [d / n for d, n in walk if '.git' not in (d / n).relative_to(t).parts]
     links = [p for p in inside if p.is_symlink()]
