@@ -86,6 +86,14 @@ def test_the_bisection_stops_at_its_fixed_point(monkeypatch, t_cmb, most):
     assert _bits(radius, jax.jit(_pair(_FixedSteps)._r_icb_bisect)(t_cmb))
 
 
+
+def test_r_icb_on_an_array_equals_the_reference():
+    """r_icb on an array of temperatures (inner core, inner core, liquid centre) equals the
+    80-step reference to the bit; a batch runs until its slowest entry stops."""
+    t_cmb = np.array([3915.0, 4100.0, 4400.0])
+    assert _bits(BUDGET.r_icb(t_cmb), REFERENCE.r_icb(t_cmb))
+    assert _bits(jax.jit(BUDGET.r_icb)(t_cmb), jax.jit(REFERENCE.r_icb)(t_cmb))
+
 _TEMPERATURES = st.one_of(
     st.floats(min_value=1.0, max_value=8000.0),
     st.floats(min_value=FREEZE - 1.0, max_value=ONSET + 1.0),
@@ -119,7 +127,7 @@ def test_the_early_stop_gives_the_bits_of_80_steps(t_cmb):
         assert abs(got - want) <= bound * abs(want)
 
 
-@pytest.mark.parametrize('t_cmb', [3915.0, 4100.0, 4146.0, 4400.0])
+@pytest.mark.parametrize('t_cmb', [3900.0, 3915.0, 4050.0, 4100.0, 4146.0, 4400.0])
 @pytest.mark.parametrize('jac', [jax.jacrev, jax.jacfwd])
 def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
     """The derivative of dtcmb_dt in the CMB temperature and heat flow, in reverse mode (the
