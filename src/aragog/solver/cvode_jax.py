@@ -132,11 +132,12 @@ _BUDGET_CONSTANTS = frozenset(
 
 def _is_constant(path) -> bool:
     """Whether the leaf at ``path`` of ``(data, phase_params, eos, budget)`` is held as a
-    program constant: every phase parameter, and the budget config constants."""
+    program constant: every phase parameter and EOS table value, and the budget config
+    constants."""
     part = path[0].idx
     if part == 3:
         return tuple(getattr(k, 'name', None) for k in path[1:]) in _BUDGET_CONSTANTS
-    return part == 1
+    return part in (1, 2)
 
 
 # At most this many input forms keep compiled CVODE programs; a new form beyond it clears them.
@@ -289,7 +290,8 @@ def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts)
 def _programs():
     """The RHS, Jacobian, step-power and lid-weight programs, with the core_bc mode and the
     radiogenic switch static. The RHS and Jacobian also take as static arguments the by-value
-    holder of the constant leaves (the phase parameters and the budget config constants) and
+    holder of the constant leaves (the phase parameters, the EOS tables and the budget config
+    constants) and
     the layout (treedef and mask), and every other leaf flat; the step-power and lid-weight
     programs take all inputs as traced arguments."""
     import jax
@@ -433,13 +435,14 @@ def build_jax_rhs_and_jacobian(
     -----
     The RHS and Jacobian programs compile once per input form: the mode, the radiogenic
     switch, the shape and dtype of each traced leaf, and the values of the compile-time
-    constants. Those are every leaf of ``phase_params``, the budget leaves named in
-    ``_BUDGET_CONSTANTS``, and every static field of the inputs, which the treedef holds: the
-    EOS pressure and entropy grid axes, the boundary condition types and ``param_utbl``, the
-    mesh flag ``top_limited``, the static phase fields ``matprop_smooth_width`` and
-    ``rheology``, and the non-array budget attributes. The EOS table values, the mesh and
-    boundary arrays and every other budget leaf are traced, so a structure update with new
-    values on the same grids and settings compiles nothing.
+    constants. Those are every leaf of ``phase_params`` and of ``eos_jax``, the budget leaves
+    named in ``_BUDGET_CONSTANTS``, and every static field of the inputs, which the treedef
+    holds: the EOS pressure and entropy grid axes, the boundary condition types and
+    ``param_utbl``, the mesh flag ``top_limited``, the static phase fields
+    ``matprop_smooth_width`` and ``rheology``, and the non-array budget attributes. The mesh
+    and boundary arrays and every other budget leaf are traced, so a structure update with new
+    mesh, boundary and core profile values compiles nothing; a new EOS table value compiles
+    once.
     """
     if core_bc_mode == 'core_module' and core_module_budget is None:
         raise ValueError(
