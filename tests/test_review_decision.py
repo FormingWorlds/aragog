@@ -141,7 +141,7 @@ def test_marked_thread_of_a_person_is_never_resolved():
 
 def test_resolved_own_thread_is_neither_resolved_again_nor_blocking():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(threads=[_thread(key, resolved=True, resolver=GQL)], fixed=[key])
+    p = _plan(threads=[_thread(key, resolved=True, resolver=BOT)], fixed=[key])
     assert p['resolve'] == [] and p['state'] == 'success'
 
 
@@ -771,7 +771,7 @@ def test_a_thread_resolved_by_the_author_or_by_nobody_known_still_blocks(resolve
 
 def test_a_bug_that_returns_after_the_bot_resolved_its_thread_blocks_again():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver=GQL)])
+    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver=BOT)])
     assert p['state'] == 'failure' and len(p['comments']) == 1
 
 
