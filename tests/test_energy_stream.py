@@ -638,3 +638,70 @@ def test_with_two_output_points_every_step_of_the_call_waits_for_its_end():
         call.end(np.array([0.0, 1.0]), np.array([[0.0, 1.0]]))
         np.testing.assert_array_equal(sink.arrays()[0], np.r_[0.0, steps, 1.0])
 
+
+@pytest.mark.parametrize('chunk', [4, 2048])
+def test_the_thickest_lid_of_the_first_chunk_sets_the_cap_excess(monkeypatch, chunk):
+    """The lid is thickest (150) at node 1, in the first chunk, and 100 at every later node:
+    both chunkings report the cap excess of 150, where a maximum that later chunks overwrite
+    would give that of 100."""
+    monkeypatch.setattr(st, 'CHUNK', chunk)
+    t, y = _lid_nodes()
+    y[2, 1] = 150.0
+    s = _lid_batch_solver()
+    s._solution = sol = OptimizeResult(t=t, y=y)
+    s._compute_step_energy_integrals()
+    cap = st._lid.LID_CAP_FRAC * 1.0e4
+    assert sol.lid_cap_excess == pytest.approx(150.0 / cap - 1.0, rel=1e-12)
+    assert abs(sol.lid_cap_excess - (100.0 / cap - 1.0)) > 1e-6
+
+
+def _cmb_parts(s, t, y, p, d=None, core=False):
+    ledger = st.CMBLedger(s, core=core)
+    for a in range(0, t.size, 4):
+        sl = slice(a, a + 4)
+        ledger.add(t[sl], y[:, sl], p=p[sl], d=None if d is None else d[sl])
+    return ledger
+
+
+@pytest.mark.parametrize('flat', [True, False])
+def test_a_flat_table_cell_in_the_first_chunk_excludes_the_call(flat):
+    """The node table slope is 1e-7 of the closure slope only at node 1, in the first of 3
+    four-node chunks: the chunked ledger excludes the call as the whole trace does and counts
+    it once, where a flag that later chunks overwrite would be False; without the flat cell
+    the call is judged."""
+    t, y, p, dT = _cmb_nodes(11)
+    S1 = y[0, 1] - 0.5 * 2.0e4 * y[2, 1]
+    bump = lambda S: np.where(flat & (np.abs(S - S1) < 1e-6), 1e7, 0.0)  # noqa: E731
+    q = -800.0 * 1.1 * 1.9e24 * dT[-1]
+    whole, parts = _cmb_solver(bump), _cmb_solver(bump)
+    whole._check_cmb_ledger(t, y, p, q)
+    parts._check_cmb_ledger(q=q, ledger=_cmb_parts(parts, t, y, p))
+    assert parts.cmb_ledger['excluded'] is whole.cmb_ledger['excluded'] is flat
+    assert (
+        parts._cmb_ledger_counts
+        == whole._cmb_ledger_counts
+        == {
+            'missed': 0,
+            'excluded': int(flat),
+        }
+    )
+
+
+@pytest.mark.physics_invariant
+def test_the_largest_core_top_change_of_the_first_chunk_sets_the_core_bound():
+    """The core-top change jumps to -2000 K at node 1, in the first chunk, and stays within
+    about 700 K later: the chunked ledger keeps 2000 K as its largest change and gives the
+    bound of the whole trace, where a maximum that later chunks overwrite would keep about
+    700 K. The ledger still closes: the miss is 0, as the end points are those of the CMB."""
+    t, y, p, dT = _cmb_nodes(11)
+    d = dT.copy()
+    d[1] = -2000.0
+    assert abs(d[1]) > 2.0 * np.max(np.abs(d[4:]))
+    whole, parts = _cmb_solver(lambda S: 0.0, 'core_module'), _cmb_solver(lambda S: 0.0)
+    parts._core_bc = 'core_module'
+    whole._check_cmb_ledger(t, y, p, 0.0, d_top=d)
+    ledger = _cmb_parts(parts, t, y, p, d=d, core=True)
+    parts._check_cmb_ledger(q=0.0, ledger=ledger)
+    assert ledger.d_max == pytest.approx(2000.0, rel=1e-15)
+    assert parts.cmb_ledger['bound'] == pytest.approx(whole.cmb_ledger['bound'], rel=1e-14)
+    assert parts.cmb_ledger['r'] == pytest.approx(0.0, abs=1e-9) == whole.cmb_ledger['r']
