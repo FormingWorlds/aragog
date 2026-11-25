@@ -578,8 +578,8 @@ def build_jax_rhs_and_jacobian(
     _bound_forms(core_bc_mode, use_radio, data, (held, consts))
     rhs_program, jac_program, powers_program, weights_program = _programs()
 
-    # flattened and on the device once per build, not at every call
-    leaves = [jnp.asarray(x) for (_, x), m in zip(paths, mask, strict=True) if not m]
+    # flattened once per build, on the device from the first call on, not at every call
+    leaves = [x for (_, x), m in zip(paths, mask, strict=True) if not m]
     static_args = (core_bc_mode, use_radio, held, (treedef, mask))
     # after the bound, which can clear _HELD
     static_args = _HELD.setdefault(static_args, static_args)
@@ -588,7 +588,9 @@ def build_jax_rhs_and_jacobian(
     jac_jit = functools.partial(jac_program, *static_args)
 
     def first_call(kind, label, program, t_nd, y_nd):
-        """Run ``program`` once and log whether it compiled a program or reused one."""
+        """Put the traced leaves on the device, run ``program`` once and log whether it
+        compiled a program or reused one."""
+        leaves[:] = [jnp.asarray(x) for x in leaves]
         before = _TRACE_COUNTERS[kind]
         out = program(t_nd, y_nd, *leaves)
         compiled = _TRACE_COUNTERS[kind] > before
