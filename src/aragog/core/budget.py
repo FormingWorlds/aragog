@@ -36,7 +36,7 @@ _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
-_BISECT_ITERS = 80  # halves the bracket to ~1e-24 of r_cmb: machine precision
+_BISECT_ITERS = 80  # most steps; the bracket reaches adjacent floats sooner and stops there
 
 
 @register_pytree
@@ -261,35 +261,42 @@ class CoreEnergyBudget:
         return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
 
     @functools.cached_property
-    def _bisect_body(self):
-        """Bisection step, built once per budget so that the loop compiles once."""
+    def _bisect_steps(self):
+        """Condition and step of the bisection, built once per budget so that the loop compiles
+        once. A step that leaves the bracket unchanged ends the loop: every later step would
+        leave it unchanged too, so the root has the bits of all ``_BISECT_ITERS`` steps."""
 
-        def body(_, carry):
-            lo, hi, t_cmb = carry
+        def cond(carry):
+            return carry[4] & (carry[0] < _BISECT_ITERS)
+
+        def body(carry):
+            i, lo, hi, t_cmb, _ = carry
             mid = (lo + hi) / 2.0
             frozen = self.superheat(mid, t_cmb) < 0.0
-            return jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid), t_cmb
+            new_lo, new_hi = jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
+            return i + 1, new_lo, new_hi, t_cmb, (new_lo != lo) | (new_hi != hi)
 
-        return body
+        return cond, body
 
     def _r_icb_bisect(self, t_cmb):
         """Primal bisection for the boundary radius; see :meth:`r_icb`."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
-        init = (jnp.zeros_like(t), jnp.full_like(t, p.r_cmb), t)
-        lo, hi, _ = jax.lax.fori_loop(0, _BISECT_ITERS, self._bisect_body, init)
-        root = (lo + hi) / 2.0
-        # All-liquid guard: with positive centre superheat there is no root.
-        return jnp.where(self.superheat(0.0, t_cmb) > 0.0, 0.0, root)
+        # All-liquid guard: with positive centre superheat there is no root and no step.
+        liquid = self.superheat(0.0, t_cmb) > 0.0
+        init = (0, jnp.zeros_like(t), jnp.full_like(t, p.r_cmb), t, ~liquid)
+        _, lo, hi, _, _ = jax.lax.while_loop(*self._bisect_steps, init)
+        return jnp.where(liquid, 0.0, (lo + hi) / 2.0)
 
     def r_icb(self, t_cmb):
         """Inner-core boundary radius [m] at ``t_cmb``.
 
-        Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
-        crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
-        so the value is always defined and trace-safe. A liquid centre
-        returns zero regardless of frozen shells above it (the top-down
+        Bisection of the superheat on [0, r_cmb] that stops when its bracket
+        no longer changes (at most 80 steps); with no crossing it converges to
+        0 (fully liquid) or r_cmb (fully frozen), so the value is always defined
+        and trace-safe. A liquid centre returns zero with no step, regardless
+        of frozen shells above it (the top-down
         and snow topologies have no inner core in the bottom-up sense);
         the boundary terms drop to zero there, and the solver refuses those
         states (``aragog.core.regime.refuse_unmodelled_regime``).
