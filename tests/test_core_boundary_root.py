@@ -106,12 +106,12 @@ def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
 
 def test_the_search_makes_few_calls(monkeypatch):
     """Superheat calls of one boundary solve (2 ends + 1 per step): 2 for a liquid centre, at
-    most 2 + n_1/2 + n0 at any temperature (also a frozen core and 1e-6 K below the onset, where
-    the tangent crossing takes the search to its bound), and a mean of at most 25 and a maximum
-    of at most 45 over 41 temperatures from freeze-out + 0.5 K to the onset - 0.5 K (a
-    bisection that stops at its fixed point needs 55 on mean, the 80-step bisection 81). The
-    maximum holds by the Illinois halving: without it, the search keeps one end near freeze-out
-    until the projection ends it at the bound."""
+    most 2 + n_1/2 + n0 at any temperature (also a frozen core), at most 50 at 1e-6 K below the
+    onset, where the tangent crossing needs many steps (40; a stop at adjacent floats takes the
+    bound, 60), and a mean of at most 25 and a maximum of at most 45 over 41 temperatures from
+    freeze-out + 0.5 K to the onset - 0.5 K (a bisection that stops at its fixed point needs 55
+    on mean, the 80-step bisection 81). The maximum holds by the Illinois halving: without it,
+    the search keeps one end near freeze-out until the projection ends it at the bound."""
     calls = []
     original = CoreEnergyBudget.superheat
 
@@ -127,7 +127,7 @@ def test_the_search_makes_few_calls(monkeypatch):
         solve(t_cmb)
         jax.effects_barrier()
         counts.append(len(calls))
-    assert counts[0] == 2 and max(counts) <= 2 + STEPS
+    assert counts[0] == 2 and max(counts) <= 2 + STEPS and counts[2] <= 50
     assert np.mean(counts[4:]) <= 25.0 and max(counts[4:]) <= 45
 
 
@@ -145,6 +145,18 @@ def test_r_icb_on_an_array_equals_r_icb_of_each_entry(order, flip):
     for got in (BUDGET.r_icb(t_cmb), jax.jit(BUDGET.r_icb)(t_cmb)):
         for t, g, w in zip(t_cmb, np.asarray(got), one, strict=True):
             assert _close(g, w, t)
+
+
+@pytest.mark.parametrize('t_cmb', [ONSET - 1e-3, ONSET - 1e-6, 4100.0])
+def test_a_stopped_entry_of_an_array_stays_put(t_cmb):
+    """In a direct array call the loop runs until the slowest entry stops; an entry whose
+    bracket is 2 eps wide is held. Next to a frozen core (the slowest entry) it ends with the
+    bracket it has next to a copy of itself: one compiled program of length 2, so the bits
+    compare."""
+    bracket = jax.jit(BUDGET._r_icb_bracket)
+    held = np.asarray(bracket(np.array([t_cmb, 3000.0]))[1:3])[:, 0]
+    alone = np.asarray(bracket(np.array([t_cmb, t_cmb]))[1:3])[:, 0]
+    assert np.array_equal(held, alone)
 
 
 @pytest.mark.physics_invariant
@@ -205,20 +217,33 @@ def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
 
 
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('below', [-1e-3, 1e-3, 1.0, 20.0])
-def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(below):
-    """With a Gaussian length scale of 3000 km the CMB freezes while a liquid layer remains
-    above the inner core (snow topology): around and below T_freeze the radius and its
-    derivative are those of the 80-step bisection, the inner-core crossing, not r_cmb, so r_icb
-    does not jump inside a solver call at T_freeze (the regime guard refuses the state only
-    after a step)."""
-    prof = GaussianCoreProfiles(**{**EARTH, 'length_scale': 3000e3})
+@pytest.mark.parametrize(
+    ('length_scale', 'below'),
+    [
+        (3000e3, -1e-3),
+        (3000e3, 1e-3),
+        (3000e3, 1.0),
+        (3000e3, 16.0),
+        (3000e3, 17.0),
+        (3000e3, 20.0),
+        (3300e3, 25.0),
+    ],
+)
+def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(length_scale, below):
+    """With a short Gaussian length scale the CMB freezes while a liquid layer remains above the
+    inner core (snow topology): around and below T_freeze the radius and its derivative are
+    those of the 80-step bisection, the inner-core crossing, not r_cmb, so r_icb does not jump
+    inside a solver call (the regime guard refuses the state only after a step). At 16 and 17 K
+    below T_freeze (3000 km) and 25 K (3300 km) a secant step from two frozen ends would land
+    in the frozen top shell and lose the layer."""
+    prof = GaussianCoreProfiles(**{**EARTH, 'length_scale': length_scale})
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     new = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
     ref = _FixedSteps(prof, curve, ds_fusion=170.0, icn_width=10.0)
     t_cmb = new.t_freeze - below
     want = float(ref.r_icb(t_cmb))
-    assert 1.2e6 < want < 1.6e6 and float(new.superheat(2.5e6, t_cmb)) > 50.0
+    above = new.superheat(jnp.linspace(want, R_CMB, 64), t_cmb)
+    assert 0.0 < want < 0.9 * R_CMB and float(jnp.max(above)) > 1.0
     assert _close(float(new.r_icb(t_cmb)), want, t_cmb, ref)
     grad = float(jax.grad(new.r_icb)(t_cmb))
     assert grad == pytest.approx(float(jax.grad(ref.r_icb)(t_cmb)), rel=1e-9)
