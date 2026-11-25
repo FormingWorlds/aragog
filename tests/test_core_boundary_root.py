@@ -127,8 +127,9 @@ def test_the_search_makes_few_calls(monkeypatch):
         solve(t_cmb)
         jax.effects_barrier()
         counts.append(len(calls))
-    assert counts[0] == 2 and max(counts) <= 2 + STEPS and counts[2] <= 50
-    assert np.mean(counts[4:]) <= 25.0 and max(counts[4:]) <= 45
+    liquid, frozen, near_onset, nan, *sweep = counts
+    assert liquid == 2 and max(frozen, nan, *sweep) <= 2 + STEPS and near_onset <= 50
+    assert np.mean(sweep) <= 25.0 and max(sweep) <= 45
 
 
 @pytest.mark.parametrize(
@@ -147,16 +148,25 @@ def test_r_icb_on_an_array_equals_r_icb_of_each_entry(order, flip):
             assert _close(g, w, t)
 
 
-@pytest.mark.parametrize('t_cmb', [ONSET - 1e-3, ONSET - 1e-6, 4100.0])
-def test_a_stopped_entry_of_an_array_stays_put(t_cmb):
+def _held_and_alone(budget, t_cmb, partner):
+    """Bracket and end superheats of ``t_cmb`` next to ``partner`` and next to itself in one
+    compiled program of length 2, and the steps of each entry alone."""
+    bracket = jax.jit(budget._r_icb_bracket)
+    held = np.asarray(bracket(np.array([t_cmb, partner]))[1:])[:, 0]
+    alone = np.asarray(bracket(np.array([t_cmb, t_cmb]))[1:])[:, 0]
+    return held, alone, int(bracket(t_cmb)[0]), int(bracket(partner)[0])
+
+
+@pytest.mark.parametrize('t_cmb', [ONSET - 1e-3, ONSET - 1e-6, ONSET - 1e-9])
+@pytest.mark.parametrize('partner', [3000.0, float('nan')])
+def test_a_stopped_entry_of_an_array_stays_put(t_cmb, partner):
     """In a direct array call the loop runs until the slowest entry stops; an entry whose
-    bracket is 2 eps wide is held. Next to a frozen core (the slowest entry) it ends with the
-    bracket it has next to a copy of itself: one compiled program of length 2, so the bits
-    compare."""
-    bracket = jax.jit(BUDGET._r_icb_bracket)
-    held = np.asarray(bracket(np.array([t_cmb, 3000.0]))[1:3])[:, 0]
-    alone = np.asarray(bracket(np.array([t_cmb, t_cmb]))[1:3])[:, 0]
-    assert np.array_equal(held, alone)
+    bracket is 2 eps wide is held. Next to a slower entry (a frozen core or a NaN temperature)
+    it ends with the bracket and end superheats it has next to a copy of itself: one compiled
+    program, so the bits compare. Roots near the centre leave many floats in a stopped
+    bracket, so an entry that is not held moves."""
+    held, alone, steps, partner_steps = _held_and_alone(BUDGET, t_cmb, partner)
+    assert partner_steps > steps and np.array_equal(held, alone)
 
 
 @pytest.mark.physics_invariant
@@ -232,10 +242,12 @@ def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
 def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(length_scale, below):
     """With a short Gaussian length scale the CMB freezes while a liquid layer remains above the
     inner core (snow topology): around and below T_freeze the radius and its derivative are
-    those of the 80-step bisection, the inner-core crossing, not r_cmb, so r_icb does not jump
-    inside a solver call (the regime guard refuses the state only after a step). At 16 and 17 K
-    below T_freeze (3000 km) and 25 K (3300 km) a secant step from two frozen ends would land
-    in the frozen top shell and lose the layer."""
+    those of the 80-step bisection, the inner-core crossing, not r_cmb. With a frozen CMB the
+    capacities that use dr/dT are zero, so the radius reaches the diagnostics and the checks
+    after a step (regime, shell base), not the right-hand side. At 16 and 17 K below T_freeze
+    (3000 km) and 25 K (3300 km) a secant step from two frozen ends would land in the frozen
+    top shell and lose the layer. The search keeps the bracket, the width and the step bound,
+    and next to a frozen core in one array call it gives its own bits."""
     prof = GaussianCoreProfiles(**{**EARTH, 'length_scale': length_scale})
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     new = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
@@ -247,6 +259,10 @@ def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(length_scale, be
     assert _close(float(new.r_icb(t_cmb)), want, t_cmb, ref)
     grad = float(jax.grad(new.r_icb)(t_cmb))
     assert grad == pytest.approx(float(jax.grad(ref.r_icb)(t_cmb)), rel=1e-9)
+    steps, lo, hi, f_lo, f_hi = map(float, jax.jit(new._r_icb_bracket)(t_cmb))
+    assert steps <= STEPS and hi - lo <= WIDTH and f_lo < 0.0 <= f_hi
+    held, alone, steps, partner_steps = _held_and_alone(new, t_cmb, new.t_freeze - 300.0)
+    assert partner_steps > steps and np.array_equal(held, alone)
 
 
 @pytest.mark.physics_invariant
