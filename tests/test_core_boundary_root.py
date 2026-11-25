@@ -20,7 +20,7 @@ from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from aragog.core.budget import CoreEnergyBudget
-from aragog.core.melting import IronMeltingCurve
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 
 pytestmark = pytest.mark.unit
@@ -65,26 +65,14 @@ _TEMPERATURES = st.one_of(
 )
 
 
-def _close(got, want, t_cmb):
+def _close(got, want, t_cmb, reference=REFERENCE):
     """Whether ``got`` is the root ``want`` [m] within round-off: equal, or nearer than the
     final bracket width plus the root shift of a superheat round-off dS = 16 ulp of T, which is
     at most min(dS / |S'|, sqrt(dS / |a|)) for S' + a r^2 about the root (a = S'' / 2)."""
     d_s = 16.0 * np.finfo(float).eps * abs(t_cmb)
-    s_r = jax.grad(REFERENCE.superheat)
+    s_r = jax.grad(reference.superheat)
     slope, a = abs(float(s_r(want, t_cmb))), abs(float(jax.grad(s_r)(want, t_cmb))) / 2.0
     return got == want or abs(got - want) <= WIDTH + min(d_s / slope, np.sqrt(d_s / a))
-
-
-def _counted(monkeypatch):
-    calls = []
-    original = CoreEnergyBudget.superheat
-
-    def counted(self, r, t):
-        jax.debug.callback(lambda: calls.append(1))
-        return original(self, r, t)
-
-    monkeypatch.setattr(CoreEnergyBudget, 'superheat', counted)
-    return calls
 
 
 @pytest.mark.physics_invariant
@@ -97,11 +85,11 @@ def _counted(monkeypatch):
 def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     """The bracket [lo, hi] keeps superheat(lo) < 0 <= superheat(hi) as the search saw them and
     ends with hi - lo <= 2 eps r_cmb (plus 1 ulp of r_cmb, as each end is u r_cmb rounded) in
-    at most n_1/2 + n0 steps (Theorem 2.1 of Oliveira &
-    Takahashi 2020); a liquid centre gives [0, 0] and a frozen CMB [r_cmb, r_cmb] with no step;
-    a NaN temperature (no sign) shrinks to a radius of at most the width above 0. The case is
-    read from end superheats more than 1e-6 K from 0, so that an ulp at the onset cannot put
-    the test and the search in different cases."""
+    at most n_1/2 + n0 steps (Theorem 2.1 of Oliveira & Takahashi 2020); a liquid centre gives
+    [0, 0] with no step, a core frozen everywhere [r_cmb, r_cmb], and a NaN temperature (no
+    sign) a radius of at most the width above 0. The case is read from end superheats more than
+    1e-6 K from 0, so that an ulp at the onset cannot put the test and the search in different
+    cases."""
     steps, lo, hi, f_lo, f_hi = map(float, jax.jit(BUDGET._r_icb_bracket)(t_cmb))
     assert 0 <= steps <= STEPS and 0.0 <= lo <= hi <= R_CMB
     assert hi - lo <= WIDTH
@@ -111,28 +99,36 @@ def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     elif centre > 1e-6:
         assert (steps, lo, hi) == (0, 0.0, 0.0)
     elif top < -1e-6:
-        assert (steps, lo, hi) == (0, R_CMB, R_CMB)
+        assert (lo, hi) == (R_CMB, R_CMB)
     elif centre < -1e-6 and top > 1e-6:
         assert f_lo < 0.0 <= f_hi and steps > 0
 
 
 def test_the_search_makes_few_calls(monkeypatch):
-    """Superheat calls of one boundary solve (the 2 ends + 1 per step): 2 for a liquid centre
-    and for a frozen CMB, at most 2 + n_1/2 + n0 at any temperature, and a mean of at most 25
-    and a maximum of at most 45 over 41 temperatures from freeze-out to the onset (a bisection
-    that stops at its fixed point needs 55 on mean, the 80-step bisection 81). The maximum holds by the Illinois halving: without it, the search keeps
-    one end near freeze-out until the projection ends it at the bound."""
-    calls = _counted(monkeypatch)
+    """Superheat calls of one boundary solve (2 ends + 1 per step): 2 for a liquid centre, at
+    most 2 + n_1/2 + n0 at any temperature (also a frozen core and 1e-6 K below the onset, where
+    the tangent crossing takes the search to its bound), and a mean of at most 25 and a maximum
+    of at most 45 over 41 temperatures from freeze-out + 0.5 K to the onset - 0.5 K (a
+    bisection that stops at its fixed point needs 55 on mean, the 80-step bisection 81). The
+    maximum holds by the Illinois halving: without it, the search keeps one end near freeze-out
+    until the projection ends it at the bound."""
+    calls = []
+    original = CoreEnergyBudget.superheat
+
+    def counted(self, r, t):
+        jax.debug.callback(lambda: calls.append(1))
+        return original(self, r, t)
+
+    monkeypatch.setattr(CoreEnergyBudget, 'superheat', counted)
     solve = jax.jit(_pair().r_icb)
     counts = []
-    for t_cmb in [4400.0, 3000.0, *SWEEP, float('nan')]:
+    for t_cmb in [4400.0, 3000.0, ONSET - 1e-6, float('nan'), *SWEEP]:
         calls.clear()
         solve(t_cmb)
         jax.effects_barrier()
         counts.append(len(calls))
-    assert counts[:2] == [2, 2]
-    assert max(counts) <= 2 + STEPS
-    assert np.mean(counts[2:-1]) <= 25.0 and max(counts[2:-1]) <= 45
+    assert counts[0] == 2 and max(counts) <= 2 + STEPS
+    assert np.mean(counts[4:]) <= 25.0 and max(counts[4:]) <= 45
 
 
 @pytest.mark.parametrize(
@@ -142,8 +138,8 @@ def test_the_search_makes_few_calls(monkeypatch):
 def test_r_icb_on_an_array_equals_r_icb_of_each_entry(order, flip):
     """r_icb on an array of temperatures (liquid centre, frozen CMB, inner cores) equals r_icb
     of each entry, eager and compiled, within round-off (``_close``; 2 compiled programs can
-    round differently); a batch runs until its slowest
-    entry stops, and an entry that has stopped does not move."""
+    round differently); a batch runs until its slowest entry stops, and an entry that has
+    stopped does not move."""
     t_cmb = np.array(order[::-1] if flip else order)
     one = [float(BUDGET.r_icb(t)) for t in t_cmb]
     for got in (BUDGET.r_icb(t_cmb), jax.jit(BUDGET.r_icb)(t_cmb)):
@@ -165,12 +161,12 @@ def test_the_root_equals_the_80_step_root_within_round_off(t_cmb):
     """r_icb (eager and with a traced temperature) and its batch equal the 80-step bisection
     within round-off (``_close``): the final bracket width plus the root shift of a superheat
     round-off, which grows near the onset, where the crossing is tangent, and at the guards,
-    where 2 programs can disagree by an ulp on a liquid centre or a frozen CMB. The gradient is a new program:
-    near the onset a round-off dS moves the root by dr/r = dS/(2 a r^2), and the gradient may
-    differ by 1e-12 + (1 m / r_icb)^2 relative; where that bound is 1 or more (r_icb below about
-    1 m) the test checks the sign of the gradient instead. The radius comes from the
-    derivative program, whose liquid guard can differ from the eager one by an ulp at the
-    onset."""
+    where 2 programs can disagree by an ulp on a liquid centre or a frozen CMB. The gradient is
+    a new program: near the onset a round-off dS moves the root by dr/r = dS/(2 a r^2), and the
+    gradient may differ by 1e-12 + (1 m / r_icb)^2 relative; where that bound is 1 or more
+    (r_icb below about 1 m) the test checks the sign of the gradient instead. The radius comes
+    from the derivative program, whose liquid guard can differ from the eager one by an ulp at
+    the onset."""
     want = float(jax.jit(REFERENCE.r_icb)(t_cmb))
     for got in (
         BUDGET.r_icb(t_cmb),
@@ -206,3 +202,67 @@ def test_the_core_rate_jacobian_equals_the_80_step_version(jac, t_cmb):
     assert np.all(np.isfinite(want)) and np.any(want != 0.0)
     scale = np.max(np.abs(want * x)) / np.abs(x)
     assert np.all(np.abs(got - want) <= 1e-11 * scale)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('below', [-1e-3, 1e-3, 1.0, 20.0])
+def test_a_frozen_cmb_above_a_liquid_layer_keeps_the_inner_core(below):
+    """With a Gaussian length scale of 3000 km the CMB freezes while a liquid layer remains
+    above the inner core (snow topology): around and below T_freeze the radius and its
+    derivative are those of the 80-step bisection, the inner-core crossing, not r_cmb, so r_icb
+    does not jump inside a solver call at T_freeze (the regime guard refuses the state only
+    after a step)."""
+    prof = GaussianCoreProfiles(**{**EARTH, 'length_scale': 3000e3})
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    new = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    ref = _FixedSteps(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    t_cmb = new.t_freeze - below
+    want = float(ref.r_icb(t_cmb))
+    assert 1.2e6 < want < 1.6e6 and float(new.superheat(2.5e6, t_cmb)) > 50.0
+    assert _close(float(new.r_icb(t_cmb)), want, t_cmb, ref)
+    grad = float(jax.grad(new.r_icb)(t_cmb))
+    assert grad == pytest.approx(float(jax.grad(ref.r_icb)(t_cmb)), rel=1e-9)
+
+
+@pytest.mark.physics_invariant
+def test_a_liquid_centre_gives_no_inner_core_under_a_frozen_cmb():
+    """A melting curve that falls with pressure freezes the CMB first (top-down): at 4300 K the
+    centre is liquid and the CMB frozen, and the radius is 0 with no step, as in the 80-step
+    bisection, not a crossing below the frozen shell."""
+    prof = GaussianCoreProfiles(**EARTH)
+    curve = QuadraticMeltingCurve(t_m0=5200.0, t_m1=-1.2e-12, t_m2=0.0)
+    new = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    ref = _FixedSteps(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    assert new.superheat(0.0, 4300.0) > 0.0 > new.superheat(R_CMB, 4300.0)
+    steps, lo, hi, _, _ = map(float, jax.jit(new._r_icb_bracket)(4300.0))
+    assert (steps, lo, hi) == (0, 0.0, 0.0) and float(ref.r_icb(4300.0)) == 0.0
+
+
+class _Shaped(CoreEnergyBudget):
+    """A budget whose superheat is a hard shape in u = r / r_cmb with its root at ``root``."""
+
+    shape, root = 'step', 0.5
+
+    def superheat(self, r, t_cmb):
+        u = r / self.profiles.r_cmb - self.root
+        hard = {
+            'step': jnp.where(u < 0.0, -1e-200, 1e200),
+            'power': u**9,
+            'kink': jnp.where(u < 0.0, 1e9 * u, 1e-9 * u),
+        }
+        return hard[self.shape] + 0.0 * t_cmb
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('shape', ['step', 'power', 'kink'])
+@pytest.mark.parametrize('root', [1e-12, 1e-6, 0.314, 0.5, 0.9, 1.0 - 1e-9])
+def test_the_projection_keeps_the_bound_on_hard_shapes(shape, root):
+    """On a step, a ninth power and a kink of 18 decades, where regula falsi alone keeps one end
+    for good, the projection of Algorithm 1 still ends the search within 2 eps of the root in at
+    most n_1/2 + n0 steps (Theorem 2.1): the bound does not rest on the smooth superheat."""
+    prof = GaussianCoreProfiles(**EARTH)
+    budget = _Shaped(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
+    budget.shape, budget.root = shape, root
+    steps, lo, hi, _, _ = map(float, jax.jit(budget._r_icb_bracket)(4000.0))
+    assert steps <= STEPS and hi - lo <= WIDTH
+    assert lo - WIDTH <= root * R_CMB <= hi + WIDTH

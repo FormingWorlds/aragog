@@ -160,11 +160,12 @@ def test_the_stratified_core_heat_compiles_once_per_length_bucket():
 def test_padding_changes_no_value(budget, n):
     """For states across T_freeze and T_onset, the padding to a length bucket changes no value:
     the regime codes equal the unpadded codes, and at the bucket length the boundary radius,
-    regime codes and layer base of the real states do not depend on the padding values. From
-    jax 0.12 XLA rounds a batched program by its length, so the unpadded call is another
-    rounding: the layer base equals it to rtol 1e-13, and the radius within the final bracket
-    width plus 16 ulp of T over the superheat slope, since the root search reads superheat
-    values and a round-off of the superheat moves its root by that much."""
+    regime codes and layer base of the real states do not depend on the padding values. The
+    unpadded call is another compiled program: the layer base equals it to rtol 1e-13 (from jax
+    0.12 XLA rounds a batched program by its length). The radius equals it at 0 and r_cmb, and
+    elsewhere within the final bracket width plus the root shift of a superheat round-off of 16
+    ulp of T, min(dS / |S'|, sqrt(dS / |a|)): the root search steps by superheat values, so a
+    program that rounds its steps differently ends at another point of that round-off band."""
     import contextlib
 
     from aragog.core.regime import refuse_unmodelled_regime
@@ -182,11 +183,17 @@ def test_padding_changes_no_value(budget, n):
     radius = _padded_call(budget.r_icb_batch, t)
     for row in (0, n // 2):
         assert np.array_equal(radius, np.asarray(budget.r_icb_batch(refill(t, m, row)))[:n])
-    unpadded = np.asarray(budget.r_icb_batch(t))
-    slope = np.abs(np.asarray(jax.vmap(jax.grad(budget.superheat))(unpadded, t)))
+    unpadded, r_cmb = np.asarray(budget.r_icb_batch(t)), budget.profiles.r_cmb
+    s_r = jax.grad(budget.superheat)
+    slope = np.abs(np.asarray(jax.vmap(s_r)(unpadded, t)))
+    a = np.abs(np.asarray(jax.vmap(jax.grad(s_r))(unpadded, t))) / 2.0
+    d_s = 16.0 * np.finfo(float).eps * t
     with np.errstate(divide='ignore'):
-        bound = 2.0**-53 * 3480e3 + np.spacing(3480e3) + 16.0 * np.finfo(float).eps * t / slope
-    assert np.all(np.abs(radius - unpadded) <= bound)
+        shift = np.minimum(d_s / slope, np.sqrt(d_s / a))
+    edge = (unpadded == 0.0) | (unpadded == r_cmb)
+    assert np.array_equal(radius[edge], unpadded[edge])
+    bound = 2.0**-53 * r_cmb + np.spacing(r_cmb) + shift
+    assert np.all(np.abs(radius - unpadded)[~edge] <= bound[~edge])
 
     real, seen = budget.regime_batch, []
     budget.regime_batch = lambda x: seen.append(np.asarray(real(x))) or seen[-1]

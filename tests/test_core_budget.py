@@ -193,7 +193,7 @@ def test_error_contract_and_jit(prof, alloy_budget):
 @pytest.mark.physics_invariant
 def test_r_icb_gradient_carries_the_implicit_sensitivity(prof, alloy_budget):
     """jax.grad through r_icb must equal the finite-difference boundary
-    motion (a comparison-driven bisection alone would return exactly zero),
+    motion (a comparison-driven search alone would return exactly zero),
     and the effective-capacity gradient must match its finite difference,
     so the solver's analytic-Jacobian path sees the true derivatives."""
     import jax
