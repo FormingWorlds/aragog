@@ -1229,6 +1229,7 @@ def test_only_the_resolve_job_can_write_contents_and_it_runs_no_pull_request_cod
     perms = _block(resolve, '    permissions:', 4).splitlines()[1:]
     assert sorted(p.split('#')[0].strip() for p in perms) == [
         'contents: write',
+        'pull-requests: read',
         'statuses: write',
     ]
     assert not any(s in resolve for s in ('actions/checkout', 'python', 'claude-code-action'))
