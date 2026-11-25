@@ -795,3 +795,43 @@ def test_collect_sends_owner_and_repository_as_strings():
     rd.collect('o/123', '5', gh)
     first = gh.calls[0]
     assert first[first.index('o=o') - 1] == '-f' and first[first.index('r=123') - 1] == '-f'
+
+
+def _live_thread(key, resolver):
+    """A review thread as GraphQL returns it on aragog PR 130 (2026-11-25)."""
+    return {
+        'id': 'PRRT_kwDOO5J5KM68FM5B',
+        'isResolved': True,
+        'resolvedBy': {'__typename': 'User', 'login': resolver},
+        'path': 'src/aragog/utilities.py',
+        'line': 155,
+        'comments': {
+            'nodes': [
+                {
+                    'body': 'text\n\n' + rd.finding_marker(key, 'important'),
+                    'author': {'__typename': 'Bot', 'login': 'github-actions'},
+                }
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ('resolver', 'state'),
+    [('github-actions[bot]', 'fixed'), ('egpbos', 'dismissed'), ('timlichtenberg', 'open')],
+)
+def test_the_resolver_logins_of_the_live_payload_give_the_thread_state(resolver, state):
+    key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
+    assert rd.own_threads([_live_thread(key, resolver)], 'timlichtenberg')[0]['state'] == state
+
+
+def test_a_returning_bug_on_a_thread_the_workflow_resolved_is_a_candidate_again():
+    title = 'Weighted mixture uses (1 + w)'
+    key = rd.finding_key('src/aragog/utilities.py', title)
+    own = rd.own_threads([_live_thread(key, 'github-actions[bot]')], 'timlichtenberg')
+    find = {
+        'summary': 's',
+        'findings': [_finding(path='src/aragog/utilities.py', line=155, title=title)],
+        'fixed': [],
+    }
+    assert [c['key'] for c in rd.prep(find, own)['candidates']] == [key]
