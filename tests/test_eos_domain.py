@@ -11,6 +11,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from .conftest import returns
+
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 # 3 pressure columns, 10 entropy nodes 100 J/kg/K apart
@@ -161,6 +163,11 @@ def test_from_mask_refuses_an_axis_that_does_not_rise(axis):
     P_ax, S_ax = (P[::-1], S) if axis == 'P' else (P, S[::-1])
     with pytest.raises(ValueError, match='rise strictly'):
         PhaseWindow.from_mask(P_ax, S_ax, _mask((2, 3, 4), (6, 7, 8)))
+    P_rep, S_rep = (
+        (np.array([P[0], P[1], P[1]]), S) if axis == 'P' else (P, np.r_[S[:-1], S[-2]])
+    )
+    with pytest.raises(ValueError, match='rise strictly'):
+        PhaseWindow.from_mask(P_rep, S_rep, _mask((2, 3, 4), (6, 7, 8)))
 
 
 def test_lookup_points_follow_the_phase_of_each_point():
@@ -242,12 +249,14 @@ def test_settings_default_to_warn_at_5_cells():
     from aragog.parser import _SolverParameters
 
     for cls in (_SolverParameters, SolverConfig):
-        c = cls(start_time=0.0, end_time=1.0)
+        c = returns(cls, 0.0, 1.0)
         assert c.eos_domain_check == 'warn'
         assert c.eos_domain_tolerance_cells == 5.0
         for mode in ('off', 'warn', 'raise'):
             assert (
-                cls(start_time=0.0, end_time=1.0, eos_domain_check=mode).eos_domain_check
+                returns(
+                    lambda: cls(start_time=0.0, end_time=1.0, eos_domain_check=mode)
+                ).eos_domain_check
                 == mode
             )
 
@@ -318,3 +327,13 @@ def test_the_reader_counts_the_zero_nodes_inside_the_windows(caplog):
         PhaseWindow.from_mask(P, S, m)
     lines = [r.getMessage() for r in caplog.records if 'mask nodes marked 0' in r.getMessage()]
     assert lines == ['3 mask nodes marked 0 lie inside the window, not judged']
+
+
+def test_a_mode_that_is_not_a_str_is_refused_even_when_it_compares_equal():
+    """A str-like object equal to 'warn' is not a str: the mode is refused."""
+    from collections import UserString
+
+    from aragog.config.solver import check_eos_domain_mode
+
+    with pytest.raises(ValueError, match='eos_domain_check must be one of'):
+        check_eos_domain_mode(UserString('warn'))

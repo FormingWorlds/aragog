@@ -7,6 +7,7 @@ the state. The check warns by default, raises in 'raise' mode and never changes 
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
@@ -206,7 +207,10 @@ def test_a_non_finite_cell_counts_as_outside():
     cells = _uniform_melt(s, eos, 0.0)
     cells[3] = np.nan
     msg = s._eos_domain_failure(_two_states(cells))
-    assert 'staggered node 3 ' in msg and 'not a finite point' in msg
+    assert msg is not None
+    assert (
+        'staggered node 3 ' in msg and 'not a finite point' in msg and msg.endswith('T=nan K')
+    )
 
 
 @pytest.mark.parametrize('switch', ['mode off', 'no masks', 'constant properties'])
@@ -222,7 +226,7 @@ def test_the_check_is_off_without_masks_in_off_mode_and_with_constant_properties
         eos.domain = None
     else:
         s.parameters.phase_mixed.const_properties = True
-    assert s._eos_domain_failure(_two_states(cells)) is None
+    assert returns(s._eos_domain_failure, _two_states(cells)) is None
 
 
 def test_the_eos_reads_the_masks_next_to_its_tables(tmp_path, caplog):
@@ -597,3 +601,77 @@ def test_a_bad_tolerance_raises_at_the_call_start_and_keeps_the_state(mode, tol)
     with pytest.raises((TypeError, ValueError), match='eos_domain_tolerance_cells must be'):
         s.solve()
     assert s._solution is first and s.cmb_ledger is marker
+
+
+def test_an_eos_class_without_a_domain_turns_the_check_off():
+    """An EOS object whose class has no domain gives no domain, also with an attribute of that
+    name on the instance; no EOS gives none either."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import _eos_domain_of
+
+    assert returns(_eos_domain_of, None) is None
+    assert returns(_eos_domain_of, SimpleNamespace()) is None
+    assert returns(_eos_domain_of, SimpleNamespace(domain='x')) is None
+    eos = entropy_eos_copy(EOS_DIR)
+    eos.domain = _tight(eos)
+    assert _eos_domain_of(eos) is eos.domain
+
+
+def test_basic_entropy_takes_a_given_basic_profile_as_a_copy():
+    """With entropy_basic given (gradient mode), the result is a float copy of it, not the mesh
+    transform of the cells."""
+    eos = entropy_eos_copy(EOS_DIR)
+    s = _solver(eos, core='gradient')
+    S_s = np.linspace(2000.0, 3000.0, s._n_stag)
+    given = np.full(s._n_stag + 1, 5000.0)
+    out = s.state.basic_entropy(S_s, entropy_basic=given)
+    np.testing.assert_array_equal(out, given)
+    assert out is not given and out.dtype == float
+    assert not np.array_equal(out, np.ravel(s.evaluator.mesh.quantity_at_basic_nodes(S_s)))
+
+
+def test_raise_after_a_floor_stop_at_the_call_start_holds_the_outer_call_start(monkeypatch):
+    """The floor root at the call start solves the call again; when that solve raises, the
+    solver holds the result of the outer call start (none on a first call)."""
+    from aragog.eos.domain import EOSDomainError
+    from aragog.solver import entropy_solver as es
+
+    from .test_eos_floor import _drained
+
+    monkeypatch.setattr(
+        es, '_floor_start_level', lambda w, S, *_: (es._floor_entropy(w, S) - 1e-12, False)
+    )
+    real = es.solve_ivp
+
+    def moved(fun, t_span, y0, **kwargs):
+        res = real(fun, t_span, y0, **kwargs)
+        if res.status == 1 and res.t[-1] == res.t[0]:
+            res.y[5, -1] += 1e-3  # the state moved while the time did not
+        return res
+
+    monkeypatch.setattr(es, 'solve_ivp', moved)
+    eos = entropy_eos_copy(EOS_DIR)
+    starts, solvers, solve = [], [], EntropySolver.solve
+
+    def counted(self, *args, **kwargs):
+        self.parameters.solver.eos_domain_check = 'raise'
+        self.entropy_eos.domain = _tight(self.entropy_eos)
+        solvers.append(self)
+        starts.append(kwargs.get('_start', 'outer'))
+        return solve(self, *args, **kwargs)
+
+    monkeypatch.setattr(EntropySolver, 'solve', counted)
+    with pytest.raises(EOSDomainError):
+        _drained(eos, float(eos.S_min) + 400.0, method='bdf', start_time=1.0e8)
+    assert starts == ['outer', None] and solvers[0]._solution is None
+
+
+@pytest.mark.parametrize('bad', [(math.nan, 1500.0), (1.0e9, math.nan), (1.0e9, math.inf)])
+def test_the_table_temperature_of_a_non_finite_point_is_nan(bad):
+    """The EOS lookup clamps a non-finite point to the table edge; the message reads NaN."""
+    from aragog.eos.domain import TableDomain
+
+    eos = entropy_eos_copy(EOS_DIR)
+    for melt in (True, False):
+        assert math.isnan(TableDomain.lookup_temperature(eos, *bad, melt))
