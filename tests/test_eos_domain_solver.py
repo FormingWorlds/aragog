@@ -334,10 +334,10 @@ def test_the_check_reads_the_basic_entropy_of_the_right_hand_side(core, bc, monk
 
     monkeypatch.setattr(dom_mod.TableDomain, 'lookup_distances', record)
     assert returns(s._eos_domain_failure, _states(y)) is not None
-    np.testing.assert_array_equal(seen[1], _rhs_basic(s, y))
-    np.testing.assert_array_equal(seen[0], s._stag_entropy(y))
+    np.testing.assert_array_equal(seen[1], [_rhs_basic(s, y)])  # one row per state
+    np.testing.assert_array_equal(seen[0], [s._stag_entropy(y)])
     if bc == 5:
-        assert seen[1][-1] == s.state._surface_temperature_bc[0]
+        assert seen[1][0, -1] == s.state._surface_temperature_bc[0]
 
 
 def _states(*ys, t=None):
@@ -800,5 +800,7 @@ def test_the_check_reads_the_lookup_points_of_the_jax_rhs(monkeypatch):
         ]
         assert match, 'no JAX evaluation at the pressures of the check'
         for _, S_j in match:
-            np.testing.assert_allclose(S_j, S_c, rtol=1e-12, atol=0.0)
-    assert seen_check[1][1][0] != seen_check[0][1][0]  # the CMB node is not the bottom cell
+            np.testing.assert_allclose(S_j, S_c[0], rtol=1e-12, atol=0.0)  # the 1 state
+    assert (
+        seen_check[1][1][0, 0] != seen_check[0][1][0, 0]
+    )  # the CMB node is not the bottom cell

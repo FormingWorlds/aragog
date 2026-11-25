@@ -6583,28 +6583,35 @@ class EntropySolver:
             float(self.state.phase_staggered._matprop_smooth_width),
             float(self.state.phase_basic._matprop_smooth_width),
         )
-        n_out, worst = 0, None
-        for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
-            S_s = self._stag_entropy(y)
+        S_s, S_b = [], []  # one row per state
+        for y in np.asarray(y_pts, dtype=float).T:
+            S_s.append(self._stag_entropy(y))
             if self._core_bc == 'gradient':
                 n_b = self._n_stag + 1
-                S_b = self.state.basic_entropy(
-                    S_s, entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1]
+                S_b.append(
+                    self.state.basic_entropy(
+                        S_s[-1],
+                        entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1],
+                    )
                 )
             else:
-                S_b = self.state.basic_entropy(S_s, None if k_cmb is None else y[k_cmb])
-            for kind, P, S, r, width in (
-                ('staggered', self._P_stag_flat, S_s, self._r_stag_flat, widths[0]),
-                ('basic', self._P_basic_flat, S_b, self._r_basic_flat, widths[1]),
-            ):
-                d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
-                d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
-                k = int(np.argmax(d))
-                if not d[k] > tol:
-                    continue
-                n_out += int((d > tol).sum())
-                if worst is None or d[k] > worst[0]:
-                    worst = (d[k], t, kind, k, r[k], P[k], S[k], melt[k], s_look[k])
+                S_b.append(
+                    self.state.basic_entropy(S_s[-1], None if k_cmb is None else y[k_cmb])
+                )
+        n_out, worst = 0, None
+        for kind, P, S, r, width in (
+            ('staggered', self._P_stag_flat, np.array(S_s), self._r_stag_flat, widths[0]),
+            ('basic', self._P_basic_flat, np.array(S_b), self._r_basic_flat, widths[1]),
+        ):
+            d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
+            d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
+            j = np.unravel_index(int(np.argmax(d)), d.shape)  # (state, node)
+            if not d[j] > tol:
+                continue
+            n_out += int((d > tol).sum())
+            if worst is None or d[j] > worst[0]:
+                k = int(j[1])
+                worst = (d[j], t_pts[j[0]], kind, k, r[k], P[k], S[j], melt[j], s_look[j])
         if worst is None:
             return None
         d_k, t, kind, k, r, P, S, melt, s_look = worst
