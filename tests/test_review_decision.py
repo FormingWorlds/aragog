@@ -21,8 +21,8 @@ rd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rd)
 
 HEAD = 'a' * 40
-BOT = 'github-actions[bot]'  # login in the REST API
-GQL = 'github-actions'  # login of the same bot in GraphQL
+BOT = 'github-actions[bot]'  # the workflow token in REST and as a GraphQL thread resolver
+GQL = 'github-actions'  # the same bot as a GraphQL comment author
 AUTHOR = 'egpbos'
 POLICY_ALL = '# approve everywhere but the protected set\n{"version": 1, "approve": {"allow": ["**"], "deny": []}}\n'
 PATCH = '@@ -10,3 +10,4 @@ def f():\n     a = 1\n-    b = 2\n+    b = 3\n+    c = 4\n     return a\n'
@@ -826,11 +826,13 @@ def _live_thread(key, resolver):
     ],
 )
 def test_the_resolver_logins_of_the_live_payload_give_the_thread_state(resolver, state):
+    """Only github-actions[bot] as resolver marks a thread the workflow resolved."""
     key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
     assert rd.own_threads([_live_thread(key, resolver)], 'timlichtenberg')[0]['state'] == state
 
 
 def test_a_returning_bug_on_a_thread_the_workflow_resolved_is_a_candidate_again():
+    """A finding on a fixed thread goes to the verify pass again when the find pass reports it."""
     title = 'Weighted mixture uses (1 + w)'
     key = rd.finding_key('src/aragog/utilities.py', title)
     own = rd.own_threads([_live_thread(key, 'github-actions[bot]')], 'timlichtenberg')
@@ -849,6 +851,7 @@ def test_a_returning_bug_on_a_thread_the_workflow_resolved_is_a_candidate_again(
 def test_a_thread_stays_open_unless_it_is_resolved_and_its_author_is_known(
     resolved, resolver, author
 ):
+    """An unresolved thread, or one resolved while the author is unknown, stays open."""
     key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
     node = {**_live_thread(key, resolver), 'isResolved': resolved}
     assert rd.own_threads([node], author)[0]['state'] == 'open'
