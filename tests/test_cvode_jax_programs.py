@@ -270,19 +270,42 @@ def test_each_input_reaches_the_reused_program(eos, name):
     assert np.max(np.abs(got[1] - want[1])) <= 2e-12 * np.max(np.abs(want[1]))
 
 
-def test_a_new_phase_value_is_a_new_input_form_and_a_new_eos_value_is_not(eos):
-    """The phase parameters are constants of the programs and the EOS table values are traced: a
-    changed phase value is a new input form of the bound, a changed table value is not."""
+def test_a_new_phase_or_eos_value_is_a_new_input_form(eos):
+    """The phase parameters and the EOS table values are constants of the programs: a changed
+    value of either is a new input form of the bound, an equal value in a new object is not."""
     from aragog.solver import cvode_jax
 
     clear_jit_cache()
     mode = 'energy_balance'
     _factory(mode, eos, PhaseParams())
     _factory(mode, _copy(eos), PhaseParams())
-    _factory(mode, *CHANGES['eos_table'](eos, PhaseParams(), None)[:2])
     assert len(cvode_jax._FORMS) == 1
-    _factory(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
+    _factory(mode, *CHANGES['eos_table'](eos, PhaseParams(), None)[:2])
     assert len(cvode_jax._FORMS) == 2
+    _factory(mode, *CHANGES['phase_params'](eos, PhaseParams(), None)[:2])
+    assert len(cvode_jax._FORMS) == 3
+
+
+def test_a_new_table_value_compiles_once_and_an_equal_table_reuses_it(eos):
+    """A changed EOS table value compiles the RHS and the Jacobian once, a new object with the
+    changed values reuses that program, and the first tables parsed again from disk reuse the
+    first program."""
+    from aragog.jax.eos import EntropyEOS_JAX
+
+    clear_jit_cache()
+    mode = 'energy_balance'
+    changed = CHANGES['eos_table'](eos, PhaseParams(), None)[0]
+    _evaluate(mode, eos, PhaseParams())
+    first = dict(_TRACE_COUNTERS)
+    _evaluate(mode, changed, PhaseParams())
+    assert (_TRACE_COUNTERS['rhs'], _TRACE_COUNTERS['jac']) == (
+        first['rhs'] + 1,
+        first['jac'] + 1,
+    )
+    traces = dict(_TRACE_COUNTERS)
+    _evaluate(mode, _copy(changed), PhaseParams())
+    _evaluate(mode, EntropyEOS_JAX(EOS_DIR), PhaseParams())
+    assert dict(_TRACE_COUNTERS) == traces
 
 
 # Budget leaves that follow the structure (the profile fit and the CMB); all others are config.
