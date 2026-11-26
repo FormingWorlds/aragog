@@ -73,6 +73,13 @@ def _parts(path: str) -> list[dict]:
     ]
 
 
+def _check_rtol(name: str, log: str, rtol: str) -> None:
+    """Refuse a run whose CVODE options hold another rtol than ``rtol``."""
+    rtols = set(re.findall(r"'rtol': ([0-9.e+-]+)", log))
+    if rtols != {repr(float(rtol))}:
+        raise ValueError(f'{name}: CVODE rtol {rtols}, not {rtol}')
+
+
 def _store_parts(out: dict, key: str, parts: list[dict]) -> None:
     """Per-call CMB flux and ledger terms of ``parts`` under ``key``."""
     for name in ('t1', 'F_max', 'F_end', 'F_avg', 'g_cmb_end'):
@@ -125,39 +132,47 @@ def main(spec_path: str) -> None:
             prov[key][f'sha256_{k}'] = hashlib.sha256(Path(s[k]).read_bytes()).hexdigest()
     _store_parts(out, 'v9_tip', _parts(spec['v9_parts_log']))
     for key in PARTS_OWN:
+        _check_rtol(key, Path(spec[key]['log']).read_text(), spec[key]['rtol'])
+        out[f'{key}/rtol'] = np.array(float(spec[key]['rtol']))
         parts = _parts(spec[key]['log'])
         if len(parts) != out[f'{key}/ledger_rB'].size:
             raise ValueError(
                 f'{key}: {len(parts)} call records, {out[f"{key}/ledger_rB"].size} calls'
             )
         _store_parts(out, key, parts)
+        # every CVODE call of the run, so also each segment of a rate-cap call
         steps = re.findall(r'CVODE stats: nst=(\d+)', Path(spec[key]['log']).read_text())
         out[f'{key}/cvode_steps'] = np.array(sum(int(n) for n in steps))
     # the copy rule in the run that the #113 table comes from (an older build, no ledger lines)
     s = spec['v9x_copy']
-    for col, values in _helpfile(s['helpfile'], 30169.30).items():
-        out[f'v9x_copy/{col}'] = values
-    keep = out['v9x_copy/Time'] <= 60000.5
+    cols = _helpfile(s['helpfile'], 30169.30)
+    keep = cols['Time'] <= 60000.5
     for col in COLUMNS:
-        out[f'v9x_copy/{col}'] = out[f'v9x_copy/{col}'][keep]
+        out[f'v9x_copy/{col}'] = cols[col][keep]
     out['v9x_copy/status'] = np.array(int(Path(s['status']).read_text().split()[0]))
-    prov['v9x_copy'] = {k: s[k] for k in ('run', 'aragog', 'proteus')}
+    prov['v9x_copy'] = {k: s[k] for k in ('run', 'aragog', 'proteus', 'rtol')}
     prov['v9x_copy']['sha256_helpfile'] = hashlib.sha256(
         Path(s['helpfile']).read_bytes()
     ).hexdigest()
     # single calls rerun from a stored start at several rtol: |r|/B and the CMB heat of the call
     for name, c in spec['rtol_calls'].items():
         log = Path(c['log']).read_text()
-        rtols = set(re.findall(r"'rtol': ([0-9.e+-]+)", log))
-        if rtols != {repr(float(c['rtol']))}:
-            raise ValueError(f'{name}: CVODE rtol {rtols}, not {c["rtol"]}')
-        m = LEDGER.search(log)
-        t1, rb = float(m.group(1)), float(m.group(2)) / float(m.group(3))
+        _check_rtol(name, log, c['rtol'])
+        calls = [
+            m for m in LEDGER.finditer(log) if abs(float(m.group(1)) - c['call_end']) < 1.0e-3
+        ]
+        if len(calls) != 1:
+            raise ValueError(
+                f'{name}: {len(calls)} ledger lines at the call end {c["call_end"]}'
+            )
+        t1 = float(calls[0].group(1))
+        rb = float(calls[0].group(2)) / float(calls[0].group(3))
         rows = _helpfile(c['helpfile'], -1.0)
         k = int(np.argmin(np.abs(rows['Time'] - t1)))
         if abs(rows['Time'][k] - t1) > 1.0e-6:
             raise ValueError(f'{name}: no helpfile row at the call end {t1}')
         out[f'rtol_calls/{name}/rtol'] = np.array(float(c['rtol']))
+        out[f'rtol_calls/{name}/t1'] = np.array(t1)
         out[f'rtol_calls/{name}/rB'] = np.array(rb)
         out[f'rtol_calls/{name}/q'] = np.array(rows['step_dE_F_cmb_J'][k])
         prov[f'rtol_calls/{name}'] = {

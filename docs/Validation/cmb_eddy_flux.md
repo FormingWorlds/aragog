@@ -11,10 +11,10 @@ The right answer comes from 3 sources:
 
 - the rule written out by hand in the test;
 - a second implementation: the NumPy update and the JAX function `compute_mlt`;
-- coupled PROTEUS runs that stop under the copy rule.
+- coupled PROTEUS runs under the copy rule, as the case to compare with: 2 of them stop, and in 1 the core stays almost cut off from the mantle for 27 kyr.
 
 If this part were wrong, the heat flow out of the core could jump between 2 values when the entropies of the 2 lowest cells cross, or fall to 0 while the CMB gradient is unstable.
-The core would then cool at the wrong rate, and the energy check of the run would stop it.
+The core would then cool at the wrong rate: the energy check can stop the run, or the run can go on with the core almost cut off from the mantle.
 Each case says why the check exists, what it tests, how we know the right answer and why it matters; then it shows a plot or a table, and the test details.
 
 In the formulas below, $S_0$ and $S_1$ are the entropies of the 2 lowest cells, $\partial S/\partial r$ is the entropy gradient at a node, $\kappa_h^\mathrm{mlt}[1]$ is the mixing-length eddy diffusivity of node 1 before the floor, $\kappa_h^\mathrm{floor}[0]$ is the floor of the CMB node, and $D$ is `energy.convective_threshold` (0 unless set).
@@ -96,11 +96,12 @@ This case has no plot: each of the 300 states is a single comparison of 2 number
 
 **What it tests.** The check raises `CMBEddyFluxError` when:
 
-- $\partial S/\partial r[0] \ge D$ and $|J| > \rho T \kappa_h^\mathrm{mlt}[1]\,|\partial S/\partial r[0]|$: a floor of node 1 crosses a stable CMB;
-- $\partial S/\partial r[0] < D$ and $|J| < \rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$: the CMB node lost its own floor;
-- $J\,\partial S/\partial r[0] > 0$: the flux runs against its gradient;
-- $J$ differs from $-\rho T \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])\,\partial S/\partial r[0]$ by more than $10^{-12}$ relative: any other flux, for example one with the mixing-length part of node 1 dropped.
+- (i) $\partial S/\partial r[0] \ge D$ and $|J| > \rho T \kappa_h^\mathrm{mlt}[1]\,|\partial S/\partial r[0]|$: a floor of node 1 crosses a stable CMB;
+- (ii) $\partial S/\partial r[0] < D$ and $|J| < \rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$: the CMB node lost its own floor;
+- (iii) $J\,\partial S/\partial r[0] > 0$: the flux runs against its gradient;
+- (iv) $J$ differs from $-\rho T \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])\,\partial S/\partial r[0]$ by more than $10^{-12}$ relative: any other flux, for example one with the mixing-length part of node 1 dropped.
 
+A state where one input is not finite (NaN or infinite) is not checked; the finite checks of the solver handle it.
 The tests pass each kind of state through the check, give it a flux that breaks each part, and confirm that the update calls it with the values it used. 2 solver tests make the check fail inside a solve.
 
 **How we know the right answer.** The 4 parts follow from the rule: $\kappa_h[0]$ is at least the floor of node 0, equals $\kappa_h^\mathrm{mlt}[1]$ over a stable gradient, is never negative, and is the larger of the 2 inputs.
@@ -111,8 +112,8 @@ This case has no plot: each test is a single pass or refusal.
 
 ??? info "Test details"
     - Reference: the 4 parts of the rule above.
-    - Tolerance: 1e-12 relative on parts 1, 2 and 4.
-    - Test id: `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_each_broken_part`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_a_flux_between_the_bounds`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_round_off_of_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_uses_the_threshold`, `tests/test_cmb_eddy_diffusivity.py::test_update_checks_the_invariant`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_keeps_the_last_accepted_state`
+    - Tolerance: 1e-12 relative on parts (i), (ii) and (iv).
+    - Test id: `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_each_broken_part`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_a_flux_between_the_bounds`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_round_off_of_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_uses_the_threshold`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_skips_a_state_that_is_not_finite`, `tests/test_cmb_eddy_diffusivity.py::test_update_checks_the_invariant`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_keeps_the_last_accepted_state`
     - Command: `pytest tests/test_cmb_eddy_diffusivity.py -k "invariant or fault"`
 
 ## A large planet runs through the state where the copy rule stops
@@ -140,7 +141,7 @@ This case has no plot: each test is a single pass or refusal.
     - Tolerance: every call below the bound (measured: at most $|r|/B = 5.2 \times 10^{-9}$ in 14 calls); no helpfile row with a CMB heat below $-10^{25}$ J (the copy rule has none either: it stops before an accepted step). Copy rule: 3 calls above $10 B$ (at most 21.1), PROTEUS status 20 (error); CMB node rule: status 13 (completed at the target time).
     - Step test: copy rule $|\Delta P_\mathrm{cmb}| = 9.105$ to $9.212 \times 10^{16}$ W at a step of $10^{-9}$, and at least $9.105 \times 10^{16}$ W at $10^{-12}$, at all 416 points of 3 calls. CMB node rule: at most $9.8 \times 10^{-4}$ W at $10^{-9}$ (relative $1.2 \times 10^{-15}$) and 0 at $10^{-12}$, at all 544 points of 5 calls.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_case_38_runs_where_the_copy_rule_stops`, `tests/test_cmb_eddy_flux_runs.py::test_case_38_cmb_power_has_no_step_at_s1_equal_s0`
-    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`). The tests of the 4 run cases read these stored runs and do not run the code again, so a change of the code does not fail them.
+    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`). The tests of the 6 run cases read these stored runs and do not run the code again, so a change of the code does not fail them.
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py` (add `--validation-plots` to write the plot pairs)
 
 ## An Earth-mass run where node 1 turns stable
@@ -158,12 +159,12 @@ This case has no plot: each test is a single pass or refusal.
 
 **How to read the plot.** Panel (a) shows the CMB heat flux on a log scale. For the copy rule (squares) and the CMB node rule (filled circles) it is the average over each solver call, the value of the helpfile. For the CMB node rule it also shows the peak inside each call (up triangles) and the node flux at the end of each call (down triangles). Panel (b) shows $|r|/B$ of each call; the dashed line is the refusal limit of 10. The copy rule falls to about $10^{-3}$ W m$^{-2}$ and stops; the CMB node rule keeps 128 to 6092 W m$^{-2}$ and stays below the line.
 
-**Known limit.** 3 of the 12 calls of the CMB node rule miss by more than the bound: $|r|/B$ = 1.160, 1.248 and 4.323. The misses are integration error of the solver at the Aragog rtol of this run, $10^{-8}$: they fall with rtol ([The ledger misses and the solver tolerance](#the-ledger-misses-and-the-solver-tolerance)).
+**Known limit.** 3 of the 12 calls of the CMB node rule miss by more than the bound: $|r|/B$ = 1.160, 1.248 and 4.323. The misses are consistent with integration error of the solver at the Aragog rtol of this run, $10^{-8}$: at rtol $10^{-10}$ no call of the 60 kyr run of this case is above the bound, while at $10^{-9}$ the call that ends at 31979.6 yr misses by 5.51 $B$ ([The misses of the energy check and the solver tolerance](#the-misses-of-the-energy-check-and-the-solver-tolerance)).
 
 - These are calls with a short peak of the CMB flux inside the call, $2.8 \times 10^4$ to $6.9 \times 10^5$ W m$^{-2}$; 6 of the 8 calls with a peak end between 130 and 350 W m$^{-2}$.
 - All 8 calls with $|r|/B$ above 0.3 have such a peak; the 4 calls without a peak stay below 0.004.
 - The quadrature error of the CMB heat on the stored points is at most 0.01 $B$, so the trapezoid sum of the stored points does not cause the miss.
-- The peaks are not settled values: rerun from its start state at rtol $10^{-9}$, the call that ends at 32394.5 yr misses by 0.24 $B$, and its CMB heat is 3.2 times smaller.
+- The peaks are not settled values: the call that ends at 32394.5 yr, rerun at rtol $10^{-9}$ from its start state in the 60 kyr run below, misses by 0.24 $B$, and its CMB heat is 3.2 times smaller.
 - In this state (kind d) the CMB node takes its own floor, so the CMB flux is the floor flux $\rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$: at a given CMB gradient it scales with `kappah_floor`, a numerical setting (10 m$^2$ s$^{-1}$ here; no run with another value was made).
 
 **Known limit.** The helpfile flux is the average over a call, and the snapshot of a call holds the node flux at its end. At 31773 yr the call average is 1776 W m$^{-2}$, while the end state sits in a peak, at $7.738 \times 10^4$ W m$^{-2}$ with a CMB gradient of $-4.0 \times 10^{-4}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$.
@@ -178,55 +179,57 @@ This case has no plot: each test is a single pass or refusal.
 
 **Why this check exists.** [Aragog issue #113](https://github.com/FormingWorlds/aragog/issues/113) reports that in this Earth-mass case under the copy rule the CMB heat flux stays near 0.1 W m$^{-2}$ from 30.5 to 57.3 kyr, while the lowest cell falls 428 K below the CMB node. The resume above covers only the start of this interval.
 
-**What it tests.** The run above, resumed at 30169.3 yr, runs to 60 kyr under the CMB node rule. It is compared with the run of the #113 case under the copy rule, from $t = 0$ to 140 kyr in an older build (versions in `cmb_eddy_flux_runs_provenance.json`); that run gives the rows of the table in the issue. The test checks the CMB heat flux $F_\mathrm{cmb}$, the difference $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ between the lowest cell and the CMB node, and the energy check of each call.
+**What it tests.** The run above, resumed at 30169.3 yr, runs to 60 kyr under the CMB node rule. The runs use the `energy_balance` core: there $T_\mathrm{cmb}$ in the helpfile is the temperature of the lowest mantle cell, and $T_\mathrm{cmb,node}$ the temperature of the CMB node. The run is compared with the run of the #113 case under the copy rule, from $t = 0$ to 140 kyr in an older build, at the same rtol of $10^{-8}$ (versions in `cmb_eddy_flux_runs_provenance.json`); that run wrote the state of the resume, and it gives the rows of the table in the issue. In the build of this page the copy rule stops at 30952 yr in this case (the case above). The test checks the CMB heat flux $F_\mathrm{cmb}$, the difference $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ and the energy check of each call.
 
 **How we know the right answer.** This run has no exact answer. The check is that the core stays coupled to the mantle, as in the runs of this case with the constant mixing length or 160 levels, which issue #113 reports without a low-flux interval, and that no call is refused.
 
-**Why it matters.** Under the copy rule the core loses almost no heat for 27 kyr, and the lowest cell falls up to 428 K below the CMB node.
+**Why it matters.** The heat flow out of the core sets how fast the core cools and how much heat the base of the mantle gets. Under the copy rule of the older build this case runs for 27 kyr with almost no heat out of the core, and the run does not stop.
 
 ![CMB heat flux and the temperature difference between the lowest cell and the CMB node against time, copy rule and CMB node rule, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_60kyr.svg#only-light){ width="70%" }
 ![CMB heat flux and the temperature difference between the lowest cell and the CMB node against time, copy rule and CMB node rule, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_60kyr_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** Panel (a) shows $F_\mathrm{cmb}$ of each helpfile row on a log scale, panel (b) the difference $T_\mathrm{cmb} - T_\mathrm{cmb,node}$. The dashed line is the copy rule, the solid line the CMB node rule. The copy rule falls to between $10^{-3}$ and 0.1 W m$^{-2}$ at 30.5 kyr and returns after a spike at 57.5 kyr. Between 30.5 and 57.3 kyr the CMB node rule keeps a median of 1953 W m$^{-2}$, and the lowest cell stays 8.2 to 9.6 K below the node.
 
-**Known limit.** 1 of the 131 rows of the CMB node rule is below 1 W m$^{-2}$, at 43665 yr, the call between the calls with the largest and the third-largest misses of the energy check (7.20 $B$ before it, 5.69 $B$ after it). At rtol $10^{-9}$ and $10^{-10}$ no row is below 1 W m$^{-2}$ ([The ledger misses and the solver tolerance](#the-ledger-misses-and-the-solver-tolerance)).
+**Known limit.** In these states (kind d) the CMB flux of the CMB node rule is the floor flux of node 0, which scales with `kappah_floor`, a numerical setting (10 m$^2$ s$^{-1}$ here). The check shows that the core stays coupled; it does not test the size of the flux.
+
+**Known limit.** 1 of the 131 rows of the CMB node rule is below 1 W m$^{-2}$, at 43665 yr, the call between the calls with the largest and the third-largest misses of the energy check (7.20 $B$ before it, 5.69 $B$ after it). At rtol $10^{-9}$ and $10^{-10}$ no row is below 1 W m$^{-2}$ ([The misses of the energy check and the solver tolerance](#the-misses-of-the-energy-check-and-the-solver-tolerance)).
 
 ??? info "Test details"
     - Reference: the copy rule in the run of issue #113 (an older build, versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call.
-    - Tolerance: every call below $10 B$. Copy rule: median $F_\mathrm{cmb}$ 0.10 W m$^{-2}$ from 30.5 to 57.3 kyr, 116 of 130 rows below 1 W m$^{-2}$, $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ down to $-428.5$ K. CMB node rule: status 13 at 60 kyr, median 1953 W m$^{-2}$, 1 of 131 rows below 1 W m$^{-2}$, $-9.55$ to $-8.17$ K.
+    - Tolerance: every call below $10 B$. Copy rule: the rows of the issue table, $F_\mathrm{cmb} = 1.4 \times 10^{-3}$ W m$^{-2}$ at 30546 yr (1 %), $T_\mathrm{cmb} = 4811.5$ K and $T_\mathrm{cmb,node} = 5239.9$ K at 50 kyr (0.05 K); median $F_\mathrm{cmb}$ 0.10 W m$^{-2}$ from 30.5 to 57.3 kyr, 116 of 130 rows below 1 W m$^{-2}$, 1 row above $10^4$ W m$^{-2}$ at 57.5 kyr, $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ down to $-428.5$ K. CMB node rule: status 13 at 60 kyr at each rtol, median 1953 W m$^{-2}$, 1 of 131 rows below 1 W m$^{-2}$ (at 43665 yr, between the calls with misses 7.20 and 5.69 $B$), $-9.55$ to $-8.17$ K; no row below 1 W m$^{-2}$ at rtol $10^{-9}$ and $10^{-10}$.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_seal_case_to_60_kyr_keeps_the_core_coupled`
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py` (add `--validation-plots` to write the plot pair)
 
-## The ledger misses and the solver tolerance
+## The misses of the energy check and the solver tolerance
 
-**Why this check exists.** In the Earth-mass runs with the `nearest_boundary` mixing length, some calls of the CMB node rule miss the energy check by more than the bound $B$, though below the refusal limit. This case shows where the misses come from.
+**Why this check exists.** In the Earth-mass runs with the `nearest_boundary` mixing length, some calls of the CMB node rule miss the energy check by more than the bound $B$, though below the refusal limit. This case shows how the misses depend on the solver tolerance.
 
-**What it tests.** The 60 kyr run of the case above at the Aragog rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$, and single calls rerun from a stored start state at rtol $10^{-8}$ to $10^{-11}$. PROTEUS sets rtol $10^{-8}$ for Aragog when a configuration does not set it.
+**What it tests.** rtol is the relative tolerance that the CVODE time integrator holds in each step. The case runs the 60 kyr run of the case above at the Aragog rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$, and single calls rerun from a stored start state at rtol $10^{-8}$ to $10^{-11}$. PROTEUS sets rtol $10^{-8}$ for Aragog when a configuration does not set it. The run at $10^{-10}$ takes 34917 solver steps, against 61781 at $10^{-8}$ and 66110 at $10^{-9}$.
 
-**How we know the right answer.** In each call the change of the core heat must equal the CMB heat of the call. A miss that falls with rtol is integration error of the solver, not an error of the rule.
+**How we know the right answer.** In each call the change of the core heat must equal the CMB heat of the call: energy is conserved. If the misses fall as rtol gets tighter, the equations with the CMB node rule conserve energy, and the misses come from the time integration. Whether the rule makes the equations harder to integrate is not tested here. The energy check tests this balance only: a call can pass it while its CMB heat still changes with rtol (see the known limit below).
 
-**Why it matters.** At the default rtol these runs pass the energy check only with a margin below the refusal limit, and their in-call CMB flux depends on rtol.
+**Why it matters.** At the default rtol a call can pass the energy check with a CMB heat far from its value at tight rtol: the call that ends at 43407.5 yr misses by 7.20 $B$, below the refusal limit, with a CMB heat 3.59 times its value at rtol $10^{-9}$ to $10^{-11}$.
 
-![Ledger miss of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol.svg#only-light){ width="70%" }
-![Ledger miss of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol_dark.svg#only-dark){ width="70%" }
+![Miss of the energy check of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol.svg#only-light){ width="70%" }
+![Miss of the energy check of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Each line shows $|r|/B$ of the 131 calls of one run, sorted from the largest miss, on a log scale. The dotted line is the bound, the dash-dot line the refusal limit of 10. At rtol $10^{-8}$ 15 calls are above the bound (largest 7.20), at $10^{-9}$ 13 calls (largest 5.51), at $10^{-10}$ none (largest 0.061). The run at $10^{-10}$ takes 34917 solver steps, against 61781 at $10^{-8}$ and 66110 at $10^{-9}$.
+**How to read the plot.** The horizontal axis numbers the 131 calls of one run, the call with the largest miss first; the vertical axis is $|r|/B$ on a log scale. The coloured solid, dashed and dotted lines are the runs at rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$. The thin dotted line in the text colour is the bound ($|r|/B = 1$), the thin dash-dot line the refusal limit of 10. At rtol $10^{-8}$ 15 calls are above the bound (largest 7.20), at $10^{-9}$ 13 calls (largest 5.51), at $10^{-10}$ none (largest 0.061).
 
 The single calls give $|r|/B$ at each rtol:
 
 | Call ends at | Start state from | $10^{-8}$ | $10^{-9}$ | $10^{-10}$ | $10^{-11}$ |
 |---|---|---|---|---|---|
 | 43407.5 yr | run at $10^{-8}$ | 7.20 | $6.1 \times 10^{-5}$ | $6.8 \times 10^{-5}$ | $9.2 \times 10^{-6}$ |
-| 32394.5 yr | run at $10^{-8}$ | 4.32 | 0.24 | | |
-| 31979.6 yr | run at $10^{-9}$ | | 5.51 | 0.066 | $2.7 \times 10^{-4}$ |
+| 32394.5 yr | run at $10^{-8}$ | 4.32 | 0.24 | not run | not run |
+| 31979.6 yr | run at $10^{-9}$ | not run | 5.51 | 0.066 | $2.7 \times 10^{-4}$ |
 
-The CMB heat of the call that ends at 43407.5 yr agrees within $10^{-5}$ relative at $10^{-9}$, $10^{-10}$ and $10^{-11}$, and is 3.59 times smaller than at $10^{-8}$.
+At rtol $10^{-9}$, $10^{-10}$ and $10^{-11}$ the CMB heat of the call that ends at 43407.5 yr is the same within $10^{-5}$ relative; at $10^{-8}$ it is 3.59 times larger.
 
-**Known limit.** The call that ends at 31979.6 yr closes the energy check at tight rtol, but its CMB heat still changes: $2.84$, $2.63$ and $2.16 \times 10^{27}$ J at $10^{-9}$, $10^{-10}$ and $10^{-11}$. A short peak of the CMB flux inside this call appears only at tight rtol, and we do not know whether it is physical. The misses do not fall with a 4 times smaller maximum step, nor with a difference-quotient Jacobian in place of the JAX Jacobian (probes outside this repository).
+**Known limit.** The call that ends at 31979.6 yr passes the energy check at rtol $10^{-10}$ and $10^{-11}$, but its CMB heat still changes: $2.84$, $2.63$ and $2.16 \times 10^{27}$ J at $10^{-9}$, $10^{-10}$ and $10^{-11}$. Its CMB heat is not settled at $10^{-11}$.
 
 ??? info "Test details"
     - Reference: the energy check of each call (the core heat change against the CMB heat of the call).
-    - Tolerance: as measured, $|r|/B$ of the runs to $5 \times 10^{-4}$ relative and of the single calls to $10^{-2}$ relative; every call below $10 B$ at each rtol.
+    - Tolerance: each value quoted here equals the stored value rounded to the quoted digits; the number of calls above the bound and the solver steps exactly; the 3 heats of the call that ends at 43407.5 yr within $10^{-5}$ of each other; every call below $10 B$ at each rtol.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_seal_case_ledger_misses_fall_with_rtol`
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py` (add `--validation-plots` to write the plot pair)
 

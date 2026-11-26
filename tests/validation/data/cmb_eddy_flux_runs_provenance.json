@@ -101,6 +101,7 @@
   "run": "the #113 case from t = 0 to 140 kyr under the copy rule (its rows 30169.3 to 60000 yr are kept)",
   "aragog": "26.11.8.post1.dev3+gbfb122428",
   "proteus": "dfa3a9f9e24f4ba50a92ad28c5b998fca7fe04c6",
+  "rtol": "1e-08 (interior_energetics.rtol in its init_coupler.toml)",
   "sha256_helpfile": "d082a7de8483602438fa93a4a71f4315deb840da0d08ec818d14d72ad75cd39a"
  },
  "rtol_calls/c43151_r8": {

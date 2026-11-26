@@ -253,10 +253,10 @@ def test_cmb_rule_holds_on_random_states(g0, g1, phi0, phi1, D, edt, kappah_floo
 _RHO_T = 4500.0 * 4000.0
 
 
-def _check(jconv0, dsdr0, kh_mlt_1, floor_0, threshold):
+def _check(jconv0, dsdr0, kh_mlt_1, floor_0, threshold, rho_t=_RHO_T):
     check_cmb_convective_flux(
         jconv_0=jconv0,
-        rho_t_0=_RHO_T,
+        rho_t_0=rho_t,
         dsdr_0=dsdr0,
         kh_mlt_1=kh_mlt_1,
         kh_floor_0=floor_0,
@@ -318,14 +318,17 @@ def test_invariant_passes_round_off_of_the_rule():
     _check(_RHO_T * 8.0 * 1.0e-4 * (1.0 + 1.0e-13), -1.0e-4, 8.0, 5.0, 0.0)
 
 
-@pytest.mark.parametrize('arg', ['jconv0', 'dsdr0', 'kh_mlt_1', 'floor_0'])
-def test_invariant_skips_a_state_that_is_not_finite(arg):
-    """A non-finite input leaves the state to the finite checks of the solver: a flux up a
-    stable gradient, refused by part (iii) when finite, passes with one input set to NaN."""
+@pytest.mark.parametrize('bad', [np.nan, np.inf], ids=['nan', 'inf'])
+@pytest.mark.parametrize('arg', ['jconv0', 'dsdr0', 'kh_mlt_1', 'floor_0', 'rho_t'])
+def test_invariant_skips_a_state_that_is_not_finite(arg, bad):
+    """A state with a non-finite input is not checked: a flux up a stable gradient, refused by
+    part (iii) when finite, passes with any input NaN or infinite. Without the guard an infinite
+    input still reaches part (iii); a NaN flux or gradient passes either way, as each comparison
+    with NaN is false."""
     kw = dict(jconv0=_RHO_T * 3.0 * 1.0e-4, dsdr0=1.0e-4, kh_mlt_1=3.0, floor_0=0.0)
     with pytest.raises(CMBEddyFluxError, match=r'\(iii\)'):
         _check(**kw, threshold=0.0)
-    _check(**{**kw, arg: np.nan}, threshold=0.0)
+    _check(**{**kw, arg: bad}, threshold=0.0)
 
 
 def test_invariant_uses_the_threshold():
