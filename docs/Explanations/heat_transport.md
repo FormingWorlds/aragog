@@ -109,7 +109,7 @@ Two cases follow:
 At $D = 0$ the CMB flux is continuous in $S_1 - S_0$; for $D > 0$ it jumps where the minimum drive of node 1 switches off.
 In every call `EntropyState.update` checks both cases and that the CMB flux does not run against its gradient; it raises `CMBEddyFluxError` when a check fails.
 
-**Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md).
+**Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md); worked example in the [tutorial](../Tutorials/cmb_eddy_diffusivity.md).
 
 ## Gravitational separation of melt
 

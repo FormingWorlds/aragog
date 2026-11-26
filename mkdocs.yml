@@ -42,6 +42,7 @@ nav:
       - A core on the PALEOS isentrope: Tutorials/core_tabulated.md
       - Closing the core energy at the CMB: Tutorials/cmb_closure.md
       - The CMB law by phase: Tutorials/cmb_law_by_phase.md
+      - The eddy diffusivity at the CMB node: Tutorials/cmb_eddy_diffusivity.md
 
   - Explanations:
       - Overview:
