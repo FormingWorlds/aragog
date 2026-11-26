@@ -50,12 +50,14 @@ def test_case_38_runs_where_the_copy_rule_stops(runs, validation_plot):
     below -1e25 J."""
     assert int(runs['v4_main/status']) == STATUS_ERROR
     assert runs['v4_main/ledger_rB'].size == 3
+    assert np.all(runs['v4_main/step_dE_F_cmb_J'] == 0.0)  # no interior step after the resume
     assert np.sum(np.abs(runs['v4_main/ledger_rB']) > LEDGER_LIMIT) == 3
     assert _max_rb(runs, 'v4_main') == pytest.approx(21.06, abs=0.005)
     assert int(runs['v4_tip/status']) == STATUS_TARGET_TIME
     assert runs['v4_tip/Time'][-1] >= 6.82e6
     assert runs['v4_tip/ledger_rB'].size == 14
     assert _max_rb(runs, 'v4_tip') == pytest.approx(5.2e-9, abs=0.05e-9)
+    # the acceptance row of the plan; the copy rule also has no such row: it stops before
     assert np.all(runs['v4_tip/step_dE_F_cmb_J'] > -1.0e25)
 
     def figure():
@@ -131,6 +133,8 @@ def test_constant_mixing_length_resume_keeps_the_ledger(runs, validation_plot):
         assert runs[f'{key}/ledger_rB'].size == 4
     assert _max_rb(runs, 'v6_main') == pytest.approx(0.28, abs=0.005)
     assert _max_rb(runs, 'v6_tip') == pytest.approx(0.30, abs=0.005)
+    for key in ('v6_main', 'v6_tip'):  # the first row carries heat into the core
+        assert runs[f'{key}/F_cmb'][0] == pytest.approx(-592.0, abs=0.1)
     t = runs['v6_main/Time']
     for col, rel in (('F_cmb', 1.7e-3), ('T_cmb', 1.7e-9)):
         rule = np.interp(t, runs['v6_tip/Time'], runs[f'v6_tip/{col}'])
@@ -155,14 +159,21 @@ def test_constant_mixing_length_resume_keeps_the_ledger(runs, validation_plot):
 def test_run_from_t0_differs_only_at_the_graph_round_off(runs):
     """1 Earth mass, constant mixing length, t = 0 to 5 kyr: the CMB node rule never differs from
     the copy rule in a CMB evaluation (0 of 88499 JAX, 0 of 454 NumPy); its run equals the copy
-    rule with a value-neutral edit of the same line bit for bit; against the copy rule it differs
-    in 136 of 1040 helpfile columns, first at 2 yr by 9.9e-9 in F_cmb and by at most 25.6 W m^-2
+    rule with a value-neutral edit of the same line bit for bit (as a second run of the copy rule
+    and the rule run with a debug callback equal the copy rule); against the copy rule it and the
+    edit differ in 136 of 1040 helpfile columns, first at 2 yr by 9.9e-9 in F_cmb and by at most 25.6 W m^-2
     by 5 kyr."""
     assert int(runs['v7_tip/jax_evals']) == 88499 and int(runs['v7_tip/jax_differing']) == 0
     assert int(runs['v7_tip/numpy_evals']) == 454 and int(runs['v7_tip/numpy_differing']) == 0
     for col in ('Time', 'F_cmb', 'T_cmb', 'step_dE_F_cmb_J'):
         assert np.array_equal(runs[f'v7_tip/{col}'], runs[f'v7_main_graph/{col}'])
-    assert int(runs['v7_columns_differ']) == 136 and int(runs['v7_columns_total']) == 1040
+    assert int(runs['v7_columns_total']) == 1040
+    for pair in ('v7_tip_vs_graph', 'v7_repeat_vs_main', 'v7_callback_vs_main'):
+        assert bool(runs[f'{pair}/only_runtime']), (
+            pair
+        )  # equal in every column but the run time
+    for pair in ('v7_tip_vs_main', 'v7_graph_vs_main'):
+        assert int(runs[f'{pair}/columns_differ']) == 136, pair
     a, b = runs['v7_main/F_cmb'], runs['v7_tip/F_cmb']
     first = int(np.argmax(a != b))
     assert first == 4 and runs['v7_main/Time'][first] == 2.0

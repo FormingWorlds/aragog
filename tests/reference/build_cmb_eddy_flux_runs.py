@@ -37,6 +37,8 @@ RUNS = {
     'v7_main': -1.0,
     'v7_tip': -1.0,
     'v7_main_graph': -1.0,
+    'v7_main_repeat': -1.0,
+    'v7_tip_callback': -1.0,
     'v9_main': 30169.30,
     'v9_tip': 30169.30,
 }
@@ -109,19 +111,36 @@ def main(spec_path: str) -> None:
     out['v9_tip/call_rB'] = np.array([p['r'] / p['bound'] for p in parts])
     out['v9_tip/call_Etrap_B'] = np.array([p['E_trap'] / p['bound'] for p in parts])
     probe = Path(spec['v7_probe_log']).read_text()
-    m = re.search(r'V7PROBE evals (\d+) differing \{(.*?)\}', probe)
-    out['v7_tip/jax_evals'] = np.array(int(m.group(1)))
-    out['v7_tip/jax_differing'] = np.array(len(m.group(2).strip()))  # empty dict: no kind
-    kinds = re.findall(
-        r"\(\('(\w)', '(same|differs)'\), (\d+)\)", Path(spec['v7_tip']['log']).read_text()
+    counters = re.findall(r'V7PROBE evals (\d+) differing \{(.*?)\}', probe)
+    if len(counters) != 1:
+        raise ValueError(f'v7 probe log: {len(counters)} counter lines, not 1')
+    out['v7_tip/jax_evals'] = np.array(int(counters[0][0]))
+    out['v7_tip/jax_differing'] = np.array(
+        sum(int(n) for n in re.findall(r'\): (\d+)', counters[0][1]))
     )
+    kinds_lines = re.findall(r'VRUN kinds (.*)', Path(spec['v7_tip']['log']).read_text())
+    if len(kinds_lines) != 1:
+        raise ValueError(f'v7 tip log: {len(kinds_lines)} kind lines, not 1')
+    kinds = re.findall(r"\(\('(\w)', '(same|differs)'\), (\d+)\)", kinds_lines[0])
     out['v7_tip/numpy_evals'] = np.array(sum(int(n) for _, _, n in kinds))
     out['v7_tip/numpy_differing'] = np.array(sum(int(n) for _, d, n in kinds if d == 'differs'))
-    a, b = (_table(spec[k]['helpfile']) for k in ('v7_main', 'v7_tip'))
-    out['v7_columns_total'] = np.array(len(a))
-    out['v7_columns_differ'] = np.array(
-        sum(not np.array_equal(a[c], b[c], equal_nan=True) for c in a)
-    )
+    # whole helpfiles, exact values: pairs of runs and the number of columns that differ
+    tables = {
+        k: _table(spec[k]['helpfile'])
+        for k in ('v7_main', 'v7_tip', 'v7_main_graph', 'v7_main_repeat', 'v7_tip_callback')
+    }
+    out['v7_columns_total'] = np.array(len(tables['v7_main']))
+    for name, (x, y) in {
+        'v7_tip_vs_main': ('v7_main', 'v7_tip'),
+        'v7_graph_vs_main': ('v7_main', 'v7_main_graph'),
+        'v7_tip_vs_graph': ('v7_main_graph', 'v7_tip'),
+        'v7_repeat_vs_main': ('v7_main', 'v7_main_repeat'),
+        'v7_callback_vs_main': ('v7_main', 'v7_tip_callback'),
+    }.items():
+        a, b = tables[x], tables[y]
+        diff = [c for c in a if not np.array_equal(a[c], b[c], equal_nan=True)]
+        out[f'{name}/columns_differ'] = np.array(len(diff))
+        out[f'{name}/only_runtime'] = np.array(diff == ['runtime'])
     prov['numpy'] = np.__version__
     prov['v7_probe_log_sha256'] = hashlib.sha256(probe.encode()).hexdigest()
     prov['v9_parts_log_sha256'] = hashlib.sha256(

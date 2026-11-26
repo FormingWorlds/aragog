@@ -48,6 +48,20 @@
   "sha256_helpfile": "f6da41dd1f1f2d5d56562e588946d82b0b94fb578c2ed675d92df65b3b83a766",
   "sha256_log": "c6588d18af3965db23764049f5405831e608084059717b5dffd29459fefa5318"
  },
+ "v7_main_repeat": {
+  "run": "same, a second run of the copy rule",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "1c0cb182145f7bd232c62071143146bcfbbe5df2a500c6cdf20f107ddcca2561",
+  "sha256_log": "bf8cdda1888f1fa70349994d49c5706c84a57ef45643ae3dc24fa1ba42d45939"
+ },
+ "v7_tip_callback": {
+  "run": "same, CMB node rule with a debug callback in compute_mlt",
+  "aragog": "c5778c51066da8991c7d7ccf5f1d2354b2c063d2 + debug callback",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "6a379369909a55b03954ddbef367fb07c23f13698ba5a3c7039e97f70f32ab40",
+  "sha256_log": "dce1ffa547c4d76c07c374794a98c27388a13cee6c82a139f3cdd2688abf55e2"
+ },
  "v9_main": {
   "run": "1 Earth mass, nearest-boundary mixing length, resumed at 30169.3 yr to 32500 yr",
   "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
