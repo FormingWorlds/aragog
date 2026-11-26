@@ -191,6 +191,10 @@ def test_nearest_mixing_length_resume_runs_where_the_copy_rule_stops(runs, valid
     assert _max_rb(runs, 'v9_main') == pytest.approx(787, abs=0.5)
     assert int(runs['v9_tip/status']) == STATUS_TARGET_TIME
     assert runs['v9_tip/Time'][-1] == 32500.0
+    assert float(runs['v9_tip/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
+    # the call that misses by 5.51 B at rtol 1e-9 (60 kyr run) misses by 0.71 B here
+    k = int(np.argmin(np.abs(runs['v9_tip/ledger_t1'] - 31979.6)))
+    assert runs['v9_tip/ledger_rB'][k] == pytest.approx(0.711, abs=5e-4)
     rb = np.abs(runs['v9_tip/ledger_rB'])
     assert rb.size == 12 and np.sum(rb > 1.0) == 3 and rb.max() < LEDGER_LIMIT
     np.testing.assert_allclose(np.sort(rb[rb > 1.0]), [1.160, 1.248, 4.323], atol=5e-4)
@@ -326,22 +330,33 @@ def test_seal_case_ledger_misses_fall_with_rtol(runs, validation_plot):
         10: (0.061, 2, 0),
     }.items():
         k = SEAL_RUNS[r]
-        assert float(runs[f'{k}/rtol']) == 10.0**-r and rb[r].size == 131
+        assert (
+            float(runs[f'{k}/rtol']) == pytest.approx(10.0**-r, rel=1e-12) and rb[r].size == 131
+        )
         np.testing.assert_array_equal(runs[f'{k}/ledger_rB'], runs[f'{k}/call_rB'])
         assert _quoted(rb[r].max(), digits) == top and np.sum(rb[r] > 1.0) == n_above
     steps = [int(runs[f'{k}/cvode_steps']) for k in SEAL_RUNS.values()]
     assert steps == [61781, 66110, 34917]
+    assert [_quoted(np.median(rb[r]), 2) for r in (8, 9, 10)] == [4.7e-3, 3.4e-4, 1.0e-5]
+    # the calls the page names, by their end time [yr] and |r|/B in the 60 kyr runs
+    t1 = {r: runs[f'{k}/ledger_t1'] for r, k in SEAL_RUNS.items()}
+    assert t1[8][np.argmax(rb[8])] == pytest.approx(43407.5, abs=0.05)
+    assert t1[9][np.argmax(rb[9])] == pytest.approx(31979.6, abs=0.05)
+    named = {end: rb[8][np.argmin(np.abs(t1[8] - end))] for end in (31979.6, 32394.5)}
+    assert [_quoted(named[31979.6], 2), _quoted(named[32394.5], 3)] == [0.71, 4.32]
     # single calls: (call end [yr], {rtol exponent: |r|/B as quoted on the page})
     table = {
         'c43151': (43407.5, {8: 7.20, 9: 6.1e-5, 10: 6.8e-5, 11: 9.2e-6}),
         'c32187': (32394.5, {8: 4.32, 9: 0.24}),
         'c31773': (31979.6, {9: 5.51, 10: 0.066, 11: 2.7e-4}),
     }
+    stored = {n.split('/')[1] for n in runs if n.startswith('rtol_calls/')}
+    assert stored == {f'{c}_r{r}' for c, (_, quoted) in table.items() for r in quoted}
     q = {}
     for call, (end, quoted) in table.items():
         for r, value in quoted.items():
             key = f'rtol_calls/{call}_r{r}'
-            assert float(runs[f'{key}/rtol']) == 10.0**-r
+            assert float(runs[f'{key}/rtol']) == pytest.approx(10.0**-r, rel=1e-12)
             assert float(runs[f'{key}/t1']) == pytest.approx(end, abs=0.05)
             assert _quoted(float(runs[f'{key}/rB']), 3 if value > 1.0 else 2) == value
             q[call, r] = float(runs[f'{key}/q'])

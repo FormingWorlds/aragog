@@ -11,14 +11,14 @@ The right answer comes from 3 sources:
 
 - the rule written out by hand in the test;
 - a second implementation: the NumPy update and the JAX function `compute_mlt`;
-- coupled PROTEUS runs under the copy rule, as the case to compare with: 2 of them stop, and in 1 the core stays almost cut off from the mantle for 27 kyr.
+- coupled PROTEUS runs: the energy check of each solver call (below) gives the pass mark, and runs under the copy rule give the failure to compare with; 2 of these copy-rule runs stop, and in 1 the core stays almost cut off from the mantle for 27 kyr.
 
 If this part were wrong, the heat flow out of the core could jump between 2 values when the entropies of the 2 lowest cells cross, or fall to 0 while the CMB gradient is unstable.
 The core would then cool at the wrong rate: the energy check can stop the run, or the run can go on with the core almost cut off from the mantle.
 Each case says why the check exists, what it tests, how we know the right answer and why it matters; then it shows a plot or a table, and the test details.
 
 In the formulas below, $S_0$ and $S_1$ are the entropies of the 2 lowest cells, $\partial S/\partial r$ is the entropy gradient at a node, $\kappa_h^\mathrm{mlt}[1]$ is the mixing-length eddy diffusivity of node 1 before the floor, $\kappa_h^\mathrm{floor}[0]$ is the floor of the CMB node, and $D$ is `energy.convective_threshold` (0 unless set).
-The energy check is the [ledger check of the CMB closure](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure): in each solver call the change of the core heat must match the CMB heat of the call within the bound $B$; $r$ is the miss, and a call with $|r| > 10 B$ is refused.
+The energy check is the [ledger check of the CMB closure](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure): in each solver call the change of the core heat must match the CMB heat of the call. $r$ is the miss and $B$ the bound that the solver tolerances allow. A call with $|r| \le B$ is within the bound, a call with $B < |r| \le 10 B$ is kept with a warning, and a call with $|r| > 10 B$ is refused.
 
 ## The CMB flux has no step where node 1 changes sign
 
@@ -101,7 +101,7 @@ This case has no plot: each of the 300 states is a single comparison of 2 number
 - (iii) $J\,\partial S/\partial r[0] > 0$: the flux runs against its gradient;
 - (iv) $J$ differs from $-\rho T \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])\,\partial S/\partial r[0]$ by more than $10^{-12}$ relative: any other flux, for example one with the mixing-length part of node 1 dropped.
 
-A state where one input is not finite (NaN or infinite) is not checked; the finite checks of the solver handle it.
+The check skips a state where $J$, $\rho T$, the gradient or one of the 2 inputs is not finite (NaN or infinite).
 The tests pass each kind of state through the check, give it a flux that breaks each part, and confirm that the update calls it with the values it used. 2 solver tests make the check fail inside a solve.
 
 **How we know the right answer.** The 4 parts follow from the rule: $\kappa_h[0]$ is at least the floor of node 0, equals $\kappa_h^\mathrm{mlt}[1]$ over a stable gradient, is never negative, and is the larger of the 2 inputs.
@@ -159,7 +159,7 @@ This case has no plot: each test is a single pass or refusal.
 
 **How to read the plot.** Panel (a) shows the CMB heat flux on a log scale. For the copy rule (squares) and the CMB node rule (filled circles) it is the average over each solver call, the value of the helpfile. For the CMB node rule it also shows the peak inside each call (up triangles) and the node flux at the end of each call (down triangles). Panel (b) shows $|r|/B$ of each call; the dashed line is the refusal limit of 10. The copy rule falls to about $10^{-3}$ W m$^{-2}$ and stops; the CMB node rule keeps 128 to 6092 W m$^{-2}$ and stays below the line.
 
-**Known limit.** 3 of the 12 calls of the CMB node rule miss by more than the bound: $|r|/B$ = 1.160, 1.248 and 4.323. The misses are consistent with integration error of the solver at the Aragog rtol of this run, $10^{-8}$: at rtol $10^{-10}$ no call of the 60 kyr run of this case is above the bound, while at $10^{-9}$ the call that ends at 31979.6 yr misses by 5.51 $B$ ([The misses of the energy check and the solver tolerance](#the-misses-of-the-energy-check-and-the-solver-tolerance)).
+**Known limit.** 3 of the 12 calls of the CMB node rule miss by more than the bound: $|r|/B$ = 1.160, 1.248 and 4.323. The misses are consistent with integration error of the solver at the Aragog rtol of this run, $10^{-8}$: at rtol $10^{-10}$ no call of the 60 kyr run of this case is above the bound, while at $10^{-9}$ the call that ends at 31979.6 yr misses by 5.51 $B$, against 0.71 $B$ at $10^{-8}$ in this run ([The misses of the energy check and the solver tolerance](#the-misses-of-the-energy-check-and-the-solver-tolerance)).
 
 - These are calls with a short peak of the CMB flux inside the call, $2.8 \times 10^4$ to $6.9 \times 10^5$ W m$^{-2}$; 6 of the 8 calls with a peak end between 130 and 350 W m$^{-2}$.
 - All 8 calls with $|r|/B$ above 0.3 have such a peak; the 4 calls without a peak stay below 0.004.
@@ -179,7 +179,7 @@ This case has no plot: each test is a single pass or refusal.
 
 **Why this check exists.** [Aragog issue #113](https://github.com/FormingWorlds/aragog/issues/113) reports that in this Earth-mass case under the copy rule the CMB heat flux stays near 0.1 W m$^{-2}$ from 30.5 to 57.3 kyr, while the lowest cell falls 428 K below the CMB node. The resume above covers only the start of this interval.
 
-**What it tests.** The run above, resumed at 30169.3 yr, runs to 60 kyr under the CMB node rule. The runs use the `energy_balance` core: there $T_\mathrm{cmb}$ in the helpfile is the temperature of the lowest mantle cell, and $T_\mathrm{cmb,node}$ the temperature of the CMB node. The run is compared with the run of the #113 case under the copy rule, from $t = 0$ to 140 kyr in an older build, at the same rtol of $10^{-8}$ (versions in `cmb_eddy_flux_runs_provenance.json`); that run wrote the state of the resume, and it gives the rows of the table in the issue. In the build of this page the copy rule stops at 30952 yr in this case (the case above). The test checks the CMB heat flux $F_\mathrm{cmb}$, the difference $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ and the energy check of each call.
+**What it tests.** The run above, resumed at 30169.3 yr, runs to 60 kyr under the CMB node rule. The runs use the `energy_balance` core. In the PROTEUS helpfile, $T_\mathrm{cmb}$ (column `T_cmb`) is the temperature of the lowest mantle cell and $T_\mathrm{cmb,node}$ (column `T_cmb_node`) the temperature of the CMB node, which is the core temperature of the [energy balance](../Explanations/core_bc.md#energy_balance-default). The run is compared with the run of the #113 case under the copy rule, from $t = 0$ to 140 kyr in an older build whose configuration sets the same rtol of $10^{-8}$ (versions in `cmb_eddy_flux_runs_provenance.json`); that run wrote the state of the resume, and it gives the rows of the table in the issue. In the build of the copy-rule run of the case above, the copy rule stops in this case at 30952 yr. The test checks the CMB heat flux $F_\mathrm{cmb}$, the difference $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ and the energy check of each call.
 
 **How we know the right answer.** This run has no exact answer. The check is that the core stays coupled to the mantle, as in the runs of this case with the constant mixing length or 160 levels, which issue #113 reports without a low-flux interval, and that no call is refused.
 
@@ -204,16 +204,16 @@ This case has no plot: each test is a single pass or refusal.
 
 **Why this check exists.** In the Earth-mass runs with the `nearest_boundary` mixing length, some calls of the CMB node rule miss the energy check by more than the bound $B$, though below the refusal limit. This case shows how the misses depend on the solver tolerance.
 
-**What it tests.** rtol is the relative tolerance that the CVODE time integrator holds in each step. The case runs the 60 kyr run of the case above at the Aragog rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$, and single calls rerun from a stored start state at rtol $10^{-8}$ to $10^{-11}$. PROTEUS sets rtol $10^{-8}$ for Aragog when a configuration does not set it. The run at $10^{-10}$ takes 34917 solver steps, against 61781 at $10^{-8}$ and 66110 at $10^{-9}$.
+**What it tests.** rtol is the relative tolerance that the CVODE time integrator holds in each step. The case runs the 60 kyr run of the case above at the Aragog rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$, and single calls rerun from a stored start state at rtol $10^{-8}$ to $10^{-11}$. PROTEUS sets rtol $10^{-8}$ for Aragog when a configuration does not set it. The run at $10^{-10}$ takes 34917 solver steps, against 61781 at $10^{-8}$ and 66110 at $10^{-9}$; this page does not test why.
 
-**How we know the right answer.** In each call the change of the core heat must equal the CMB heat of the call: energy is conserved. If the misses fall as rtol gets tighter, the equations with the CMB node rule conserve energy, and the misses come from the time integration. Whether the rule makes the equations harder to integrate is not tested here. The energy check tests this balance only: a call can pass it while its CMB heat still changes with rtol (see the known limit below).
+**How we know the right answer.** In each call the change of the core heat must equal the CMB heat of the call: energy is conserved. If the misses fall as rtol gets tighter, the equations with the CMB node rule conserve energy, and the misses come from the time integration. Here the median miss of the 131 calls falls from $4.7 \times 10^{-3}$ to $3.4 \times 10^{-4}$ and $1.0 \times 10^{-5}$ $B$ at rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$; the largest miss falls from 7.20 to 5.51 $B$ at $10^{-9}$ and to 0.061 $B$ at $10^{-10}$, and single calls do not fall in step: the call that ends at 31979.6 yr misses by 0.71 $B$ in the run at $10^{-8}$ and by 5.51 $B$ in the run at $10^{-9}$. Whether the rule makes the equations harder to integrate is not tested here. The energy check tests this balance only: a call can miss by less than $B$ while its CMB heat still changes with rtol (see the known limit below).
 
-**Why it matters.** At the default rtol a call can pass the energy check with a CMB heat far from its value at tight rtol: the call that ends at 43407.5 yr misses by 7.20 $B$, below the refusal limit, with a CMB heat 3.59 times its value at rtol $10^{-9}$ to $10^{-11}$.
+**Why it matters.** At the default rtol a call can be kept by the energy check with a CMB heat far from its value at tight rtol: the call that ends at 43407.5 yr misses by 7.20 $B$, below the refusal limit, with a CMB heat 3.59 times its value at rtol $10^{-9}$ to $10^{-11}$.
 
 ![Miss of the energy check of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol.svg#only-light){ width="70%" }
 ![Miss of the energy check of each call, sorted from the largest, at 3 solver tolerances, the case of issue 113 to 60 kyr](../assets/validation/cmb_eddy_flux_seal_rtol_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** The horizontal axis numbers the 131 calls of one run, the call with the largest miss first; the vertical axis is $|r|/B$ on a log scale. The coloured solid, dashed and dotted lines are the runs at rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$. The thin dotted line in the text colour is the bound ($|r|/B = 1$), the thin dash-dot line the refusal limit of 10. At rtol $10^{-8}$ 15 calls are above the bound (largest 7.20), at $10^{-9}$ 13 calls (largest 5.51), at $10^{-10}$ none (largest 0.061).
+**How to read the plot.** The horizontal axis numbers the 131 calls of one run, the call with the largest miss first; each run is sorted on its own, so one position on the axis is not the same call in the 3 runs. The vertical axis is $|r|/B$ on a log scale. The coloured solid, dashed and dotted lines are the runs at rtol $10^{-8}$, $10^{-9}$ and $10^{-10}$. The thin dotted line in the text colour is the bound ($|r|/B = 1$), the thin dash-dot line the refusal limit of 10. At rtol $10^{-8}$ 15 calls are above the bound (largest 7.20), at $10^{-9}$ 13 calls (largest 5.51), at $10^{-10}$ none (largest 0.061).
 
 The single calls give $|r|/B$ at each rtol:
 
@@ -225,7 +225,7 @@ The single calls give $|r|/B$ at each rtol:
 
 At rtol $10^{-9}$, $10^{-10}$ and $10^{-11}$ the CMB heat of the call that ends at 43407.5 yr is the same within $10^{-5}$ relative; at $10^{-8}$ it is 3.59 times larger.
 
-**Known limit.** The call that ends at 31979.6 yr passes the energy check at rtol $10^{-10}$ and $10^{-11}$, but its CMB heat still changes: $2.84$, $2.63$ and $2.16 \times 10^{27}$ J at $10^{-9}$, $10^{-10}$ and $10^{-11}$. Its CMB heat is not settled at $10^{-11}$.
+**Known limit.** The call that ends at 31979.6 yr misses by less than $B$ at rtol $10^{-10}$ and $10^{-11}$, but its CMB heat still changes: $2.84$, $2.63$ and $2.16 \times 10^{27}$ J at $10^{-9}$, $10^{-10}$ and $10^{-11}$. Its CMB heat is not settled at $10^{-11}$.
 
 ??? info "Test details"
     - Reference: the energy check of each call (the core heat change against the CMB heat of the call).

@@ -11,7 +11,11 @@ sweep values. The provenance (run descriptions, aragog and PROTEUS commits, chec
 
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
-"aragog": ..., "proteus": ...}`` (``run`` describes the case), the key ``v9_parts_log`` to the
+"aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
+CVODE rtol checked in its log and stored), the key ``v9x_copy`` to the helpfile, status, versions
+and configured ``rtol`` of the copy-rule run of issue #113, the key ``rtol_calls`` to the single
+calls rerun from a stored start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the
+key ``v9_parts_log`` to the
 log of the V9 resume that prints the in-call CMB flux of each call, and the key ``v7_probe_log``
 to the log of the V7 rule run with the JAX count of CMB evaluations that differ from the copy. The provenance file holds the
 descriptions, the commits and the sha256 of each helpfile and log, not the local paths.
@@ -116,6 +120,9 @@ def main(spec_path: str) -> None:
             raise ValueError(f'{key}: {n_lines} ledger lines, {led.shape[0]} parsed')
         out[f'{key}/ledger_t1'], out[f'{key}/ledger_rB'] = led[:, 0], led[:, 1]
         out[f'{key}/status'] = np.array(int(Path(s['status']).read_text().split()[0]))
+        if 'rtol' in s:
+            _check_rtol(key, log, s['rtol'])
+            out[f'{key}/rtol'] = np.array(float(s['rtol']))
         sweep = [
             json.loads(ln[len('VRUN sweep ') :])
             for ln in log.splitlines()
@@ -132,8 +139,6 @@ def main(spec_path: str) -> None:
             prov[key][f'sha256_{k}'] = hashlib.sha256(Path(s[k]).read_bytes()).hexdigest()
     _store_parts(out, 'v9_tip', _parts(spec['v9_parts_log']))
     for key in PARTS_OWN:
-        _check_rtol(key, Path(spec[key]['log']).read_text(), spec[key]['rtol'])
-        out[f'{key}/rtol'] = np.array(float(spec[key]['rtol']))
         parts = _parts(spec[key]['log'])
         if len(parts) != out[f'{key}/ledger_rB'].size:
             raise ValueError(
