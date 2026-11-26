@@ -18,6 +18,7 @@ tsurf_poststep_change = 30
 cvode_output_points = 65          # dense-output grid per CVODE macro-step
 max_steps = 100000                # internal CVODE steps per output interval
 # tcore_change_limit = 3000       # optional; flag a per-solve core-T change above this [K] (off by default)
+# eos_domain_check = "warn"       # off, warn or raise: lookups outside the valid table window
 
 [boundary_conditions]
 outer_boundary_condition = 4      # 4 = prescribed flux (PROTEUS coupling)
@@ -146,6 +147,8 @@ Time-integration controls.
 | `max_steps` | -- | Maximum number of internal CVODE steps between two consecutive output times (SUNDIALS `mxstep`; default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one output interval reaches this count. With `phase_boundary_cap = "rate"` each CVODE segment applies the same per-interval limit. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
 | `tcore_change_limit` | K | Optional limit on the per-solve core-temperature change (unset by default; must be positive when set). Aragog always measures the largest change of the core temperature from the solve-entry value over the returned grid and reports it as `tcore_change_max`. When this limit is set and that change exceeds it, Aragog sets the `tcore_change_exceeded` flag on the result; the flag is also set whenever any sampled core temperature is non-finite, independent of whether a limit is set, since that signals a corrupted solve. The solve never raises. A caller can use the flag to reject a solve whose core temperature jumps as it crosses a phase boundary in a single accepted step, or whose core temperature is non-finite. |
 | `strict_accepted_range` | bool | With the rheology off: an accepted state of a call with a cell entropy outside the EOS tables raises `AcceptedStateRangeError`, naming the cell, its entropy and the time (default false: the call fails with status -1 and keeps the states before it). With the rheology on, such a state always raises. |
+| `eos_domain_check` | -- | Check of the EOS lookup points of each call against the valid window of the tables, read from `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables: `"off"`, `"warn"` (default; 1 WARNING per call that names the worst point) or `"raise"` (`EOSDomainError`). Off for tables with neither mask file; with only one, the first call raises `FileNotFoundError`, and a mask that breaks the rules of [Validity masks](../Reference/data.md#validity-masks) raises `ValueError`. See [Lookups outside the valid window of the tables](solver-method-tuning.md#lookups-outside-the-valid-window-of-the-tables). |
+| `eos_domain_tolerance_cells` | -- | Distance outside the window, in table entropy cells, beyond which a lookup point counts (default 5; must be finite and positive). |
 
 ### `[boundary_conditions]`
 

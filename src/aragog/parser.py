@@ -48,6 +48,7 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_MODES,
     check_matprop_smooth_width,
 )
+from aragog.config.solver import check_eos_domain_mode, check_eos_domain_tolerance
 from aragog.rheology import (
     SolidRheologyParams,
     check_viscosity_ceiling,
@@ -698,8 +699,16 @@ class _SolverParameters:
     # Raise AcceptedStateRangeError, in place of a failed call, when an accepted state of a
     # call leaves the entropy range of the EOS tables (rheology off; on, it always raises).
     strict_accepted_range: bool = False
+    # EOS lookup points of a call outside the valid window of the tables (valid_mask files) by
+    # more than the tolerance in table S cells: 'off', 'warn' or 'raise' (EOSDomainError).
+    eos_domain_check: str = 'warn'
+    eos_domain_tolerance_cells: float = 5.0
 
     def __post_init__(self):
+        check_eos_domain_mode(self.eos_domain_check)
+        self.eos_domain_tolerance_cells = check_eos_domain_tolerance(
+            self.eos_domain_tolerance_cells
+        )
         if not isinstance(self.strict_accepted_range, bool):
             raise TypeError(
                 f'strict_accepted_range must be true or false, got {self.strict_accepted_range!r}'
