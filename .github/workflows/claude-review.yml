@@ -96,7 +96,7 @@ jobs:
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
       MODEL: ${{ (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claude deep-review')) && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      TOOLS_BEYOND_READ: '([.[] | select(.type == "system" and .subtype == "init")][0].tools // ["<no init>"]) + [.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name] | map(select(. != "Read" and . != "StructuredOutput")) | unique | join(",")'
+      TOOLS_CHECK: 'def ok: . == "Read" or . == "StructuredOutput"; def text: if type == "string" then . elif type == "array" then map(.text? // "") | join("") else "" end; if type != "array" then error("not a transcript") else . end | [.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")] as $calls | [.[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result")] as $res | [.[] | select(.type == "result") | .permission_denials[]?.tool_use_id] as $denied | def refused($c): .is_error == true and ((.content | text) as $t | $t == "<tool_use_error>Error: No such tool available: \($c.name). \($c.name) is disabled for this session.</tool_use_error>" or ((($t | startswith("Claude requested permissions to ")) or ($t | startswith("Permission to use \($c.name) has been denied"))) and any($denied[]; . == $c.id))); [$calls[] | select(.name | ok | not) | {c: ., m: (.id as $i | [$res[] | select(.tool_use_id == $i)])} | .ok = ((.m | length) == 1 and (. as $b | $b.m[0] | refused($b.c)))] as $beyond | {fail: ((([.[] | select(.type == "system" and .subtype == "init")][0].tools // ["<no init>"]) | map(select(ok | not))) + [$calls[] | select((.id | type) != "string" or (.name | type) != "string") | "<bad tool_use>"] + [$res[] | .tool_use_id as $i | select(any($calls[]; .id == $i) | not) | "<unmatched tool_result>"] + [$beyond[] | select(.ok | not) | .c.name | tostring] | unique), refused: [$beyond[] | select(.ok) | "\(.c.name) \(.c.input | tojson)"]}'
     steps:
       - name: Skip closed, draft, fork and bot pull requests
         id: gate
@@ -330,6 +330,7 @@ jobs:
             --add-dir ${{ runner.temp }}/review_in
             --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --tools Read
+            --permission-mode dontAsk
             --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit,Grep,Glob,LS,LSP,NotebookRead"
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
@@ -340,7 +341,9 @@ jobs:
           EXEC: ${{ steps.find.outputs.execution_file }}
         run: |
           cp "$EXEC" "$RUNNER_TEMP/exec_find.json"
-          beyond=$(jq -r "$TOOLS_BEYOND_READ" "$RUNNER_TEMP/exec_find.json")
+          check=$(jq -c "$TOOLS_CHECK" "$RUNNER_TEMP/exec_find.json")
+          jq -r '.refused[] | "Refused call: \(.)"' <<<"$check" | tee -a "$GITHUB_STEP_SUMMARY"
+          beyond=$(jq -r '.fail | join(",")' <<<"$check")
           if [ -n "$beyond" ]; then
             echo "::error::the model had tools beyond Read: $beyond"
             exit 1
@@ -391,6 +394,7 @@ jobs:
             --add-dir ${{ runner.temp }}/review_in
             --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --tools Read
+            --permission-mode dontAsk
             --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit,Grep,Glob,LS,LSP,NotebookRead"
             --json-schema '{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["id","verified","reason"]}},"fixed":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["key","verified","reason"]}}},"required":["verdicts","fixed"]}'
 
@@ -401,7 +405,9 @@ jobs:
           EXEC: ${{ steps.verify.outputs.execution_file }}
         run: |
           cp "$EXEC" "$RUNNER_TEMP/exec_verify.json"
-          beyond=$(jq -r "$TOOLS_BEYOND_READ" "$RUNNER_TEMP/exec_verify.json")
+          check=$(jq -c "$TOOLS_CHECK" "$RUNNER_TEMP/exec_verify.json")
+          jq -r '.refused[] | "Refused call: \(.)"' <<<"$check" | tee -a "$GITHUB_STEP_SUMMARY"
+          beyond=$(jq -r '.fail | join(",")' <<<"$check")
           if [ -n "$beyond" ]; then
             echo "::error::the model had tools beyond Read: $beyond"
             exit 1
