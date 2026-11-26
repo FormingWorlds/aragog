@@ -1162,27 +1162,44 @@ def test_the_post_step_hands_the_threads_to_resolve_out_and_never_to_apply():
     assert '2>"$RUNNER_TEMP/post_cause.txt"' in post
 
 
-_FAKE_GH = """#!/usr/bin/env python3
+_FAKE_HEAD = """#!/usr/bin/env python3
 import json, os, subprocess, sys
 args = sys.argv[1:]
 with open(os.environ['GH_LOG'], 'a') as f:
     f.write(json.dumps(args) + '\\n')
-if 'statuses' in ' '.join(args) and '-X' in args:
-    sys.exit(0)
+def _fails(kind, env):
+    with open(os.environ['GH_LOG']) as f:
+        n = sum(kind(json.loads(line)) for line in f)
+    if n <= int(os.environ.get(env, '0')):
+        sys.stderr.write('gh: HTTP 502\\n')
+        sys.exit(1)
+post = lambda c: '-X' in c and any('/statuses/' in a for a in c)
+put = lambda c: any(a.endswith('/dismissals') for a in c)
+for kind, env in ((post, 'POST_FAILS'), (put, 'PUT_FAILS')):
+    if kind(args):
+        _fails(kind, env)
+        sys.exit(0)
+def _page(url):
+    own = {'context': 'Claude review', 'description': os.environ.get('LIVE_DESC', 'x'),
+           'target_url': None if url == 'null' else url}
+    page = json.dumps({'statuses': [] if url == 'absent' else [own]})
+    jq = args[args.index('--jq') + 1]
+    return subprocess.run(['jq', '-r', jq], input=page, capture_output=True, text=True).stdout
+"""
+_FAKE_GH = (
+    _FAKE_HEAD
+    + """
 if any('/status?' in a for a in args):
     with open(os.environ['GH_LOG']) as f:
         reads = sum('/status?' in line for line in f)
     if reads > int(os.environ.get('STATUS_OK', '99')):
         sys.stderr.write(os.environ.get('GH_ERR', 'gh: HTTP 502') + '\\n')
         sys.exit(1)
-    own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'],
-           'description': os.environ.get('LIVE_DESC', 'x')}
-    page = json.dumps({'statuses': [own]})
-    jq = args[args.index('--jq') + 1]
-    sys.stdout.write(subprocess.run(['jq', '-r', jq], input=page, capture_output=True, text=True).stdout)
+    sys.stdout.write(_page(os.environ.get('OWN_URL', os.environ['RUN_URL'])))
     sys.exit(0)
-print('[[]]')
+print(os.environ.get('APPROVALS', '[[]]') if '--slurp' in args else '[[]]')
 """
+)
 
 
 CMD_LINE = "review_decision: Command '['api', '-X', 'POST']' returned non-zero exit status 1.\n"
@@ -1226,12 +1243,46 @@ def test_a_long_lookup_error_keeps_the_description_within_140_characters(tmp_pat
     assert desc.endswith('comment @claude review to retry')
 
 
-def _run_report(tmp_path, cause, **extra):
+def _writes(calls):
+    posts = [c for c in calls if '-X' in c and f'repos/o/r/statuses/{HEAD}' in c]
+    puts = [c for c in calls if any(a.endswith('/dismissals') for a in c)]
+    return posts, [c[c.index('-X') + 2].split('/')[-2] for c in puts], puts
+
+
+@pytest.mark.parametrize(('fails', 'posts', 'code'), [('1', 2, 0), ('3', 3, 1)])
+def test_a_failed_status_post_is_retried_and_the_approvals_are_still_dismissed(
+    tmp_path, fails, posts, code
+):
+    calls = _run_report(
+        tmp_path, None, code, POST_FAILS=fails, APPROVALS=json.dumps([[APPROVAL]])
+    )
+    p, ids, _ = _writes(calls)
+    assert len(p) == posts and ids == ['7']
+
+
+def test_a_failed_dismissal_does_not_stop_the_later_ones(tmp_path):
+    two = json.dumps([[APPROVAL, {**APPROVAL, 'id': 9}]])
+    calls = _run_report(tmp_path, None, 1, PUT_FAILS='1', APPROVALS=two)
+    assert _writes(calls)[1] == ['7', '9']
+
+
+@pytest.mark.parametrize(('own', 'posts'), [('absent', 1), ('null', 1), ('NEWER', 0)])
+def test_only_a_known_other_owner_stops_the_failure_report(tmp_path, own, posts):
+    assert len(_writes(_run_report(tmp_path, None, OWN_URL=own))[0]) == posts
+
+
+def test_the_live_loop_sleeps_only_between_reads(tmp_path):
+    calls = _run_report(tmp_path, CMD_LINE, LIVE_DESC='review running')
+    assert sum(any('/status?' in a for a in c) for c in calls) == 4
+    assert (tmp_path / 'sleeps').read_text().count('x') == 2
+
+
+def _run_report(tmp_path, cause, code=0, **extra):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     (bin_dir / 'gh').write_text(_FAKE_GH)
     (bin_dir / 'gh').chmod(0o755)
-    (bin_dir / 'sleep').write_text('#!/bin/sh\n')
+    (bin_dir / 'sleep').write_text('#!/bin/sh\necho x >> "$RUNNER_TEMP/sleeps"\n')
     (bin_dir / 'sleep').chmod(0o755)
     if cause is not None:
         (tmp_path / 'post_cause.txt').write_text(cause)
@@ -1249,7 +1300,7 @@ def _run_report(tmp_path, cause, **extra):
         **extra,
     }
     step = _run_block(_step('Report a failed review'))
-    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == 0
+    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == code
     return [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
 
 
@@ -1280,11 +1331,9 @@ def _step_in(text, name):
     return _block(text, f'      - name: {name}', 6)
 
 
-_FAKE_RESOLVE_GH = """#!/usr/bin/env python3
-import json, os, sys
-args = sys.argv[1:]
-with open(os.environ['GH_LOG'], 'a') as f:
-    f.write(json.dumps(args) + '\\n')
+_FAKE_RESOLVE_GH = (
+    _FAKE_HEAD
+    + """
 text = ' '.join(args)
 if 'resolveReviewThread' in text:
     if os.environ.get('RESOLVE_FAILS'):
@@ -1301,13 +1350,15 @@ if '/status?' in text:
     if os.environ.get('OWNER_FAILS'):
         sys.stderr.write('gh: HTTP 502\\n')
         sys.exit(1)
-    print(os.environ.get('OWNER_URL', os.environ['RUN_URL']))
+    sys.stdout.write(_page(os.environ.get('OWNER_URL', os.environ['RUN_URL'])))
 elif '--slurp' in args and text.endswith('/reviews'):
     print(os.environ.get('APPROVALS', '[[]]'))
 elif '.head.sha' in args:
+    _fails(lambda c: '.head.sha' in c, 'HEAD_FAILS')
     print(os.environ.get('PR_HEAD', os.environ['HEAD_SHA']))
 sys.exit(0)
 """
+)
 OWN_BODY = 'text\n<!-- claude-review:finding key=0123456789ab severity=important -->'
 
 
@@ -1410,6 +1461,8 @@ def _run_resolve(tmp_path, **extra):
     bin_dir.mkdir()
     (bin_dir / 'gh').write_text(_FAKE_RESOLVE_GH)
     (bin_dir / 'gh').chmod(0o755)
+    (bin_dir / 'sleep').write_text('#!/bin/sh\n')
+    (bin_dir / 'sleep').chmod(0o755)
     node = {
         'pullRequest': {'number': 5},
         'comments': {'nodes': [{'body': OWN_BODY, 'author': {'login': 'github-actions'}}]},
@@ -1533,3 +1586,42 @@ def test_a_thread_stays_open_unless_it_is_resolved_and_its_author_is_known(
     key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
     node = {**_live_thread(key, resolver), 'isResolved': resolved}
     assert rd.own_threads([node], author)[0]['state'] == 'open'
+
+
+@pytest.mark.parametrize(('fails', 'posts'), [('1', 2), ('3', 3)])
+def test_the_resolve_job_retries_a_failed_status_post_and_still_dismisses(
+    tmp_path, fails, posts
+):
+    rc, p, d, _ = _run_resolve(
+        tmp_path, RESOLVE_FAILS='1', POST_FAILS=fails, APPROVALS=json.dumps([[APPROVAL]])
+    )
+    assert rc == 1 and len(p) == posts and len(d) == 1
+
+
+def test_a_failed_dismissal_of_the_resolve_job_does_not_stop_the_later_ones(tmp_path):
+    two = json.dumps([[APPROVAL, {**APPROVAL, 'id': 9}]])
+    rc, _, d, _ = _run_resolve(tmp_path, RESOLVE_FAILS='1', PUT_FAILS='1', APPROVALS=two)
+    assert rc == 1 and [c[c.index('-X') + 2].split('/')[-2] for c in d] == ['7', '9']
+
+
+@pytest.mark.parametrize('owner', ['absent', 'null'])
+def test_an_unknown_owner_still_gets_the_failure_of_the_resolve_job(tmp_path, owner):
+    rc, posts, dismissed, _ = _run_resolve(
+        tmp_path, RESOLVE_FAILS='1', OWNER_URL=owner, APPROVALS=json.dumps([[APPROVAL]])
+    )
+    assert rc == 1 and len(posts) == 1 and len(dismissed) == 1
+
+
+def test_a_failed_head_lookup_is_retried(tmp_path):
+    assert _run_resolve(tmp_path, HEAD_FAILS='2') == (0, [], [], 1)
+
+
+def test_a_head_that_cannot_be_read_names_its_cause_in_the_dismissal(tmp_path):
+    rc, posts, dismissed, resolved = _run_resolve(
+        tmp_path, HEAD_FAILS='3', APPROVALS=json.dumps([[APPROVAL]])
+    )
+    assert rc == 1 and resolved == 0 and len(posts) == 1
+    assert any(
+        a.startswith('message=') and 'head lookup failed: gh: HTTP 502' in a
+        for a in dismissed[0]
+    )
