@@ -7247,11 +7247,13 @@ class EntropySolver:
 
     def _check_shell_base(self, budget, t_core, layer_base) -> None:
         """Refuse an inner core that reaches the shell base, and warn once when the layer base
-        comes within three cells of it, where the shell no longer holds the layer. A NaN radius
-        (a NaN core temperature) does not count, so it cannot hide the other nodes."""
+        comes within three cells of it, where the shell no longer holds the layer. The check
+        sees the accepted states of a call, so a non-finite core temperature is refused."""
+        bad = int(np.sum(~np.isfinite(t_core)))
+        if bad:
+            raise ValueError(f'core_module: non-finite core temperature at {bad} of the nodes')
         shell = budget.shell
-        r = _padded_call(budget.r_icb_batch, t_core)
-        r_icb = float(np.max(r, initial=-np.inf, where=~np.isnan(r)))
+        r_icb = float(np.max(_padded_call(budget.r_icb_batch, t_core)))
         if r_icb >= shell.r_base:
             raise ValueError(
                 f'core_module: the inner core ({r_icb / 1e3:.0f} km) reaches the base of the '
