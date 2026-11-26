@@ -5,6 +5,10 @@
 This page checks the eddy diffusivity at the core-mantle boundary (CMB) node, and with it the convective heat flux from the core into the mantle.
 The CMB node (node 0) takes the mixing-length eddy diffusivity of node 1, the node above it, or its own floor, whichever is larger ([Eddy diffusivity at the CMB node](../Explanations/heat_transport.md#eddy-diffusivity-at-the-cmb-node)).
 We call this the CMB node rule. The cases compare it with the copy rule, where the CMB node copies the floored value of node 1.
+If this part were wrong, the heat flow out of the core could jump between 2 values when the entropies of the 2 lowest cells cross, or fall to 0 while the CMB gradient is unstable.
+The core would then cool at the wrong rate: the energy check can stop the run, or the run can go on with the core almost cut off from the mantle.
+
+## How the cases are checked
 
 Validation here means that we run the code on a case where we know the right answer, and check that the code gives that answer.
 The right answer comes from 3 sources:
@@ -13,12 +17,15 @@ The right answer comes from 3 sources:
 - a second implementation: the NumPy update and the JAX function `compute_mlt`;
 - coupled PROTEUS runs: the energy check of each solver call (below) gives the pass mark, and runs under the copy rule give the failure to compare with; 2 of these copy-rule runs stop, and in 1 the core stays almost cut off from the mantle for 27 kyr.
 
-If this part were wrong, the heat flow out of the core could jump between 2 values when the entropies of the 2 lowest cells cross, or fall to 0 while the CMB gradient is unstable.
-The core would then cool at the wrong rate: the energy check can stop the run, or the run can go on with the core almost cut off from the mantle.
 Each case says why the check exists, what it tests, how we know the right answer and why it matters; then it shows a plot or a table, and the test details.
 
-In the formulas below, $S_0$ and $S_1$ are the entropies of the 2 lowest cells, $\partial S/\partial r$ is the entropy gradient at a node, $\kappa_h^\mathrm{mlt}[1]$ is the mixing-length eddy diffusivity of node 1 before the floor, $\kappa_h^\mathrm{floor}[0]$ is the floor of the CMB node, and $D$ is `energy.convective_threshold` (0 unless set).
-The energy check is the [ledger check of the CMB closure](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure): in each solver call the change of the core heat must match the CMB heat of the call. $r$ is the miss and $B$ the bound that the solver tolerances allow. A call with $|r| \le B$ is within the bound, a call with $B < |r| \le 10 B$ is kept with a warning, and a call with $|r| > 10 B$ is refused.
+## Symbols and terms
+
+- $S_0$ and $S_1$ are the entropies of the 2 lowest cells, and $\partial S/\partial r$ is the entropy gradient at a node.
+- The floor is the minimum eddy diffusivity that `kappah_floor` and the melt fraction set on nodes with $\partial S/\partial r < D$ ([Phase-modulated floor](../Explanations/heat_transport.md#phase-modulated-floor)). A node is on its floor when its mixing-length value is below the floor.
+- $\kappa_h^\mathrm{mlt}[1]$ is the mixing-length eddy diffusivity of node 1 before the floor, $\kappa_h^\mathrm{floor}[0]$ is the floor of the CMB node, and $D$ is `energy.convective_threshold` (0 unless set).
+- The CMB heat flux is in W m$^{-2}$. The CMB power, in W, is that flux times the area of the CMB. The CMB heat of a call, in J, is the energy that crosses the CMB during the call.
+- The energy check is the [ledger check of the CMB closure](../Explanations/core_bc.md#ledger-check-of-the-cmb-closure): in each solver call the change of the core heat must match the CMB heat of the call. $r$ is the miss and $B$ the bound that the solver tolerances allow. A call with $|r| \le B$ is within the bound, a call with $B < |r| \le 10 B$ is kept with a warning, and a call with $|r| > 10 B$ is refused.
 
 ## The CMB flux has no step where node 1 changes sign
 
@@ -92,7 +99,7 @@ This case has no plot: each of the 300 states is a single comparison of 2 number
 
 ## The CMB flux check in the code
 
-**Why this check exists.** The NumPy `EntropyState.update` sets the eddy diffusivity and the convective flux $J$ of the CMB node from 2 recorded inputs, $\kappa_h^\mathrm{mlt}[1]$ and $\kappa_h^\mathrm{floor}[0]$. The check `check_cmb_convective_flux` tests $J$ against those inputs in every update, so an edit that sets $J$ or $\kappa_h[0]$ against the rule fails at once. It does not test how the 2 inputs are computed, and it does not run on the JAX path; the known-answer tests above do both.
+**Why this check exists.** The NumPy `EntropyState.update` sets the eddy diffusivity and the convective flux $J$ of the CMB node from 2 recorded inputs, $\kappa_h^\mathrm{mlt}[1]$ and $\kappa_h^\mathrm{floor}[0]$. The check `check_cmb_convective_flux` tests $J$ against those inputs in every update, so an edit that sets $J$ or $\kappa_h[0]$ against the rule fails at once. The check takes the 2 inputs from the same mixing-length call that sets $\kappa_h[0]$, so it tests the value that this call gives the CMB node, not how the call computes the inputs: an edit that takes the floor of node 0 from the melt fraction of node 1 passes the check and the other tests of `tests/test_cmb_eddy_diffusivity.py`, and fails the test on random states above. The check runs on the NumPy path (the energy replay, the NumPy right-hand side and the update of the end state of each call), not inside the JAX right-hand side; the known-answer tests above check the JAX function `compute_mlt`.
 
 **What it tests.** The check raises `CMBEddyFluxError` when:
 
@@ -126,8 +133,8 @@ This case has no plot: each test is a single pass or refusal.
 
 **Why it matters.** This is the failure that the CMB node rule removes. Under the copy rule the run takes no interior step past 6.7697 Myr.
 
-![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume.svg#only-light){ width="70%" }
-![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume_dark.svg#only-dark){ width="70%" }
+![CMB heat flux and miss of the energy check of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume.svg#only-light){ width="70%" }
+![CMB heat flux and miss of the energy check of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** Time runs from the resume. Panel (a) shows the CMB heat flux $F_\mathrm{cmb}$ of each helpfile row. Panel (b) shows $|r|/B$ of each call on a log scale; the dashed line is the refusal limit of 10. The copy rule (squares) has 3 calls above the limit and stops. The CMB node rule (circles) stays at or below $5.2 \times 10^{-9}$ in every call and runs to 6.82 Myr.
 
@@ -154,8 +161,8 @@ This case has no plot: each test is a single pass or refusal.
 
 **Why it matters.** Kind d states occur in long Earth-mass runs. If the CMB node loses its floor there, the core is cut off from the mantle.
 
-![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, Earth-mass resume with the nearest-boundary mixing length](../assets/validation/cmb_eddy_flux_nearest_resume.svg#only-light){ width="70%" }
-![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, Earth-mass resume with the nearest-boundary mixing length](../assets/validation/cmb_eddy_flux_nearest_resume_dark.svg#only-dark){ width="70%" }
+![CMB heat flux and miss of the energy check of each call against time, copy rule and CMB node rule, Earth-mass resume with the nearest-boundary mixing length](../assets/validation/cmb_eddy_flux_nearest_resume.svg#only-light){ width="70%" }
+![CMB heat flux and miss of the energy check of each call against time, copy rule and CMB node rule, Earth-mass resume with the nearest-boundary mixing length](../assets/validation/cmb_eddy_flux_nearest_resume_dark.svg#only-dark){ width="70%" }
 
 **How to read the plot.** Panel (a) shows the CMB heat flux on a log scale. For the copy rule (squares) and the CMB node rule (filled circles) it is the average over each solver call, the value of the helpfile. For the CMB node rule it also shows the peak inside each call (up triangles) and the node flux at the end of each call (down triangles). Panel (b) shows $|r|/B$ of each call; the dashed line is the refusal limit of 10. The copy rule falls to about $10^{-3}$ W m$^{-2}$ and stops; the CMB node rule keeps 128 to 6092 W m$^{-2}$ and stays below the line.
 

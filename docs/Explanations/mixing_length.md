@@ -55,10 +55,11 @@ When solid-state mantle rheology is enabled, the mixing-length profile boundary 
 
 ## The mixing-length profile and the core-mantle boundary
 
-Which mixing length does Aragog use near the boundaries, and why does PROTEUS run the `constant` profile?
+Which mixing length does Aragog use near the boundaries, and which eddy diffusivity does the CMB node take?
 
 Aragog offers 2 profiles: `nearest_boundary`, which goes to 0 at both boundaries, and `constant`.
-With `nearest_boundary` the flux out of the core can stop for tens of thousands of years, so PROTEUS runs `constant` by default.
+With `nearest_boundary` the node above the CMB can turn stable while the CMB gradient stays unstable; the CMB node then keeps its own floor, and in an Earth-mass run with `kappah_floor` = 10 m$^2$ s$^{-1}$ the core stays coupled to the mantle ([CMB eddy flux](../Validation/cmb_eddy_flux.md#an-earth-mass-run-where-node-1-turns-stable)).
+PROTEUS runs `constant` by default.
 Aragog itself has no default profile: each configuration sets `mixing_length_profile`.
 The `nearest_boundary` profile is
 
@@ -172,7 +173,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   The narrow width keeps the inviscid contribution confined to the convecting regime without leaking into solid layers; a wider blend gave $T_\mathrm{core}$ bistability in test runs.
 
 - **Mixing-length profile.**
-  Aragog offers the bounded-eddy profile `nearest_boundary` and the `constant` profile; [The mixing-length profile and the core-mantle boundary](#the-mixing-length-profile-and-the-core-mantle-boundary) explains both and why PROTEUS runs `constant`.
+  Aragog offers the bounded-eddy profile `nearest_boundary` and the `constant` profile; [The mixing-length profile and the core-mantle boundary](#the-mixing-length-profile-and-the-core-mantle-boundary) explains both and the eddy diffusivity of the CMB node.
 
 - **Convective threshold.**
   The mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$ but uses at least a small gradient $D$ (`energy.convective_threshold`, default 0) on unstable nodes, and the floor acts up to $\partial S/\partial r = D$.
