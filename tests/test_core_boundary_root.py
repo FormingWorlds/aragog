@@ -369,9 +369,9 @@ def test_the_boundary_moves_inwards_on_heating_when_the_slope_is_round_off():
 
 
 @pytest.mark.physics_invariant
-def test_a_nan_node_does_not_hide_an_inner_core_past_the_shell_base():
-    """A NaN core temperature at one node gives a NaN radius; the shell-base check still refuses
-    an inner core past the shell base at the other nodes of the call."""
+def test_the_shell_base_check_refuses_a_non_finite_core_temperature():
+    """The shell-base check sees the accepted states of a call: a NaN or inf core temperature at
+    any node is refused, so it cannot hide an inner core past the shell base at another node."""
     from types import SimpleNamespace
 
     from aragog.solver.entropy_solver import EntropySolver
@@ -383,7 +383,9 @@ def test_a_nan_node_does_not_hide_an_inner_core_past_the_shell_base():
         shell=SimpleNamespace(r_base=faces[0], r_faces=faces), r_icb_batch=BUDGET.r_icb_batch
     )
     solver = EntropySolver.__new__(EntropySolver)
-    for t_core in ([3800.0], [3800.0, float('nan')], [float('nan'), 3800.0]):
-        with pytest.raises(ValueError, match='reaches the base of the resolved shell'):
+    with pytest.raises(ValueError, match='reaches the base of the resolved shell'):
+        solver._check_shell_base(budget, [3800.0], [R_CMB])
+    nan, inf = float('nan'), float('inf')
+    for t_core in ([nan], [inf], [-inf], [3800.0, nan], [nan, 3800.0], [5000.0, inf]):
+        with pytest.raises(ValueError, match='non-finite core temperature'):
             solver._check_shell_base(budget, t_core, [R_CMB])
-    solver._check_shell_base(budget, [float('nan')], [R_CMB])
