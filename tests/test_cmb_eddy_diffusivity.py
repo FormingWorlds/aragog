@@ -127,37 +127,41 @@ def test_cmb_flux_is_continuous_where_node_1_changes_sign(mixing_length):
     Discriminating: if node 0 copies the floored value of node 1, node 1 on the
     S1 < S0 side carries its floor (about 5 m^2/s) and the CMB flux jumps by
     rho T kappah_floor f(phi_1) dS/dr[0], about -2.9e3 W m^-2 in this state, against a
-    total CMB flux of 7e-4 W m^-2. The mixing-length part of node 1 is linear in its
-    gradient here, so the step of dS/dr[1] is 1e-22 (S1 - S0 about 1e-17 J/kg/K).
+    total CMB flux of 7e-4 W m^-2. At steps of S1 - S0 = +-1e-9 and +-1e-12 J/kg/K the
+    difference between the sides must shrink with the step (the mixing-length part of
+    node 1 is linear in its gradient here), and at +-1e-17 J/kg/K it is below 1e-6 of
+    the flux.
     """
-    eps = 1.0e-22  # dS/dr[1] [J/kg/K/m]
-    flux = {}
-    for side in (-1.0, 1.0):
-        state, mesh = _state(mixing_length=mixing_length)
-        dSdr = _update(state, mesh, [_CMB_STABLE, side * eps], [_PHI_MUSH] * mesh.N)
-        rho_t = _basic(state, 'density') * _basic(state, 'temperature')
-        k = _basic(state, 'thermal_conductivity')
-        cp = _basic(state, 'heat_capacity')
-        dtdps = _basic(state, 'dTdPs')
-        jcond_0 = -k[0] * (_basic(state, 'temperature')[0] / cp[0] * dSdr[0]) - k[0] * (
-            dtdps[0] * state._dP_dr_basic[0]
-        )
-        kh_jax, kh_mlt_jax = _jax_twin(state, mesh, dSdr, _KAPPAH_FLOOR, 0.0)
-        kh_mlt_1 = float(kh_mlt_jax[1])
-        jconv_0 = -rho_t[0] * kh_mlt_1 * dSdr[0]
-        assert state.jconv[0] == pytest.approx(jconv_0, rel=1e-12, abs=1.0e-12)
-        assert state.jcond[0] == pytest.approx(jcond_0, rel=1e-12)
-        assert state.heat_flux[0] == pytest.approx(jcond_0 + jconv_0, rel=1e-12)
-        assert float(kh_jax[0]) == pytest.approx(
-            state.eddy_diffusivity[0], rel=1e-10, abs=1e-12
-        )
-        if side < 0:
-            assert state.eddy_diffusivity[1] > 0.1 * _KAPPAH_FLOOR  # node 1 on its floor
-            jump_main = rho_t[0] * state.eddy_diffusivity[1] * dSdr[0]
-        flux[side] = state.heat_flux[0]
-    assert flux[-1.0] == pytest.approx(flux[1.0], rel=1e-6)
-    assert abs(flux[1.0]) > 1.0e-5 and jump_main > 1.0e3
-    assert abs(flux[-1.0] - flux[1.0]) < 1.0e-10 * jump_main
+    d_flux, jump_main = {}, {}
+    for step in (1.0e-9, 1.0e-12, 1.0e-17):
+        flux = {}
+        for side in (-1.0, 1.0):
+            state, mesh = _state(mixing_length=mixing_length)
+            g1 = side * step / mesh.dr[0]
+            dSdr = _update(state, mesh, [_CMB_STABLE, g1], [_PHI_MUSH] * mesh.N)
+            rho_t = _basic(state, 'density') * _basic(state, 'temperature')
+            k = _basic(state, 'thermal_conductivity')
+            cp = _basic(state, 'heat_capacity')
+            dtdps = _basic(state, 'dTdPs')
+            jcond_0 = -k[0] * (_basic(state, 'temperature')[0] / cp[0] * dSdr[0]) - k[0] * (
+                dtdps[0] * state._dP_dr_basic[0]
+            )
+            kh_jax, kh_mlt_jax = _jax_twin(state, mesh, dSdr, _KAPPAH_FLOOR, 0.0)
+            jconv_0 = -rho_t[0] * float(kh_mlt_jax[1]) * dSdr[0]
+            assert state.jconv[0] == pytest.approx(jconv_0, rel=1e-12, abs=1.0e-12)
+            assert state.jcond[0] == pytest.approx(jcond_0, rel=1e-12)
+            assert state.heat_flux[0] == pytest.approx(jcond_0 + jconv_0, rel=1e-12)
+            assert float(kh_jax[0]) == pytest.approx(
+                state.eddy_diffusivity[0], rel=1e-10, abs=1e-12
+            )
+            if side < 0:
+                assert state.eddy_diffusivity[1] > 0.1 * _KAPPAH_FLOOR  # node 1 on its floor
+                jump_main[step] = rho_t[0] * state.eddy_diffusivity[1] * dSdr[0]
+            flux[side] = state.heat_flux[0]
+        d_flux[step] = abs(flux[-1.0] - flux[1.0])
+        assert jump_main[step] > 1.0e3 and d_flux[step] < 1.0e-5 * jump_main[step]
+    assert d_flux[1.0e-9] >= 100.0 * d_flux[1.0e-12]
+    assert d_flux[1.0e-17] < 1.0e-6 * abs(flux[1.0]) and abs(flux[1.0]) > 1.0e-5
 
 
 # ---------------------------------------------------------------------------
