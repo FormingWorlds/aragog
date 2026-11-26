@@ -1044,6 +1044,7 @@ def test_the_model_passes_have_read_only():
         args = _step(name)
         assert '--tools Read\n' in args
         assert f'--disallowedTools "{DENIED}"\n' in args
+        assert '--permission-mode dontAsk\n' in args
 
 
 def test_a_tool_check_follows_each_pass_and_keeps_its_execution_file():
@@ -1063,20 +1064,44 @@ def test_a_tool_check_follows_each_pass_and_keeps_its_execution_file():
     assert 'find_tools|verify_tools) cause="the model had tools beyond Read" ;;' in report
 
 
-def _beyond_read(execution):
-    m = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
-    assert m
+_CHECK = re.search(r"^      TOOLS_CHECK: '([^']*)'$", _WORKFLOW, re.M)
+REFUSED = '<tool_use_error>Error: No such tool available: {0}. {0} is disabled for this session.</tool_use_error>'
+ASKED = "Claude requested permissions to read from /etc/hosts, but you haven't granted it yet."
+DONT_ASK = (
+    'Permission to use Grep has been denied because Claude Code is running in dont ask mode.'
+)
+
+
+def _check(execution):
+    assert _CHECK
     out = subprocess.run(
-        ['jq', '-r', m.group(1)], input=json.dumps(execution), capture_output=True, text=True
+        ['jq', '-c', _CHECK[1]], input=json.dumps(execution), capture_output=True, text=True
     )
     assert out.returncode == 0, out.stderr
-    return out.stdout.strip()
+    return json.loads(out.stdout)
 
 
-def _execution(tools, used):
-    calls = [{'type': 'tool_use', 'name': n, 'input': {}} for n in used]
+def _beyond_read(execution):
+    return ','.join(_check(execution)['fail'])
+
+
+def _execution(tools, used, results=(), denied=()):
+    calls = [
+        {'type': 'tool_use', 'id': f't{i}', 'name': n, 'input': {'path': 'src/a.py'}}
+        for i, n in enumerate(used)
+    ]
+    back = [
+        {'type': 'tool_result', 'tool_use_id': i, 'is_error': e, 'content': c}
+        for i, e, c in results
+    ]
     init = [{'type': 'system', 'subtype': 'init', 'tools': tools}] if tools is not None else []
-    return [*init, {'type': 'assistant', 'message': {'content': calls}}, {'type': 'result'}]
+    end = {'type': 'result', 'permission_denials': [{'tool_use_id': i} for i in denied]}
+    return [
+        *init,
+        {'type': 'assistant', 'message': {'content': calls}},
+        {'type': 'user', 'message': {'content': back}},
+        end,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1094,22 +1119,72 @@ def test_the_tool_check_names_every_tool_beyond_read(tools, used, beyond):
     assert _beyond_read(_execution(tools, used)) == beyond
 
 
-@pytest.mark.parametrize('kind', ['find', 'verify'])
-@pytest.mark.parametrize(('used', 'code'), [(['Read'], 0), (['Read', 'Bash'], 1)])
-def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, kind, used, code):
-    jq = re.search(r"^      TOOLS_BEYOND_READ: '([^']*)'$", _WORKFLOW, re.M)
-    assert jq
+GREP = REFUSED.format('Grep')
+
+
+@pytest.mark.parametrize(
+    ('results', 'denied', 'beyond'),
+    [
+        ([('t1', True, GREP)], (), ''),
+        ([('t1', True, [{'type': 'text', 'text': GREP}])], (), ''),
+        ([('t1', True, ASKED)], ('t1',), ''),
+        ([('t1', True, DONT_ASK)], ('t1',), ''),
+        ([('t1', True, ASKED)], (), 'Grep'),
+        ([('t1', False, GREP)], (), 'Grep'),
+        ([('t1', None, 'src/a.py:3: weight')], (), 'Grep'),
+        ([('t1', True, 'some other error')], (), 'Grep'),
+        ([('t1', True, REFUSED.format('Glob'))], (), 'Grep'),
+        ([('t1', True, GREP), ('t1', True, GREP)], (), 'Grep'),
+        ([], (), 'Grep'),
+        ([('t1', True, GREP), ('t9', True, GREP)], (), '<unmatched tool_result>'),
+    ],
+)
+def test_the_tool_check_passes_only_a_refused_call(results, denied, beyond):
+    run = _execution(['Read', 'StructuredOutput'], ['Read', 'Grep'], results, denied)
+    assert _beyond_read(run) == beyond
+
+
+def test_the_tool_check_fails_a_call_without_an_id_and_a_transcript_that_is_not_a_list():
+    run = _execution(['Read', 'StructuredOutput'], ['Grep'], [('t0', True, GREP)])
+    del run[1]['message']['content'][0]['id']
+    assert _beyond_read(run) == '<bad tool_use>,<unmatched tool_result>,Grep'
+    out = subprocess.run(
+        ['jq', '-c', _CHECK[1]], input='{"type": "result"}', capture_output=True, text=True
+    )
+    assert out.returncode != 0
+
+
+def _check_step(tmp_path, kind, text):
+    assert _CHECK
     run = tmp_path / 'execution.json'
-    run.write_text(json.dumps(_execution(['Read', 'StructuredOutput'], used)))
+    run.write_text(text)
     env = {
         **os.environ,
         'EXEC': str(run),
         'RUNNER_TEMP': str(tmp_path),
-        'TOOLS_BEYOND_READ': jq[1],
+        'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary.md'),
+        'TOOLS_CHECK': _CHECK[1],
     }
     step = _run_block(_step(f'Check the tools of the {kind} pass'))
-    assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == code
+    code = subprocess.run(['bash', '-e', '-c', step], env=env).returncode
     assert (tmp_path / f'exec_{kind}.json').read_text() == run.read_text()
+    return code
+
+
+@pytest.mark.parametrize('kind', ['find', 'verify'])
+@pytest.mark.parametrize(('used', 'code'), [(['Read'], 0), (['Read', 'Bash'], 1)])
+def test_the_tool_check_step_fails_the_job_on_a_tool_beyond_read(tmp_path, kind, used, code):
+    run = json.dumps(_execution(['Read', 'StructuredOutput'], used))
+    assert _check_step(tmp_path, kind, run) == code
+
+
+@pytest.mark.parametrize('kind', ['find', 'verify'])
+def test_the_tool_check_step_names_a_refused_call_and_fails_on_bad_json(tmp_path, kind):
+    run = _execution(['Read', 'StructuredOutput'], ['Read', 'Grep'], [('t1', True, GREP)])
+    assert _check_step(tmp_path, kind, json.dumps(run)) == 0
+    summary = (tmp_path / 'summary.md').read_text()
+    assert 'Refused call: Grep {"path":"src/a.py"}' in summary
+    assert _check_step(tmp_path, kind, json.dumps(run)[:-5]) != 0
 
 
 def _if_line(step):
