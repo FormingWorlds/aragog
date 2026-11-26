@@ -416,7 +416,9 @@ def test_a_failed_call_is_not_judged(monkeypatch, caplog):
     eos = entropy_eos_copy(EOS_DIR)
     eos.domain = _tight(eos)
     s = _solver(eos)
-    monkeypatch.setattr(EntropySolver, '_eos_table_failure', lambda self, sol: (sol.t[-1], 'x'))
+    monkeypatch.setattr(
+        EntropySolver, '_eos_table_failure', lambda self, sol, guard=None: (sol.t[-1], 'x')
+    )
     with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
         s.solve()
     assert s._solution.status == -1 and _messages(caplog) == []
