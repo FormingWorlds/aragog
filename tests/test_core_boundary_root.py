@@ -86,8 +86,8 @@ def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     """The bracket [lo, hi] keeps superheat(lo) < 0 <= superheat(hi) as the search saw them and
     ends with hi - lo <= 2 eps r_cmb (plus 1 ulp of r_cmb, as each end is u r_cmb rounded) in
     at most n_1/2 + n0 steps (Theorem 2.1 of Oliveira & Takahashi 2020); a liquid centre gives
-    [0, 0] with no step, a core frozen everywhere [r_cmb, r_cmb], and a NaN temperature (no
-    sign) a radius of at most the width above 0. The case is read from end superheats more than
+    [0, 0] with no step, a core frozen everywhere [r_cmb, r_cmb], and a NaN temperature a NaN
+    radius and derivative. The case is read from end superheats more than
     1e-6 K from 0, so that an ulp at the onset cannot put the test and the search in different
     cases."""
     steps, lo, hi, f_lo, f_hi = map(float, jax.jit(BUDGET._r_icb_bracket)(t_cmb))
@@ -95,7 +95,8 @@ def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     assert hi - lo <= WIDTH
     centre, top = float(BUDGET.superheat(0.0, t_cmb)), float(BUDGET.superheat(R_CMB, t_cmb))
     if np.isnan(t_cmb):
-        assert hi <= WIDTH
+        assert np.isnan(float(BUDGET.r_icb(t_cmb)))
+        assert np.isnan(float(jax.grad(BUDGET.r_icb)(t_cmb)))
     elif centre > 1e-6:
         assert (steps, lo, hi) == (0, 0.0, 0.0)
     elif top < -1e-6:
@@ -197,7 +198,7 @@ def test_the_root_equals_the_80_step_root_within_round_off(t_cmb):
         BUDGET.r_icb_batch(jnp.array([t_cmb, 4100.0, 4400.0]))[0],
     ):
         got = float(got)
-        assert 0.0 <= got <= WIDTH if np.isnan(t_cmb) else _close(got, want, t_cmb)
+        assert np.isnan(got) if np.isnan(t_cmb) else _close(got, want, t_cmb)
     if np.isfinite(t_cmb):
         radius, want = map(float, jax.jvp(REFERENCE.r_icb, (t_cmb,), (1.0,)))
         got = float(jax.grad(BUDGET.r_icb)(t_cmb))
@@ -206,6 +207,24 @@ def test_the_root_equals_the_80_step_root_within_round_off(t_cmb):
             assert abs(got - want) <= bound * abs(want)
         else:
             assert np.isfinite(got) and want < 0.0 and got < 0.0
+
+
+@pytest.mark.parametrize('t_cmb', [3700.0, 3800.0, 3900.0, 4000.0, 4100.0])
+def test_the_boundary_derivative_equals_a_central_difference_of_the_radius(t_cmb):
+    """grad(r_icb) equals the central difference of the 80-step radius with h = 1e-2 K, which
+    uses no JVP rule, to 1e-7 relative (measured worst 1.0e-8 at 4100 K; the error falls as h^2,
+    and the onset at 4146.7 K is more than 46 K away)."""
+    solve, h = jax.jit(REFERENCE._r_icb_solve), 1e-2
+    want = (float(solve(t_cmb + h)) - float(solve(t_cmb - h))) / (2.0 * h)
+    assert want < 0.0 and abs(float(jax.grad(BUDGET.r_icb)(t_cmb)) - want) <= 1e-7 * abs(want)
+
+
+@pytest.mark.parametrize(('t_cmb', 'radius'), [(4400.0, 0.0), (3000.0, R_CMB)])
+def test_the_boundary_does_not_move_with_a_liquid_centre_or_a_frozen_core(t_cmb, radius):
+    """With a liquid centre (4400 K) and a core frozen throughout (3000 K) the radius stays at
+    its domain end, and its derivative is exactly zero."""
+    assert float(BUDGET.r_icb(t_cmb)) == radius
+    assert float(jax.grad(BUDGET.r_icb)(t_cmb)) == 0.0
 
 
 @pytest.mark.parametrize('t_cmb', [3900.0, 3915.0, 4050.0, 4100.0, 4128.0, 4146.0, 4400.0])

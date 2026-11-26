@@ -141,14 +141,14 @@ CHANGES = [
 @pytest.mark.parametrize(('name', 'value'), CHANGES, ids=[c[0] for c in CHANGES])
 def test_each_input_reaches_the_reused_program(name, value):
     """A budget that differs from the first in one input gives, through the programs compiled
-    for the first, the values of programs built for it alone (1e-10 relative), and at least one
+    for the first, the values of programs built for it alone (2e-12 relative), and at least one
     value differs from the first budget's."""
     base = _batched(_Form().budget())
     changed = _Form(**{name: value}).budget()
     got, want = _batched(changed), _fresh(changed)
     for a, b in zip(got, want):
-        # near the inner-core onset 1 ulp of T moves the capacity by ~3e-13 (condition ~1.4e3)
-        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-10, atol=0.0)
+        # measured worst 4.7e-13 over the CHANGES and the 5 programs (near the onset)
+        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=2e-12, atol=0.0)
     assert any(not np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(got, base))
 
 
