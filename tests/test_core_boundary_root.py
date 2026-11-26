@@ -82,6 +82,7 @@ def _close(got, want, t_cmb, reference=REFERENCE):
 @example(t_cmb=3700.0)
 @example(t_cmb=float(np.nextafter(ONSET, 0.0)))
 @example(t_cmb=ONSET - 1e-9)
+@example(t_cmb=float('nan'))
 def test_the_search_keeps_a_bracket_and_ends_within_the_bisection_bound(t_cmb):
     """The bracket [lo, hi] keeps superheat(lo) < 0 <= superheat(hi) as the search saw them and
     ends with hi - lo <= 2 eps r_cmb (plus 1 ulp of r_cmb, as each end is u r_cmb rounded) in
@@ -181,6 +182,7 @@ def test_a_stopped_entry_of_an_array_stays_put(t_cmb, partner):
 @example(t_cmb=ONSET + 4 * float(np.spacing(ONSET)))
 @example(t_cmb=ONSET - 4 * float(np.spacing(ONSET)))
 @example(t_cmb=ONSET - 1e-6)
+@example(t_cmb=float('nan'))
 def test_the_root_equals_the_80_step_root_within_round_off(t_cmb):
     """r_icb (eager and with a traced temperature) and its batch equal the 80-step bisection
     within round-off (``_close``): the final bracket width plus the root shift of a superheat
