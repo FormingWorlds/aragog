@@ -107,6 +107,71 @@ def apply_kappah_floor(
     return np.maximum(eddy_diffusivity, kh_floor)
 
 
+class CMBEddyFluxError(RuntimeError):
+    """The convective flux at the CMB basic node breaks the rule of its eddy diffusivity."""
+
+
+def check_cmb_convective_flux(
+    jconv_0: float,
+    rho_t_0: float,
+    dsdr_0: float,
+    kh_mlt_1: float,
+    kh_floor_0: float,
+    threshold: float,
+    rtol: float = 1.0e-12,
+) -> None:
+    """Check the convective flux at the CMB basic node against the inputs of its rule.
+
+    The CMB node takes ``kh[0] = max(kh_mlt_1, kh_floor_0)``, so its convective flux
+    ``J = -rho T kh[0] dS/dr[0]`` must satisfy, with ``g = dS/dr[0]`` and ``D`` the
+    convective threshold:
+
+    (i) for ``g >= D``: ``|J| <= rho T kh_mlt_1 |g|`` (no floor of node 1 crosses a
+        stable CMB);
+    (ii) for ``g < D``: ``|J| >= rho T kh_floor_0 |g|`` (node 0 keeps its own floor);
+    (iii) ``J g <= 0`` (no flux against its own gradient).
+
+    A state with a non-finite input is not checked.
+
+    Parameters
+    ----------
+    jconv_0 : float
+        Convective heat flux at the CMB node [W m^-2].
+    rho_t_0 : float
+        Density times temperature at the CMB node [kg K m^-3].
+    dsdr_0 : float
+        Entropy gradient at the CMB node [J kg^-1 K^-1 m^-1].
+    kh_mlt_1 : float
+        Mixing-length eddy diffusivity of node 1 before the floor [m^2 s^-1].
+    kh_floor_0 : float
+        Floor of node 0 under its own mask [m^2 s^-1].
+    threshold : float
+        Convective threshold ``D`` [J kg^-1 K^-1 m^-1].
+    rtol : float, optional
+        Relative tolerance of parts (i) and (ii).
+
+    Raises
+    ------
+    CMBEddyFluxError
+        If a part of the invariant fails; the message names the part.
+    """
+    values = (jconv_0, rho_t_0, dsdr_0, kh_mlt_1, kh_floor_0)
+    if not np.all(np.isfinite(values)):
+        return
+    j, g = float(jconv_0), float(dsdr_0)
+    state = (
+        f'J={j:.6e} W/m2, dS/dr[0]={g:.6e}, kh_mlt[1]={kh_mlt_1:.6e}, floor[0]={kh_floor_0:.6e}'
+    )
+    if j * g > 0.0:
+        raise CMBEddyFluxError(
+            f'CMB invariant (iii) failed, flux against its gradient: {state}'
+        )
+    if g >= threshold and abs(j) > rho_t_0 * kh_mlt_1 * abs(g) * (1.0 + rtol):
+        raise CMBEddyFluxError(f'CMB invariant (i) failed, flux above kh_mlt[1]: {state}')
+    if g < threshold and abs(j) < rho_t_0 * kh_floor_0 * abs(g) * (1.0 - rtol):
+        raise CMBEddyFluxError(f'CMB invariant (ii) failed, flux below floor[0]: {state}')
+
+
 def _smooth_clip(
     x: npt.NDArray,
     lo: float = 0.0,
@@ -275,6 +340,7 @@ class EntropyState:
         # so each term can be written to NetCDF independently.
         self._jcond = np.zeros(n_basic)
         self._jconv = np.zeros(n_basic)
+        self._cmb_kh_inputs = (0.0, 0.0)
         self._jgrav_heat = np.zeros(n_basic)
         self._jmix_heat = np.zeros(n_basic)
 
@@ -768,6 +834,8 @@ class EntropyState:
             else:
                 kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
+            kh_mlt_1 = float(eddy[1]) if len(eddy) >= 2 else 0.0
+            kh_floor_0 = 0.0
             # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only (see
             # apply_kappah_floor for why cells with dS/dr >= D keep their raw value).
             # Mirrored in the JAX twin jax/phase.py.
@@ -780,12 +848,13 @@ class EntropyState:
                 else:
                     f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
                 eddy = apply_kappah_floor(eddy, self._kappah_floor, f_floor, floor_mask)
+                kh_floor_0 = float(self._kappah_floor * f_floor[0] * floor_mask[0])
 
-            # Mirror SPIDER energy.c:220-223: at the CMB basic node, use the eddy
-            # diffusivity from one node above (kappah is nonlinear in the entropy
-            # gradient, so the boundary extrapolation can over- or under-estimate it).
+            # CMB basic node: the mixing-length value of node 1 (SPIDER energy.c 220-223),
+            # or the floor of node 0 under its own mask, whichever is larger.
             if len(eddy) >= 2:
-                eddy[0] = eddy[1]
+                eddy[0] = max(kh_mlt_1, kh_floor_0)
+            self._cmb_kh_inputs = (kh_mlt_1, kh_floor_0)
             return u_visc, re, eddy, kappac
 
         viscous_velocity, reynolds, self._eddy_diffusivity, self._kappac = mlt(nu, q_mlt_1)
@@ -925,6 +994,15 @@ class EntropyState:
             self._heat_flux = self._jcond + self._jconv
         else:
             self._lid_state = None
+
+        if self._convection and self._jconv.size >= 2:
+            check_cmb_convective_flux(
+                self._jconv[0],
+                rho[0] * T[0],
+                self._dSdr[0],
+                *self._cmb_kh_inputs,
+                self._convective_threshold,
+            )
 
         if self._grav_sep:
             phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()
@@ -1137,6 +1215,11 @@ class EntropyState:
     @property
     def jconv(self) -> npt.NDArray:
         return self._jconv
+
+    @property
+    def cmb_eddy_diffusivity_inputs(self) -> tuple[float, float]:
+        """``(kh_mlt[1], floor[0])`` of the last update, the inputs of the CMB node rule."""
+        return self._cmb_kh_inputs
 
     @property
     def jgrav_heat(self) -> npt.NDArray:
