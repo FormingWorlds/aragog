@@ -110,7 +110,7 @@ The tests pass each kind of state through the check, give it a flux that breaks 
 This case has no plot: each test is a single pass or refusal.
 
 ??? info "Test details"
-    - Reference: the 3 parts of the rule above.
+    - Reference: the 4 parts of the rule above.
     - Tolerance: 1e-12 relative on parts 1, 2 and 4.
     - Test id: `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_each_broken_part`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_a_flux_between_the_bounds`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_round_off_of_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_uses_the_threshold`, `tests/test_cmb_eddy_diffusivity.py::test_update_checks_the_invariant`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_keeps_the_last_accepted_state`
     - Command: `pytest tests/test_cmb_eddy_diffusivity.py -k "invariant or fault"`
