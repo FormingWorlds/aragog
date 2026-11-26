@@ -8,8 +8,9 @@ fired root, the root-search points below the root. They pass through three stage
 2. ``SolveNodes`` joins the calls of one solve, keeps the last of each run of nodes that
    round to the same physical time, converts them to physical units and collects them in
    chunks of ``CHUNK`` nodes.
-3. The consumers (``EnergyQuadrature``, ``TableGuard``, ``FloorMin``, ``RegimeCheck``) take
-   one chunk at a time and keep only running sums, extremes and the last node.
+3. The consumers (``EnergyQuadrature``, ``TableGuard``, ``DomainCheck``, ``FloorMin``,
+   ``RegimeCheck``) take one chunk at a time and keep only running sums, extremes and the
+   last node.
 
 So the memory of a call is bounded by the steps of one output interval (at most
 ``max_steps``, which wait in ``CallNodes``) and one chunk, not by its step count. The nodes,
@@ -256,6 +257,54 @@ class TableGuard:
             self.bad = (tk, msg)
             if self.s.parameters.solver.strict_accepted_range:
                 self.error = AcceptedStateRangeError(msg)
+
+
+class DomainCheck:
+    """EOS lookup points outside the valid table window (``EntropySolver._eos_domain_failure``).
+
+    Keeps the count of states, the count of points more than ``tol`` table S cells outside and
+    the worst such point; ``k_cmb`` is the state row of the CMB gradient, if there is one.
+    """
+
+    def __init__(self, solver: EntropySolver, domain, tol: float, k_cmb: int | None):
+        self.s, self.domain, self.tol, self.k_cmb = solver, domain, tol, k_cmb
+        self.widths = (
+            float(solver.state.phase_staggered._matprop_smooth_width),
+            float(solver.state.phase_basic._matprop_smooth_width),
+        )
+        self.n_states = self.n_out = 0
+        self.worst = None
+
+    def _basic(self, y, S_s):
+        s = self.s
+        if s._core_bc == 'gradient':
+            n_b = s._n_stag + 1
+            S_b = s._reconstruct_entropy(y[:n_b], float(y[n_b]))[1]
+            return s.state.basic_entropy(S_s, entropy_basic=S_b)
+        return s.state.basic_entropy(S_s, None if self.k_cmb is None else y[self.k_cmb])
+
+    def add(self, t, y, change=None) -> None:
+        if not t.size:
+            return
+        s = self.s
+        self.n_states += t.size
+        S_s = [s._stag_entropy(col) for col in y.T]
+        S_b = [self._basic(col, S) for col, S in zip(y.T, S_s, strict=True)]
+        for kind, P, S, r, width in (
+            ('staggered', s._P_stag_flat, np.array(S_s), s._r_stag_flat, self.widths[0]),
+            ('basic', s._P_basic_flat, np.array(S_b), s._r_basic_flat, self.widths[1]),
+        ):
+            d, melt, s_look = self.domain.lookup_distances(
+                s.entropy_eos, P, S, smooth_width=width
+            )
+            d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
+            j = np.unravel_index(int(np.argmax(d)), d.shape)  # (state, node)
+            if not d[j] > self.tol:
+                continue
+            self.n_out += int((d > self.tol).sum())
+            if self.worst is None or d[j] > self.worst[0]:
+                k = int(j[1])
+                self.worst = (d[j], t[j[0]], kind, k, r[k], P[k], S[j], melt[j], s_look[j])
 
 
 class FloorMin:

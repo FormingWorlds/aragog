@@ -66,6 +66,7 @@ from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
 from aragog.solver.energy_stream import (
     CallNodes,
     CMBLedger,
+    DomainCheck,
     EnergyQuadrature,
     FloorMin,
     ListSink,
@@ -176,7 +177,6 @@ class CMBClosureError(RuntimeError):
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
 _CALL_START = object()  # solve() reads the call-start solution itself
-_EOS_DOMAIN_BLOCK = 4096  # states per table pass of the EOS domain check (bounds its memory)
 
 
 def _eos_domain_of(eos):
@@ -6435,7 +6435,10 @@ class EntropySolver:
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
                 self._lid_handover_time = self._lid_start_handover_time
-        if not _status_failed(sol.status) and (outside := self._eos_domain_failure(sol)):
+        domain = None if stream is None else stream.domain
+        if not _status_failed(sol.status) and (
+            outside := self._eos_domain_failure(sol, domain)
+        ):
             if self.parameters.solver.eos_domain_check == 'raise':
                 self._solution = last_accepted  # back to the solution held at the call start
                 raise EOSDomainError(outside)
@@ -6473,8 +6476,8 @@ class EntropySolver:
     def _energy_stream(self, scales, floor) -> SimpleNamespace:
         """Consumers of the quadrature nodes of one CVODE solve and the node stream feeding
         them (``aragog.solver.energy_stream``)."""
-        quad, guard = EnergyQuadrature(self), TableGuard(self)
-        consumers = [quad, guard]
+        quad, guard, domain = EnergyQuadrature(self), TableGuard(self), self._eos_domain_check()
+        consumers = [quad, guard, *(() if domain is None else (domain,))]
         floor_min = regime = None
         if floor is not None:
             floor_min = FloorMin(self, floor['floor_weights'])
@@ -6493,7 +6496,7 @@ class EntropySolver:
             keep=self.keep_energy_trace,
         )
         return SimpleNamespace(
-            nodes=nodes, quad=quad, guard=guard, floor=floor_min, regime=regime
+            nodes=nodes, quad=quad, guard=guard, domain=domain, floor=floor_min, regime=regime
         )
 
     def _eos_table_failure(
@@ -6549,7 +6552,22 @@ class EntropySolver:
         if cfg.eos_domain_check != 'off' and not self.parameters.phase_mixed.const_properties:
             _eos_domain_of(self.entropy_eos)
 
-    def _eos_domain_failure(self, sol) -> str | None:
+    def _eos_domain_check(self) -> DomainCheck | None:
+        """A fresh ``DomainCheck`` for one call; None when the check is off: with
+        ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties."""
+        cfg = self.parameters.solver
+        check_eos_domain_mode(cfg.eos_domain_check)
+        if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
+            return None
+        domain = _eos_domain_of(self.entropy_eos)
+        if domain is None:
+            return None
+        tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
+        return DomainCheck(self, domain, tol, k_cmb)
+
+    def _eos_domain_failure(self, sol, check: DomainCheck | None = None) -> str | None:
         """Judge the EOS lookup points of a call's accepted states against the valid table window.
 
         The points are those the EOS reads in the right-hand side: each staggered node at its
@@ -6557,77 +6575,41 @@ class EntropySolver:
         ``EntropyState.basic_entropy`` gives it (the CMB node from the state's CMB gradient in
         energy_balance and core_module, the top node at the surface entropy with BC 5), with the
         phase-boundary lookups of the smoothing band; see ``TableDomain.lookup_distances``. The
-        states are those of the call's energy trace (accepted steps and root-search points);
-        without a trace only the output states ``sol.y`` count, with 1 info line per solver, and
-        a state that leaves the window and returns between 2 output points is not seen. Off
-        with ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties.
+        states are the quadrature nodes of the call (accepted steps and root-search points):
+        those ``check`` saw in the node stream of a CVODE call, else those of the energy trace;
+        without either only the output states ``sol.y`` count, with 1 info line per solver, and
+        a state that leaves the window and returns between 2 output points is not seen.
 
         Parameters
         ----------
         sol : OptimizeResult
             Result of the call, with ``energy_trace`` when the call kept it.
+        check : DomainCheck, optional
+            The check that saw the nodes of a streamed CVODE call.
 
         Returns
         -------
         str or None
             A message on the worst point more than ``eos_domain_tolerance_cells`` outside, with
-            the count of such points summed over the output states; None when there is none.
+            the count of such points summed over the states; None when there is none or the
+            check is off.
         """
-        eos, cfg = self.entropy_eos, self.parameters.solver
-        check_eos_domain_mode(cfg.eos_domain_check)
-        if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
-            return None
-        domain = _eos_domain_of(eos)
-        if domain is None:
-            return None
-        tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
-        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
-        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
-        trace = sol.get('energy_trace')
-        if trace is None:
-            self._warn_once(
-                'eos_domain_output_states',
-                'EOS domain check: the calls keep no energy trace, so the check judges their '
-                'output states only',
-                logging.INFO,
-            )
-        t_pts, y_pts = trace or (sol.t, sol.y)
-        widths = (
-            float(self.state.phase_staggered._matprop_smooth_width),
-            float(self.state.phase_basic._matprop_smooth_width),
-        )
-        Y = np.asarray(y_pts, dtype=float)
-        n_out, worst = 0, None
-        for i0 in range(0, Y.shape[1], _EOS_DOMAIN_BLOCK):  # one row per state in a block
-            S_s, S_b = [], []
-            for y in Y[:, i0 : i0 + _EOS_DOMAIN_BLOCK].T:
-                S_s.append(self._stag_entropy(y))
-                if self._core_bc == 'gradient':
-                    n_b = self._n_stag + 1
-                    S_b.append(
-                        self.state.basic_entropy(
-                            S_s[-1],
-                            entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1],
-                        )
-                    )
-                else:
-                    S_b.append(
-                        self.state.basic_entropy(S_s[-1], None if k_cmb is None else y[k_cmb])
-                    )
-            for kind, P, S, r, width in (
-                ('staggered', self._P_stag_flat, np.array(S_s), self._r_stag_flat, widths[0]),
-                ('basic', self._P_basic_flat, np.array(S_b), self._r_basic_flat, widths[1]),
-            ):
-                d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
-                d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
-                j = np.unravel_index(int(np.argmax(d)), d.shape)  # (state in the block, node)
-                if not d[j] > tol:
-                    continue
-                n_out += int((d > tol).sum())
-                if worst is None or d[j] > worst[0]:
-                    k = int(j[1])
-                    t = t_pts[i0 + j[0]]
-                    worst = (d[j], t, kind, k, r[k], P[k], S[j], melt[j], s_look[j])
+        states = 'accepted'
+        if check is None:
+            check = self._eos_domain_check()
+            if check is None:
+                return None
+            trace = sol.get('energy_trace')
+            if trace is None:
+                states = 'output'
+                self._warn_once(
+                    'eos_domain_output_states',
+                    'EOS domain check: the calls keep no energy trace, so the check judges '
+                    'their output states only',
+                    logging.INFO,
+                )
+            feed([check], *(trace or (sol.t, sol.y)))
+        worst, domain, eos, tol = check.worst, check.domain, self.entropy_eos, check.tol
         if worst is None:
             return None
         d_k, t, kind, k, r, P, S, melt, s_look = worst
@@ -6640,10 +6622,9 @@ class EntropySolver:
             how = 'no valid window at this pressure (a mask column with no valid node)'
         else:
             how = f'{d_k:.2f} cells outside'
-        states = 'accepted' if trace is not None else 'output'
         return (
-            f'EOS domain check: {n_out} lookup points over the {np.size(t_pts)} {states} states of '
-            f'the call more than {tol:g} table S cells outside the valid window; worst at '
+            f'EOS domain check: {check.n_out} lookup points over the {check.n_states} {states} '
+            f'states of the call more than {tol:g} table S cells outside the valid window; worst at '
             f't={t:.6e} yr: {kind} node {k} (r={r:.6e} m), P={P:.6e} Pa, S={S:.6f} J/kg/K, '
             f'read on the {"melt" if melt else "solid"} table at S={s_look:.6f} J/kg/K, window '
             f'[{lo:.6f}, {hi:.6f}] J/kg/K, ' + how + f', T={T:.6f} K'

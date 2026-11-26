@@ -20,7 +20,7 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos, returns
-from .test_eos_floor import CVODE_BDF
+from .test_eos_floor import CVODE_BDF, needs_cvode
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
 pytestmark = [pytest.mark.smoke, needs_eos]
@@ -810,12 +810,12 @@ def test_the_check_reads_the_lookup_points_of_the_jax_rhs(monkeypatch):
     )  # the CMB node is not the bottom cell
 
 
-def test_a_trace_longer_than_one_block_is_judged_in_full(monkeypatch):
-    """The states are judged in blocks: with 2 states per block, the worst state, the last of its
-    block, is named with its time, and the count sums the points of every block."""
-    import aragog.solver.entropy_solver as es_mod
+def test_a_trace_longer_than_one_chunk_is_judged_in_full(monkeypatch):
+    """The states are judged in chunks: with 2 states per chunk, the worst state, the last of its
+    chunk, is named with its time, and the count sums the points of every chunk."""
+    from aragog.solver import energy_stream
 
-    monkeypatch.setattr(es_mod, '_EOS_DOMAIN_BLOCK', 2)
+    monkeypatch.setattr(energy_stream, 'CHUNK', 2)
     eos = entropy_eos_copy(EOS_DIR)
     s = _solver(eos)
     a = _uniform_melt(s, eos, 0.0)
@@ -829,4 +829,60 @@ def test_a_trace_longer_than_one_block_is_judged_in_full(monkeypatch):
     assert msg is not None
     n_pts = 2 * s._n_stag + 1
     assert msg.startswith(f'{_MSG}: {4 * n_pts} lookup points over the 5 accepted states')
-    assert 'worst at t=3.000000e+00 yr' in msg and '12.00 cells outside' in msg  # a block end
+    assert 'worst at t=3.000000e+00 yr' in msg and '12.00 cells outside' in msg  # a chunk end
+
+
+@needs_cvode
+@pytest.mark.parametrize('mode', ['warn', 'raise'])
+def test_a_streamed_cvode_call_sees_an_excursion_between_output_points(
+    monkeypatch, caplog, mode
+):
+    """A CVODE call keeps no energy trace; one quadrature node between 2 output points is set
+    10.5 table S cells above the melt window on its way to the node stream. The check names that
+    node and its time, so it judges the stream, not the output states, which stay inside."""
+    from aragog.eos.domain import EOSDomainError
+    from aragog.solver import energy_stream
+
+    def melt_solver(mode):
+        s = _solver(entropy_eos_copy(EOS_DIR), method='cvode', mode=mode)
+        s.set_initial_entropy(_uniform_melt(s, s.entropy_eos, -20.0, dS=10.0))
+        return s
+
+    real_add, seen, moved = energy_stream.SolveNodes.add, [], []
+    monkeypatch.setattr(
+        energy_stream.SolveNodes,
+        'add',
+        lambda self, t, y: seen.append((t, t * self.t_ref)) or real_add(self, t, y),
+    )
+    plain = melt_solver('off')
+    plain.solve()  # the same call unchanged: its nodes and output times
+    t_move = next(t for t, yr in seen if yr > 1.0 and yr not in plain._solution.t)
+    s = melt_solver(mode)
+    dS, hi = s.entropy_eos.domain.melt.dS, s.entropy_eos.domain.melt.hi[0]
+
+    def add(self, t_nd, y_nd):
+        if t_nd == t_move:
+            y_nd, n = np.array(y_nd, dtype=float), s._n_stag
+            y_nd[:n] = (hi + 10.5 * dS - self.offset[:n, 0]) / self.scale[:n, 0]
+            moved.append(t_nd * self.t_ref)
+        real_add(self, t_nd, y_nd)
+
+    monkeypatch.setattr(energy_stream.SolveNodes, 'add', add)
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
+        if mode == 'raise':
+            with pytest.raises(EOSDomainError) as err:
+                s.solve()
+            msgs, sol = [str(err.value)], None
+        else:
+            s.solve()
+            msgs, sol = _messages(caplog), s._solution
+    assert len(moved) == 1 and len(msgs) == 1
+    assert f'worst at t={moved[0]:.6e} yr' in msgs[0] and 'accepted states' in msgs[0]
+    assert '10.50 cells outside' in msgs[0]
+    assert f'{2 * s._n_stag + 1} lookup points over the ' in msgs[0]  # that 1 state only
+    if sol is not None:
+        assert 'energy_trace' not in sol and sol.status == 0
+        np.testing.assert_array_equal(sol.t, plain._solution.t)
+        assert moved[0] not in sol.t and sol.t[0] < moved[0] < sol.t[-1]
+        assert np.all(sol.y[: s._n_stag] <= hi)  # every output state inside the window
+        assert s._eos_domain_failure(sol) is None  # the output states alone show nothing
