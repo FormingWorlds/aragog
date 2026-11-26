@@ -35,6 +35,11 @@ The energy check is the [ledger check of the CMB closure](../Explanations/core_b
 
 **How to read the plot.** The horizontal axis is $S_1 - S_0$ in J kg$^{-1}$ K$^{-1}$, the vertical axis the CMB heat flux in W m$^{-2}$; both are on symmetric log scales. The dots are the CMB node rule. The squares are the copy rule, shown for context. The dots pass through $S_1 = S_0$ without a step. The squares differ by about $2.9 \times 10^3$ W m$^{-2}$ between the 2 sides.
 
+**Known limit.** The test runs at $D = 0$, the value of every PROTEUS run: PROTEUS has no setting for `energy.convective_threshold`, and its default in Aragog is 0. For $D > 0$ and a positive `eddy_diffusivity_thermal` both rules step, with $\kappa_h(D)$ the mixing-length value of a gradient $D$ and $g_0 = \partial S/\partial r[0]$:
+
+- CMB node rule: where node 1 crosses $\partial S/\partial r = 0$, by $\rho T \max(\kappa_h(D) - \kappa_h^\mathrm{floor}[0], 0)\,|g_0|$, with $\kappa_h^\mathrm{floor}[0]$ taken as 0 when $g_0 \ge D$; and where $g_0$ crosses $D$, by $\rho T \max(\kappa_h^\mathrm{floor}[0] - \kappa_h^\mathrm{mlt}[1], 0)\,D$.
+- Copy rule: where node 1 crosses 0, by $\rho T (\max(\kappa_h(D), \kappa_h^\mathrm{floor}[1]) - \kappa_h^\mathrm{floor}[1])\,|g_0|$; and where node 1 crosses $D$, by $\rho T \kappa_h^\mathrm{floor}[1]\,|g_0|$.
+
 ??? info "Test details"
     - Reference: the convective flux $-\rho T \kappa_h^\mathrm{mlt}[1]\,\partial S/\partial r$ and the conductive flux of Bower et al. (2018)[^cite-bower2018], from the properties at node 0; the JAX `compute_mlt`.
     - Tolerance: formulas 1e-12 relative; NumPy against JAX 1e-10 relative (absolute 1e-25 m$^2$ s$^{-1}$, the residual drive of the NumPy path on the stable side); the side difference shrinks by at least 100 from a step of 1e-9 to 1e-12 J/kg/K, stays below 1e-5 of the copy-rule step at every step, and below 1e-6 of the CMB flux at 1e-17 J/kg/K. Measured side differences, `nearest_boundary`: 2.2e-4, 2.2e-7 and 2.2e-12 W m$^{-2}$; `constant`: 3.6e-3, 3.6e-6 and 3.6e-11 W m$^{-2}$; the copy rule steps by 2890.8 W m$^{-2}$ at every step.
