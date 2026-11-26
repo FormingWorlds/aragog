@@ -175,6 +175,6 @@ def combine_properties(weight: Any, property1: Any, property2: Any) -> Any:
     Returns:
         The combined (weighted) property
     """
-    out = weight * property1 + (1.0 + weight) * property2
+    out = weight * property1 + (1.0 - weight) * property2
 
     return out
