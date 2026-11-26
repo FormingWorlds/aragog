@@ -451,7 +451,7 @@ jobs:
           if ! last=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
             --jq '.statuses[] | select(.context == "Claude review")' 2>"$err"); then
             lookup="; status lookup failed: $(tail -n 1 "$err")"
-          elif [ "$(jq -r .target_url <<<"$last")" != "$RUN_URL" ]; then
+          elif owner=$(jq -r '.target_url // empty' <<<"$last") && [ -n "$owner" ] && [ "$owner" != "$RUN_URL" ]; then
             echo "A newer run owns the status of $HEAD_SHA; nothing to report."
             exit 0
           fi
@@ -471,23 +471,31 @@ jobs:
               live=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
                 --jq '.statuses[] | select(.context == "Claude review") | .description') || live=''
               if [[ "$live" == "post failed:"* ]]; then keep=1; break; fi
-              sleep 2
+              [ "$i" = 3 ] || sleep 2
             done
           fi
+          wfail=''
           if [ -n "$keep" ]; then
             echo "The post step set the status with its cause."
           else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
-              -f context='Claude review' -f description="$cause; comment @claude review to retry" \
-              -f target_url="$RUN_URL"
+            for i in 1 2 3; do
+              if gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
+                -f context='Claude review' -f description="$cause; comment @claude review to retry" \
+                -f target_url="$RUN_URL"; then break; fi
+              if [ "$i" = 3 ]; then wfail='the failure status'; else sleep 2; fi
+            done
           fi
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+          if ids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
-                and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id' \
-            | while read -r id; do
-                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$id/dismissals" \
-                  -f message='A later review run failed.' -f event=DISMISS
-              done
+                and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id'); then
+            for id in $ids; do
+              gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$id/dismissals" \
+                -f message='A later review run failed.' -f event=DISMISS || wfail="$wfail, dismissal $id"
+            done
+          else
+            wfail="$wfail, the approval lookup"
+          fi
+          if [ -n "$wfail" ]; then echo "Not written: ${wfail#, }"; exit 1; fi
 
       - name: Report model, turns and time
         if: always() && (steps.find.outputs.execution_file != '' || steps.verify.outputs.execution_file != '')
@@ -528,10 +536,15 @@ jobs:
         run: |
           set -o pipefail
           err=$(mktemp)
-          fail=''
-          if ! head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha 2>"$err"); then
+          for i in 1 2 3; do
+            if head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha 2>"$err"); then
+              fail=''
+              break
+            fi
             fail="head lookup failed: $(tail -n 1 "$err")"
-          elif [ "$head" != "$HEAD_SHA" ]; then
+            [ "$i" = 3 ] || sleep 2
+          done
+          if [ -z "$fail" ] && [ "$head" != "$HEAD_SHA" ]; then
             echo "The head moved to $head after the review; no thread is resolved."
             exit 0
           fi
@@ -559,21 +572,27 @@ jobs:
           done
           if [ -n "$fail" ]; then
             if ! owner=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
-              --jq '.statuses[] | select(.context == "Claude review") | .target_url' 2>"$err"); then
+              --jq '.statuses[] | select(.context == "Claude review") | .target_url // empty' 2>"$err"); then
               fail="$fail; status lookup failed: $(tail -n 1 "$err")"
-            elif [ "$owner" != "$RUN_URL" ]; then
+            elif [ -n "$owner" ] && [ "$owner" != "$RUN_URL" ]; then
               echo "A newer run owns the status of $HEAD_SHA; not reported: $fail"
               exit 1
             fi
             msg="$DESCRIPTION; $fail"
-            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
-              -f context='Claude review' -f description="${msg:0:140}" -f target_url="$RUN_URL"
-            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            for i in 1 2 3; do
+              if gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
+                -f context='Claude review' -f description="${msg:0:140}" -f target_url="$RUN_URL"; then break; fi
+              if [ "$i" = 3 ]; then echo "Not written: the failure status"; else sleep 2; fi
+            done
+            if rids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
               | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
-                  and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id' \
-              | while read -r rid; do
-                  gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$rid/dismissals" \
-                    -f message='A thread of a fixed finding could not be resolved.' -f event=DISMISS
-                done
+                  and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id'); then
+              for rid in $rids; do
+                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$rid/dismissals" \
+                  -f message="The resolve job failed: $fail" -f event=DISMISS || echo "Not written: dismissal $rid"
+              done
+            else
+              echo "Not written: the approval lookup"
+            fi
             exit 1
           fi
