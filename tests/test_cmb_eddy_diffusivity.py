@@ -118,6 +118,7 @@ def _jax_twin(state, mesh, dSdr, kappah_floor, D, edt=1.0):
 
 @needs_eos
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize('mixing_length', [None, 1.0e5], ids=['nearest', 'constant'])
 def test_cmb_flux_is_continuous_where_node_1_changes_sign(mixing_length):
     """Over a stable CMB gradient, the CMB flux is the same on both sides of
@@ -152,7 +153,9 @@ def test_cmb_flux_is_continuous_where_node_1_changes_sign(mixing_length):
             assert state.jcond[0] == pytest.approx(jcond_0, rel=1e-12)
             assert state.heat_flux[0] == pytest.approx(jcond_0 + jconv_0, rel=1e-12)
             assert float(kh_jax[0]) == pytest.approx(
-                state.eddy_diffusivity[0], rel=1e-10, abs=1e-12
+                state.eddy_diffusivity[0],
+                rel=1e-10,
+                abs=1.0e-25,  # numpy residual drive
             )
             if side < 0:
                 assert state.eddy_diffusivity[1] > 0.1 * _KAPPAH_FLOOR  # node 1 on its floor
@@ -166,10 +169,11 @@ def test_cmb_flux_is_continuous_where_node_1_changes_sign(mixing_length):
 
 @needs_eos
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 def test_cmb_flux_across_s1_equal_s0(validation_plot):
     """Over a stable CMB gradient, the CMB flux across S1 - S0 from -1e-6 to 1e-6 J/kg/K
-    has no step at S1 = S0, while the flux with the floored node 1 value copied to the CMB
-    node (the rule SPIDER uses, with the floor of node 1) steps there by about 2.9e3 W m^-2."""
+    has no step at S1 = S0, while the flux of the copy rule (the CMB node copies the floored
+    value of node 1) steps there by about 2.9e3 W m^-2."""
     steps = np.r_[-np.logspace(-6, -14, 9), np.logspace(-14, -6, 9)]
     flux, copied = [], []
     for d in steps:
@@ -187,8 +191,8 @@ def test_cmb_flux_across_s1_equal_s0(validation_plot):
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots(figsize=(6.4, 4.2))
-        ax.plot(steps, copied, 's', ms=4, mfc='none', color='C1', label='node 1 value copied')
-        ax.plot(steps, flux, 'o', ms=3, color='C0', label='Aragog')
+        ax.plot(steps, copied, 's', ms=4, mfc='none', color='C1', label='copy rule')
+        ax.plot(steps, flux, 'o', ms=3, color='C0', label='CMB node rule')
         ax.set_xscale('symlog', linthresh=1.0e-14)
         ax.set_yscale('symlog', linthresh=1.0e-3)
         ticks = [-1.0e-6, -1.0e-10, 0.0, 1.0e-10, 1.0e-6]
@@ -215,6 +219,7 @@ def _signed(mag_lo=-12.0, mag_hi=-2.0):
 
 @needs_eos
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 @settings(max_examples=300, deadline=None, derandomize=True)
 @given(
     g0=_signed(),
@@ -248,6 +253,17 @@ def test_cmb_rule_holds_on_random_states(g0, g1, phi0, phi1, D, edt, kappah_floo
 _RHO_T = 4500.0 * 4000.0
 
 
+def _check(jconv0, dsdr0, kh_mlt_1, floor_0, threshold):
+    check_cmb_convective_flux(
+        jconv_0=jconv0,
+        rho_t_0=_RHO_T,
+        dsdr_0=dsdr0,
+        kh_mlt_1=kh_mlt_1,
+        kh_floor_0=floor_0,
+        threshold=threshold,
+    )
+
+
 @pytest.mark.parametrize(
     ('dsdr0', 'kh0', 'kh_mlt_1', 'floor_0'),
     [
@@ -261,7 +277,7 @@ _RHO_T = 4500.0 * 4000.0
 def test_invariant_passes_the_rule(dsdr0, kh0, kh_mlt_1, floor_0):
     """The rule passes the invariant in every kind of CMB state."""
     jconv0 = -_RHO_T * kh0 * dsdr0
-    check_cmb_convective_flux(jconv0, _RHO_T, dsdr0, kh_mlt_1, floor_0, 0.0)
+    _check(jconv0, dsdr0, kh_mlt_1, floor_0, 0.0)
 
 
 @pytest.mark.parametrize(
@@ -280,14 +296,19 @@ def test_invariant_passes_the_rule(dsdr0, kh0, kh_mlt_1, floor_0):
 def test_invariant_refuses_each_broken_part(dsdr0, jconv0, kh_mlt_1, floor_0, part):
     """Each part of the invariant refuses the flux that breaks it, and names the part."""
     with pytest.raises(CMBEddyFluxError, match=part):
-        check_cmb_convective_flux(jconv0, _RHO_T, dsdr0, kh_mlt_1, floor_0, 0.0)
+        _check(jconv0, dsdr0, kh_mlt_1, floor_0, 0.0)
 
 
 def test_invariant_uses_the_threshold():
-    """With D > 0 a node 0 gradient in [0, D) is convective for part (ii)."""
+    """With D > 0 a node 0 gradient in [0, D) is convective for part (ii), and a gradient at D
+    is stable for part (i)."""
+    D = 1.0e-6
     with pytest.raises(CMBEddyFluxError, match=r'\(ii\)'):
-        check_cmb_convective_flux(0.0 * _RHO_T, _RHO_T, 5.0e-7, 0.0, 5.0, 1.0e-6)
-    check_cmb_convective_flux(-_RHO_T * 5.0 * 5.0e-7, _RHO_T, 5.0e-7, 0.0, 5.0, 1.0e-6)
+        _check(0.0, 5.0e-7, 0.0, 5.0, D)
+    _check(-_RHO_T * 5.0 * 5.0e-7, 5.0e-7, 0.0, 5.0, D)
+    _check(-_RHO_T * 3.0 * D, D, 3.0, 5.0, D)  # at D the floor of node 0 is off
+    with pytest.raises(CMBEddyFluxError, match=r'\(i\)'):
+        _check(-_RHO_T * 5.0 * D, D, 3.0, 5.0, D)
 
 
 @needs_eos
@@ -298,14 +319,79 @@ def test_update_checks_the_invariant(monkeypatch):
     seen = []
     real = es.check_cmb_convective_flux
 
-    def spy(*args):
-        seen.append(args)
-        return real(*args)
+    def spy(**kw):
+        seen.append(kw)
+        return real(**kw)
 
     monkeypatch.setattr(es, 'check_cmb_convective_flux', spy)
     state, mesh = _state()
     _update(state, mesh, [_CMB_STABLE, 1.0e-15], [_PHI_MUSH] * mesh.N)
     assert seen, 'update did not check the CMB invariant'
-    jconv0, rho_t0, dsdr0, kh_mlt_1, floor_0, D = seen[-1]
-    assert jconv0 == state.jconv[0] and dsdr0 == state.dSdr[0] and D == 0.0
-    assert (kh_mlt_1, floor_0) == state.cmb_eddy_diffusivity_inputs
+    kw = seen[-1]
+    rho_t = _basic(state, 'density')[0] * _basic(state, 'temperature')[0]
+    assert kw['jconv_0'] == state.jconv[0] and kw['dsdr_0'] == state.dSdr[0]
+    assert kw['rho_t_0'] == rho_t and kw['threshold'] == 0.0
+    assert (kw['kh_mlt_1'], kw['kh_floor_0']) == state.cmb_eddy_diffusivity_inputs
+
+
+# ---------------------------------------------------------------------------
+# A CMB flux fault inside a solve
+# ---------------------------------------------------------------------------
+
+
+def _raise_after(monkeypatch, n_calls):
+    """Make the CMB flux check fail from its call ``n_calls + 1`` on."""
+    import aragog.solver.entropy_state as es
+
+    real, calls = es.check_cmb_convective_flux, [0]
+
+    def faulty(**kw):
+        calls[0] += 1
+        if calls[0] > n_calls:
+            raise CMBEddyFluxError('CMB invariant (i) failed at the probe')
+        return real(**kw)
+
+    monkeypatch.setattr(es, 'check_cmb_convective_flux', faulty)
+
+
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.parametrize('n_calls', [3, 200])
+def test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller(monkeypatch, n_calls):
+    """A CMB flux fault in the NumPy RHS stops a CVODE call with ``CMBEddyFluxError``, early in
+    the call (where CVODE turns it into a failed step) and late."""
+    from tests.test_cmb_closure_ledger import _solver
+
+    _raise_after(monkeypatch, n_calls)
+    solver = _solver(0.9, end_time=20.0, solver_method='cvode', use_jax_jacobian=False)
+    with pytest.raises(CMBEddyFluxError, match='at the probe'):
+        solver.solve()
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_a_flux_fault_keeps_the_last_accepted_state(monkeypatch):
+    """After a CMB flux fault in the energy replay of a call, the solver holds the CMB gradient
+    of its last accepted call."""
+    import aragog.solver.entropy_state as es
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_cmb_closure_ledger import _ledger
+
+    _, _, _, solver = _ledger('energy_balance', 'radau', 0.9, end_time=2.0)
+    accepted = solver.get_current_dSdr_cmb()
+    replay, in_replay = EntropySolver._compute_step_energy_integrals, [False]
+
+    def flagged(self, *a, **kw):
+        in_replay[0] = True
+        return replay(self, *a, **kw)
+
+    def faulty(**kw):
+        if in_replay[0]:
+            raise CMBEddyFluxError('CMB invariant (i) failed at the probe')
+
+    monkeypatch.setattr(EntropySolver, '_compute_step_energy_integrals', flagged)
+    monkeypatch.setattr(es, 'check_cmb_convective_flux', faulty)
+    solver.parameters.solver.end_time = 20.0
+    with pytest.raises(CMBEddyFluxError, match='at the probe'):
+        solver.solve()
+    assert in_replay[0] and solver.get_current_dSdr_cmb() == accepted

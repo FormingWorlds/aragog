@@ -549,11 +549,23 @@ def test_numpy_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor(cmb)
         floor_0 = _KAPPAH_FLOOR * float(tanh_weight(phi_0, _PHI_RHEO, _PHI_WIDTH)) * (cmb < D)
         # Node 1 is on its floor only in the band 0 <= dS/dr < D; there the mixing-length part is 0.
         kh_mlt_1 = kh[1] if x < 0.0 else 0.0
+        if x < 0.0:  # the drive of D keeps node 1 above its floor, so kh[1] is kh_mlt[1]
+            assert kh[1] > _KAPPAH_FLOOR
         # 0 and the band keep the numpy drive of x ~ 0 at node 1 (below 1e-18 m^2/s here).
         assert kh[0] == pytest.approx(max(kh_mlt_1, floor_0), rel=1e-12, abs=1.0e-12)
         assert state.jconv[0] == pytest.approx(rho_t[0] * kh[0] * -dSdr[0], rel=1e-12)
         kh1.append(kh[1])
     assert kh1[0] > kh1[1] == kh1[2] > 0.0 == kh1[3]
+
+
+@needs_eos
+@pytest.mark.parametrize('cmb', [-1.0e-4, -1.0e-31, 1.0e-31, 1.0e-4])
+@pytest.mark.parametrize('x', [-1.0e-4, -1.0e-31, 0.0, 1.0e-4])
+def test_numpy_cmb_node_without_floor_is_the_copy_of_node_1(cmb, x):
+    """With ``kappah_floor = 0`` the CMB node equals node 1 bit for bit on the numpy path (the
+    SPIDER rule), whatever the gradients of nodes 0 and 1."""
+    state, _, _ = _update_with_gradients([cmb, x], start=0, kappah_floor=0.0)
+    assert state.eddy_diffusivity[0] == state.eddy_diffusivity[1]
 
 
 @needs_eos

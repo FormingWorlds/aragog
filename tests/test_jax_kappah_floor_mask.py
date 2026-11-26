@@ -247,6 +247,7 @@ _KINDS = [
 
 
 @pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
 @pytest.mark.parametrize('edt', [1.0, -1.0])
 @pytest.mark.parametrize(('kind', 'g', 'phi'), _KINDS)
 def test_cmb_node_known_answer_in_each_kind(kind, g, phi, edt):
@@ -270,6 +271,39 @@ def test_cmb_node_known_answer_in_each_kind(kind, g, phi, edt):
         assert float(kh[0]) < 1.0e-6 * float(kh[1])
     if kind in ('c', 'd') and edt > 0:
         assert float(kh[0]) == pytest.approx(_floor(0.6), rel=1e-12)
+
+
+@pytest.mark.parametrize(('kind', 'g', 'phi'), [k for k in _KINDS if k[0] in 'cd'])
+def test_cmb_node_takes_its_own_zero_anchored_floor_with_rheology(kind, g, phi):
+    """With the solid rheology on, the floor of node 0 uses the zero-anchored weight of its own
+    melt fraction: 0.298 m^2/s at 0.15, against 0.344 with the plain tanh weight and 5 for the
+    floor of node 1."""
+    from aragog.rheology import SolidRheologyParams
+    from aragog.utilities import zero_anchored_weight
+
+    rheo = SolidRheologyParams(enabled=True)
+    x = [g[0], g[1], -1.0e-4, -1.0e-4]
+    ph = [0.15, phi[1], 0.4, 0.4]
+    kh_mlt = _kh_mlt(x, ph, rheology=rheo)
+    floor_0 = 10.0 * float(zero_anchored_weight(tanh_weight, 0.15, 0.4, 0.15))
+    assert abs(floor_0 - _floor(0.15)) > 0.04
+    params = PhaseParams(**_PARAMS, convective_threshold=0.0, rheology=rheo)
+    kh, _ = compute_mlt(jnp.asarray(x), _phase(4, ph), _mesh(4, ml=1.0e5), params)
+    assert float(kh[0]) == pytest.approx(max(float(kh_mlt[1]), floor_0), rel=1e-12, abs=0.0)
+
+
+def test_cmb_flux_steps_where_the_cmb_gradient_crosses_d():
+    """For D > 0 the floor of node 0 is on below D and off at D, so with node 1 stable the CMB
+    node holds its floor just below D and 0 at D."""
+    D = 1.0e-6
+    params = PhaseParams(**_PARAMS, convective_threshold=D)
+    ph, mesh = _phase(4, [0.6, 0.4, 0.4, 0.4]), _mesh(4, ml=1.0e5)
+    below, _ = compute_mlt(
+        jnp.array([np.nextafter(D, 0.0), 1.0e-4, -1.0e-4, -1.0e-4]), ph, mesh, params
+    )
+    at, _ = compute_mlt(jnp.array([D, 1.0e-4, -1.0e-4, -1.0e-4]), ph, mesh, params)
+    assert float(below[0]) == pytest.approx(_floor(0.6), rel=1e-12)
+    assert float(at[0]) == 0.0
 
 
 @pytest.mark.parametrize(('kind', 'g', 'phi'), _KINDS)
