@@ -130,7 +130,11 @@ def check_cmb_convective_flux(
     (i) for ``g >= D``: ``|J| <= rho T kh_mlt_1 |g|`` (no floor of node 1 crosses a
         stable CMB);
     (ii) for ``g < D``: ``|J| >= rho T kh_floor_0 |g|`` (node 0 keeps its own floor);
-    (iii) ``J g <= 0`` (no flux against its own gradient).
+    (iii) ``J g <= 0`` (no flux against its own gradient);
+    (iv) ``J = -rho T max(kh_mlt_1, kh_floor_0) g`` (the rule itself).
+
+    ``kh_floor_0`` is already 0 where ``g >= D``. Parts (i) to (iii) name the failure; (iv)
+    also catches a flux between the bounds of (i) and (ii).
 
     A state with a non-finite input is not checked.
 
@@ -149,7 +153,7 @@ def check_cmb_convective_flux(
     threshold : float
         Convective threshold ``D`` [J kg^-1 K^-1 m^-1].
     rtol : float, optional
-        Relative tolerance of parts (i) and (ii).
+        Relative tolerance of parts (i), (ii) and (iv).
 
     Raises
     ------
@@ -165,6 +169,8 @@ def check_cmb_convective_flux(
         part = '(i) failed, flux above kh_mlt[1]'
     elif g < threshold and abs(j) < rho_t_0 * kh_floor_0 * abs(g) * (1.0 - rtol):
         part = '(ii) failed, flux below floor[0]'
+    elif abs(j + rho_t_0 * max(kh_mlt_1, kh_floor_0) * g) > rtol * abs(j):
+        part = '(iv) failed, flux differs from the rule'
     else:
         return
     raise CMBEddyFluxError(

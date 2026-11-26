@@ -569,6 +569,25 @@ def test_numpy_cmb_node_without_floor_is_the_copy_of_node_1(cmb, x):
 
 
 @needs_eos
+def test_numpy_cmb_node_floor_steps_where_the_cmb_gradient_crosses_d():
+    """With D > 0 and node 1 stable, the CMB node holds its own floor just below
+    dS/dr[0] = D and loses it at D, as on the JAX path."""
+    D = _D
+    kh0 = []
+    for g0 in (np.nextafter(D, 0.0), D):
+        state, _, _ = _update_with_gradients([g0, 1.0e-4], start=0, kappah_floor=_KAPPAH_FLOOR)
+        phi_0 = float(np.asarray(state.phase_basic.melt_fraction()).ravel()[0])
+        kh0.append(
+            (
+                state.eddy_diffusivity[0],
+                _KAPPAH_FLOOR * float(tanh_weight(phi_0, _PHI_RHEO, _PHI_WIDTH)),
+            )
+        )
+    assert kh0[0][0] == pytest.approx(kh0[0][1], rel=1e-12) and kh0[0][1] > 1.0
+    assert kh0[1][0] < 1.0e-12  # node 1 stable: only the residual numpy drive remains
+
+
+@needs_eos
 def test_numpy_threshold_is_strict_at_D():
     """On the numpy path a node just below D gets the floor only and nodes at D and
     just above get nothing; ``EntropyState`` rejects a negative D."""

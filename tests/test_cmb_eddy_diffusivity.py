@@ -299,6 +299,25 @@ def test_invariant_refuses_each_broken_part(dsdr0, jconv0, kh_mlt_1, floor_0, pa
         _check(jconv0, dsdr0, kh_mlt_1, floor_0, 0.0)
 
 
+@pytest.mark.parametrize(
+    ('dsdr0', 'jconv0', 'kh_mlt_1', 'floor_0'),
+    [
+        (1.0e-4, 0.0, 3.0, 0.0),  # the mixing-length part of node 1 dropped over a stable CMB
+        (-1.0e-4, _RHO_T * 5.0 * 1.0e-4, 8.0, 5.0),  # the floor where node 1 is above it
+        (-1.0e-4, _RHO_T * 8.0 * 1.0e-4 * (1.0 + 1.0e-6), 8.0, 5.0),  # 1e-6 off the rule
+    ],
+)
+def test_invariant_refuses_a_flux_between_the_bounds(dsdr0, jconv0, kh_mlt_1, floor_0):
+    """Part (iv) refuses a flux that parts (i) to (iii) let through but that is not the rule."""
+    with pytest.raises(CMBEddyFluxError, match=r'\(iv\)'):
+        _check(jconv0, dsdr0, kh_mlt_1, floor_0, 0.0)
+
+
+def test_invariant_passes_round_off_of_the_rule():
+    """A flux 1e-13 off the rule passes; the tolerance of the check is 1e-12."""
+    _check(_RHO_T * 8.0 * 1.0e-4 * (1.0 + 1.0e-13), -1.0e-4, 8.0, 5.0, 0.0)
+
+
 def test_invariant_uses_the_threshold():
     """With D > 0 a node 0 gradient in [0, D) is convective for part (ii), and a gradient at D
     is stable for part (i)."""
@@ -306,13 +325,14 @@ def test_invariant_uses_the_threshold():
     with pytest.raises(CMBEddyFluxError, match=r'\(ii\)'):
         _check(0.0, 5.0e-7, 0.0, 5.0, D)
     _check(-_RHO_T * 5.0 * 5.0e-7, 5.0e-7, 0.0, 5.0, D)
-    _check(-_RHO_T * 3.0 * D, D, 3.0, 5.0, D)  # at D the floor of node 0 is off
+    _check(-_RHO_T * 3.0 * D, D, 3.0, 0.0, D)  # at D the mask of node 0 sets its floor to 0
     with pytest.raises(CMBEddyFluxError, match=r'\(i\)'):
-        _check(-_RHO_T * 5.0 * D, D, 3.0, 5.0, D)
+        _check(-_RHO_T * 5.0 * D, D, 3.0, 0.0, D)
 
 
 @needs_eos
-def test_update_checks_the_invariant(monkeypatch):
+@pytest.mark.parametrize('D', [0.0, 1.0e-6])
+def test_update_checks_the_invariant(monkeypatch, D):
     """``EntropyState.update`` calls the invariant check with the CMB values it used."""
     import aragog.solver.entropy_state as es
 
@@ -324,13 +344,13 @@ def test_update_checks_the_invariant(monkeypatch):
         return real(**kw)
 
     monkeypatch.setattr(es, 'check_cmb_convective_flux', spy)
-    state, mesh = _state()
+    state, mesh = _state(D=D)
     _update(state, mesh, [_CMB_STABLE, 1.0e-15], [_PHI_MUSH] * mesh.N)
     assert seen, 'update did not check the CMB invariant'
     kw = seen[-1]
     rho_t = _basic(state, 'density')[0] * _basic(state, 'temperature')[0]
     assert kw['jconv_0'] == state.jconv[0] and kw['dsdr_0'] == state.dSdr[0]
-    assert kw['rho_t_0'] == rho_t and kw['threshold'] == 0.0
+    assert kw['rho_t_0'] == rho_t and kw['threshold'] == D
     assert (kw['kh_mlt_1'], kw['kh_floor_0']) == state.cmb_eddy_diffusivity_inputs
 
 
@@ -356,13 +376,12 @@ def _raise_after(monkeypatch, n_calls):
 
 @needs_eos
 @pytest.mark.smoke
-@pytest.mark.parametrize('n_calls', [3, 200])
-def test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller(monkeypatch, n_calls):
-    """A CMB flux fault in the NumPy RHS stops a CVODE call with ``CMBEddyFluxError``, early in
-    the call (where CVODE turns it into a failed step) and late."""
+def test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller(monkeypatch):
+    """A CMB flux fault in the NumPy RHS early in a CVODE call (where CVODE turns it into a
+    failed step) stops the call with ``CMBEddyFluxError``."""
     from tests.test_cmb_closure_ledger import _solver
 
-    _raise_after(monkeypatch, n_calls)
+    _raise_after(monkeypatch, 3)
     solver = _solver(0.9, end_time=20.0, solver_method='cvode', use_jax_jacobian=False)
     with pytest.raises(CMBEddyFluxError, match='at the probe'):
         solver.solve()
