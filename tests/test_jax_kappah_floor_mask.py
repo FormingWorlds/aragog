@@ -246,6 +246,7 @@ _KINDS = [
 ]
 
 
+@pytest.mark.reference_pinned
 @pytest.mark.parametrize('edt', [1.0, -1.0])
 @pytest.mark.parametrize(('kind', 'g', 'phi'), _KINDS)
 def test_cmb_node_known_answer_in_each_kind(kind, g, phi, edt):

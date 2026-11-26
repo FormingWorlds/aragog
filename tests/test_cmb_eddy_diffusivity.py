@@ -214,6 +214,7 @@ def _signed(mag_lo=-12.0, mag_hi=-2.0):
 
 
 @needs_eos
+@pytest.mark.reference_pinned
 @settings(max_examples=300, deadline=None, derandomize=True)
 @given(
     g0=_signed(),

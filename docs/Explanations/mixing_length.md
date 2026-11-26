@@ -70,12 +70,10 @@ the classical bounded-eddy profile that vanishes at both boundaries and reaches 
 Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux fits experimental measurements (Fig. 3 in Abe (1995); Stothers & Chin (1997)[^cite-stothers1997]).
 The `constant` profile is a uniform fraction of the mantle thickness, `mixing_length_constant_fraction` (0.25 unless set, the value SPIDER uses); see [Heat transport](heat_transport.md#mixing-length-profile).
 
-The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
+The CMB node takes the mixing-length eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), or its own floor, whichever is larger; see [Heat transport](heat_transport.md#eddy-diffusivity-at-the-cmb-node).
 With `nearest_boundary` the length at that node is the thickness of the bottom cell.
-If that node turns stable, its diffusivity is 0, and the flux out of the core falls to about 0.
-In PROTEUS runs of 1 Earth mass this lasts about 30 kyr on the uniform mesh of 80 nodes and on 80 nodes with a 3000 m CMB cell, but not on the uniform mesh of 160 nodes.
-The thickness of the bottom cell alone does not explain which meshes lose the flux.
-PROTEUS therefore runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
+If that node turns stable, its mixing-length diffusivity is 0, and over an unstable CMB gradient the CMB node keeps only its floor.
+PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 
 **Where this is checked.** The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
 
