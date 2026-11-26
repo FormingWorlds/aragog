@@ -1149,7 +1149,10 @@ def test_the_tool_check_fails_a_call_without_an_id_and_a_transcript_that_is_not_
     del run[1]['message']['content'][0]['id']
     assert _beyond_read(run) == '<bad tool_use>,<unmatched tool_result>,Grep'
     out = subprocess.run(
-        ['jq', '-c', _CHECK[1]], input='{"type": "result"}', capture_output=True, text=True
+        ['jq', '-c', _CHECK[1]],
+        input='{"x": {"type": "system", "subtype": "init", "tools": ["Read"]}}',
+        capture_output=True,
+        text=True,
     )
     assert out.returncode != 0
 
@@ -1158,6 +1161,7 @@ def _check_step(tmp_path, kind, text):
     assert _CHECK
     run = tmp_path / 'execution.json'
     run.write_text(text)
+    (tmp_path / 'summary.md').write_text('')
     env = {
         **os.environ,
         'EXEC': str(run),
