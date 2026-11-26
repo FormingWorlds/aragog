@@ -366,3 +366,24 @@ def test_the_boundary_moves_inwards_on_heating_when_the_slope_is_round_off():
     budget = _RoundOffSlope(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
     assert abs(float(budget.r_icb(4000.0)) - 0.5 * R_CMB) <= WIDTH
     assert float(jax.grad(budget.r_icb)(4000.0)) < 0.0
+
+
+@pytest.mark.physics_invariant
+def test_a_nan_node_does_not_hide_an_inner_core_past_the_shell_base():
+    """A NaN core temperature at one node gives a NaN radius; the shell-base check still refuses
+    an inner core past the shell base at the other nodes of the call."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    r_cold = float(BUDGET.r_icb(3800.0))
+    assert 0.0 < r_cold < R_CMB and math.isnan(float(BUDGET.r_icb(float('nan'))))
+    faces = np.linspace(0.5 * r_cold, R_CMB, 11)
+    budget = SimpleNamespace(
+        shell=SimpleNamespace(r_base=faces[0], r_faces=faces), r_icb_batch=BUDGET.r_icb_batch
+    )
+    solver = EntropySolver.__new__(EntropySolver)
+    for t_core in ([3800.0], [3800.0, float('nan')], [float('nan'), 3800.0]):
+        with pytest.raises(ValueError, match='reaches the base of the resolved shell'):
+            solver._check_shell_base(budget, t_core, [R_CMB])
+    solver._check_shell_base(budget, [float('nan')], [R_CMB])
