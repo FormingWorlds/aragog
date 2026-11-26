@@ -482,20 +482,17 @@ jobs:
               if gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=failure \
                 -f context='Claude review' -f description="$cause; comment @claude review to retry" \
                 -f target_url="$RUN_URL"; then break; fi
-              if [ "$i" = 3 ]; then wfail='the failure status'; else sleep 2; fi
+              if [ "$i" = 3 ]; then echo "Not written: the failure status"; wfail=1; else sleep 2; fi
             done
           fi
-          if ids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+          ids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
-                and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id'); then
-            for id in $ids; do
-              gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$id/dismissals" \
-                -f message='A later review run failed.' -f event=DISMISS || wfail="$wfail, dismissal $id"
-            done
-          else
-            wfail="$wfail, the approval lookup"
-          fi
-          if [ -n "$wfail" ]; then echo "Not written: ${wfail#, }"; exit 1; fi
+                and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id')
+          for id in $ids; do
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$id/dismissals" \
+              -f message='A later review run failed.' -f event=DISMISS || { echo "Not written: dismissal $id"; wfail=1; }
+          done
+          [ -z "$wfail" ] || exit 1
 
       - name: Report model, turns and time
         if: always() && (steps.find.outputs.execution_file != '' || steps.verify.outputs.execution_file != '')
@@ -581,15 +578,12 @@ jobs:
                 -f context='Claude review' -f description="${msg:0:140}" -f target_url="$RUN_URL"; then break; fi
               if [ "$i" = 3 ]; then echo "Not written: the failure status"; else sleep 2; fi
             done
-            if rids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            rids=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
               | jq -r '.[][] | select(.state == "APPROVED" and .user.login == "github-actions[bot]"
-                  and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id'); then
-              for rid in $rids; do
-                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$rid/dismissals" \
-                  -f message="The resolve job failed: $fail" -f event=DISMISS || echo "Not written: dismissal $rid"
-              done
-            else
-              echo "Not written: the approval lookup"
-            fi
+                  and ((.body // "") | contains("<!-- claude-review:approval -->"))) | .id')
+            for rid in $rids; do
+              gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$rid/dismissals" \
+                -f message="The resolve job failed: $fail" -f event=DISMISS || echo "Not written: dismissal $rid"
+            done
             exit 1
           fi
