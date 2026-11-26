@@ -1044,7 +1044,13 @@ def test_the_model_passes_have_read_only():
         args = _step(name)
         assert '--tools Read\n' in args
         assert f'--disallowedTools "{DENIED}"\n' in args
-        assert '--permission-mode dontAsk\n' in args
+
+
+def test_the_review_job_keeps_the_subprocess_env_scrub():
+    # with the scrub set the CLI forces the default permission mode, so no pass sets one
+    assert _WORKFLOW.count('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB') == 1
+    assert "\n      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'\n" in _job('review')
+    assert '--permission-mode' not in _WORKFLOW
 
 
 def test_a_tool_check_follows_each_pass_and_keeps_its_execution_file():
