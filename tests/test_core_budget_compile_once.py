@@ -239,3 +239,24 @@ def test_the_budget_programs_give_the_compiled_values_without_jit(budget):
     assert compiled[1] < 0.0
     for c, e in zip(compiled, eager, strict=True):
         np.testing.assert_allclose(e, c, rtol=1e-12, atol=0.0)
+
+
+def test_the_core_heat_compiles_once_per_length_bucket(budget):
+    """Without stratification, after a call of 33 states the core heat of calls of 34 to 64
+    states (one bucket) compiles nothing, and each capacity is the effective capacity."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = SimpleNamespace(_n_stag=1)
+
+    def call(n):
+        y = np.zeros((3, n))
+        y[2] = np.linspace(4100.0, 4200.0, n)
+        return y, EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))[1]
+
+    call(33)
+    assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0
+    y, cap = call(40)
+    want = [float(budget.effective_capacity(t)) for t in y[2]]
+    np.testing.assert_allclose(cap, want, rtol=1e-12)

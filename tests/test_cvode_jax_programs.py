@@ -514,3 +514,20 @@ def test_each_part_of_the_input_form_counts():
         counts.append(len(cvode_jax._FORMS))
     clear_jit_cache()
     assert counts == [1, 1, 2, 3, 4, 5, 6, 7, 7]
+
+
+def test_a_call_at_a_new_time_reuses_the_programs(eos):
+    """The time is a traced argument of the RHS and Jacobian programs: calls of one build at
+    new times trace and compile nothing."""
+    clear_jit_cache()
+    mode = 'energy_balance'
+    rhs, jac = _factory(mode, eos, PhaseParams())
+    n = N + EXTRA[mode]
+    f, J = np.zeros(n), np.zeros((n, n))
+    assert rhs(0.0, _state(mode), f) == 0 and jac(0.0, _state(mode), None, J) == 0
+    traces = dict(_TRACE_COUNTERS)
+    _SEEN.clear()
+    for t in (1.0, 2.5):
+        assert rhs(t, _state(mode), f) == 0 and jac(t, _state(mode), None, J) == 0
+    assert dict(_TRACE_COUNTERS) == traces
+    assert len(_SEEN) == 0

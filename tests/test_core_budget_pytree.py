@@ -12,6 +12,7 @@ counted with the backend-compile events of ``jax.monitoring``.
 from __future__ import annotations
 
 import dataclasses
+import functools
 
 import jax
 import jax.monitoring
@@ -271,3 +272,60 @@ def test_a_class_with_its_own_subclass_hook_keeps_it():
         pass
 
     assert getattr(Sub, 'tag', None) == 'own'
+
+
+@functools.cache
+def _tabulated_inputs():
+    """Core arrays and liquid table of the ``_Form`` profile, shared as a re-solve shares them
+    (the table is a static object, so a new table is a new program)."""
+    from tests.conftest import gaussian_core_arrays
+    from tests.test_core_budget_tabulated import constant_property_table
+
+    g = _Form().budget().profiles
+    return gaussian_core_arrays(g, 201), constant_property_table(g)
+
+
+def _other_form(form, scale):
+    """A budget of another form than ``_Form``, its values scaled by ``scale``: a quadratic
+    melting curve or a stratified core (its shell part of the budget); tabulated profiles are
+    built anew from the same inputs."""
+    from tests.test_core_stratified_budget import K_CORE, _profiles
+
+    f = _Form()
+    if form == 'quadratic':
+        curve = QuadraticMeltingCurve(t_m0=1695.0 * scale, t_m1=1.09e-11, t_m2=-8.0e-24)
+        return CoreEnergyBudget(
+            f.budget().profiles, curve, ds_fusion=f.ds_fusion, icn_width=f.icn_width
+        )
+    if form == 'tabulated':
+        from aragog.core.profiles_tabulated import TabulatedCoreProfiles
+
+        core, table = _tabulated_inputs()
+        tab = TabulatedCoreProfiles(core, table, t_cmb_range=(2900.0, 6100.0))
+        return CoreEnergyBudget(
+            tab, f.budget().melting_curve, ds_fusion=f.ds_fusion, icn_width=10.0
+        )
+    curve = QuadraticMeltingCurve(t_m0=2677.0 * scale, t_m1=2.95e-12, t_m2=8.37e-25)
+    return CoreEnergyBudget(
+        _profiles(),
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=K_CORE * scale,
+    )
+
+
+@pytest.mark.parametrize('form', ['quadratic', 'tabulated', 'stratified'])
+def test_a_second_budget_of_another_form_reuses_its_programs(form):
+    """Every part of a budget is a pytree, also a quadratic curve, tabulated profiles and the
+    shell of a stratified core: a second budget of the form with other values compiles nothing."""
+
+    def calls(b):
+        if form == 'stratified':
+            return b.r_icb_batch(T), b.capacity_batch(T)
+        return _batched(b)
+
+    calls(_other_form(form, 1.0))
+    second = _other_form(form, 1.01)
+    assert _compiles(lambda: jax.block_until_ready(calls(second))) == 0

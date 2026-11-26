@@ -126,3 +126,13 @@ def test_a_grid_that_is_not_finite_and_real_is_refused(bad):
 
     with pytest.raises(ValueError, match='finite real'):
         StaticArray(bad)
+
+
+def test_the_phase_boundary_slope_interpolates_the_gradient_on_the_table_pressures():
+    """dS/dP of a phase boundary between the table pressures is the linear interpolation of
+    the finite-difference gradient on those pressures."""
+    p = np.geomspace(1e5, 1.4e11, 50)
+    s = 2000.0 + 3e-9 * p - 1e-21 * p**2
+    q = 0.5 * (p[1:] + p[:-1])
+    got = np.asarray(_PhaseBoundary1D(p, s).dSdP(jnp.asarray(q)))
+    np.testing.assert_allclose(got, np.interp(q, p, np.gradient(s, p)), rtol=1e-12, atol=0.0)
