@@ -76,6 +76,69 @@
   "sha256_helpfile": "42cc5b445689d3d162e1b697613837d5a1e333cca3d2c7e96bba11b9586c2c9f",
   "sha256_log": "0e1fdb433ef6188ad38a4448abd6ee377baf536ef5251df8dc71d8643dccdd03"
  },
+ "v9x_tip": {
+  "run": "1 Earth mass, nearest-boundary mixing length (the #113 case), resumed at 30169.3 yr to 60 kyr, aragog rtol 1e-8",
+  "aragog": "2268ce2e7b8c7d938f83822b31ace257514cad65",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "34e7146377a7a75f55ec1079abc597dc7be29b35872dc23d8908f60bd01a7847",
+  "sha256_log": "19a65deccc94116ef74dfec7149759963edac55b3194beba61b635006bef1df5"
+ },
+ "v9x_tip_r9": {
+  "run": "same, aragog rtol 1e-9",
+  "aragog": "2268ce2e7b8c7d938f83822b31ace257514cad65",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "50d89999e2fb3b22471fb0853eea5188c52c2e6db51fab1b99328d9244b658d6",
+  "sha256_log": "24be5a5638eb437463ae503479bfe580b3dd76ab5689616c7c36e4d738aa2434"
+ },
+ "v9x_tip_r10": {
+  "run": "same, aragog rtol 1e-10",
+  "aragog": "2268ce2e7b8c7d938f83822b31ace257514cad65",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "9b735cf71e7205192d6b60cd02d427fd368c581484aa9150f44560f0712e5020",
+  "sha256_log": "1438cc94256096efcbba86e01ee70a4be772496039ccd172c4f2ed1c7207b519"
+ },
+ "v9x_copy": {
+  "run": "the #113 case from t = 0 to 140 kyr under the copy rule (its rows 30169.3 to 60000 yr are kept)",
+  "aragog": "26.11.8.post1.dev3+gbfb122428",
+  "proteus": "dfa3a9f9e24f4ba50a92ad28c5b998fca7fe04c6",
+  "sha256_helpfile": "d082a7de8483602438fa93a4a71f4315deb840da0d08ec818d14d72ad75cd39a"
+ },
+ "rtol_calls/c43151_r8": {
+  "run": "the 43151 yr call of v9x_tip from its stored start, aragog rtol 1e-08, src 2268ce2e",
+  "sha256_log": "330e3216295729c454bc98d638e58d79a307d0bf988a495f466b23f732493a6a"
+ },
+ "rtol_calls/c43151_r9": {
+  "run": "the 43151 yr call of v9x_tip from its stored start, aragog rtol 1e-09, src 2268ce2e",
+  "sha256_log": "45b2a1f95cf80d96c9dd55b13eb1e092eb878688f21dcca35dfc612976f72c58"
+ },
+ "rtol_calls/c43151_r10": {
+  "run": "the 43151 yr call of v9x_tip from its stored start, aragog rtol 1e-10, src 2268ce2e",
+  "sha256_log": "ede93c67c31f224f05195f8c18165b2bb7435e487ae21cc3068bbe4134be0ae8"
+ },
+ "rtol_calls/c43151_r11": {
+  "run": "the 43151 yr call of v9x_tip from its stored start, aragog rtol 1e-11, src 2268ce2e",
+  "sha256_log": "5b3058c8561161cabda5ffbcb3fc55a92a1ec1c417871b64c2bc29c232f519b1"
+ },
+ "rtol_calls/c32187_r8": {
+  "run": "the 32187 yr call of v9x_tip from its stored start, aragog rtol 1e-08, src 2268ce2e",
+  "sha256_log": "1d733ab88f0e6b7bfecb691fdd84f843a9a7c7dd925e0ec450ecbc355eec7a70"
+ },
+ "rtol_calls/c32187_r9": {
+  "run": "the 32187 yr call of v9x_tip from its stored start, aragog rtol 1e-09, src 2268ce2e",
+  "sha256_log": "ee5323397acae4f34e548b8565073902f72aab4e19927b972a2c68169ec8d780"
+ },
+ "rtol_calls/c31773_r9": {
+  "run": "the 31773 yr call of v9x_tip_r9 from its stored start, aragog rtol 1e-09, src 2268ce2e",
+  "sha256_log": "99fc14674ac4a6ec56a62381bf492928a73f1faf33dbae4dbaee872f0366754f"
+ },
+ "rtol_calls/c31773_r10": {
+  "run": "the 31773 yr call of v9x_tip_r9 from its stored start, aragog rtol 1e-10, src 2268ce2e",
+  "sha256_log": "1ed6af8ef6720384b3703d085cfb40f41fbe54cdda7b43d174ca18f438765740"
+ },
+ "rtol_calls/c31773_r11": {
+  "run": "the 31773 yr call of v9x_tip_r9 from its stored start, aragog rtol 1e-11, src 2268ce2e",
+  "sha256_log": "9245728ea10393cde7b0dc542e3147e81d3eb48aac68f6a547d7a7b4a544a75f"
+ },
  "numpy": "2.4.6",
  "v7_probe_log_sha256": "dce1ffa547c4d76c07c374794a98c27388a13cee6c82a139f3cdd2688abf55e2",
  "v9_parts_log_sha256": "2aad6a6055082e7f5498cd3146ad0127aa37e6622eed0bf43532764a3c709534"

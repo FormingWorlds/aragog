@@ -239,3 +239,122 @@ def test_nearest_mixing_length_resume_runs_where_the_copy_rule_stops(runs, valid
         return fig
 
     validation_plot(figure, 'cmb_eddy_flux_nearest_resume')
+
+
+def _seal_window(runs, key):
+    """Rows of a 60 kyr seal run inside the low-flux interval of the copy rule, 30.5 to 57.3 kyr."""
+    t = runs[f'{key}/Time']
+    return runs[f'{key}/F_cmb'][(t > 30500.0) & (t < 57300.0)]
+
+
+def test_seal_case_to_60_kyr_keeps_the_core_coupled(runs, validation_plot):
+    """The #113 case resumed at 30169.3 yr to 60 kyr: under the copy rule F_cmb stays near
+    0.1 W m^-2 from 30.5 to 57.3 kyr and the lowest cell falls 428 K below the CMB node; under the
+    CMB node rule F_cmb stays near 2 kW m^-2 and the cell stays 8 to 10 K below the node."""
+    copy, rule = 'v9x_copy', 'v9x_tip'
+    assert int(runs[f'{copy}/status']) == STATUS_TARGET_TIME
+    assert int(runs[f'{rule}/status']) == STATUS_TARGET_TIME
+    assert runs[f'{rule}/Time'][-1] == 60000.0
+    # the rows of the #113 table, from the copy-rule run
+    t = runs[f'{copy}/Time']
+    k = int(np.argmin(np.abs(t - 30546.0)))
+    assert runs[f'{copy}/F_cmb'][k] == pytest.approx(1.4e-3, rel=0.01)
+    k = int(np.argmin(np.abs(t - 50000.0)))
+    assert runs[f'{copy}/T_cmb'][k] == pytest.approx(4811.5, abs=0.05)
+    assert runs[f'{copy}/T_cmb_node'][k] == pytest.approx(5239.9, abs=0.05)
+    assert np.median(_seal_window(runs, copy)) == pytest.approx(0.10, abs=0.005)
+    assert np.median(_seal_window(runs, rule)) == pytest.approx(1953, abs=0.5)
+    assert np.sum(runs[f'{copy}/F_cmb'] < 1.0) == 116 and runs[f'{copy}/F_cmb'].size == 130
+    assert np.sum(runs[f'{rule}/F_cmb'] < 1.0) == 1 and runs[f'{rule}/F_cmb'].size == 131
+    d_copy = runs[f'{copy}/T_cmb'] - runs[f'{copy}/T_cmb_node']
+    d_rule = runs[f'{rule}/T_cmb'] - runs[f'{rule}/T_cmb_node']
+    assert d_copy.min() == pytest.approx(-428.5, abs=0.05)
+    assert d_rule.min() == pytest.approx(-9.55, abs=0.005) and d_rule.max() == pytest.approx(
+        -8.17, abs=0.005
+    )
+    rb = np.abs(runs[f'{rule}/ledger_rB'])
+    assert rb.size == 131 and rb.max() < LEDGER_LIMIT
+    low = runs[f'{rule}/Time'][runs[f'{rule}/F_cmb'] < 1.0]
+    assert low[0] == pytest.approx(43665, abs=0.5)
+    t1, crb = runs[f'{rule}/call_t1'], np.abs(runs[f'{rule}/call_rB'])
+    k = int(np.argmin(np.abs(t1 - low[0])))
+    top = np.sort(crb)[::-1]
+    assert crb[k - 1] == top[0] and crb[k + 1] == top[2] and crb[k] < 1.0e-4
+    np.testing.assert_allclose([top[0], top[2]], [7.20, 5.69], atol=0.005)
+    assert all(np.sum(runs[f'{k}/F_cmb'] < 1.0) == 0 for k in ('v9x_tip_r9', 'v9x_tip_r10'))
+    t = runs[f'{copy}/Time'][runs[f'{copy}/F_cmb'] > 1.0e4]
+    assert t.size == 1 and t[0] == pytest.approx(57.5e3, abs=100.0)
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(5.8, 4.8), sharex=True)
+        for key, ls, lab in ((copy, '--', COPY), (rule, '-', RULE)):
+            tk = runs[f'{key}/Time'] / 1.0e3
+            ax0.plot(tk, runs[f'{key}/F_cmb'], ls, lw=1.2, label=lab)
+            ax1.plot(
+                tk, runs[f'{key}/T_cmb'] - runs[f'{key}/T_cmb_node'], ls, lw=1.2, label=lab
+            )
+        ax0.set(yscale='log', ylabel='$F_\\mathrm{cmb}$ [W m$^{-2}$]')
+        ax0.legend(fontsize=7, loc='center left', bbox_to_anchor=(0.55, 0.5))
+        ax1.set(xlabel='Time [kyr]', ylabel='$T_\\mathrm{cmb} - T_\\mathrm{cmb,node}$ [K]')
+        ax0.text(0.02, 0.88, '(a)', transform=ax0.transAxes)
+        ax1.text(0.02, 0.45, '(b)', transform=ax1.transAxes)
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'cmb_eddy_flux_seal_60kyr')
+
+
+def test_seal_case_ledger_misses_fall_with_rtol(runs, validation_plot):
+    """The misses of the CMB ledger in the 60 kyr seal run fall with the aragog rtol: at most
+    7.20 B at 1e-8, 5.51 B at 1e-9 and 0.061 B at 1e-10. Single calls rerun from a stored start
+    close the ledger at tight rtol, but the CMB heat of the 31773 yr call still changes."""
+    rb = {
+        r: np.abs(runs[f'{k}/ledger_rB'])
+        for r, k in ((8, 'v9x_tip'), (9, 'v9x_tip_r9'), (10, 'v9x_tip_r10'))
+    }
+    for r, (top, n_above) in {8: (7.197, 15), 9: (5.509, 13), 10: (0.0606, 0)}.items():
+        assert rb[r].size == 131
+        assert rb[r].max() == pytest.approx(top, rel=5e-4) and np.sum(rb[r] > 1.0) == n_above
+    steps = [int(runs[f'{k}/cvode_steps']) for k in ('v9x_tip', 'v9x_tip_r9', 'v9x_tip_r10')]
+    assert steps == [61781, 66110, 34917]
+    c = {
+        n.split('/')[1]: (float(runs[n]), float(runs[n.replace('/rB', '/q')]))
+        for n in runs
+        if n.startswith('rtol_calls/') and n.endswith('/rB')
+    }
+    assert c['c43151_r8'][0] == pytest.approx(7.197, rel=5e-4)
+    q = [c[f'c43151_r{r}'][1] for r in (9, 10, 11)]
+    np.testing.assert_allclose(
+        [c[f'c43151_r{r}'][0] for r in (9, 10, 11)], [6.1e-5, 6.8e-5, 9.2e-6], rtol=0.01
+    )
+    assert c['c32187_r8'][1] / c['c32187_r9'][1] == pytest.approx(3.18, abs=0.005)
+    assert max(q) / min(q) - 1.0 < 1.0e-5 and c['c43151_r8'][1] / q[0] == pytest.approx(
+        3.587, rel=1e-3
+    )
+    assert c['c32187_r8'][0] == pytest.approx(4.323, rel=5e-4) and c['c32187_r9'][
+        0
+    ] == pytest.approx(0.2405, rel=1e-3)
+    np.testing.assert_allclose(
+        [c[f'c31773_r{r}'][0] for r in (9, 10, 11)], [5.509, 0.0658, 2.71e-4], rtol=2e-3
+    )
+    np.testing.assert_allclose(
+        [c[f'c31773_r{r}'][1] for r in (9, 10, 11)], [2.843e27, 2.630e27, 2.161e27], rtol=1e-3
+    )
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(5.8, 3.4))
+        rank = np.arange(1, 132)
+        for r, ls in ((8, '-'), (9, '--'), (10, ':')):
+            ax.plot(rank, np.sort(rb[r])[::-1], ls, lw=1.4, label=f'rtol $10^{{-{r}}}$')
+        ax.axhline(LEDGER_LIMIT, ls='-.', color=plt.rcParams['text.color'], lw=0.8)
+        ax.axhline(1.0, ls=(0, (1, 3)), color=plt.rcParams['text.color'], lw=0.8)
+        ax.set(yscale='log', xlabel='Calls, largest miss first', ylabel='$|r|/B$')
+        ax.legend(fontsize=7, loc='upper right', bbox_to_anchor=(1.0, 0.78))
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'cmb_eddy_flux_seal_rtol')

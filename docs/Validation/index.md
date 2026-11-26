@@ -86,7 +86,7 @@ The command of a case is `pytest <test>`; the young-layer case, the surface-boun
 
 **Checks on stored runs.** These tests read stored runs and do not run the code. They are not in the table and carry no `reference_pinned` marker. `tests/test_surface_lid_v8.py` compares the lid after its hand-over with 2 runs without the lid: the step between 200 and 400 nodes is at most 0.75 of the step between 100 and 200 nodes, and the late mean of the surface flux lies within 1 % of the reference on 200 and 400 nodes ([Surface lid](surface_lid.md#a-case-where-the-lid-hands-over)).
 
-`tests/test_cmb_eddy_flux_runs.py` checks the coupled runs of the CMB node rule against the copy rule: an 8.63 Earth-mass run and 2 Earth-mass runs, resumed, and an Earth-mass run from the start ([CMB eddy flux](cmb_eddy_flux.md#a-large-planet-runs-through-the-state-where-the-copy-rule-stops)).
+`tests/test_cmb_eddy_flux_runs.py` checks the coupled runs of the CMB node rule against the copy rule: an 8.63 Earth-mass run and 2 Earth-mass runs, resumed, the case of issue #113 to 60 kyr at 3 solver tolerances, and an Earth-mass run from the start ([CMB eddy flux](cmb_eddy_flux.md#a-large-planet-runs-through-the-state-where-the-copy-rule-stops)).
 
 `tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` compares all 36 benchmark rows with and without the lid ([Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks)).
 
