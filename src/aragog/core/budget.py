@@ -319,9 +319,9 @@ class CoreEnergyBudget:
         return k, jnp.where(frozen, p.r_cmb, a * p.r_cmb), b * p.r_cmb, f_a, f_b
 
     def _r_icb_solve(self, t_cmb):
-        """Boundary radius [m] of the root search; see :meth:`r_icb`."""
+        """Boundary radius [m] of the root search, NaN for a NaN ``t_cmb``; see :meth:`r_icb`."""
         _, lo, hi, _, _ = self._r_icb_bracket(t_cmb)
-        return (lo + hi) / 2.0
+        return jnp.where(jnp.isnan(t_cmb), jnp.nan, (lo + hi) / 2.0)
 
     def r_icb(self, t_cmb):
         """Inner-core boundary radius [m] at ``t_cmb``.
@@ -349,7 +349,8 @@ class CoreEnergyBudget:
         topology with a liquid centre has no inner core in the bottom-up
         sense); the boundary terms drop to zero there, and the solver refuses
         those states
-        (``aragog.core.regime.refuse_unmodelled_regime``).
+        (``aragog.core.regime.refuse_unmodelled_regime``). A NaN temperature
+        gives a NaN radius and derivative.
 
         The derivative is the implicit-function sensitivity attached as a
         custom JVP: a comparison-driven search carries no gradient of
@@ -409,9 +410,9 @@ class CoreEnergyBudget:
             d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
             safe = jnp.where(jnp.abs(d_dr) > 0.0, jnp.abs(d_dr), 1.0)
             # Interior boundary: dr/dT from the implicit function theorem;
-            # pinned at the domain ends where the root does not move.
+            # pinned at the domain ends where the root does not move; NaN for a NaN radius.
             interior = (radius > 0.0) & (radius < self.profiles.r_cmb)
-            drdt = jnp.where(interior, -d_dt / safe, 0.0)
+            drdt = jnp.where(interior, -d_dt / safe, jnp.where(jnp.isnan(radius), jnp.nan, 0.0))
             return radius, drdt * t_dot
 
         return root

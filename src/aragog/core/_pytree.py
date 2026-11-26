@@ -4,6 +4,8 @@ Floats, NumPy and JAX arrays and registered objects (and tuples, lists and dicts
 leaves, floats as strong float64; strings, booleans, integers and None are static and compared by
 value; any other object (a SciPy table) is static and compared by identity. Cached properties
 and callables (compiled functions an object keeps) are left out and built again when used.
+Class attributes and methods are not part of the program key: a program compiled before a
+method is patched keeps the old method until ``jax.clear_caches()``.
 """
 
 from __future__ import annotations
