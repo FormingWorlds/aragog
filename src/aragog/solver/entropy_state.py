@@ -506,6 +506,46 @@ class EntropyState:
         """
         self._surface_temperature_bc = (float(entropy), float(temperature), float(half_cell))
 
+    def basic_entropy(
+        self,
+        entropy: npt.NDArray,
+        dSdr_cmb: float | None = None,
+        entropy_basic: npt.NDArray | None = None,
+    ) -> npt.NDArray:
+        """Entropy at the basic nodes that ``update`` gives the basic phase evaluator.
+
+        The mesh transform of the staggered ``entropy`` (or a copy of ``entropy_basic``); with
+        ``dSdr_cmb`` the CMB node is the bottom cell carried to the CMB by that gradient, and
+        with a set surface temperature (BC 5) the top node holds its entropy.
+
+        Parameters
+        ----------
+        entropy : ndarray
+            Entropy at the staggered nodes [J/kg/K].
+        dSdr_cmb : float, optional
+            Entropy gradient at the CMB [J/kg/K/m] (energy_balance and core_module).
+        entropy_basic : ndarray, optional
+            Entropy at the basic nodes (gradient mode), used in place of the transform.
+
+        Returns
+        -------
+        ndarray
+            Entropy at the basic nodes [J/kg/K].
+        """
+        mesh = self._evaluator.mesh
+        S = np.asarray(entropy).ravel()
+        if entropy_basic is None:
+            basic = getattr(mesh, 'entropy_at_basic_nodes', mesh.quantity_at_basic_nodes)
+            entropy_basic = basic(S)
+        S_b = np.array(entropy_basic, dtype=float).ravel()
+        if dSdr_cmb is not None:
+            r_basic = np.asarray(mesh.basic.radii).ravel()
+            dr_offset = r_basic[0] - 0.5 * (r_basic[0] + r_basic[1])
+            S_b[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
+        if self._surface_temperature_bc is not None:
+            S_b[-1] = self._surface_temperature_bc[0]
+        return S_b
+
     def update(
         self,
         entropy: npt.NDArray,
@@ -539,11 +579,7 @@ class EntropyState:
         self._entropy_staggered = S
         t_arr = np.asarray(time, dtype=float)
         self._time = float(t_arr.flat[0]) if t_arr.size > 0 else 0.0
-        if entropy_basic is not None:
-            self._entropy_basic = np.asarray(entropy_basic).ravel()
-        else:
-            basic = getattr(mesh, 'entropy_at_basic_nodes', mesh.quantity_at_basic_nodes)
-            self._entropy_basic = np.ravel(basic(S))
+        self._entropy_basic = self.basic_entropy(S, dSdr_cmb, entropy_basic)
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:
@@ -593,18 +629,9 @@ class EntropyState:
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
-        # energy_balance and core_module: override the boundary entropy gradient with the
-        # state-vector value, BEFORE the phase_basic update so the bottom basic node uses the
-        # boundary entropy.
+        # energy_balance and core_module: the CMB gradient is the state-vector value
         if dSdr_cmb is not None:
-            r_basic = np.asarray(mesh.basic.radii).ravel()
-            r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
-            dr_offset = r_basic[0] - r_stag_0
             self._dSdr[0] = float(dSdr_cmb)
-            self._entropy_basic[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
-
-        if self._surface_temperature_bc is not None:
-            self._entropy_basic[-1] = self._surface_temperature_bc[0]
 
         # Update phase evaluators with current (P, S)
         self.phase_staggered.set_entropy(S)

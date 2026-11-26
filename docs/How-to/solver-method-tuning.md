@@ -1,6 +1,6 @@
 # Solver method tuning
 
-Use this page to choose an integrator, set its tolerances, get a stalled run moving, and decide what to do when a run leaves the EOS tables. `_EnergyParameters.solver_method` (see `src/aragog/parser.py`) selects the integrator for the stiff time integration. It accepts 3 values: `"cvode"` (the default), `"radau"` and `"bdf"`.
+Use this page to choose an integrator, set its tolerances, get a stalled run moving, and decide what to do when a run leaves the EOS tables or [reads table values with no EOS data behind them](#lookups-outside-the-valid-window-of-the-tables). `_EnergyParameters.solver_method` (see `src/aragog/parser.py`) selects the integrator for the stiff time integration. It accepts 3 values: `"cvode"` (the default), `"radau"` and `"bdf"`.
 
 !!! note "Default is CVODE"
     Normal PROTEUS runs use `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
@@ -91,7 +91,7 @@ The guard is a safety net. It does not set the step and does not remove the caus
 **What it does not judge.**
 
 - The extrapolated basic nodes: with the floor off they can lie below $S_\mathrm{min}$ in a returned state.
-- The padded rows of a pressure column.
+- The padded rows of a pressure column. When the mask files mark them 0, the [EOS domain check](#lookups-outside-the-valid-window-of-the-tables) reports lookups on them.
 - A run with constant properties or without tables, and a call that does not advance.
 
 **A cell at a table edge.** It passes until it has moved past the edge by the tolerance, so it fails after about $10^{-3}$ J kg$^{-1}$ K$^{-1}$ over its outward rate.
@@ -122,6 +122,41 @@ Turn the floor on in a standalone run when a drain must stop at a known entropy,
 - In one PALEOS solid table at the lowest pressure, $T$ is the same over the rows from about $S_\mathrm{min} + 70$ to $S_\mathrm{min} + 620$ J kg$^{-1}$ K$^{-1}$.
 
 With the floor on, every state a call returns is inside the table when the call starts inside it, and the returned states and the energy trace cannot hold a state below $S_\mathrm{min}$.
+
+## Lookups outside the valid window of the tables
+
+A table generator can fill the nodes of a P-S table where the EOS has no valid value, outside the temperature window of the phase. Zalmoxis marks these nodes 0 in `valid_mask_melt.dat` and `valid_mask_solid.dat` next to the tables (format in [Reference: data](../Reference/data.md#validity-masks)). A lookup on a filled node returns a value, but no EOS data stands behind it. The window of a pressure column is the entropy range from its lowest to its highest valid node; between 2 columns, the window ends are linear in pressure. A column with no valid node (Zalmoxis writes one when it fills a column in full) has no window: a point at its pressure, or between it and a neighbouring column, counts as outside at any tolerance. One table entropy cell is the mean spacing of the entropy axis of the phase's temperature table, in J kg$^{-1}$ K$^{-1}$; it is not a cell of the solver mesh.
+
+**What it does.** After each call, the solver checks the lookup points of the states of the call: the states of its energy trace (the accepted steps and the root-search points), or the output states when the call keeps no trace. A lookup point is a cell or a basic node, at the pressure of the node and the entropy that the right-hand side gives the EOS there:
+
+- A cell: its entropy.
+- A basic node: the mesh transform of the cell entropies, with 3 exceptions. With `core_bc = "energy_balance"` or `"core_module"`, the CMB node is the bottom cell carried to the CMB by the CMB entropy gradient of the state. With `core_bc = "gradient"`, the basic-node entropies are rebuilt from the state. With `outer_boundary_condition = 5`, the top node holds the entropy of the set surface temperature.
+- A point in the mush: read on the melt table at the liquidus entropy and on the solid table at the solidus entropy; the larger of the 2 distances counts.
+- A single-phase point where the phase blend gives the mixed-phase properties a weight above 0 (with `matprop_smooth_width` above 0, a band on each side of the mush): read on its own table and at the 2 phase-boundary entropies; the largest distance counts.
+
+A point counts when it lies more than `eos_domain_tolerance_cells` (default 5) table entropy cells outside its window. A non-finite point always counts.
+
+Near the upper edge of a window, 5 cells is a large temperature step. On the PALEOS tables of 2 PROTEUS runs (measured outside the test suite), the temperature rises over the 5 nodes below the upper edge by 316 to 733 K on the melt table and 626 to 1106 K on the solid table (10 to 90 % of the pressure columns, a table set up to 101 GPa), and by 1070 to 5541 K and 1341 to 2428 K on a table set up to 1.26 TPa. A filled value 5 cells out can thus miss the EOS temperature by hundreds to thousands of kelvin, if the slope inside the window holds outside it.
+
+**What you see.**
+
+- With `eos_domain_check = "warn"`, the default: 1 WARNING per call. It names the worst point (time, node, radius, pressure, entropy, table, window ends, distance in cells, and the temperature that the table returns at that lookup) and the count of points outside, summed over the judged states of the call. The result is the same as with the check off.
+- With `"raise"`: the call raises `EOSDomainError` with the same text, and the solver keeps the solution from the call start (none on a first call). `EOSDomainError` is a `RuntimeError`, so in a PROTEUS run it ends like a failed Aragog call: PROTEUS keeps the previous interior state for the step, and after 3 failed calls in a row it stops the run with status 20. PROTEUS passes no `eos_domain_check`, so its runs use the default `"warn"`.
+
+**What to do.** Look at the node that the message names. With `top_node = "linear"`, the default, the top basic node is a linear extrapolation from the 2 top cells, so it can leave the window while every cell is inside. Its temperature is then a filled table value, and Aragog reports it as `T_magma` (with a live lid and the mush base, `T_magma` is a blend that includes it).
+
+**What it does not judge.**
+
+- A call that keeps no energy trace: the check then reads the output states only, so a state that leaves the window and returns between 2 output points is not seen. The solver says so in 1 INFO line.
+- A call that fails (the [EOS table guard](#eos-table-guard) or the integrator).
+- A 0 node between 2 valid nodes of a column: it lies inside the window. The EOS logs 1 INFO line with the count of such nodes when it reads the masks.
+- Tables with neither mask file: the check is off, and the EOS logs 1 INFO line when the first call looks for the masks.
+- Runs with constant properties.
+- Phase-boundary lookups outside the smoothing band of the NumPy phase evaluator: the mixing flux reads them where $S_\mathrm{liq} - S_\mathrm{sol} < 1$ J kg$^{-1}$ K$^{-1}$ (it floors that gap at 1), and the JAX evaluator at its band edge, with a blend weight of at most $4.4 \times 10^{-16}$.
+- A bad mask or setting: each call checks both settings before it integrates, and the first call reads the masks then. With only one of the 2 files it raises `FileNotFoundError`; with a mask that breaks the rules of [Validity masks](../Reference/data.md#validity-masks), or a bad setting, it raises `ValueError` (`TypeError` for a tolerance that is not a number). The solver keeps its last solution. `"off"` does not read the masks.
+- Points closer to the window than the tolerance. The phase boundaries of a table can lie just outside its windows, so the mush lookups of ordinary runs read nodes near the window; the default tolerance leaves these out. Over the mantle pressure range of 13 PROTEUS runs on 2 table sets, the liquidus lies at most 2.29 cells outside the melt window and the solidus at most 1.35 cells outside the solid window (measured outside the test suite; `tests/test_eos_domain.py` pins 2.29 and 1.12 for one set).
+
+**Where the check runs.** Only `EntropySolver.solve` has the check. The direct JAX integration in `aragog.jax.solver` does not.
 
 ## Reference
 

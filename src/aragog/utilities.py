@@ -85,6 +85,29 @@ def tanh_weight(value: FloatOrArray, threshold: float, width: float) -> npt.NDAr
     return weight
 
 
+def blend_weight(gphi: FloatOrArray, width: float) -> npt.NDArray:
+    """Weight of the mixed-phase properties in the phase blend (SPIDER ``get_smoothing``).
+
+    Parameters
+    ----------
+    gphi : float or ndarray
+        Melt coordinate ``(S - S_sol) / (S_liq - S_sol)``, not clipped [-].
+    width : float
+        Smoothing width in the melt coordinate; 0 gives 1 inside [0, 1] and 0 outside.
+
+    Returns
+    -------
+    ndarray
+        Weight in [0, 1]; above 0 inside the mush and in a band around it for a width above 0.
+    """
+    gphi = np.asarray(gphi, dtype=float)
+    if width > 0:
+        return np.where(
+            gphi > 0.5, 1.0 - tanh_weight(gphi, 1.0, width), tanh_weight(gphi, 0.0, width)
+        )
+    return np.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
+
+
 def zero_anchored_weight(
     weight_fn: Any, value: FloatOrArray, threshold: float, width: float, xp: Any = np
 ) -> Any:

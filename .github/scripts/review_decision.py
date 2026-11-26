@@ -44,8 +44,8 @@ import re
 import subprocess
 import sys
 
-BOT = 'github-actions[bot]'  # login of the workflow token in the REST API
-BOT_GRAPHQL = 'github-actions'  # the same bot in GraphQL
+BOT = 'github-actions[bot]'  # the workflow token in REST and as a GraphQL thread resolver
+BOT_GRAPHQL = 'github-actions'  # the same bot as a GraphQL comment author
 CONTEXT = 'Claude review'
 BLOCKING = ('important', 'pre_existing')
 SEVERITIES = (*BLOCKING, 'nit')
@@ -181,7 +181,7 @@ def own_threads(nodes, pr_author):
         if mark and (first.get('author') or {}).get('login') == BOT_GRAPHQL:
             by = (t.get('resolvedBy') or {}).get('login')
             state = 'open'
-            if t.get('isResolved') and by == BOT_GRAPHQL:
+            if t.get('isResolved') and by == BOT:
                 state = 'fixed'
             elif t.get('isResolved') and by and pr_author and by != pr_author:
                 state = 'dismissed'
