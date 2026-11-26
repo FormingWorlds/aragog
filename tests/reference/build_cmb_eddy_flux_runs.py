@@ -11,8 +11,9 @@ sweep values. The provenance (run descriptions, aragog and PROTEUS commits, chec
 
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
-"aragog": ..., "proteus": ...}`` (``run`` describes the case) and the key ``v9_parts_log`` to the
-log of the V9 resume that prints the in-call CMB flux of each call. The provenance file holds the
+"aragog": ..., "proteus": ...}`` (``run`` describes the case), the key ``v9_parts_log`` to the
+log of the V9 resume that prints the in-call CMB flux of each call, and the key ``v7_probe_log``
+to the log of the V7 rule run with the JAX count of CMB evaluations that differ from the copy. The provenance file holds the
 descriptions, the commits and the sha256 of each helpfile and log, not the local paths.
 """
 
@@ -39,9 +40,9 @@ RUNS = {
     'v9_main': 30169.30,
     'v9_tip': 30169.30,
 }
+NUM = r'([-+0-9.eE]+|nan|inf|-inf)'
 LEDGER = re.compile(
-    r"ledger t1=([-0-9.e+]+) terms=\{'r': np\.float64\(([-0-9.e+]+)\), "
-    r"'bound': np\.float64\(([-0-9.e+]+)\)"
+    rf"ledger t1={NUM} terms=\{{'r': np\.float64\({NUM}\), 'bound': np\.float64\({NUM}\)"
 )
 COLUMNS = ('Time', 'F_cmb', 'T_cmb', 'step_dE_F_cmb_J')
 
@@ -54,6 +55,14 @@ def _helpfile(path: str, t0: float) -> dict[str, np.ndarray]:
     rows = [[float(x) for x in (ln.split('\t')[i] for i in idx)] for ln in lines[1:]]
     arr = np.array([r for r in rows if r[0] > t0])
     return {c: arr[:, k] for k, c in enumerate(COLUMNS)}
+
+
+def _table(path: str) -> dict[str, np.ndarray]:
+    """Every numeric column of a helpfile."""
+    lines = Path(path).read_text().splitlines()
+    head = lines[0].split('\t')
+    rows = np.array([[float(x) for x in ln.split('\t')] for ln in lines[1:]])
+    return {c: rows[:, k] for k, c in enumerate(head)}
 
 
 def main(spec_path: str) -> None:
@@ -71,6 +80,9 @@ def main(spec_path: str) -> None:
                 for m in LEDGER.finditer(log)
             ]
         ).reshape(-1, 2)
+        n_lines = log.count('ledger t1=')
+        if n_lines == 0 or led.shape[0] != n_lines:
+            raise ValueError(f'{key}: {n_lines} ledger lines, {led.shape[0]} parsed')
         out[f'{key}/ledger_t1'], out[f'{key}/ledger_rB'] = led[:, 0], led[:, 1]
         out[f'{key}/status'] = np.array(int(Path(s['status']).read_text().split()[0]))
         sweep = [
@@ -81,6 +93,7 @@ def main(spec_path: str) -> None:
         if sweep:
             pts = [p for r in sweep for p in r['points']]
             out[f'{key}/sweep_t'] = np.array([p['t'] for p in pts])
+            out[f'{key}/sweep_calls'] = np.array(len(sweep))
             for step in ('1e-09', '1e-12'):
                 out[f'{key}/sweep_P_{step}'] = np.array([p['P'][step] for p in pts])
         prov[key] = {k: s[k] for k in ('run', 'aragog', 'proteus')}
@@ -91,10 +104,26 @@ def main(spec_path: str) -> None:
         for ln in Path(spec['v9_parts_log']).read_text().splitlines()
         if ln.startswith('V9PARTS {')
     ]
-    for name in ('t1', 'F_max', 'F_end', 'F_avg'):
+    for name in ('t1', 'F_max', 'F_end', 'F_avg', 'g_cmb_end'):
         out[f'v9_tip/call_{name}'] = np.array([p[name] for p in parts])
     out['v9_tip/call_rB'] = np.array([p['r'] / p['bound'] for p in parts])
     out['v9_tip/call_Etrap_B'] = np.array([p['E_trap'] / p['bound'] for p in parts])
+    probe = Path(spec['v7_probe_log']).read_text()
+    m = re.search(r'V7PROBE evals (\d+) differing \{(.*?)\}', probe)
+    out['v7_tip/jax_evals'] = np.array(int(m.group(1)))
+    out['v7_tip/jax_differing'] = np.array(len(m.group(2).strip()))  # empty dict: no kind
+    kinds = re.findall(
+        r"\(\('(\w)', '(same|differs)'\), (\d+)\)", Path(spec['v7_tip']['log']).read_text()
+    )
+    out['v7_tip/numpy_evals'] = np.array(sum(int(n) for _, _, n in kinds))
+    out['v7_tip/numpy_differing'] = np.array(sum(int(n) for _, d, n in kinds if d == 'differs'))
+    a, b = (_table(spec[k]['helpfile']) for k in ('v7_main', 'v7_tip'))
+    out['v7_columns_total'] = np.array(len(a))
+    out['v7_columns_differ'] = np.array(
+        sum(not np.array_equal(a[c], b[c], equal_nan=True) for c in a)
+    )
+    prov['numpy'] = np.__version__
+    prov['v7_probe_log_sha256'] = hashlib.sha256(probe.encode()).hexdigest()
     prov['v9_parts_log_sha256'] = hashlib.sha256(
         Path(spec['v9_parts_log']).read_bytes()
     ).hexdigest()

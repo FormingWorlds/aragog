@@ -62,5 +62,7 @@
   "sha256_helpfile": "42cc5b445689d3d162e1b697613837d5a1e333cca3d2c7e96bba11b9586c2c9f",
   "sha256_log": "0e1fdb433ef6188ad38a4448abd6ee377baf536ef5251df8dc71d8643dccdd03"
  },
+ "numpy": "2.4.6",
+ "v7_probe_log_sha256": "dce1ffa547c4d76c07c374794a98c27388a13cee6c82a139f3cdd2688abf55e2",
  "v9_parts_log_sha256": "2aad6a6055082e7f5498cd3146ad0127aa37e6622eed0bf43532764a3c709534"
 }
