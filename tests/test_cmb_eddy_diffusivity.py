@@ -318,6 +318,16 @@ def test_invariant_passes_round_off_of_the_rule():
     _check(_RHO_T * 8.0 * 1.0e-4 * (1.0 + 1.0e-13), -1.0e-4, 8.0, 5.0, 0.0)
 
 
+@pytest.mark.parametrize('arg', ['jconv0', 'dsdr0', 'kh_mlt_1', 'floor_0'])
+def test_invariant_skips_a_state_that_is_not_finite(arg):
+    """A non-finite input leaves the state to the finite checks of the solver: a flux up a
+    stable gradient, refused by part (iii) when finite, passes with one input set to NaN."""
+    kw = dict(jconv0=_RHO_T * 3.0 * 1.0e-4, dsdr0=1.0e-4, kh_mlt_1=3.0, floor_0=0.0)
+    with pytest.raises(CMBEddyFluxError, match=r'\(iii\)'):
+        _check(**kw, threshold=0.0)
+    _check(**{**kw, arg: np.nan}, threshold=0.0)
+
+
 def test_invariant_uses_the_threshold():
     """With D > 0 a node 0 gradient in [0, D) is convective for part (ii), and a gradient at D
     is stable for part (i)."""
