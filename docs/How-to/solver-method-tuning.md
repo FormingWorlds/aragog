@@ -201,7 +201,7 @@ Near the upper edge of a window, 5 cells is a large temperature step. On the PAL
 ### Lock measurements
 
 ??? note "What the lock counts rest on"
-    **Setup.** A probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py`: 24 nodes, 200 yr, fixed cap unless stated. It draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$. The probe script is not in the repository, and the runs were on macOS arm64. The counts hold for this 24-node standalone case at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$, not for a coupled solve.
+    **Setup.** A probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py`: 24 nodes, 200 yr, fixed cap unless stated. It draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$. The probe script is not in the repository, and the runs were on macOS arm64. The counts hold for this 24-node standalone case at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$, not for a coupled solve. In these runs the CMB node took the floored eddy diffusivity of node 1, not the current [CMB node rule](../Explanations/heat_transport.md#eddy-diffusivity-at-the-cmb-node); the counts are not measured again under that rule.
 
     **What counts as locked.** A run that has not reached 200 yr after 600 s of wall time. Every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations.
 

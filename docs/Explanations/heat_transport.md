@@ -29,7 +29,7 @@ $$
 F_\mathrm{conv} = -\rho T \kappa_h \tfrac{\partial S}{\partial r},
 $$
 
-with $\kappa_h > 0$ on unstable nodes, on nodes with the floor and on the CMB node, which takes the mixing-length $\kappa_h$ of the node above it or its own floor (see [Eddy diffusivity at the CMB node](#eddy-diffusivity-at-the-cmb-node); for the default positive `eddy_diffusivity_thermal`; a negative value sets $\kappa_h$ to its magnitude on every node, raised to the floor on nodes below $D$). The mixing-length drive acts only where $\partial S/\partial r < 0$, the usual instability criterion and the switch of SPIDER, and there it uses $\max(|\partial S/\partial r|, D)$: for $D > 0$ an unstable node next to the adiabat gets at least the eddy diffusivities $\kappa_h$ and $\kappa_c$ of a gradient $D$, while $F_\mathrm{conv}$ still goes to zero with $\partial S/\partial r$. The phase-modulated [floor](#phase-modulated-floor) applies wherever $\partial S/\partial r < D$, where $D$ is `energy.convective_threshold` (default 0; the numbers below use $D = 10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$). For $D > 0$ a node just on the stable side ($0 \le \partial S/\partial r < D$) therefore keeps the floor diffusivity and no mixing-length diffusivity, so a near-zero stable gradient still diffuses; a node with a stable gradient above $D$ gets neither. Both are hard masks, and the default $D = 0$ gives the $\partial S/\partial r < 0$ switch with no minimum drive and no floor band.
+with $\kappa_h > 0$ on unstable nodes, on nodes with the floor and on the CMB node where it takes a positive mixing-length $\kappa_h$ of the node above it or its own floor (see [Eddy diffusivity at the CMB node](#eddy-diffusivity-at-the-cmb-node); for the default positive `eddy_diffusivity_thermal`; a negative value sets $\kappa_h$ to its magnitude on every node, raised to the floor on nodes below $D$). The mixing-length drive acts only where $\partial S/\partial r < 0$, the usual instability criterion and the switch of SPIDER, and there it uses $\max(|\partial S/\partial r|, D)$: for $D > 0$ an unstable node next to the adiabat gets at least the eddy diffusivities $\kappa_h$ and $\kappa_c$ of a gradient $D$, while $F_\mathrm{conv}$ still goes to zero with $\partial S/\partial r$. The phase-modulated [floor](#phase-modulated-floor) applies wherever $\partial S/\partial r < D$, where $D$ is `energy.convective_threshold` (default 0; the numbers below use $D = 10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$). For $D > 0$ a node just on the stable side ($0 \le \partial S/\partial r < D$) therefore keeps the floor diffusivity and no mixing-length diffusivity, so a near-zero stable gradient still diffuses; a node with a stable gradient above $D$ gets neither. Both are hard masks, and the default $D = 0$ gives the $\partial S/\partial r < 0$ switch with no minimum drive and no floor band.
 
 $D = 10^{-6}$ gives one end state in the replayed coupled calls described below, which end in one of two states under the plain switch, but $D > 0$ can stall CVODE, also at `rtol` = `atol` = $10^{-8}$. The minimum drive makes $\kappa_h$ jump at $\partial S/\partial r = 0$ from the floor to the mixing-length value of a gradient $D$ (where that value is above the floor), so a node whose gradient stays near 0 changes sign again and again, and CVODE takes steps of about the relaxation time $\Delta r^2/\kappa_h(D)$ of that node. In the grey-body setup of `TestCvodeEnergyOutputGrid` in `tests/test_entropy_verification.py` with 2 output points, `core_bc` `quasi_steady` and `rtol` = `atol` = $10^{-8}$, 1 of 30 starts perturbed by a relative $10^{-9}$ reached the CVODE step limit at $D = 10^{-6}$ (at 892.9 yr of a 5000 yr call), and 0 of 30 at $D = 0$ (too few runs to give a rate); in the stalled call $\kappa_h$ of the CMB node changed between 8.45 and $2.0 \times 10^6$ m$^2$ s$^{-1}$, and the steps were near $\Delta r^2/\kappa_h(D) = 2.6 \times 10^{-5}$ yr. The width-0 solve of `test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin` in `tests/test_phase_boundary_cap.py` takes 183724 CVODE steps at $D = 10^{-6}$ and 518 at $D = 0$, both at `rtol` = `atol` = $10^{-6}$. The probe scripts are not in the repository.
 
@@ -81,33 +81,31 @@ where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction and gated to
 
 ### Eddy diffusivity at the CMB node
 
-How does Aragog set the eddy diffusivity at the core-mantle boundary (CMB) node, where the mixing length is 0?
+What eddy diffusivity does the core-mantle boundary (CMB) node get, and how much heat does convection then carry out of the core?
 
-The CMB node takes the mixing-length eddy diffusivity of the node above it, or its own floor, whichever is larger.
-The flux out of the core does not depend on whether the node above sits on its floor.
+The CMB node (node 0) takes the mixing-length eddy diffusivity of node 1, the node above it, or its own floor, whichever is larger.
+So the flux out of the core does not change when node 1 moves onto or off its floor.
 
-The mixing-length law gives $\kappa_h = 0$ at the CMB, because the mixing length is 0 there.
+With `core_bc` `energy_balance` or `gradient`, the convective flux at node 0 is part of the CMB flux, so Aragog needs $\kappa_h[0]$.
+With the `nearest_boundary` profile the mixing length is 0 at the CMB; with `constant` node 0 has a length, but its gradient is the extrapolated CMB gradient.
 Bower et al. (2018) do not use the node law at the CMB: they set the CMB flux from the energy balance of the lowest cell.
-Aragog uses the node law at the CMB, so it needs $\kappa_h$ at node 0; SPIDER takes the value of node 1 (`energy.c`). Aragog sets
+SPIDER takes the value of node 1 at the CMB (`energy.c`). Aragog sets
 
 $$
 \kappa_h[0] = \max\!\big(\kappa_h^\mathrm{mlt}[1],\ \kappa_h^\mathrm{floor}[0]\big),
 $$
 
-with $\kappa_h^\mathrm{mlt}[1]$ the mixing-length value of node 1 before the floor and $\kappa_h^\mathrm{floor}[0]$ the [floor](#phase-modulated-floor) of node 0 (its own melt fraction; only where the CMB gradient is below $D$).
+with $\kappa_h^\mathrm{mlt}[1]$ the mixing-length value of node 1 before the floor and $\kappa_h^\mathrm{floor}[0]$ the [floor](#phase-modulated-floor) of node 0 (its own melt fraction; only where $\partial S/\partial r[0] < D$).
 With `kappah_floor = 0` this is the SPIDER rule.
 
-The floor of node 1 is not copied, because it switches with the sign of $S_1 - S_0$, the entropy difference of the 2 lowest cells.
-A copied floor sends a downward flux across a stable CMB gradient while $S_1 < S_0$, and none while $S_1 > S_0$.
-In the test state of the Validation page that jump is $2.9 \times 10^3$ W m$^{-2}$, against a CMB flux of $7 \times 10^{-4}$ W m$^{-2}$.
+The floor of node 1 is not copied, because it switches with the sign of $S_1 - S_0$, the entropy difference of the 2 lowest cells (at $D = 0$).
+A copied floor sends a downward flux across a stable CMB gradient while $S_1 < S_0$, and none while $S_1 > S_0$: $2.9 \times 10^3$ W m$^{-2}$ in the test state of the Validation page, against a CMB flux of $7 \times 10^{-4}$ W m$^{-2}$.
 
-Two cases follow:
+- $\partial S/\partial r[0] \ge D$: only the mixing-length part of node 1 acts, so a downward flux $-\rho T \kappa_h^\mathrm{mlt}[1]\,\partial S/\partial r$ remains where node 1 convects, as in SPIDER.
+- $\partial S/\partial r[0] < D$: the CMB node keeps at least its own floor, also when node 1 is stable.
+- At $D = 0$ the CMB flux is continuous. For $D > 0$ it steps where the minimum drive of node 1 switches off, and at $\partial S/\partial r[0] = D$ by $\rho T \max(\kappa_h^\mathrm{floor}[0] - \kappa_h^\mathrm{mlt}[1], 0)\,D$.
 
-- The CMB gradient is stable: only the mixing-length part of node 1 acts, so a downward flux $-\rho T \kappa_h^\mathrm{mlt}[1]\,\partial S/\partial r$ remains where node 1 convects, as in SPIDER.
-- The CMB gradient is unstable: the CMB node keeps at least its own floor, also when node 1 is stable.
-
-At $D = 0$ the CMB flux is continuous in $S_1 - S_0$; for $D > 0$ it jumps where the minimum drive of node 1 switches off.
-In every call `EntropyState.update` checks both cases and that the CMB flux does not run against its gradient; it raises `CMBEddyFluxError` when a check fails.
+The NumPy `EntropyState.update` raises `CMBEddyFluxError` when the CMB flux breaks the first 2 items or runs against its gradient.
 
 **Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md); worked example in the [tutorial](../Tutorials/cmb_eddy_diffusivity.md).
 

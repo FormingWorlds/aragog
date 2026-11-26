@@ -2,7 +2,7 @@
 
 What eddy diffusivity does Aragog give the core-mantle boundary (CMB) node, and how does the convective heat flux out of the core follow from it? This tutorial evaluates the rule on 3 kinds of CMB state and then moves the entropy gradient of the node above the CMB through 0.
 
-The CMB node takes the mixing-length eddy diffusivity of node 1 (the node above it) or its own floor, whichever is larger. The blocks below use the JAX function `compute_mlt` with material properties given by hand, so they need no tables of the equation of state (EOS). Run them in one Python session from the root of the repository.
+The CMB node takes the mixing-length eddy diffusivity of node 1 (the node above it) or its own floor, whichever is larger. The blocks below use the JAX function `compute_mlt` with material properties given by hand, so they need no tables of the equation of state (EOS). They need the JAX extra (`pip install -e '.[jax]'`). Run them in one Python session from the root of the repository.
 
 [Eddy diffusivity at the CMB node](../Explanations/heat_transport.md#eddy-diffusivity-at-the-cmb-node) explains the rule, and [its validation](../Validation/cmb_eddy_flux.md) shows the checks.
 
@@ -47,12 +47,12 @@ def phase(phi0, phi1):
         density=4500.0 * ones,  # kg/m^3
         heat_capacity=1000.0 * ones,  # J/kg/K
         thermal_expansivity=3.0e-5 * ones,  # 1/K
-        dTdPs=1.0e-8 * ones,
+        dTdPs=1.0e-8 * ones,  # K/Pa
         melt_fraction=jnp.array([phi0, phi1, 0.4, 0.4]),
-        viscosity=1.0e3 * ones,
+        viscosity=1.0e3 * ones,  # Pa s
         kinematic_viscosity=ones,  # m^2/s
-        thermal_conductivity=4.0 * ones,
-        latent_heat=4.0e5 * ones,
+        thermal_conductivity=4.0 * ones,  # W/m/K
+        latent_heat=4.0e5 * ones,  # J/kg
         capacitance=4500.0 * 4000.0 * ones,
     )
 
