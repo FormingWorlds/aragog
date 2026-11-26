@@ -640,13 +640,14 @@ def test_with_two_output_points_every_step_of_the_call_waits_for_its_end():
 
 
 @pytest.mark.parametrize('chunk', [4, 2048])
-def test_the_thickest_lid_of_the_first_chunk_sets_the_cap_excess(monkeypatch, chunk):
-    """The lid is thickest (150) at node 1, in the first chunk, and 100 at every later node:
-    both chunkings report the cap excess of 150, where a maximum that later chunks overwrite
-    would give that of 100."""
+@pytest.mark.parametrize('node', [1, 70])
+def test_the_thickest_lid_of_any_chunk_sets_the_cap_excess(monkeypatch, chunk, node):
+    """The lid is thickest (150) at one node, in the first or in the 18th 4-node chunk, and 100
+    at every other node: both chunkings report the cap excess of 150, where a maximum that
+    later chunks overwrite, or that keeps the first chunk's value, would give that of 100."""
     monkeypatch.setattr(st, 'CHUNK', chunk)
     t, y = _lid_nodes()
-    y[2, 1] = 150.0
+    y[2, node] = 150.0
     s = _lid_batch_solver()
     s._solution = sol = OptimizeResult(t=t, y=y)
     s._compute_step_energy_integrals()
@@ -664,13 +665,14 @@ def _cmb_parts(s, t, y, p, d=None, core=False):
 
 
 @pytest.mark.parametrize('flat', [True, False])
-def test_a_flat_table_cell_in_the_first_chunk_excludes_the_call(flat):
-    """The node table slope is 1e-7 of the closure slope only at node 1, in the first of 3
-    four-node chunks: the chunked ledger excludes the call as the whole trace does and counts
-    it once, where a flag that later chunks overwrite would be False; without the flat cell
-    the call is judged."""
+@pytest.mark.parametrize('node', [1, 9])
+def test_a_flat_table_cell_in_any_chunk_excludes_the_call(flat, node):
+    """The node table slope is 1e-7 of the closure slope only at one node, in the first or the
+    last of 3 four-node chunks: the chunked ledger excludes the call as the whole trace does
+    and counts it once, where a flag that later chunks overwrite, or that keeps the first
+    chunk's value, would be False; without the flat cell the call is judged."""
     t, y, p, dT = _cmb_nodes(11)
-    S1 = y[0, 1] - 0.5 * 2.0e4 * y[2, 1]
+    S1 = y[0, node] - 0.5 * 2.0e4 * y[2, node]
     bump = lambda S: np.where(flat & (np.abs(S - S1) < 1e-6), 1e7, 0.0)  # noqa: E731
     q = -800.0 * 1.1 * 1.9e24 * dT[-1]
     whole, parts = _cmb_solver(bump), _cmb_solver(bump)
