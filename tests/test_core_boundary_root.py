@@ -110,11 +110,15 @@ def test_the_search_makes_few_calls(monkeypatch):
     """Superheat calls of one boundary solve (2 ends + 1 per step): 2 for a liquid centre, at
     most 2 + n_1/2 + n0 at any temperature (also a frozen core), at most 50 at 1e-6 K below the
     onset, where the tangent crossing needs many steps (40; a stop at adjacent floats takes the
-    bound, 60), and a mean of at most 19 and a maximum of at most 45 over 41 temperatures from
+    bound, 60), and a mean of at most 22 and a maximum of at most 45 over 41 temperatures from
     freeze-out + 0.5 K to the onset - 0.5 K (a bisection that stops at its fixed point needs 55
-    on mean, the 80-step bisection 81). The maximum holds by the Illinois halving: without it,
-    the search keeps one end near freeze-out until the projection ends it at the bound; halving
-    the end that moved instead of the end kept raises the mean to 20.3."""
+    on mean, the 80-step bisection 81). The sweep gives a mean of 16.9 to 19.1 and a maximum of
+    34 to 38 over jax 0.8.3 to 0.12.1 on macOS arm64 and Linux x86_64: a step that lands within
+    round-off of the root leaves the far end to close by halving, and the compiled rounding of
+    the superheat decides where that happens. The maximum holds by the Illinois halving: without
+    it, the search keeps one end near freeze-out until the projection ends it at the bound (60);
+    halving the end that moved instead of the end kept gives a mean of 25 to 27 and a maximum of 60,
+    swapping the halved ends a mean of 51."""
     calls = []
     original = CoreEnergyBudget.superheat
 
@@ -132,7 +136,8 @@ def test_the_search_makes_few_calls(monkeypatch):
         counts.append(len(calls))
     liquid, frozen, near_onset, nan, *sweep = counts
     assert liquid == 2 and max(frozen, nan, *sweep) <= 2 + STEPS and near_onset <= 50
-    assert np.mean(sweep) <= 19.0 and max(sweep) <= 45
+    # call cost of the search, not a physics tolerance: measured spread plus a margin of 2.9
+    assert np.mean(sweep) <= 22.0 and max(sweep) <= 45
 
 
 @pytest.mark.parametrize(
