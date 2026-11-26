@@ -54,6 +54,8 @@ from aragog.config.phases import (
     SolidRheologyParams,
     check_viscosity_ceiling,
 )
+from aragog.config.solver import check_eos_domain_mode, check_eos_domain_tolerance
+from aragog.eos.domain import EOSDomainError
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
@@ -165,6 +167,13 @@ _LID_E_DENSITY_SCALE = 3.6e6
 # the JAX table is padded to the most knots the slice below the solidus holds.
 _LID_TABLE_COUNTS = (2048, 512, 2048)
 LID_TABLE_KNOTS = _LID_TABLE_COUNTS[0] + 1
+_CALL_START = object()  # solve() reads the call-start solution itself
+_EOS_DOMAIN_BLOCK = 4096  # states per table pass of the EOS domain check (bounds its memory)
+
+
+def _eos_domain_of(eos):
+    """The table domain of ``eos``; None for no EOS or an EOS class without one."""
+    return eos.domain if hasattr(type(eos), 'domain') else None
 
 
 @dataclass(frozen=True)
@@ -5608,7 +5617,7 @@ class EntropySolver:
             self._warned.add(key)
             logger.log(level, message)
 
-    def solve(self, _floor_discard: str | None = None) -> None:
+    def solve(self, _floor_discard: str | None = None, _start: object = _CALL_START) -> None:
         """Run the BDF time integration.
 
         A successful solve also stores the per-call energy integrals on the result as
@@ -5619,9 +5628,12 @@ class EntropySolver:
         warning: a call whose floor root returns a state below the EOS table, or stops at the
         call start, is solved again this way, so it returns its start state; a lid trigger
         already passed at the call start still merges, so that state then holds the merged lid.
+        ``_start`` (internal) is the solution held at the call start, passed on to that solve.
         """
         wall_start = time.perf_counter()
-        self.cmb_ledger, last_accepted = None, getattr(self, '_solution', None)
+        last_accepted = getattr(self, '_solution', None) if _start is _CALL_START else _start
+        self._eos_domain_prepare()
+        self.cmb_ledger = None
         s0 = getattr(self, '_S0', None)
         if _lid_slots(self) and s0 is not None and s0.size == self._n_core_state() + 2:
             # a lid set after the entropy reaches the start unchecked: check the state it holds
@@ -6304,21 +6316,23 @@ class EntropySolver:
             low = min(float(np.min(floor['floor_weights'] @ S_all)), float(S_all.min()))
             if low < S_tab:
                 return self.solve(
+                    _start=last_accepted,
                     _floor_discard=(
                         f'EOS floor: the call with level S_min {floor["floor_level"] - S_tab:+.3e} '
                         f'J/kg/K put the floor entropy at S_min {low - S_tab:+.3e} J/kg/K at '
                         f'{t_end - start_time:.6g} yr after the call start {start_time:.9g} yr '
                         f'(table minimum {S_tab:.9g} J/kg/K); the call is discarded and does not '
                         'advance'
-                    )
+                    ),
                 )
             if t_end <= float(np.asarray(sol.t)[0]):  # the returned start, after the time scale
                 return self.solve(
+                    _start=last_accepted,
                     _floor_discard=(
                         f'EOS floor: the root of level S_min {floor["floor_level"] - S_tab:+.3e} '
                         f'J/kg/K fell at the call start t={start_time:.9g} yr; the call does not '
                         'advance'
-                    )
+                    ),
                 )
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
@@ -6435,6 +6449,11 @@ class EntropySolver:
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
                 self._lid_handover_time = self._lid_start_handover_time
+        if not _status_failed(sol.status) and (outside := self._eos_domain_failure(sol)):
+            if self.parameters.solver.eos_domain_check == 'raise':
+                self._solution = last_accepted  # back to the solution held at the call start
+                raise EOSDomainError(outside)
+            logger.warning(outside)
         self._log_solution_outcome(self.parameters.solver.end_time)
         sol.lid_cap_excess = math.nan  # the energy replay sets it from the trace
         sol.lid_weight_max = math.nan  # the energy replay sets it with a lid
@@ -6511,6 +6530,115 @@ class EntropySolver:
                     raise AcceptedStateRangeError(msg)
                 return float(t), msg
         return None
+
+    def _eos_domain_prepare(self) -> None:
+        """Check the domain settings and read the masks before a call integrates, so that a bad
+        setting or mask file raises with the solver state unchanged."""
+        cfg = self.parameters.solver
+        check_eos_domain_mode(cfg.eos_domain_check)
+        check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
+        if cfg.eos_domain_check != 'off' and not self.parameters.phase_mixed.const_properties:
+            _eos_domain_of(self.entropy_eos)
+
+    def _eos_domain_failure(self, sol) -> str | None:
+        """Judge the EOS lookup points of a call's accepted states against the valid table window.
+
+        The points are those the EOS reads in the right-hand side: each staggered node at its
+        phase lookups and each basic node at the mesh pressure and the entropy that
+        ``EntropyState.basic_entropy`` gives it (the CMB node from the state's CMB gradient in
+        energy_balance and core_module, the top node at the surface entropy with BC 5), with the
+        phase-boundary lookups of the smoothing band; see ``TableDomain.lookup_distances``. The
+        states are those of the call's energy trace (accepted steps and root-search points);
+        without a trace only the output states ``sol.y`` count, with 1 info line per solver, and
+        a state that leaves the window and returns between 2 output points is not seen. Off
+        with ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties.
+
+        Parameters
+        ----------
+        sol : OptimizeResult
+            Result of the call, with ``energy_trace`` when the call kept it.
+
+        Returns
+        -------
+        str or None
+            A message on the worst point more than ``eos_domain_tolerance_cells`` outside, with
+            the count of such points summed over the output states; None when there is none.
+        """
+        eos, cfg = self.entropy_eos, self.parameters.solver
+        check_eos_domain_mode(cfg.eos_domain_check)
+        if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
+            return None
+        domain = _eos_domain_of(eos)
+        if domain is None:
+            return None
+        tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
+        trace = sol.get('energy_trace')
+        if trace is None:
+            self._warn_once(
+                'eos_domain_output_states',
+                'EOS domain check: the calls keep no energy trace, so the check judges their '
+                'output states only',
+                logging.INFO,
+            )
+        t_pts, y_pts = trace or (sol.t, sol.y)
+        widths = (
+            float(self.state.phase_staggered._matprop_smooth_width),
+            float(self.state.phase_basic._matprop_smooth_width),
+        )
+        Y = np.asarray(y_pts, dtype=float)
+        n_out, worst = 0, None
+        for i0 in range(0, Y.shape[1], _EOS_DOMAIN_BLOCK):  # one row per state in a block
+            S_s, S_b = [], []
+            for y in Y[:, i0 : i0 + _EOS_DOMAIN_BLOCK].T:
+                S_s.append(self._stag_entropy(y))
+                if self._core_bc == 'gradient':
+                    n_b = self._n_stag + 1
+                    S_b.append(
+                        self.state.basic_entropy(
+                            S_s[-1],
+                            entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1],
+                        )
+                    )
+                else:
+                    S_b.append(
+                        self.state.basic_entropy(S_s[-1], None if k_cmb is None else y[k_cmb])
+                    )
+            for kind, P, S, r, width in (
+                ('staggered', self._P_stag_flat, np.array(S_s), self._r_stag_flat, widths[0]),
+                ('basic', self._P_basic_flat, np.array(S_b), self._r_basic_flat, widths[1]),
+            ):
+                d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
+                d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
+                j = np.unravel_index(int(np.argmax(d)), d.shape)  # (state in the block, node)
+                if not d[j] > tol:
+                    continue
+                n_out += int((d > tol).sum())
+                if worst is None or d[j] > worst[0]:
+                    k = int(j[1])
+                    t = t_pts[i0 + j[0]]
+                    worst = (d[j], t, kind, k, r[k], P[k], S[j], melt[j], s_look[j])
+        if worst is None:
+            return None
+        d_k, t, kind, k, r, P, S, melt, s_look = worst
+        window = domain.melt if melt else domain.solid
+        lo, hi = window.ends(P)
+        T = domain.lookup_temperature(eos, P, s_look, melt)
+        if not (math.isfinite(P) and math.isfinite(S)):
+            how = 'not a finite point'
+        elif math.isinf(d_k):
+            how = 'no valid window at this pressure (a mask column with no valid node)'
+        else:
+            how = f'{d_k:.2f} cells outside'
+        states = 'accepted' if trace is not None else 'output'
+        return (
+            f'EOS domain check: {n_out} lookup points over the {np.size(t_pts)} {states} states of '
+            f'the call more than {tol:g} table S cells outside the valid window; worst at '
+            f't={t:.6e} yr: {kind} node {k} (r={r:.6e} m), P={P:.6e} Pa, S={S:.6f} J/kg/K, '
+            f'read on the {"melt" if melt else "solid"} table at S={s_look:.6f} J/kg/K, window '
+            f'[{lo:.6f}, {hi:.6f}] J/kg/K, ' + how + f', T={T:.6f} K'
+        )
 
     def _log_solution_outcome(self, end_time: float) -> None:
         """Log the outcome of the last integration and set ``stop_early`` on a failure."""

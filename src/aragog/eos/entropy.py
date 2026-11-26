@@ -26,6 +26,7 @@ from __future__ import annotations
 import bisect
 import logging
 import math
+from functools import cached_property
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,7 @@ import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import brentq
 
+from aragog.eos.domain import TableDomain
 from aragog.eos.table_cache import read_cached_table
 
 logger = logging.getLogger('fwl.' + __name__)
@@ -361,6 +363,12 @@ class EntropyEOS:
         outside a phase table's own S range (or is non-finite),
         instead of only logging a warning and clamping to the table
         edge.
+
+    Attributes
+    ----------
+    domain : TableDomain or None
+        Valid windows of the melt and solid tables from the ``valid_mask_*.dat`` files in
+        ``eos_dir``, read at the first access; None without mask files.
     """
 
     def __init__(self, eos_dir: Path | str, strict_range: bool = False):
@@ -406,6 +414,7 @@ class EntropyEOS:
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
+        self._domain_dir = eos_dir.resolve()
 
         # Store P and S ranges. P uses the temperature tables only (grid
         # shape reference for callers). S is the union across every
@@ -785,6 +794,17 @@ class EntropyEOS:
         dS = np.maximum(S_liq - S_sol, 1e-10)
         phi = np.clip((S - S_sol) / dS, 0.0, 1.0)
         return phi
+
+    @cached_property
+    def domain(self) -> TableDomain | None:
+        """Valid table windows, read from the mask files at the first access (see class doc).
+
+        An assignment sets it; a read that raises is not stored, so the next access reads again.
+        """
+        return TableDomain.from_dir(
+            self._domain_dir,
+            {ph: self._tables[f'temperature_{ph}'] for ph in ('melt', 'solid')},
+        )
 
     def _check_entropy_range(
         self,

@@ -21,8 +21,8 @@ rd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rd)
 
 HEAD = 'a' * 40
-BOT = 'github-actions[bot]'  # login in the REST API
-GQL = 'github-actions'  # login of the same bot in GraphQL
+BOT = 'github-actions[bot]'  # the workflow token in REST and as a GraphQL thread resolver
+GQL = 'github-actions'  # the same bot as a GraphQL comment author
 AUTHOR = 'egpbos'
 POLICY_ALL = '# approve everywhere but the protected set\n{"version": 1, "approve": {"allow": ["**"], "deny": []}}\n'
 PATCH = '@@ -10,3 +10,4 @@ def f():\n     a = 1\n-    b = 2\n+    b = 3\n+    c = 4\n     return a\n'
@@ -141,7 +141,7 @@ def test_marked_thread_of_a_person_is_never_resolved():
 
 def test_resolved_own_thread_is_neither_resolved_again_nor_blocking():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(threads=[_thread(key, resolved=True, resolver=GQL)], fixed=[key])
+    p = _plan(threads=[_thread(key, resolved=True, resolver=BOT)], fixed=[key])
     assert p['resolve'] == [] and p['state'] == 'success'
 
 
@@ -771,7 +771,7 @@ def test_a_thread_resolved_by_the_author_or_by_nobody_known_still_blocks(resolve
 
 def test_a_bug_that_returns_after_the_bot_resolved_its_thread_blocks_again():
     key = rd.finding_key('src/aragog/x.py', 'Wrong sign')
-    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver=GQL)])
+    p = _plan(findings=[_finding()], threads=[_thread(key, resolved=True, resolver=BOT)])
     assert p['state'] == 'failure' and len(p['comments']) == 1
 
 
@@ -795,3 +795,63 @@ def test_collect_sends_owner_and_repository_as_strings():
     rd.collect('o/123', '5', gh)
     first = gh.calls[0]
     assert first[first.index('o=o') - 1] == '-f' and first[first.index('r=123') - 1] == '-f'
+
+
+def _live_thread(key, resolver):
+    """A review thread as the GraphQL API returns it for a thread the workflow resolved."""
+    return {
+        'id': 'PRRT_kwDOO5J5KM68FM5B',
+        'isResolved': True,
+        'resolvedBy': {'__typename': 'User', 'login': resolver},
+        'path': 'src/aragog/utilities.py',
+        'line': 155,
+        'comments': {
+            'nodes': [
+                {
+                    'body': 'text\n\n' + rd.finding_marker(key, 'important'),
+                    'author': {'__typename': 'Bot', 'login': 'github-actions'},
+                }
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ('resolver', 'state'),
+    [
+        ('github-actions[bot]', 'fixed'),
+        ('github-actions', 'dismissed'),
+        ('egpbos', 'dismissed'),
+        ('timlichtenberg', 'open'),
+    ],
+)
+def test_the_resolver_logins_of_the_live_payload_give_the_thread_state(resolver, state):
+    """Only github-actions[bot] as resolver marks a thread the workflow resolved."""
+    key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
+    assert rd.own_threads([_live_thread(key, resolver)], 'timlichtenberg')[0]['state'] == state
+
+
+def test_a_returning_bug_on_a_thread_the_workflow_resolved_is_a_candidate_again():
+    """A finding on a fixed thread goes to the verify pass again when the find pass reports it."""
+    title = 'Weighted mixture uses (1 + w)'
+    key = rd.finding_key('src/aragog/utilities.py', title)
+    own = rd.own_threads([_live_thread(key, 'github-actions[bot]')], 'timlichtenberg')
+    find = {
+        'summary': 's',
+        'findings': [_finding(path='src/aragog/utilities.py', line=155, title=title)],
+        'fixed': [],
+    }
+    assert [c['key'] for c in rd.prep(find, own)['candidates']] == [key]
+
+
+@pytest.mark.parametrize(
+    ('resolved', 'resolver', 'author'),
+    [(False, BOT, 'timlichtenberg'), (False, 'ana', 'timlichtenberg'), (True, 'ana', None)],
+)
+def test_a_thread_stays_open_unless_it_is_resolved_and_its_author_is_known(
+    resolved, resolver, author
+):
+    """An unresolved thread, or one resolved while the author is unknown, stays open."""
+    key = rd.finding_key('src/aragog/utilities.py', 'Weighted mixture uses (1 + w)')
+    node = {**_live_thread(key, resolver), 'isResolved': resolved}
+    assert rd.own_threads([node], author)[0]['state'] == 'open'

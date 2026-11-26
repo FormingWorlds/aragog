@@ -1,0 +1,12 @@
+# melt validity mask: 10 rows (entropy nodes) x 3 columns (pressure nodes), the nodes of the melt P-S tables
+# 1: inside the phase temperature window with a finite PALEOS value for all five properties; 0: a filled value or nabla_ad written as 0
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+1 0 1
+1 0 1
+1 0 1
+1 0 1
+1 0 1
