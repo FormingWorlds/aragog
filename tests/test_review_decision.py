@@ -1035,7 +1035,7 @@ DENIED = (
     'Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,'
     'RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,'
     'EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,'
-    'Edit,Write,NotebookEdit'
+    'Edit,Write,NotebookEdit,Grep,Glob,LS,LSP,NotebookRead'
 )
 
 
@@ -1085,6 +1085,7 @@ def _execution(tools, used):
         (['Read', 'StructuredOutput'], ['Read', 'StructuredOutput'], ''),
         (['Read', 'StructuredOutput', 'Bash'], ['Read'], 'Bash'),
         (['Read', 'StructuredOutput'], ['Read', 'Bash'], 'Bash'),
+        (['Read', 'StructuredOutput'], ['Read', 'Grep'], 'Grep'),
         (None, ['Read'], '<no init>'),
         (['Read', 'Bash', 'WebFetch'], ['Bash', 'Bash'], 'Bash,WebFetch'),
     ],
