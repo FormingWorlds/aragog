@@ -1019,9 +1019,8 @@ def compute_mlt(
     kappa_h_mlt = kappa_h
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
-    # CMB basic node: the mixing-length value of node 1 (SPIDER energy.c 220-223), or
-    # the floor of node 0 under its own mask, whichever is larger. Mirrors the numpy
-    # mlt helper of EntropyState.update.
+    # CMB basic node: the mixing-length value of node 1 (SPIDER energy.c 220-223) or the
+    # floor of node 0 under its own mask, whichever is larger; numpy twin: EntropyState.update.
     kappa_h = kappa_h.at[0].set(jnp.maximum(kappa_h_mlt[1], kh_floor[0]))
 
     if return_aux:

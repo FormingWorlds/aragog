@@ -62,7 +62,7 @@ from aragog.parser import Parameters
 from aragog.rheology import R_GAS as _R_GAS
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
-from aragog.solver.entropy_state import EntropyState
+from aragog.solver.entropy_state import CMBEddyFluxError, EntropyState
 from aragog.utilities import positive_gravity
 
 # SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
@@ -159,6 +159,11 @@ class AcceptedStateRangeError(RuntimeError):
 
 class CMBClosureError(RuntimeError):
     """The CMB closure of a call fails its ledger check, or the node slope is not positive."""
+
+
+# Faults of the CMB terms that end a call: CVODE turns them into a failed step, and the call
+# goes back to its start solution.
+_CMB_FAULTS = (CMBClosureError, CMBEddyFluxError)
 
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
@@ -5153,7 +5158,7 @@ class EntropySolver:
             def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
                 try:
                     ydot[:] = _rhs(t, y)
-                except CMBClosureError as err:  # CVODE can turn a raise into a failed step
+                except _CMB_FAULTS as err:  # CVODE can turn a raise into a failed step
                     rhs_fault.append(err)
                     return -1
                 nfev_box[0] += 1
@@ -6468,7 +6473,7 @@ class EntropySolver:
         t_solved = time.perf_counter()
         try:
             sol.energy_integrals = self._compute_step_energy_integrals()
-        except CMBClosureError:
+        except _CMB_FAULTS:
             self._solution = last_accepted  # back to the solution held at the call start
             raise
         logger.info(

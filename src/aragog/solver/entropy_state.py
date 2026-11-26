@@ -112,6 +112,7 @@ class CMBEddyFluxError(RuntimeError):
 
 
 def check_cmb_convective_flux(
+    *,
     jconv_0: float,
     rho_t_0: float,
     dsdr_0: float,
@@ -155,21 +156,21 @@ def check_cmb_convective_flux(
     CMBEddyFluxError
         If a part of the invariant fails; the message names the part.
     """
-    values = (jconv_0, rho_t_0, dsdr_0, kh_mlt_1, kh_floor_0)
-    if not np.all(np.isfinite(values)):
+    if not np.all(np.isfinite((jconv_0, rho_t_0, dsdr_0, kh_mlt_1, kh_floor_0))):
         return
     j, g = float(jconv_0), float(dsdr_0)
-    state = (
-        f'J={j:.6e} W/m2, dS/dr[0]={g:.6e}, kh_mlt[1]={kh_mlt_1:.6e}, floor[0]={kh_floor_0:.6e}'
-    )
     if j * g > 0.0:
-        raise CMBEddyFluxError(
-            f'CMB invariant (iii) failed, flux against its gradient: {state}'
-        )
-    if g >= threshold and abs(j) > rho_t_0 * kh_mlt_1 * abs(g) * (1.0 + rtol):
-        raise CMBEddyFluxError(f'CMB invariant (i) failed, flux above kh_mlt[1]: {state}')
-    if g < threshold and abs(j) < rho_t_0 * kh_floor_0 * abs(g) * (1.0 - rtol):
-        raise CMBEddyFluxError(f'CMB invariant (ii) failed, flux below floor[0]: {state}')
+        part = '(iii) failed, flux against its gradient'
+    elif g >= threshold and abs(j) > rho_t_0 * kh_mlt_1 * abs(g) * (1.0 + rtol):
+        part = '(i) failed, flux above kh_mlt[1]'
+    elif g < threshold and abs(j) < rho_t_0 * kh_floor_0 * abs(g) * (1.0 - rtol):
+        part = '(ii) failed, flux below floor[0]'
+    else:
+        return
+    raise CMBEddyFluxError(
+        f'CMB invariant {part}: J={j:.6e} W/m2, dS/dr[0]={g:.6e}, '
+        f'kh_mlt[1]={kh_mlt_1:.6e}, floor[0]={kh_floor_0:.6e}'
+    )
 
 
 def _smooth_clip(
@@ -853,7 +854,7 @@ class EntropyState:
             # CMB basic node: the mixing-length value of node 1 (SPIDER energy.c 220-223),
             # or the floor of node 0 under its own mask, whichever is larger.
             if len(eddy) >= 2:
-                eddy[0] = max(kh_mlt_1, kh_floor_0)
+                eddy[0] = np.maximum(kh_mlt_1, kh_floor_0)
             self._cmb_kh_inputs = (kh_mlt_1, kh_floor_0)
             return u_visc, re, eddy, kappac
 
@@ -996,12 +997,14 @@ class EntropyState:
             self._lid_state = None
 
         if self._convection and self._jconv.size >= 2:
+            kh_mlt_1, kh_floor_0 = self._cmb_kh_inputs
             check_cmb_convective_flux(
-                self._jconv[0],
-                rho[0] * T[0],
-                self._dSdr[0],
-                *self._cmb_kh_inputs,
-                self._convective_threshold,
+                jconv_0=self._jconv[0],
+                rho_t_0=rho[0] * T[0],
+                dsdr_0=self._dSdr[0],
+                kh_mlt_1=kh_mlt_1,
+                kh_floor_0=kh_floor_0,
+                threshold=self._convective_threshold,
             )
 
         if self._grav_sep:
