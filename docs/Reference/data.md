@@ -44,6 +44,10 @@ The `solidus_P-S.dat` and `liquidus_P-S.dat` files are two-column $(P, S)$ in th
 
 The grid must be rectangular: phase-filtered tables (where each phase's grid is restricted to its own valid region) cause `scipy.interpolate.RegularGridInterpolator` to fall back to slow unstructured interpolation and should not be used.
 
+### Validity masks
+
+In `eos_dir`, next to the tables, `valid_mask_melt.dat` and `valid_mask_solid.dat` mark each node of the phase's temperature table: 1 where the generator had a valid EOS value, 0 where it filled the node or a property had no finite value. Each file is a 2-D array of 0 and 1 with one row per entropy node and one column per pressure node, shape $(n_S, n_P)$, with `#` comment lines allowed. A column with no valid node has no window: every lookup at its pressure counts as outside. The $P$ and $S$ axes of the temperature table must rise strictly. A mask that breaks a rule of this section (shape $(n_S, n_P)$, values 0 and 1 only, strictly rising axes, at least one valid node) raises `ValueError` when the first call reads it. The masks are optional; the [EOS domain check](../How-to/solver-method-tuning.md#lookups-outside-the-valid-window-of-the-tables) reads them.
+
 ### Canonical source: PALEOS
 
 In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS framework (Attia et al. (2026)[^cite-attia2026]) from a configured P-T melting curve and the Wolf & Bower (2018)[^cite-wolfbower2018] RTpress liquid EOS. The PROTEUS wrapper writes the resulting tables into `output/data/aragog_pt/` at construction time and points `eos_dir` there.

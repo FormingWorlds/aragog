@@ -28,7 +28,7 @@ from aragog.config.phases import (
     merge_rheology,
 )
 from aragog.eos.entropy import EntropyEOS
-from aragog.utilities import FloatOrArray, tanh_weight
+from aragog.utilities import FloatOrArray, blend_weight, tanh_weight
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -332,16 +332,11 @@ class EntropyPhaseEvaluator:
         self._melt_fraction = phi_arr
 
         # smth: matprop_smooth_width blend factor (SPIDER util.c:get_smoothing)
+        smth = blend_weight(gphi, smw)
         if smw > 0:
-            smth = np.where(
-                gphi > 0.5,
-                1.0 - tanh_weight(gphi, 1.0, smw),
-                tanh_weight(gphi, 0.0, smw),
-            )
             sech2 = 1.0 - np.tanh(np.where(gphi > 0.5, gphi - 1.0, gphi) / smw) ** 2
             dsmth_dg = np.where(gphi > 0.5, -0.5, 0.5) * sech2 / smw
         else:
-            smth = np.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
             dsmth_dg = np.zeros_like(gphi)
 
         # ── Step 2: phase-boundary table evaluations (ONCE each) ────
