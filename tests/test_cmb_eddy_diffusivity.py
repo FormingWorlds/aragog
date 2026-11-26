@@ -164,6 +164,44 @@ def test_cmb_flux_is_continuous_where_node_1_changes_sign(mixing_length):
     assert d_flux[1.0e-17] < 1.0e-6 * abs(flux[1.0]) and abs(flux[1.0]) > 1.0e-5
 
 
+@needs_eos
+@pytest.mark.reference_pinned
+def test_cmb_flux_across_s1_equal_s0(validation_plot):
+    """Over a stable CMB gradient, the CMB flux across S1 - S0 from -1e-6 to 1e-6 J/kg/K
+    has no step at S1 = S0, while the flux with the floored node 1 value copied to the CMB
+    node (the rule SPIDER uses, with the floor of node 1) steps there by about 2.9e3 W m^-2."""
+    steps = np.r_[-np.logspace(-6, -14, 9), np.logspace(-14, -6, 9)]
+    flux, copied = [], []
+    for d in steps:
+        state, mesh = _state()
+        dSdr = _update(state, mesh, [_CMB_STABLE, d / mesh.dr[0]], [_PHI_MUSH] * mesh.N)
+        rho_t = _basic(state, 'density')[0] * _basic(state, 'temperature')[0]
+        flux.append(state.heat_flux[0])
+        copied.append(state.jcond[0] - rho_t * state.eddy_diffusivity[1] * dSdr[0])
+    flux, copied = np.array(flux), np.array(copied)
+    side = steps < 0
+    jump = copied[~side][0] - copied[side][-1]
+    assert jump > 1.0e3 and abs(flux[side][-1] - flux[~side][0]) < 1.0e-10 * jump
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(6.4, 4.2))
+        ax.plot(steps, copied, 's', ms=4, mfc='none', color='C1', label='node 1 value copied')
+        ax.plot(steps, flux, 'o', ms=3, color='C0', label='Aragog')
+        ax.set_xscale('symlog', linthresh=1.0e-14)
+        ax.set_yscale('symlog', linthresh=1.0e-3)
+        ticks = [-1.0e-6, -1.0e-10, 0.0, 1.0e-10, 1.0e-6]
+        labels = ['$-10^{-6}$', '$-10^{-10}$', '0', '$10^{-10}$', '$10^{-6}$']
+        ax.set_xticks(ticks, labels)
+        ax.set(xlabel='$S_1 - S_0$ [J kg$^{-1}$ K$^{-1}$]', ylabel='CMB heat flux [W m$^{-2}$]')
+        ax.legend(fontsize=8, loc='center right')
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'cmb_eddy_flux_continuity')
+
+
 # ---------------------------------------------------------------------------
 # V3: the rule on random states, NumPy == JAX
 # ---------------------------------------------------------------------------
