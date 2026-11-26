@@ -1170,6 +1170,11 @@ with open(os.environ['GH_LOG'], 'a') as f:
 if 'statuses' in ' '.join(args) and '-X' in args:
     sys.exit(0)
 if any('/status?' in a for a in args):
+    with open(os.environ['GH_LOG']) as f:
+        reads = sum('/status?' in line for line in f)
+    if reads > int(os.environ.get('STATUS_OK', '99')):
+        sys.stderr.write(os.environ.get('GH_ERR', 'gh: HTTP 502') + '\\n')
+        sys.exit(1)
     own = {'context': 'Claude review', 'target_url': os.environ['RUN_URL'],
            'description': os.environ.get('LIVE_DESC', 'x')}
     page = json.dumps({'statuses': [own]})
@@ -1193,6 +1198,35 @@ CMD_LINE = "review_decision: Command '['api', '-X', 'POST']' returned non-zero e
     ],
 )
 def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, live, posts, reads):
+    calls = _run_report(tmp_path, cause, LIVE_DESC=live)
+    status = [
+        c for c in calls if '-X' in c and c[c.index('-X') + 2].startswith('repos/o/r/statuses/')
+    ]
+    assert len(status) == posts
+    assert sum(any('/status?' in a for a in c) for c in calls[1:]) == reads
+
+
+@pytest.mark.parametrize(
+    ('ok', 'reads', 'cause'),
+    [(0, 1, 'status lookup failed: gh: HTTP 502'), (1, 4, 'the decision or post step failed')],
+)
+def test_a_failed_status_lookup_still_sets_the_failure_status(tmp_path, ok, reads, cause):
+    calls = _run_report(tmp_path, CMD_LINE, LIVE_DESC='post failed: x', STATUS_OK=str(ok))
+    status = [c for c in calls if '-X' in c and 'repos/o/r/statuses/' + HEAD in c]
+    assert len(status) == 1 and sum(any('/status?' in a for a in c) for c in calls) == reads
+    assert any(a.startswith('description=') and cause in a for a in status[0])
+
+
+def test_a_long_lookup_error_keeps_the_description_within_140_characters(tmp_path):
+    steps = json.dumps({'merge': {'outcome': 'failure'}})
+    calls = _run_report(tmp_path, None, STATUS_OK='0', GH_ERR='gh: ' + 'x' * 200, STEPS=steps)
+    status = [c for c in calls if '-X' in c and 'repos/o/r/statuses/' + HEAD in c]
+    desc = next(a for a in status[0] if a.startswith('description='))
+    assert len(desc) <= len('description=') + 140
+    assert desc.endswith('comment @claude review to retry')
+
+
+def _run_report(tmp_path, cause, **extra):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     (bin_dir / 'gh').write_text(_FAKE_GH)
@@ -1212,16 +1246,11 @@ def test_the_failure_report_keeps_a_status_that_apply_set(tmp_path, cause, live,
         'HEAD_SHA': HEAD,
         'PR_NUMBER': '5',
         'GITHUB_REPOSITORY': 'o/r',
-        'LIVE_DESC': live,
+        **extra,
     }
     step = _run_block(_step('Report a failed review'))
     assert subprocess.run(['bash', '-e', '-c', step], env=env).returncode == 0
-    calls = [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
-    status = [
-        c for c in calls if '-X' in c and c[c.index('-X') + 2].startswith('repos/o/r/statuses/')
-    ]
-    assert len(status) == posts
-    assert sum(any('/status?' in a for a in c) for c in calls[1:]) == reads
+    return [json.loads(line) for line in (tmp_path / 'log').read_text().splitlines()]
 
 
 def _job(name):
@@ -1269,6 +1298,9 @@ if 'query=' in text:
     print(os.environ['THREAD_JSON'])
     sys.exit(0)
 if '/status?' in text:
+    if os.environ.get('OWNER_FAILS'):
+        sys.stderr.write('gh: HTTP 502\\n')
+        sys.exit(1)
     print(os.environ.get('OWNER_URL', os.environ['RUN_URL']))
 elif '--slurp' in args and text.endswith('/reviews'):
     print(os.environ.get('APPROVALS', '[[]]'))
@@ -1425,6 +1457,15 @@ def test_a_failed_resolve_dismisses_the_approval_of_the_workflow(tmp_path):
     assert [c[c.index('-X') + 2] for c in dismissed] == [
         'repos/o/r/pulls/5/reviews/7/dismissals'
     ]
+
+
+def test_a_failed_owner_lookup_still_reports_the_failure_with_both_causes(tmp_path):
+    rc, posts, dismissed, _ = _run_resolve(
+        tmp_path, RESOLVE_FAILS='1', OWNER_FAILS='1', APPROVALS=json.dumps([[APPROVAL]])
+    )
+    assert rc == 1 and len(posts) == 1 and len(dismissed) == 1
+    desc = next(a for a in posts[0] if a.startswith('description='))
+    assert 'Resource not accessible' in desc and 'status lookup failed: gh: HTTP 502' in desc
 
 
 def test_the_resolve_job_leaves_a_status_that_a_newer_run_owns(tmp_path):
