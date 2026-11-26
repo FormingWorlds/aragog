@@ -86,11 +86,13 @@ The command of a case is `pytest <test>`; the young-layer case, the surface-boun
 
 **Checks on stored runs.** These tests read stored runs and do not run the code. They are not in the table and carry no `reference_pinned` marker. `tests/test_surface_lid_v8.py` compares the lid after its hand-over with 2 runs without the lid: the step between 200 and 400 nodes is at most 0.75 of the step between 100 and 200 nodes, and the late mean of the surface flux lies within 1 % of the reference on 200 and 400 nodes ([Surface lid](surface_lid.md#a-case-where-the-lid-hands-over)).
 
+`tests/test_cmb_eddy_flux_runs.py` checks the coupled runs of the CMB node rule against the copy rule: an 8.63 Earth-mass run and 2 Earth-mass runs, resumed, and an Earth-mass run from the start ([CMB eddy flux](cmb_eddy_flux.md#a-large-planet-runs-through-the-state-where-the-copy-rule-stops)).
+
 `tests/test_surface_lid_v5_rows.py::test_stored_rows_keep_their_values_with_the_lid` compares all 36 benchmark rows with and without the lid ([Surface lid](surface_lid.md#the-lid-on-the-stagnant-lid-benchmarks)).
 
 `tests/test_surface_lid_base_cap.py::test_lid_base_cap_on_the_mesh_and_the_floor` is a sensitivity study with no reference: it reads stored runs of the lid base at the melt temperature on 100, 200 and 400 nodes and with floors of 1e2, 1e3 and 1e4 J/kg.
 
-At 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py tests/test_surface_lid_v5_rows.py tests/test_surface_lid_v8.py -m "not slow" --validation-plots` writes their plot pairs.
+At 3e5 yr the step from 200 to 400 nodes stays below 1.2 (1.024), at 4e5 yr both mesh steps lie above 1.4, and the floors agree within 4e-2 up to 3e5 yr ([Surface lid](surface_lid.md#the-lid-base-at-the-melt-temperature-mesh-and-floor)). `pytest tests/test_surface_lid_base_cap.py tests/test_surface_lid_v5_rows.py tests/test_surface_lid_v8.py tests/test_cmb_eddy_flux_runs.py -m "not slow" --validation-plots` writes their plot pairs.
 
 ## Plots written by the tests
 

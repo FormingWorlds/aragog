@@ -84,10 +84,10 @@ where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction and gated to
 What eddy diffusivity does the core-mantle boundary (CMB) node get, and how much heat does convection then carry out of the core?
 
 The CMB node (node 0) takes the mixing-length eddy diffusivity of node 1, the node above it, or its own floor, whichever is larger.
-So the flux out of the core does not change when node 1 moves onto or off its floor.
+So at $D = 0$ the flux out of the core does not change when node 1 moves onto or off its floor.
 
 With `core_bc` `energy_balance` or `gradient`, the convective flux at node 0 is part of the CMB flux, so Aragog needs $\kappa_h[0]$.
-With the `nearest_boundary` profile the mixing length is 0 at the CMB; with `constant` node 0 has a length, but its gradient is the extrapolated CMB gradient.
+With the `nearest_boundary` profile the mixing length is 0 at the CMB; with `constant` node 0 has a length, but its gradient is the CMB gradient of the state, set by the core energy balance.
 Bower et al. (2018) do not use the node law at the CMB: they set the CMB flux from the energy balance of the lowest cell.
 SPIDER takes the value of node 1 at the CMB (`energy.c`). Aragog sets
 
@@ -105,7 +105,7 @@ A copied floor sends a downward flux across a stable CMB gradient while $S_1 < S
 - $\partial S/\partial r[0] < D$: the CMB node keeps at least its own floor, also when node 1 is stable.
 - At $D = 0$ the CMB flux is continuous. For $D > 0$ it steps where the minimum drive of node 1 switches off, and at $\partial S/\partial r[0] = D$ by $\rho T \max(\kappa_h^\mathrm{floor}[0] - \kappa_h^\mathrm{mlt}[1], 0)\,D$.
 
-The NumPy `EntropyState.update` raises `CMBEddyFluxError` when the CMB flux breaks the first 2 items or runs against its gradient.
+The NumPy `EntropyState.update` raises `CMBEddyFluxError` when its CMB flux differs from this rule.
 
 **Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md); worked example in the [tutorial](../Tutorials/cmb_eddy_diffusivity.md).
 

@@ -53,7 +53,7 @@ def phase(phi0, phi1):
         kinematic_viscosity=ones,  # m^2/s
         thermal_conductivity=4.0 * ones,  # W/m/K
         latent_heat=4.0e5 * ones,  # J/kg
-        capacitance=4500.0 * 4000.0 * ones,
+        capacitance=4500.0 * 4000.0 * ones,  # rho T, kg K/m^3
     )
 
 

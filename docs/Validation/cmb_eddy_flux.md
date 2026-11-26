@@ -50,7 +50,7 @@ The energy check is the [ledger check of the CMB closure](../Explanations/core_b
 
 **Why this check exists.** The rule must give the right value in each kind of state the CMB can be in. A wrong floor (the floor of node 1, or no floor) changes the CMB flux in some kinds only, so each kind is checked on its own.
 
-**What it tests.** 5 built states on the JAX `compute_mlt`, with the gradient and the melt fraction $\phi$ of nodes 0 and 1 set by hand, $D = 0$ and a mixing length of 100 km. With the floor parameter `kappah_floor` = 10 m$^2$ s$^{-1}$, the floor is $10 f(\phi)$ m$^2$ s$^{-1}$, with $f$ the tanh weight around the melt fraction 0.4. The test asserts $\kappa_h[0] = \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])$ in each kind, for a scaled and a constant `eddy_diffusivity_thermal`. With `kappah_floor = 0` the CMB node must equal node 1 bit for bit, as in SPIDER, on both paths. With the solid rheology on, the floor of node 0 uses the zero-anchored weight of its own melt fraction (0.298 m$^2$ s$^{-1}$ at 0.15, against 0.344 with the plain tanh weight). For $D > 0$, the CMB node holds its floor just below $\partial S/\partial r[0] = D$ and loses it at $D$. The NumPy update is checked in the same way across node 1 at 0 and at $D$.
+**What it tests.** 5 built states on the JAX `compute_mlt`, with the gradient and the melt fraction $\phi$ of nodes 0 and 1 set by hand, $D = 0$ and a mixing length of 100 km. With the floor parameter `kappah_floor` = 10 m$^2$ s$^{-1}$, the floor is $10 f(\phi)$ m$^2$ s$^{-1}$, with $f$ the tanh weight around the melt fraction 0.4. The test asserts $\kappa_h[0] = \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])$ in each kind, for a scaled and a constant `eddy_diffusivity_thermal`. With `kappah_floor = 0` the CMB node must equal node 1 bit for bit, as in SPIDER, on both paths. With the solid rheology on, the floor of node 0 uses the zero-anchored weight of its own melt fraction (0.298 m$^2$ s$^{-1}$ at 0.15, against 0.344 with the plain tanh weight). For $D > 0$, the CMB node holds its floor just below $\partial S/\partial r[0] = D$ and loses it at $D$, on both paths. The NumPy update is checked in the same way across node 1 at 0 and at $D$.
 
 **How we know the right answer.** The rule written out by hand: the test takes $\kappa_h^\mathrm{mlt}[1]$ from the same state without the floor and evaluates the floor of node 0 from its melt fraction.
 
@@ -69,7 +69,7 @@ The table gives eddy diffusivities in m$^2$ s$^{-1}$ and gradients in J kg$^{-1}
 ??? info "Test details"
     - Reference: $\max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])$ evaluated in the test; the SPIDER rule (`energy.c`) for `kappah_floor = 0`.
     - Tolerance: 1e-12 relative; bit-equal for `kappah_floor = 0`.
-    - Test id: `tests/test_jax_kappah_floor_mask.py::test_cmb_node_known_answer_in_each_kind`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_without_floor_is_the_copy_of_node_1`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_takes_its_own_zero_anchored_floor_with_rheology`, `tests/test_jax_kappah_floor_mask.py::test_cmb_flux_steps_where_the_cmb_gradient_crosses_d`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor`, `tests/test_entropy_state_kappah_floor_mask.py::test_numpy_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor`, `tests/test_entropy_state_kappah_floor_mask.py::test_numpy_cmb_node_without_floor_is_the_copy_of_node_1`
+    - Test id: `tests/test_jax_kappah_floor_mask.py::test_cmb_node_known_answer_in_each_kind`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_without_floor_is_the_copy_of_node_1`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_takes_its_own_zero_anchored_floor_with_rheology`, `tests/test_jax_kappah_floor_mask.py::test_cmb_flux_steps_where_the_cmb_gradient_crosses_d`, `tests/test_jax_kappah_floor_mask.py::test_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor`, `tests/test_entropy_state_kappah_floor_mask.py::test_numpy_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor`, `tests/test_entropy_state_kappah_floor_mask.py::test_numpy_cmb_node_without_floor_is_the_copy_of_node_1`, `tests/test_entropy_state_kappah_floor_mask.py::test_numpy_cmb_node_floor_steps_where_the_cmb_gradient_crosses_d`
     - Command: `pytest tests/test_jax_kappah_floor_mask.py tests/test_entropy_state_kappah_floor_mask.py`
 
 ## The rule on random states
@@ -80,7 +80,7 @@ The table gives eddy diffusivities in m$^2$ s$^{-1}$ and gradients in J kg$^{-1}
 
 **How we know the right answer.** The rule written out in the test, with the floor of node 0 from the melt fraction that the NumPy update gives at node 0.
 
-**Why it matters.** With `use_jax_jacobian = true` (the default; PROTEUS sets it with `backend = "jax"`) the solver integrates with the JAX right-hand side, which takes its eddy diffusivity from `compute_mlt`, while the output arrays and the energy replay of each call come from the NumPy update. Both must give the same CMB value.
+**Why it matters.** With `use_jax_jacobian = true` (the default) and a JAX CVODE factory, as PROTEUS sets with `backend = "jax"`, the solver integrates with the JAX right-hand side and evaluates the energy replay of each call with the JAX batch, both with `compute_mlt`. The NumPy update gives the end state of each call and the output arrays. Without the factory every part uses the NumPy update. Both paths must give the same CMB value.
 
 This case has no plot: each of the 300 states is a single comparison of 2 numbers.
 
@@ -92,26 +92,27 @@ This case has no plot: each of the 300 states is a single comparison of 2 number
 
 ## The CMB flux check in the code
 
-**Why this check exists.** The NumPy `EntropyState.update` sets the eddy diffusivity and the convective flux $J$ of the CMB node from 2 recorded inputs, $\kappa_h^\mathrm{mlt}[1]$ and $\kappa_h^\mathrm{floor}[0]$. The check `check_cmb_convective_flux` tests $J$ against those inputs in every update, so an edit that sets $J$ or $\kappa_h[0]$ against the rule fails at once. It does not test how the 2 inputs are computed; the known-answer tests above do that, for both paths.
+**Why this check exists.** The NumPy `EntropyState.update` sets the eddy diffusivity and the convective flux $J$ of the CMB node from 2 recorded inputs, $\kappa_h^\mathrm{mlt}[1]$ and $\kappa_h^\mathrm{floor}[0]$. The check `check_cmb_convective_flux` tests $J$ against those inputs in every update, so an edit that sets $J$ or $\kappa_h[0]$ against the rule fails at once. It does not test how the 2 inputs are computed, and it does not run on the JAX path; the known-answer tests above do both.
 
 **What it tests.** The check raises `CMBEddyFluxError` when:
 
 - $\partial S/\partial r[0] \ge D$ and $|J| > \rho T \kappa_h^\mathrm{mlt}[1]\,|\partial S/\partial r[0]|$: a floor of node 1 crosses a stable CMB;
 - $\partial S/\partial r[0] < D$ and $|J| < \rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$: the CMB node lost its own floor;
-- $J\,\partial S/\partial r[0] > 0$: the flux runs against its gradient.
+- $J\,\partial S/\partial r[0] > 0$: the flux runs against its gradient;
+- $J$ differs from $-\rho T \max(\kappa_h^\mathrm{mlt}[1], \kappa_h^\mathrm{floor}[0])\,\partial S/\partial r[0]$ by more than $10^{-12}$ relative: any other flux, for example one with the mixing-length part of node 1 dropped.
 
 The tests pass each kind of state through the check, give it a flux that breaks each part, and confirm that the update calls it with the values it used. 2 solver tests make the check fail inside a solve.
 
-**How we know the right answer.** The 3 parts follow from the rule: $\kappa_h[0]$ is at least the floor of node 0, equals $\kappa_h^\mathrm{mlt}[1]$ over a stable gradient, and is never negative.
+**How we know the right answer.** The 4 parts follow from the rule: $\kappa_h[0]$ is at least the floor of node 0, equals $\kappa_h^\mathrm{mlt}[1]$ over a stable gradient, is never negative, and is the larger of the 2 inputs.
 
-**Why it matters.** The solver calls the NumPy update in the energy replay of every call. A call that breaks the rule fails like a refused ledger call: in the NumPy CVODE right-hand side it ends the call, and the solver goes back to the solution held at the call start and raises the error, which names the part.
+**Why it matters.** On the JAX path the check sees the end state of each call; on the NumPy path (scipy, or CVODE without the JAX factory) it also sees every state of the energy replay and of the right-hand side. A call that breaks the rule fails like a refused ledger call: in the NumPy CVODE right-hand side it ends the call, and in the energy replay the solver goes back to the solution held at the call start. The error names the part.
 
 This case has no plot: each test is a single pass or refusal.
 
 ??? info "Test details"
     - Reference: the 3 parts of the rule above.
-    - Tolerance: 1e-12 relative on parts 1 and 2.
-    - Test id: `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_each_broken_part`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_uses_the_threshold`, `tests/test_cmb_eddy_diffusivity.py::test_update_checks_the_invariant`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_keeps_the_last_accepted_state`
+    - Tolerance: 1e-12 relative on parts 1, 2 and 4.
+    - Test id: `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_each_broken_part`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_refuses_a_flux_between_the_bounds`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_passes_round_off_of_the_rule`, `tests/test_cmb_eddy_diffusivity.py::test_invariant_uses_the_threshold`, `tests/test_cmb_eddy_diffusivity.py::test_update_checks_the_invariant`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_in_the_cvode_rhs_reaches_the_caller`, `tests/test_cmb_eddy_diffusivity.py::test_a_flux_fault_keeps_the_last_accepted_state`
     - Command: `pytest tests/test_cmb_eddy_diffusivity.py -k "invariant or fault"`
 
 ## A large planet runs through the state where the copy rule stops
@@ -122,12 +123,12 @@ This case has no plot: each test is a single pass or refusal.
 
 **How we know the right answer.** The copy rule stops here, so it gives the failure to compare with. The energy check of each call gives the pass mark: no call above $10 B$.
 
-**Why it matters.** This is the failure that the CMB node rule removes. Under the copy rule the run cannot pass 6.77 Myr.
+**Why it matters.** This is the failure that the CMB node rule removes. Under the copy rule the run takes no interior step past 6.7697 Myr.
 
 ![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume.svg#only-light){ width="70%" }
 ![CMB heat flux and ledger miss of each call against time, copy rule and CMB node rule, resume of the 8.63 Earth-mass run](../assets/validation/cmb_eddy_flux_case38_resume_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Time runs from the resume. Panel (a) shows the CMB heat flux $F_\mathrm{cmb}$ of each helpfile row. Panel (b) shows $|r|/B$ of each call on a log scale; the dashed line is the refusal limit of 10. The copy rule (squares) has 3 calls above the limit and stops. The CMB node rule (circles) stays near $10^{-9}$ in every call and runs to 6.82 Myr.
+**How to read the plot.** Time runs from the resume. Panel (a) shows the CMB heat flux $F_\mathrm{cmb}$ of each helpfile row. Panel (b) shows $|r|/B$ of each call on a log scale; the dashed line is the refusal limit of 10. The copy rule (squares) has 3 calls above the limit and stops. The CMB node rule (circles) stays at or below $5.2 \times 10^{-9}$ in every call and runs to 6.82 Myr.
 
 ![Difference of the CMB power between the 2 sides of S1 = S0 at every output point of the first calls, copy rule and CMB node rule](../assets/validation/cmb_eddy_flux_case38_sweep.svg#only-light){ width="70%" }
 ![Difference of the CMB power between the 2 sides of S1 = S0 at every output point of the first calls, copy rule and CMB node rule](../assets/validation/cmb_eddy_flux_case38_sweep_dark.svg#only-dark){ width="70%" }
@@ -136,10 +137,10 @@ This case has no plot: each test is a single pass or refusal.
 
 ??? info "Test details"
     - Reference: the copy rule in the same build (versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call.
-    - Tolerance: every call below the bound (measured: at most $|r|/B = 5.2 \times 10^{-9}$ in 14 calls); no helpfile row with a CMB heat below $-10^{25}$ J. Copy rule: 3 calls above $10 B$ (at most 21.1), PROTEUS status 20 (error); CMB node rule: status 13 (completed at the target time).
+    - Tolerance: every call below the bound (measured: at most $|r|/B = 5.2 \times 10^{-9}$ in 14 calls); no helpfile row with a CMB heat below $-10^{25}$ J (the copy rule has none either: it stops before an accepted step). Copy rule: 3 calls above $10 B$ (at most 21.1), PROTEUS status 20 (error); CMB node rule: status 13 (completed at the target time).
     - Step test: copy rule $|\Delta P_\mathrm{cmb}| = 9.105$ to $9.212 \times 10^{16}$ W at a step of $10^{-9}$, and at least $9.105 \times 10^{16}$ W at $10^{-12}$, at all 416 points of 3 calls. CMB node rule: at most $9.8 \times 10^{-4}$ W at $10^{-9}$ (relative $1.2 \times 10^{-15}$) and 0 at $10^{-12}$, at all 544 points of 5 calls.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_case_38_runs_where_the_copy_rule_stops`, `tests/test_cmb_eddy_flux_runs.py::test_case_38_cmb_power_has_no_step_at_s1_equal_s0`
-    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`).
+    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`). The tests of the 4 run cases read these stored runs and do not run the code again, so a change of the code does not fail them.
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py` (add `--validation-plots` to write the plot pairs)
 
 ## An Earth-mass run where node 1 turns stable
@@ -162,7 +163,7 @@ This case has no plot: each test is a single pass or refusal.
 - These are calls with a short peak of the CMB flux inside the call, $2.8 \times 10^4$ to $6.9 \times 10^5$ W m$^{-2}$; 6 of the 8 calls with a peak end between 130 and 350 W m$^{-2}$.
 - All 8 calls with $|r|/B$ above 0.3 have such a peak; the 4 calls without a peak stay below 0.004.
 - The quadrature error of the CMB heat on the stored points is at most 0.01 $B$, so the trapezoid sum of the stored points does not cause the miss.
-- In this state (kind d) the CMB flux is the floor flux $\rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$, so its size follows `kappah_floor`, a numerical setting, not a mixing-length value.
+- In this state (kind d) the CMB node takes its own floor, so the CMB flux is the floor flux $\rho T \kappa_h^\mathrm{floor}[0]\,|\partial S/\partial r[0]|$: at a given CMB gradient it scales with `kappah_floor`, a numerical setting (10 m$^2$ s$^{-1}$ here; no run with another value was made).
 
 **Known limit.** The helpfile flux is the average over a call, and the snapshot of a call holds the node flux at its end. At 31773 yr the call average is 1776 W m$^{-2}$, while the end state sits in a peak, at $7.738 \times 10^4$ W m$^{-2}$ with a CMB gradient of $-4.0 \times 10^{-4}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$.
 
@@ -174,13 +175,13 @@ This case has no plot: each test is a single pass or refusal.
 
 ## An Earth-mass run where the CMB node rule keeps the flux of the copy rule
 
-**Why this check exists.** A rule for one state must not break a run that the copy rule handles. A run of 1 Earth mass with the `constant` mixing length passes through states where a rule without the downward eddy flux over a stable CMB gradient fails.
+**Why this check exists.** A rule for one state must not break a run that the copy rule handles. A run of 1 Earth mass with the `constant` mixing length passes through states where a rule without the downward eddy flux over a stable CMB gradient failed in a probe outside this repository.
 
 **What it tests.** The run is resumed at 37854.6 yr and runs to 38600 yr, under both rules. The test compares the CMB flux and the CMB temperature, and checks the energy check of each call.
 
 **How we know the right answer.** The copy rule closes the energy check in every call here, so the CMB node rule must close it too and stay close to the copy rule.
 
-**Why it matters.** This is a convective CMB state of a normal run, where the CMB node rule should change little.
+**Why it matters.** This is a state of a normal run where the CMB node rule should change little. The first row after the resume carries heat into the core ($-592$ W m$^{-2}$) under both rules.
 
 ![CMB heat flux against time, copy rule and CMB node rule, Earth-mass resume with the constant mixing length](../assets/validation/cmb_eddy_flux_constant_resume.svg#only-light){ width="70%" }
 ![CMB heat flux against time, copy rule and CMB node rule, Earth-mass resume with the constant mixing length](../assets/validation/cmb_eddy_flux_constant_resume_dark.svg#only-dark){ width="70%" }
@@ -216,7 +217,7 @@ This case has no plot: the compared runs are bit-equal, which the table states.
 
 ??? info "Test details"
     - Reference: the copy rule, a second run of it, and the copy rule with the same-value edit (versions in `cmb_eddy_flux_runs_provenance.json`).
-    - Tolerance: 0 differing evaluations; the CMB node rule run bit-equal to the copy rule with the same-value edit.
+    - Tolerance: 0 differing evaluations; the CMB node rule run bit-equal to the copy rule with the same-value edit; each row of the table from the whole stored helpfiles, compared value by value.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_run_from_t0_differs_only_at_the_graph_round_off`
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py`
 

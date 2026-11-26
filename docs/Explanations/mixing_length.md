@@ -72,7 +72,7 @@ The `constant` profile is a uniform fraction of the mantle thickness, `mixing_le
 
 The CMB node takes the mixing-length eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), or its own floor, whichever is larger; see [Heat transport](heat_transport.md#eddy-diffusivity-at-the-cmb-node).
 With `nearest_boundary` the length at that node is the thickness of the bottom cell.
-If that node turns stable, its mixing-length diffusivity is 0, and over an unstable CMB gradient the CMB node keeps only its floor.
+If that node turns stable, its mixing-length diffusivity is 0 (for a positive `eddy_diffusivity_thermal`), and over an unstable CMB gradient the CMB node keeps only its floor.
 That floor is 0 with `kappah_floor = 0`, and in a fully solid cell with the solid rheology on.
 PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 
