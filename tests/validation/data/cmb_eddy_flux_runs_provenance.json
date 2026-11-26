@@ -1,0 +1,66 @@
+{
+ "v4_main": {
+  "run": "case 38 (mass_tot 8.63 Earth masses) resumed at 6.769704 Myr to 6.82 Myr, Habrok job 34901978",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "ce0b4283c38f8ad6058181a50ba5aeab0b3a553f",
+  "sha256_helpfile": "d8c1e8106b629e08dc819db8cf34a2b375e0191d0eae7287bd699fb77766a138",
+  "sha256_log": "be1c33777ad998e27503005962d607d493ea4e5bd31ce86fee1ea81ae02aee11"
+ },
+ "v4_tip": {
+  "run": "case 38 resumed at 6.769704 Myr to 6.82 Myr, Habrok job 34901979",
+  "aragog": "c5778c51066da8991c7d7ccf5f1d2354b2c063d2",
+  "proteus": "ce0b4283c38f8ad6058181a50ba5aeab0b3a553f",
+  "sha256_helpfile": "c221c32b9a407b5b4c7c65d5132aace5878db88493fa21d5890e80f1e954d239",
+  "sha256_log": "cfda64e2d584e55fa68e12422591ff64d472fb02a2da202ca2f83c295a8e79fd"
+ },
+ "v6_main": {
+  "run": "1 Earth mass, constant mixing length, resumed at 37854.6 yr to 38600 yr",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "dbbd614d1a277003550c9c44f33a28ff0c8334959d6d8a3511bc69855ce866be",
+  "sha256_log": "7d06c0c2857df7619ff1873adb30d2640a06eaa05be82fc84c93d8265fe9c6e0"
+ },
+ "v6_tip": {
+  "run": "same",
+  "aragog": "c5778c51066da8991c7d7ccf5f1d2354b2c063d2",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "8f5595365a780ddb536917203788a55c44f97b2041d049325ec5854b02f04e69",
+  "sha256_log": "e44a4b7e95ce216f036270833bf5d4ff905eebcc579653fad4fe87a0ced3c5d2"
+ },
+ "v7_main": {
+  "run": "1 Earth mass, constant mixing length, t = 0 to 5 kyr",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "35539f8e1f6041d32496d02086ae179837f3b362de4da5e2e078c1a75611eda3",
+  "sha256_log": "344cfaf314f0214cf6a09f13cd2a158644317b30e105324b3865ba461e1f5c8b"
+ },
+ "v7_tip": {
+  "run": "same",
+  "aragog": "c5778c51066da8991c7d7ccf5f1d2354b2c063d2",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "cc03a9e9603382d452eac9b137f37ed9b2aa9451b0ef658a54360d8708c45b3e",
+  "sha256_log": "387cbbb14a5d90d8645a470df4768706000d58eb6aad8b9664150ee5f7ddd2ac"
+ },
+ "v7_main_graph": {
+  "run": "same, main with kappa_h[0] = max(kappa_h[1], 0 kh_floor[0]) in compute_mlt (same values, another compiled graph)",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7 + value-neutral edit",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "f6da41dd1f1f2d5d56562e588946d82b0b94fb578c2ed675d92df65b3b83a766",
+  "sha256_log": "c6588d18af3965db23764049f5405831e608084059717b5dffd29459fefa5318"
+ },
+ "v9_main": {
+  "run": "1 Earth mass, nearest-boundary mixing length, resumed at 30169.3 yr to 32500 yr",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "d3f77da3db2b22d4c8eab76f8eecd00944ed6f2c6c92e5923a70b34126df6c03",
+  "sha256_log": "adef45eda3112805f745514b4b8337a24a67b9d21f884c18d11310de3766e9c6"
+ },
+ "v9_tip": {
+  "run": "same",
+  "aragog": "c5778c51066da8991c7d7ccf5f1d2354b2c063d2",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "42cc5b445689d3d162e1b697613837d5a1e333cca3d2c7e96bba11b9586c2c9f",
+  "sha256_log": "0e1fdb433ef6188ad38a4448abd6ee377baf536ef5251df8dc71d8643dccdd03"
+ },
+ "v9_parts_log_sha256": "2aad6a6055082e7f5498cd3146ad0127aa37e6622eed0bf43532764a3c709534"
+}
