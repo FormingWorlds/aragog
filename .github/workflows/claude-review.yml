@@ -446,9 +446,12 @@ jobs:
           STEPS: ${{ toJSON(steps) }}
         run: |
           set -o pipefail
-          last=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
-            --jq '.statuses[] | select(.context == "Claude review")')
-          if [ "$(jq -r .target_url <<<"$last")" != "$RUN_URL" ]; then
+          err=$(mktemp)
+          lookup=''
+          if ! last=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
+            --jq '.statuses[] | select(.context == "Claude review")' 2>"$err"); then
+            lookup="; status lookup failed: $(tail -n 1 "$err")"
+          elif [ "$(jq -r .target_url <<<"$last")" != "$RUN_URL" ]; then
             echo "A newer run owns the status of $HEAD_SHA; nothing to report."
             exit 0
           fi
@@ -461,11 +464,12 @@ jobs:
             post) cause="the decision or post step failed" ;;
             *) cause="the review job failed ($failed)" ;;
           esac
+          cause="$cause$lookup" && cause=${cause:0:107}  # with the retry hint, at most 140
           keep=''
-          if [ "$failed" = post ] && grep -q "^review_decision: Command '" "$RUNNER_TEMP/post_cause.txt" 2>/dev/null; then
+          if [ -z "$lookup" ] && [ "$failed" = post ] && grep -q "^review_decision: Command '" "$RUNNER_TEMP/post_cause.txt" 2>/dev/null; then
             for i in 1 2 3; do
               live=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
-                --jq '.statuses[] | select(.context == "Claude review") | .description')
+                --jq '.statuses[] | select(.context == "Claude review") | .description') || live=''
               if [[ "$live" == "post failed:"* ]]; then keep=1; break; fi
               sleep 2
             done
@@ -554,9 +558,10 @@ jobs:
             fi
           done
           if [ -n "$fail" ]; then
-            owner=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
-              --jq '.statuses[] | select(.context == "Claude review") | .target_url')
-            if [ "$owner" != "$RUN_URL" ]; then
+            if ! owner=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status?per_page=100" \
+              --jq '.statuses[] | select(.context == "Claude review") | .target_url' 2>"$err"); then
+              fail="$fail; status lookup failed: $(tail -n 1 "$err")"
+            elif [ "$owner" != "$RUN_URL" ]; then
               echo "A newer run owns the status of $HEAD_SHA; not reported: $fail"
               exit 1
             fi
