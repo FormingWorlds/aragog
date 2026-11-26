@@ -1197,6 +1197,8 @@ if any('/status?' in a for a in args):
         sys.exit(1)
     sys.stdout.write(_page(os.environ.get('OWN_URL', os.environ['RUN_URL'])))
     sys.exit(0)
+if '--slurp' in args and os.environ.get('REVIEWS_FAILS'):
+    sys.exit(1)
 print(os.environ.get('APPROVALS', '[[]]') if '--slurp' in args else '[[]]')
 """
 )
@@ -1258,6 +1260,12 @@ def test_a_failed_status_post_is_retried_and_the_approvals_are_still_dismissed(
     )
     p, ids, _ = _writes(calls)
     assert len(p) == posts and ids == ['7']
+    assert (tmp_path / 'sleeps').read_text().count('x') == posts - 1
+
+
+def test_a_failed_approval_lookup_fails_the_report_after_the_status_post(tmp_path):
+    calls = _run_report(tmp_path, None, 1, REVIEWS_FAILS='1')
+    assert len(_writes(calls)[0]) == 1
 
 
 def test_a_failed_dismissal_does_not_stop_the_later_ones(tmp_path):
