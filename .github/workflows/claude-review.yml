@@ -330,7 +330,7 @@ jobs:
             --add-dir ${{ runner.temp }}/review_in
             --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --tools Read
-            --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit"
+            --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit,Grep,Glob,LS,LSP,NotebookRead"
             --json-schema '{"type":"object","properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["important","pre_existing","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"}},"required":["severity","path","line","title","body"]}},"fixed":{"type":"array","items":{"type":"string"}}},"required":["summary","findings","fixed"]}'
 
       - name: Check the tools of the find pass
@@ -391,7 +391,7 @@ jobs:
             --add-dir ${{ runner.temp }}/review_in
             --allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"
             --tools Read
-            --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit"
+            --disallowedTools "Bash,Task,WebFetch,WebSearch,Skill,Workflow,ToolSearch,CronCreate,CronDelete,CronList,RemoteTrigger,SendMessage,PushNotification,PublishPlugin,ShareOnboardingGuide,Monitor,EnterWorktree,ExitWorktree,DesignSync,ListAgents,ScheduleWakeup,TaskStop,ReportFindings,Edit,Write,NotebookEdit,Grep,Glob,LS,LSP,NotebookRead"
             --json-schema '{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["id","verified","reason"]}},"fixed":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"verified":{"type":"boolean"},"reason":{"type":"string"}},"required":["key","verified","reason"]}}},"required":["verdicts","fixed"]}'
 
       - name: Check the tools of the verify pass
