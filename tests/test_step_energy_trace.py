@@ -162,6 +162,31 @@ def test_an_error_of_the_node_stream_is_raised_after_the_solve():
 
 
 @pytest.mark.unit
+def test_a_node_stream_error_in_a_root_call_stops_the_solve_at_that_call():
+    """A sink that raises once, on its 3rd node inside the CVODE root function, and then takes
+    nodes again: the call raises that KeyError when CVODE returns, and no later node reaches
+    the sink, neither from a later root call nor from the end of the call."""
+
+    class Once(es.ListSink):
+        def __init__(self):
+            super().__init__()
+            self.tries, self.raised = 0, False
+
+        def add(self, t, y):
+            self.tries += 1
+            if len(self.t) == 2 and not self.raised:
+                self.raised = True
+                raise KeyError('injected')
+            super().add(t, y)
+
+    sink = Once()
+    with pytest.raises(KeyError, match='injected'):
+        _solve(n_out=11, nodes=sink)
+    assert sink.raised and sink.tries == 3 and len(sink.t) == 2
+    assert sink.t[0] == 0.0 and 0.0 < sink.t[1] < 0.1  # the start node and 1 root-call node
+
+
+@pytest.mark.unit
 def test_a_failed_call_passes_no_node_past_its_returned_end():
     """With 30 steps per output interval of 0.1 and steps of at most 0.01, CVODE stops before
     t = 1: the root function saw steps past the last returned output time, and none of them
