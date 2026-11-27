@@ -55,6 +55,7 @@ RUNS = {
     'basal3000_tip': -1.0,
     'basal3000_main': -1.0,
     'basal750_tip_r10': -1.0,
+    'basal750_tip_rerun': -1.0,
 }
 # runs whose CMB node states are stored from their snapshots, in the window [yr]
 SNAP_RUNS = (

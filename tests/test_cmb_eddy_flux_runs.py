@@ -399,13 +399,19 @@ def _low_flux(runs, key):
     stored snapshots whose own helpfile row is below, and F_cmb of the row of each snapshot."""
     r = _rows(runs, key)
     below = r['F_cmb'] < 1.0
-    edges = np.flatnonzero(np.diff(np.r_[0, below.astype(int), 0]))
-    spans = [(r['Time'][i0], r['Time'][i1]) for i0, i1 in zip(edges[::2], edges[1::2])]
+    spans = _spans(r)
     # snapshot names carry the time to 3 decimals: match each to its nearest row
     st = runs[f'{key}/snap_t']
     j = np.abs(r['Time'][:, None] - st[None, :]).argmin(axis=0)
     assert np.all(np.abs(r['Time'][j] - st) < 1.0e-3), key  # every snapshot has its row
     return spans, below[j], r['F_cmb'][j]
+
+
+def _spans(r):
+    """Intervals of helpfile rows ``r`` with F_cmb < 1 W m^-2, as (first row below, first row
+    back above)."""
+    edges = np.flatnonzero(np.diff(np.r_[0, (r['F_cmb'] < 1.0).astype(int), 0]))
+    return [(r['Time'][i0], r['Time'][i1]) for i0, i1 in zip(edges[::2], edges[1::2])]
 
 
 def _last_disagreement(runs, case):
@@ -649,6 +655,39 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
     assert st[after][0] == pytest.approx(63632.1, abs=0.05)
     assert np.all(runs[f'{key}/snap_dSdr0'][after] < 0.0)
     assert np.all(runs[f'{key}/snap_dSdr1'][after] < 0.0)
+
+
+def test_basal_mush_layer_run_repeats_on_this_source(runs):
+    """The 750 m rule run at rtol 1e-8, repeated from t = 0 to 70 kyr on this source: its rows equal
+    those of the stored run to 59939.2 yr, across its own resume at 42.8 kyr. The stored run stops
+    at 60 kyr and continues from its state there, the repeat does not: from that time the call
+    times differ, and the low-flux interval ends at 62950.0 yr, against 63338.1 yr."""
+    rule, rep = 'basal750_tip', 'basal750_tip_rerun'
+    rb = np.abs(runs[f'{rep}/ledger_rB'])
+    assert int(runs[f'{rep}/status']) == STATUS_TARGET_TIME
+    assert runs[f'{rep}/Time'][-1] == 70000.0
+    assert float(runs[f'{rep}/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
+    assert int(runs[f'{rep}/rtol_retries']) == 0
+    assert rb.size == 209 and _quoted(rb.max(), 4) == 0.9942 and np.sum(rb > 1.0) == 0
+    prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
+    assert prov[rep]['aragog'].startswith('af8bb2f5') and prov[rule]['aragog'].startswith(
+        '2268ce2e'
+    )
+    assert len(prov[rep]['sha256_log']) == 2
+    ta, tr = runs[f'{rule}/Time'], runs[f'{rep}/Time']
+    k = int(np.sum(tr <= 59939.2))
+    assert k == 196 and np.array_equal(ta[:k], tr[:k])
+    for c in ('T_cmb', 'T_cmb_node'):
+        assert np.array_equal(runs[f'{rule}/{c}'][:k], runs[f'{rep}/{c}'][:k]), c
+    f_a, f_r = runs[f'{rule}/F_cmb'][:k], runs[f'{rep}/F_cmb'][:k]
+    assert np.max(np.abs(f_r / f_a - 1.0)) < 1.0e-15
+    n_led = int(np.sum(runs[f'{rep}/ledger_t1'] <= 59939.2))
+    assert n_led == 192
+    assert np.array_equal(runs[f'{rule}/ledger_t1'][:n_led], runs[f'{rep}/ledger_t1'][:n_led])
+    # the stored run's first job ends its last call at the stop time of 60 kyr
+    assert ta[k] == 60000.0 and tr[k] == pytest.approx(60542.1, abs=0.05)
+    spans = _spans(_rows(runs, rep))
+    assert len(spans) == 1 and list(spans[0]) == pytest.approx([14788.5, 62950.0], abs=0.05)
 
 
 def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):

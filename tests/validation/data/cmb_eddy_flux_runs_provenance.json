@@ -146,6 +146,16 @@
   ],
   "sha256_snapshots": "d78a2c261556b0dcfe7edfad136ae7dad1c72412ad224a1331bf81c28db8cd24"
  },
+ "basal750_tip_rerun": {
+  "run": "as basal750_tip, t = 0 to 70 kyr (0 to 42.8 kyr, then resumed from its 42.8 kyr state), aragog rtol 1e-8",
+  "aragog": "af8bb2f569f652868ab92f362282ab102a25528c",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "6639a99294d3724ccf07cb5e2c650016b884fe9b044e70979de38ec005dabcdd",
+  "sha256_log": [
+   "698f875e39ddef51b1cc6498a0f13d34643dcfdf7922e9c043b41b9d1312a3ac",
+   "6317f1371894dcd219d262cbe27cebf8299e14d85bee3501f42e25d601532f3e"
+  ]
+ },
  "v9x_copy": {
   "run": "the #113 case from t = 0 to 140 kyr under the copy rule (its rows 30169.3 to 60000 yr are kept)",
   "aragog": "26.11.8.post1.dev3+gbfb122428",
