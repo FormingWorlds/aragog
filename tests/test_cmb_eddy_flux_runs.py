@@ -434,6 +434,13 @@ def _check_calls(runs, key, n_calls, top, t_end=140000.0, rtol=1.0e-8, retries=0
     assert rb.size == n_calls and _quoted(rb.max(), 4) == top and np.sum(rb > 1.0) == 0
 
 
+def _check_unresolved(g0, no_kh, low, high):
+    """Copy rule: the CMB gradient g0 is at least ``low`` in size where the CMB node has no eddy
+    diffusivity, and at most ``high``, below atol 1e-8, in every other snapshot."""
+    assert _quoted(np.abs(g0[no_kh]).min(), 2) == low
+    assert _quoted(np.abs(g0[~no_kh]).max(), 2) == high and high < 1.0e-8
+
+
 def _flux_figure(r, rc, yticks):
     """F_cmb (log, with the 1 W m^-2 line) and T_cmb of the CMB node rule r and the copy rule rc."""
     import matplotlib.pyplot as plt
@@ -562,6 +569,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     no_kh = runs[f'{copy}/snap_kh0'][mc] == 0.0
     assert int(np.sum(no_kh)) == 54
     assert np.array_equal(no_kh, runs[f'{copy}/snap_dSdr1'][mc] > 0.0)
+    _check_unresolved(runs[f'{copy}/snap_dSdr0'][mc], no_kh, 1.0e-6, 2.9e-9)
     rc = _rows(runs, copy)
     dc = rc['T_cmb'] - rc['T_cmb_node']
     assert dc.min() == pytest.approx(-923.5, abs=0.05)
@@ -732,6 +740,7 @@ def test_copy_rule_at_rtol_1e_10_leaves_the_cmb_node_without_eddy_diffusivity(ru
     no_kh = runs[f'{key}/snap_kh0'][m] == 0.0
     assert int(np.sum(no_kh)) == 79
     assert np.array_equal(no_kh, runs[f'{key}/snap_dSdr1'][m] > 0.0)
+    _check_unresolved(runs[f'{key}/snap_dSdr0'][m], no_kh, 6.8e-6, 2.3e-9)
     st = runs[f'{key}/snap_t']
     assert st.size == 110 and np.all(runs[f'{key}/snap_n_stable'] == 0.0)
     assert st[-1] == pytest.approx(runs[f'{key}/Time'][-1], abs=1.0e-3)
