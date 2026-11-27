@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as _np
 
+from aragog.core._pytree import register_pytree
 from aragog.core.profiles import GaussianCoreProfiles
 
 jax.config.update('jax_enable_x64', True)
@@ -40,6 +41,7 @@ def _geometric_faces(r_base: float, r_top: float, n: int, d_top: float) -> _np.n
     return r_top - _np.concatenate([[0.0], _np.cumsum(widths)])[::-1]
 
 
+@register_pytree
 class CoreShell:
     """Finite-volume shell ``r_sh <= r <= r_cmb`` over the convecting core.
 

@@ -305,3 +305,13 @@ def test_build_core_module_budget_fits_profile_from_structure():
     budget_explicit = build_core_module_budget(explicit, r_cmb=3480e3, p_cmb_fallback=136e9)
     assert budget_explicit.profiles.rho_cen == pytest.approx(11000.0)
     assert budget_explicit.profiles.length_scale == pytest.approx(8000e3)
+
+
+def test_a_second_core_module_of_one_form_compiles_nothing():
+    """The RK4 rate of a CoreModule is the program shared by the budgets of one form, so a
+    module on a budget with other values compiles nothing."""
+    from tests.test_core_budget_pytree import _compiles
+
+    CoreModule(_alloy_budget(), t_cmb=4000.0, n_substeps=4).step(30e12, 1e4 * YEAR)
+    second = CoreModule(_alloy_budget(ds_fusion=171.0), t_cmb=4000.0, n_substeps=4)
+    assert _compiles(lambda: second.step(30e12, 1e4 * YEAR)) == 0

@@ -31,6 +31,8 @@ from jax.scipy.special import erf
 from scipy import constants as sp_constants
 from scipy.optimize import minimize_scalar, root_scalar
 
+from aragog.core._pytree import register_pytree
+
 jax.config.update('jax_enable_x64', True)
 
 G = sp_constants.G
@@ -44,6 +46,7 @@ _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
 
+@register_pytree
 class GaussianCoreProfiles:
     """Radial density, mass, gravity, pressure, and adiabat of the core.
 

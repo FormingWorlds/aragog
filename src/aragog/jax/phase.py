@@ -127,7 +127,7 @@ class PhaseParams(eqx.Module):
     # SPIDER -matprop_smooth_width: tanh blend width for the
     # mixed-vs-single phase blend. 0.0 = sharp (smth=1 inside [0,1]),
     # 0.01 = production setting.
-    matprop_smooth_width: float
+    matprop_smooth_width: float = eqx.field(static=True)
 
     # Transport flags (stored as float for JAX tracing: 1.0 = on, 0.0 = off)
     conduction: float
