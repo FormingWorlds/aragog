@@ -72,6 +72,10 @@ SNAP_COLUMNS = (
     'S_above',
     'T0',
     'T_above',
+    'Ftot0',
+    'Jcond0',
+    'kh_layer_max',
+    'Jgrav_layer_max',
 )
 # runs that print the in-call CMB flux of each call in their own log
 PARTS_OWN = ('v9x_tip', 'v9x_tip_r9', 'v9x_tip_r10')
@@ -121,7 +125,11 @@ def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
 
     ``n_stable`` counts the nodes with dS/dr > 0 up from node 0, ``top_km`` is the height of the
     last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that node
-    (cell 0 when node 0 is unstable). Also returns the sha256 of the snapshot files read.
+    (cell 0 when node 0 is unstable). ``Ftot0`` and ``Jcond0`` are the total and the conductive
+    flux of node 0; ``kh_layer_max`` and ``Jgrav_layer_max`` the largest eddy diffusivity and the
+    largest |gravitational separation flux| over the stable nodes (NaN without one). Raises
+    ValueError for a snapshot with a gradient that is not finite. Also returns the sha256 of the
+    snapshot files read.
     """
     import netCDF4
 
@@ -136,6 +144,11 @@ def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
         with netCDF4.Dataset(f) as ds:
             g, kh, phi = (np.ravel(ds[v][:]) for v in ('dSdr_b', 'eddy_diff_b', 'phi_basic_b'))
             s, temp, rb = (np.ravel(ds[v][:]) for v in ('entropy_s', 'temp_s', 'radius_b'))
+            ftot, jcond, jgrav = (
+                np.ravel(ds[v][:]) for v in ('Ftotal_b', 'Jcond_b', 'Jgrav_b')
+            )
+        if not np.all(np.isfinite(g)):
+            raise ValueError(f'{f}: dSdr_b is not finite')
         n = int(np.argmax(g <= 0.0)) if np.any(g <= 0.0) else g.size
         k = max(n - 1, 0)
         top = rb[n - 1] - rb[0] if n else 0.0  # radius_b is in km
@@ -154,6 +167,10 @@ def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
                 s[k],
                 temp[0],
                 temp[k],
+                ftot[0],
+                jcond[0],
+                kh[:n].max() if n else np.nan,
+                np.abs(jgrav[:n]).max() if n else np.nan,
             ]
         )
     return np.array(rows), sha.hexdigest()
