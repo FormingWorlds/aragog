@@ -163,6 +163,10 @@ class CMBClosureError(RuntimeError):
 
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
+# Entropy intervals of the lid enthalpy table below the solidus, in the melt band and above it;
+# the JAX table is padded to the most knots the slice below the solidus holds.
+_LID_TABLE_COUNTS = (2048, 512, 2048)
+LID_TABLE_KNOTS = _LID_TABLE_COUNTS[0] + 1
 _CALL_START = object()  # solve() reads the call-start solution itself
 _EOS_DOMAIN_BLOCK = 4096  # states per table pass of the EOS domain check (bounds its memory)
 
@@ -2501,7 +2505,7 @@ class EntropySolver:
         # the params and the CMB radius comes from the mesh, so the geometries agree.
         if 'core_module' in (getattr(self, '_core_bc', None), getattr(bc, 'core_bc', None)):
             try:
-                import jax
+                import jax  # noqa: F401
             except ImportError as err:
                 raise ImportError(
                     "core_bc = 'core_module' needs JAX; install it with "
@@ -2524,8 +2528,7 @@ class EntropySolver:
             if getattr(self, '_core_module_key', None) != key:
                 budget = build_core_module_budget(params, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
                 self._core_module_budget, self._core_module_key = budget, key
-                rate = budget.core_rates if budget.stratification else budget.dtcmb_dt
-                self._core_module_budget_rate = jax.jit(rate)
+                self._core_module_budget_rate = budget.rate
                 if budget.tabulated:
                     logger.info(
                         'Aragog core_module tabulated profile: %d nodes, M_core=%.4e kg, '
@@ -3527,7 +3530,7 @@ class EntropySolver:
             return _lid.LidEnthalpy.linear(p.rho, p.cp, 0.0, 0.0)
         eos, P = self.entropy_eos, self._lid_P
         edges = (float(eos.S_min), self._lid_S_sol, self._lid_S_liq, float(eos.S_max))
-        counts = (2048, 512, 2048)  # intervals below the solidus, in the melt band, above it
+        counts = _LID_TABLE_COUNTS
         S = np.unique(
             np.concatenate(
                 [np.linspace(a, b, n + 1) for a, b, n in zip(edges, edges[1:], counts)]
@@ -3582,7 +3585,7 @@ class EntropySolver:
             open_kw = dict(open_on=1.0, open_L=L, open_Fp=Fp, open_G=G, open_Gl=Gl)
             open_kw['open_T_m0'] = self._lid_open_T_m0()
         return jl.LidParams(
-            e=jl.enthalpy(self._lid_hv),
+            e=jl.enthalpy(self._lid_hv, size=LID_TABLE_KNOTS),
             hs=jl.enthalpy(hs),
             P=self._lid_P,
             S_sol=self._lid_S_sol,
@@ -7043,20 +7046,15 @@ class EntropySolver:
                 return budget.effective_capacity(t, gravitational_upper=upper)
 
             try:
-                fn = getattr(budget, '_vmap_effective_capacity', None)
-                if fn is None:
-                    fn = budget._vmap_effective_capacity = jax.jit(jax.vmap(c_eff))
-                c_eff_vals = _padded_call(fn, t_core, base)
+                c_eff_vals = _padded_call(budget.capacity_upper_batch, t_core, base)
             except Exception:
                 c_eff_vals = np.array([float(c_eff(*map(float, a))) for a in zip(t_core, base)])
             self._check_shell_base(budget, t_core, base)
             shell_heat = float(shell.heat_change(d_arr[n + 2 : n + 2 + shell.n_cells, -1]))
             heat = np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * np.diff(d_arr[n + 1]))
             return float(heat) + shell_heat, c_eff_vals
-        fn = getattr(budget, '_vmap_capacity', None)
-        if fn is None:
-            fn = budget._vmap_capacity = jax.jit(jax.vmap(budget.effective_capacity))
-        return budget.heat_change(t_core[0], d_arr[n + 1, -1]), _padded_call(fn, t_core)
+        capacity = _padded_call(budget.capacity_batch, t_core)
+        return budget.heat_change(t_core[0], d_arr[n + 1, -1]), capacity
 
     def _core_heat_tolerance(self, d_core, c_eff_vals) -> float:
         """Error scale [J] of the core heat change of a call from the T_core error control.
@@ -7249,7 +7247,11 @@ class EntropySolver:
 
     def _check_shell_base(self, budget, t_core, layer_base) -> None:
         """Refuse an inner core that reaches the shell base, and warn once when the layer base
-        comes within three cells of it, where the shell no longer holds the layer."""
+        comes within three cells of it, where the shell no longer holds the layer. The check
+        sees the accepted states of a call, so a non-finite core temperature is refused."""
+        bad = int(np.sum(~np.isfinite(t_core)))
+        if bad:
+            raise ValueError(f'core_module: non-finite core temperature at {bad} of the nodes')
         shell = budget.shell
         r_icb = float(np.max(_padded_call(budget.r_icb_batch, t_core)))
         if r_icb >= shell.r_base:

@@ -12,7 +12,7 @@ of the isothermal-reservoir factor. The contract clauses exercised here:
   integrator precision, component by component, including both boundary
   slots (the check that keeps CVODE's Newton iteration consistent);
 - the analytic Jacobian is finite and carries the boundary couplings
-  the FD path resolves (the custom JVP through the inner-core bisection
+  the FD path resolves (the custom JVP through the inner-core root search
   must survive ``jacrev``).
 """
 
@@ -202,6 +202,25 @@ def _build_jax_pieces(solver):
         else float(solver._core_module_ra_crit_cmb),
     )
     return args
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_the_rhs_gives_the_same_rates_without_jit():
+    """With jit off (jax.disable_jit, JAX_DISABLE_JIT) the core_module RHS runs eagerly on the
+    driven state and gives the rates of the default call, the core cooling slot included."""
+    solver = _build_numpy_solver(entropy_eos_copy(identity_alpha=True))
+    args = _build_jax_pieces(solver)
+    y = np.asarray(solver._S0, dtype=float)
+    y[solver._n_stag + 1] += 50.0
+    f_on = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), args))
+    try:
+        with jax.disable_jit():
+            f_off = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), args))
+    except RecursionError as exc:
+        pytest.fail(f'the core_module RHS recursed with jit off: {exc}')
+    assert np.all(np.isfinite(f_on)) and f_on[solver._n_stag + 1] < 0.0
+    np.testing.assert_allclose(f_off, f_on, rtol=1e-12, atol=0.0)
 
 
 @pytest.mark.smoke

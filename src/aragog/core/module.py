@@ -384,12 +384,9 @@ class CoreModule:
         self.last_times: jnp.ndarray | None = None
         self.last_t_cmb: jnp.ndarray | None = None
         self.last_q_cmb: jnp.ndarray | None = None
-        # One compiled RHS per instance (RK4 calls it hundreds of times per step); q_radio
-        # is a traced argument, since jit freezes closed-over values at the first trace
-        # and a later change of the attribute would keep the old power.
-        self._rhs = jax.jit(
-            lambda temp, q, q_radio: self.budget.dtcmb_dt(temp, q, q_sources=q_radio)
-        )
+        # The rate compiled once per budget form (RK4 calls it hundreds of times per step);
+        # q_radio is an argument, so a later change of the attribute reaches it.
+        self._rhs = self.budget.rate
 
     def step(self, q_cmb: float, dt: float, q_cmb_end: float | None = None) -> float:
         """Advance ``T_cmb`` over ``dt`` seconds of heat flow ``q_cmb`` [W].
