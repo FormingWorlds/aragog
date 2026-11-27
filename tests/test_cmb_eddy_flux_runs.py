@@ -420,17 +420,17 @@ def _last_disagreement(runs, case):
     a, b = (_rows(runs, k) for k in BASAL[case])
     g = np.linspace(0.0, 140000.0, 14001)
     d = np.abs(np.interp(g, a['Time'], a['T_cmb']) - np.interp(g, b['Time'], b['T_cmb']))
-    return g[np.flatnonzero(d >= 1.0)[-1]], g, d
+    return g[np.flatnonzero(d >= 1.0)[-1]]
 
 
-def _check_calls(runs, key, n_calls, top):
-    """The run ends at 140 kyr with the target-time status, rtol 1e-8 with no retry at a looser
-    rtol and n_calls ledger calls, all inside the bound; the largest |r|/B rounds to top."""
+def _check_calls(runs, key, n_calls, top, t_end=140000.0, rtol=1.0e-8, retries=0):
+    """The run ends at t_end with the target-time status, at rtol with that many retries of a
+    call and n_calls ledger calls, all inside the bound; the largest |r|/B rounds to top."""
     rb = np.abs(runs[f'{key}/ledger_rB'])
     assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
-    assert runs[f'{key}/Time'][-1] == 140000.0
-    assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
-    assert int(runs[f'{key}/rtol_retries']) == 0
+    assert runs[f'{key}/Time'][-1] == t_end
+    assert float(runs[f'{key}/rtol']) == pytest.approx(rtol, rel=1e-12)
+    assert runs[f'{key}/retry_t'].size == retries
     assert rb.size == n_calls and _quoted(rb.max(), 4) == top and np.sum(rb > 1.0) == 0
 
 
@@ -458,9 +458,9 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
 ):
     """The #113 case with a 750 m CMB cell, t = 0 to 140 kyr: under the CMB node rule a stable
     layer of 3 to 8 nodes holds F_cmb near 1e-3 W m^-2 from 14788.5 to 63338.1 yr while T_cmb stays
-    at 4789.2 K. The entropy of the lowest cell stays constant while the entropy at the top of the
-    layer falls to it; then the layer ends. After it the 2 rules differ by at most 2.99 K,
-    and by less than 1 K after 93.9 kyr."""
+    at 4789.2 K. The entropy of the lowest cell rises by 0.05 J kg^-1 K^-1 while the entropy at the
+    top of the layer falls to it; then the layer ends. From the row at 63338.1 yr the 2 rules
+    differ by at most 3.01 K, and by less than 1 K after 93.9 kyr."""
     rule, copy = BASAL[750]
     _check_calls(runs, rule, 424, 0.9942)
     _check_calls(runs, copy, 423, 0.9941)
@@ -491,6 +491,11 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert int(np.sum(m)) == 95
     snap = {c: runs[f'{rule}/snap_{c}'][m] for c in ('dSdr0', 'dSdr1', 'kh0', 'kh1', 'phi0')}
     assert np.all(snap['dSdr0'] > 0.0) and np.all(snap['dSdr1'] > 0.0)
+    assert [_quoted(snap['dSdr0'].min(), 2), _quoted(snap['dSdr1'].min(), 2)] == [
+        5.9e-7,
+        4.9e-7,
+    ]
+    assert [int(np.sum(np.abs(snap[g]) < 1.0e-5)) for g in ('dSdr0', 'dSdr1')] == [30, 7]
     assert np.all(snap['kh0'] == 0.0) and np.all(snap['kh1'] == 0.0)
     assert np.all(runs[f'{rule}/snap_kh_layer_max'][m] == 0.0)  # every stable node
     assert np.all(np.abs(snap['phi0'] - 0.350) < 5.0e-4)
@@ -526,22 +531,17 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     s0, s_top = runs[f'{rule}/snap_S0'][m], runs[f'{rule}/snap_S_above'][m]
     assert [round(float(s0.min()), 2), round(float(s0.max()), 2)] == [5503.78, 5503.84]
     d_s0 = np.diff(s0)
-    assert [
-        _quoted(d_s0.min(), 2),
-        _quoted(d_s0.max(), 2),
-        round(float(s0[-1] - s0[0]), 2),
-    ] == [
-        6.4e-5,
-        1.5e-3,
-        0.05,
-    ]
+    assert [_quoted(d_s0.min(), 2), _quoted(d_s0.max(), 2)] == [6.4e-5, 1.5e-3]
+    assert round(float(s0[-1] - s0[0]), 2) == 0.05
     assert [round(float(s_top[0]), 0), round(float(s_top[-1]), 1)] == [7018.0, 5508.5]
     ds = s_top - s0
     dt = (runs[f'{rule}/snap_T_above'] - runs[f'{rule}/snap_T0'])[m]
     assert np.all(np.diff(ds) < 0.0) and int(np.sum(np.diff(ds) > -1.0e-3)) == 20
     assert [_quoted(ds[0], 4), _quoted(ds[-1], 2)] == [1514.0, 4.6]
     plateau = (st[m] >= 22000.0) & (st[m] <= 42400.0)
+    assert np.all(n[plateau] == 5)  # the top node of the layer
     assert [round(float(ds[plateau].min())), round(float(ds[plateau].max()))] == [869, 876]
+    assert [round(float(ds[plateau][0]), 1), round(float(ds[plateau][-1]), 1)] == [876.3, 869.3]
     assert [_quoted(dt[0], 3), _quoted(dt[-1], 1)] == [260.0, 0.06]
     assert int(np.sum(np.diff(dt) > 0.0)) == 1  # the temperature step rises once
     assert int(np.sum((np.diff(dt) <= 0.0) & (np.diff(dt) > -1.0e-3))) == 23
@@ -551,9 +551,9 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert t_last == pytest.approx(62736.9, abs=0.05)
     nxt = int(np.flatnonzero(st > t_last)[0])
     assert st[nxt] == pytest.approx(63338.1, abs=0.05) and round(st[nxt] - t_last) == 601
-    assert runs[f'{rule}/snap_dSdr0'][nxt] < 0.0 and runs[f'{rule}/snap_kh0'][nxt] > 0.0
-    assert np.all(runs[f'{rule}/snap_dSdr0'][st > t_last] < 0.0)
-    assert np.all(runs[f'{rule}/snap_dSdr1'][st > t_last] < 0.0)
+    for c in ('dSdr0', 'dSdr1'):
+        assert np.all(runs[f'{rule}/snap_{c}'][st > t_last] < 0.0), c
+    assert np.all(runs[f'{rule}/snap_kh0'][st > t_last] > 0.0)
     # the copy rule: an unstable CMB node, without eddy diffusivity in 54 of 61 snapshots
     spans_c, mc, _ = _low_flux(runs, copy)
     assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(14684.1, abs=0.05)
@@ -577,13 +577,12 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
         -0.17,
     ]
     # after the layer: the 2 rules converge
-    last, _, _ = _last_disagreement(runs, 750)
-    assert last == pytest.approx(93860.0, abs=10.0)
-    # after the layer: each rule row after 63338.1 yr against the copy rule between its 2 rows
-    after = r['Time'] > 63338.1
+    assert _last_disagreement(runs, 750) == pytest.approx(93860.0, abs=10.0)
+    # after the layer: each rule row from the first back above 1 W m^-2 against the copy rule
+    after = r['Time'] >= spans[0][1]
     diff = np.abs(r['T_cmb'][after] - np.interp(r['Time'][after], rc['Time'], rc['T_cmb']))
-    assert r['Time'][after][0] == pytest.approx(63938.8, abs=0.05)
-    assert _quoted(diff.max(), 3) == 2.99 and int(np.argmax(diff)) == 0
+    assert r['Time'][after][0] == pytest.approx(63338.1, abs=0.05)
+    assert _quoted(diff.max(), 3) == 3.01 and int(np.argmax(diff)) == 0
     assert [round(float(x['T_cmb'][-1]), 2) for x in (r, rc)] == [4586.46, 4586.86]
 
     def layer():
@@ -612,17 +611,18 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
 
 
 def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
-    """The 750 m case under the CMB node rule at rtol 1e-10 on this source, t = 0 to 70 kyr: the
-    layer holds F_cmb near 1e-3 W m^-2 from 14788.2 to 63632.1 yr with 3 to 5 stable nodes. S0
-    rises and both steps fall between every 2 snapshots, with 2 near-flat pairs each and no rise
-    of the temperature step; the entropy step has no plateau at 22 to 42.4 kyr."""
+    """The 750 m case under the CMB node rule at rtol 1e-10 with aragog af8bb2f5, t = 0 to 70 kyr:
+    the layer holds F_cmb near 1e-3 W m^-2 from 14788.2 to 63632.1 yr with 3 to 5 stable nodes,
+    its top at node 4 in 91 of 100 snapshots. S0 rises and both steps fall between every 2
+    snapshots, with 2 near-flat pairs each and no rise of the temperature step; with the top at
+    node 4 the entropy step falls from 971.9 to 964.1 J kg^-1 K^-1 from 22.3 to 40.0 kyr."""
     key = 'basal750_tip_r10'
-    rb = np.abs(runs[f'{key}/ledger_rB'])
-    assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
-    assert runs[f'{key}/Time'][-1] == 70000.0
-    assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-10, rel=1e-12)
-    assert int(runs[f'{key}/rtol_retries']) == 2  # 2 calls reached mxstep, retried at 2e-10
-    assert rb.size == 217 and _quoted(rb.max(), 4) == 0.9995 and np.sum(rb > 1.0) == 0
+    _check_calls(runs, key, 217, 0.9995, 70000.0, 1.0e-10, 11)
+    # 2 calls retried at a looser rtol, 5 with half the step and a larger atol (9 retries)
+    kind, t_r = runs[f'{key}/retry_kind'], runs[f'{key}/retry_t']
+    assert list(kind) == [0] + [1] * 9 + [0] and list(t_r[kind == 0]) == [14230.0, 44470.0]
+    assert list(np.unique(t_r[kind == 1])) == [29790.0, 29920.0, 30210.0, 31790.0, 32070.0]
+    assert set(runs[f'{key}/retry_atol_sf'][kind == 1]) == {3.0, 5.0}
     prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
     assert prov[key]['aragog'].startswith('af8bb2f5') and len(prov[key]['sha256_log']) == 2
     spans, m, _ = _low_flux(runs, key)
@@ -638,9 +638,13 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
     g0, g1 = runs[f'{key}/snap_dSdr0'][m], runs[f'{key}/snap_dSdr1'][m]
     assert np.all(g0 > 0.0) and np.all(g1 > 0.0)
     assert [int(np.sum(np.abs(g) < 1.0e-5)) for g in (g0, g1)] == [30, 7]
+    assert [_quoted(g0.min(), 2), _quoted(g1.min(), 2)] == [3.5e-7, 4.5e-7]
+    # the snapshots of the calls with the larger atol
+    w = (st >= 29700.0) & (st <= 32300.0)
+    assert int(np.sum(w)) == 13 and _quoted(runs[f'{key}/snap_dSdr0'][w].min(), 2) == 1.5e-5
     assert np.all(runs[f'{key}/snap_kh0'][m] == 0.0)
     n, top_km = runs[f'{key}/snap_n_stable'][m], runs[f'{key}/snap_top_km'][m]
-    assert [int(n.min()), int(n.max())] == [3, 5]
+    assert [int(n.min()), int(n.max())] == [3, 5] and int(np.sum(n == 4)) == 91
     assert [_quoted(top_km.min(), 3), _quoted(top_km.max(), 3)] == [1.56, 3.41]
     s0 = runs[f'{key}/snap_S0'][m]
     ds = runs[f'{key}/snap_S_above'][m] - s0
@@ -650,25 +654,28 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
     assert np.all(np.diff(dt) < 0.0) and int(np.sum(np.diff(dt) > -1.0e-3)) == 2
     plateau = (st[m] >= 22000.0) & (st[m] <= 42400.0)
     assert [round(float(ds[plateau].min())), round(float(ds[plateau].max()))] == [890, 972]
-    # after the layer, nodes 0 and 1 are unstable in every snapshot
+    four = (st[m] >= 22000.0) & (st[m] <= 40000.0)
+    assert np.all(n[four] == 4)
+    assert [round(float(ds[four][0]), 1), round(float(ds[four][-1]), 1)] == [971.9, 964.1]
+    # the row of the 1-row interval has 2.77 W m^-2 at rtol 1e-8
+    r8 = _rows(runs, 'basal750_tip')
+    assert _quoted(float(r8['F_cmb'][np.argmin(np.abs(r8['Time'] - 9754.3))]), 3) == 2.77
+    # after the layer, nodes 0 and 1 are unstable and the CMB node has its eddy diffusivity
     after = st > st[m][-1]
     assert st[after][0] == pytest.approx(63632.1, abs=0.05)
-    assert np.all(runs[f'{key}/snap_dSdr0'][after] < 0.0)
-    assert np.all(runs[f'{key}/snap_dSdr1'][after] < 0.0)
+    for c in ('dSdr0', 'dSdr1'):
+        assert np.all(runs[f'{key}/snap_{c}'][after] < 0.0), c
+    assert np.all(runs[f'{key}/snap_kh0'][after] > 0.0)
+    assert st.size == 132 and st[-1] == pytest.approx(70000.0, abs=1.0e-3)
 
 
 def test_basal_mush_layer_run_repeats_on_this_source(runs):
-    """The 750 m rule run at rtol 1e-8, repeated from t = 0 to 70 kyr on this source: its rows equal
+    """The 750 m rule run at rtol 1e-8, repeated from t = 0 to 70 kyr with aragog af8bb2f5: its rows equal
     those of the stored run to 59939.2 yr, across its own resume at 42.8 kyr. The stored run stops
     at 60 kyr and continues from its state there, the repeat does not: from that time the call
     times differ, and the low-flux interval ends at 62950.0 yr, against 63338.1 yr."""
     rule, rep = 'basal750_tip', 'basal750_tip_rerun'
-    rb = np.abs(runs[f'{rep}/ledger_rB'])
-    assert int(runs[f'{rep}/status']) == STATUS_TARGET_TIME
-    assert runs[f'{rep}/Time'][-1] == 70000.0
-    assert float(runs[f'{rep}/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
-    assert int(runs[f'{rep}/rtol_retries']) == 0
-    assert rb.size == 209 and _quoted(rb.max(), 4) == 0.9942 and np.sum(rb > 1.0) == 0
+    _check_calls(runs, rep, 209, 0.9942, 70000.0)
     prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
     assert prov[rep]['aragog'].startswith('af8bb2f5') and prov[rule]['aragog'].startswith(
         '2268ce2e'
@@ -690,6 +697,46 @@ def test_basal_mush_layer_run_repeats_on_this_source(runs):
     assert len(spans) == 1 and list(spans[0]) == pytest.approx([14788.5, 62950.0], abs=0.05)
 
 
+def test_copy_rule_at_rtol_1e_10_leaves_the_cmb_node_without_eddy_diffusivity(runs):
+    """The 750 m case under the copy rule at rtol 1e-10 with aragog 211760d1, t = 0 to 46939.4 yr:
+    F_cmb is below 1 W m^-2 from 14682.0 to 44283.1 yr, against 14684.1 to 44087.6 yr at rtol 1e-8;
+    in all 85 snapshots inside, the CMB node is unstable, and node 1 is stable in exactly the 79
+    where the CMB node has no eddy diffusivity."""
+    key = 'basal750_main_r10'
+    rb = np.abs(runs[f'{key}/ledger_rB'])
+    assert (
+        f'{key}/status' not in runs
+    )  # stopped by hand: the rows after 46939.4 yr are not stored
+    assert runs[f'{key}/Time'][-1] == pytest.approx(46939.4, abs=0.05)
+    assert runs[f'{key}/ledger_t1'][-1] == runs[f'{key}/Time'][-1]
+    assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-10, rel=1e-12)
+    assert rb.size == 194 and _quoted(rb.max(), 4) == 0.9995 and np.sum(rb > 1.0) == 0
+    kind, t_r = runs[f'{key}/retry_kind'], runs[f'{key}/retry_t']
+    assert t_r.size == 29 and list(t_r[kind == 0]) == [14400.0, 46280.0]
+    assert np.unique(t_r[kind == 1]).size == 17
+    assert [t_r[kind == 1].min(), t_r[kind == 1].max()] == [29570.0, 35100.0]
+    assert set(runs[f'{key}/retry_atol_sf'][kind == 1]) == {3.0, 5.0}
+    prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
+    assert prov[key]['aragog'].startswith('211760d1') and len(prov[key]['sha256_log']) == 2
+    spans, m, _ = _low_flux(runs, key)
+    assert len(spans) == 1 and list(spans[0]) == pytest.approx([14682.0, 44283.1], abs=0.05)
+    r = _rows(runs, key)
+    w = (r['Time'] >= spans[0][0]) & (r['Time'] < spans[0][1])
+    assert int(np.sum(w)) == 85
+    assert [_quoted(r['F_cmb'][w].min(), 3), _quoted(r['F_cmb'][w].max(), 2)] == [1.19e-3, 0.69]
+    assert [round(float(r['T_cmb'][w].min()), 2), round(float(r['T_cmb'][w].max()), 2)] == [
+        4930.27,
+        4930.44,
+    ]
+    assert int(np.sum(m)) == 85 and np.all(runs[f'{key}/snap_dSdr0'][m] < 0.0)
+    no_kh = runs[f'{key}/snap_kh0'][m] == 0.0
+    assert int(np.sum(no_kh)) == 79
+    assert np.array_equal(no_kh, runs[f'{key}/snap_dSdr1'][m] > 0.0)
+    st = runs[f'{key}/snap_t']
+    assert st.size == 110 and np.all(runs[f'{key}/snap_n_stable'] == 0.0)
+    assert st[-1] == pytest.approx(runs[f'{key}/Time'][-1], abs=1.0e-3)
+
+
 def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     """The #113 case with a 3000 m CMB cell, t = 0 to 140 kyr: no stable layer holds the flux low.
     Under the CMB node rule F_cmb is below 1 W m^-2 only from 39097.7 to 42859.0 yr, with an
@@ -699,7 +746,7 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     rule, copy = BASAL[3000]
     _check_calls(runs, rule, 538, 0.9918)
     _check_calls(runs, copy, 538, 0.9919)
-    spans, m, f = _low_flux(runs, rule)
+    spans, m, _ = _low_flux(runs, rule)
     assert len(spans) == 1 and spans[0][0] == pytest.approx(39097.7, abs=0.05)
     assert spans[0][1] == pytest.approx(42859.0, abs=0.05)
     r = _rows(runs, rule)
@@ -756,8 +803,7 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     assert np.min(rc['T_cmb'] - rc['T_cmb_node']) == pytest.approx(-246.25, abs=0.005)
     dr = r['T_cmb'] - r['T_cmb_node']
     assert [round(float(dr.min()), 2), round(float(dr.max()), 2)] == [-2.35, 1.94]
-    last, _, _ = _last_disagreement(runs, 3000)
-    assert last == pytest.approx(42780.0, abs=10.0)
+    assert _last_disagreement(runs, 3000) == pytest.approx(42780.0, abs=10.0)
     assert [round(float(x['T_cmb'][-1]), 2) for x in (r, rc)] == [4586.03, 4586.08]
 
     validation_plot(

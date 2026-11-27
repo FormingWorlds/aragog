@@ -13,8 +13,11 @@ sweep values, and for the runs of ``SNAP_RUNS`` the CMB node states of their sna
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
 "aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
-CVODE rtol checked in its log and stored, with the number of retries of a call at a looser
-rtol; ``log`` can be a list of the logs of a run and its resume; a run of ``SNAP_RUNS`` also names its output folder as ``snapshots``), the key ``v9x_copy`` to the helpfile, status, versions
+CVODE rtol checked in its log and stored, with the start time, kind and atol factor of each
+retry of a call; ``log`` can be a list of the logs of a run and its resume; a run of
+``SNAP_RUNS`` also names its output folder as ``snapshots``; a run stopped by hand names its
+last kept row as ``end`` [yr] and has no status stored), the key ``v9x_copy`` to the helpfile,
+status, versions
 and configured ``rtol`` of the copy-rule run of issue #113, the key ``rtol_calls`` to the single
 calls rerun from a stored start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the
 key ``v9_parts_log`` to the
@@ -56,14 +59,11 @@ RUNS = {
     'basal3000_main': -1.0,
     'basal750_tip_r10': -1.0,
     'basal750_tip_rerun': -1.0,
+    'basal750_main_r10': -1.0,
 }
 # runs whose CMB node states are stored from their snapshots, in the window [yr]
-SNAP_RUNS = (
-    'basal750_tip',
-    'basal750_main',
-    'basal3000_tip',
-    'basal3000_main',
-    'basal750_tip_r10',
+SNAP_RUNS = tuple(
+    'basal750_tip basal750_main basal3000_tip basal3000_main basal750_tip_r10 basal750_main_r10'.split()
 )
 SNAP_WINDOW = (10000.0, 70000.0)
 SNAP_COLUMNS = tuple(
@@ -76,17 +76,21 @@ NUM = r'([-+0-9.eE]+|nan|inf|-inf)'
 LEDGER = re.compile(
     rf"ledger t1={NUM} terms=\{{'r': np\.float64\({NUM}\), 'bound': np\.float64\({NUM}\)"
 )
-RETRY = re.compile(r'Retrying with max_steps=\d+, rtol=')
+# a failed call is retried (PROTEUS interior_energetics/aragog.py): after mxstep with a looser rtol
+# (kind 0), after another failure with half the step and a larger atol (kind 1)
+RETRY = re.compile(
+    r'Aragog (CV_TOO_MUCH_WORK|solver failed) at t=([0-9.e+]+) yr[^\n]*atol_sf=([0-9.]+)x'
+)
 COLUMNS = ('Time', 'F_cmb', 'T_cmb', 'T_cmb_node', 'step_dE_F_cmb_J')
 
 
-def _helpfile(path: str, t0: float) -> dict[str, np.ndarray]:
-    """Columns of ``COLUMNS`` of the rows after ``t0``."""
+def _helpfile(path: str, t0: float, end: float = np.inf) -> dict[str, np.ndarray]:
+    """Columns of ``COLUMNS`` of the rows after ``t0`` and up to ``end``."""
     lines = Path(path).read_text().splitlines()
     head = lines[0].split('\t')
     idx = [head.index(c) for c in COLUMNS]
     rows = [[float(x) for x in (ln.split('\t')[i] for i in idx)] for ln in lines[1:]]
-    arr = np.array([r for r in rows if r[0] > t0])
+    arr = np.array([r for r in rows if t0 < r[0] <= end])
     return {c: arr[:, k] for k, c in enumerate(COLUMNS)}
 
 
@@ -114,8 +118,8 @@ def _store_parts(out: dict, key: str, parts: list[dict]) -> None:
     out[f'{key}/call_Etrap_B'] = np.array([p['E_trap'] / p['bound'] for p in parts])
 
 
-def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
-    """CMB node states of each snapshot in ``SNAP_WINDOW``, columns ``SNAP_COLUMNS``.
+def _snapshots(run_dir: str, end: float = np.inf) -> tuple[np.ndarray, str]:
+    """CMB node states of each snapshot in ``SNAP_WINDOW`` up to ``end``, columns ``SNAP_COLUMNS``.
 
     ``n_stable`` counts the nodes with dS/dr > 0 up from node 0, ``top_km`` is the height of the
     last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that node
@@ -131,7 +135,8 @@ def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
         return float(f.name.split('_')[0].replace('p', '.'))
 
     files = sorted(Path(run_dir, 'data').glob('*_int.nc'), key=t_of)
-    files = [f for f in files if SNAP_WINDOW[0] <= t_of(f) <= SNAP_WINDOW[1]]
+    last = min(SNAP_WINDOW[1], end + 1.0e-3)  # a file name holds the time to 3 decimals
+    files = [f for f in files if SNAP_WINDOW[0] <= t_of(f) <= last]
     rows, sha = [], hashlib.sha256()
     for f in files:
         sha.update(f.read_bytes())
@@ -184,10 +189,17 @@ def main(spec_path: str) -> None:
     prov: dict[str, dict] = {}
     for key, t0 in RUNS.items():
         s = spec[key]
-        for col, values in _helpfile(s['helpfile'], t0).items():
+        end = s.get('end', np.inf)
+        for col, values in _helpfile(s['helpfile'], t0, end).items():
             out[f'{key}/{col}'] = values
         logs = s['log'] if isinstance(s['log'], list) else [s['log']]
         log = ''.join(Path(f).read_text() for f in logs)
+        # a run stopped by hand: its log up to the ledger line of the last row kept
+        if 'end' in s:
+            last = [m for m in LEDGER.finditer(log) if abs(float(m.group(1)) - end) < 1.0e-6]
+            if len(last) != 1:
+                raise ValueError(f'{key}: {len(last)} ledger lines at the end {end}')
+            log = log[: last[0].end()]
         led = np.array(
             [
                 [float(m.group(1)), float(m.group(2)) / float(m.group(3))]
@@ -198,12 +210,19 @@ def main(spec_path: str) -> None:
         if n_lines == 0 or led.shape[0] != n_lines:
             raise ValueError(f'{key}: {n_lines} ledger lines, {led.shape[0]} parsed')
         out[f'{key}/ledger_t1'], out[f'{key}/ledger_rB'] = led[:, 0], led[:, 1]
-        out[f'{key}/status'] = np.array(int(Path(s['status']).read_text().split()[0]))
+        if 'end' not in s:
+            out[f'{key}/status'] = np.array(int(Path(s['status']).read_text().split()[0]))
         if 'rtol' in s:
             _check_rtol(key, log, s['rtol'])
             out[f'{key}/rtol'] = np.array(float(s['rtol']))
-            # a call that reaches mxstep is retried with a looser rtol, outside the options line
-            out[f'{key}/rtol_retries'] = np.array(len(RETRY.findall(log)))
+            retries = RETRY.findall(log)
+            if len(retries) != log.count('Retrying with'):
+                raise ValueError(f'{key}: a retry line of another kind')
+            out[f'{key}/retry_t'] = np.array([float(t) for _, t, _ in retries])
+            out[f'{key}/retry_kind'] = np.array(
+                [int(k == 'solver failed') for k, _, _ in retries]
+            )
+            out[f'{key}/retry_atol_sf'] = np.array([float(a) for _, _, a in retries])
         sweep = [
             json.loads(ln[len('VRUN sweep ') :])
             for ln in log.splitlines()
@@ -222,7 +241,7 @@ def main(spec_path: str) -> None:
         shas = [hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in logs]
         prov[key]['sha256_log'] = shas[0] if len(shas) == 1 else shas
         if key in SNAP_RUNS:
-            snap, sha = _snapshots(s['snapshots'])
+            snap, sha = _snapshots(s['snapshots'], end)
             for j, col in enumerate(SNAP_COLUMNS):
                 out[f'{key}/snap_{col}'] = snap[:, j]
             prov[key]['sha256_snapshots'] = sha

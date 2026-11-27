@@ -156,6 +156,17 @@
    "6317f1371894dcd219d262cbe27cebf8299e14d85bee3501f42e25d601532f3e"
   ]
  },
+ "basal750_main_r10": {
+  "run": "as basal750_main with aragog rtol 1e-10, t = 0 to 46939.4 yr (0 to 14682.0 yr, then resumed from its 14682.0 yr state); the process got a SIGINT on 2026-11-27 at 20:01:19 CET during the call after the row at 46939.4 yr, so the later rows are not stored",
+  "aragog": "211760d1733a2d72e5c658572e9f9df7e090369d",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "993a605ec55a025d2976b5704d9d4ec420de604379716606fa5e686d13bba4f0",
+  "sha256_log": [
+   "397dfcec34c5ffbc3c7c67788eafe1b4ce3914dab036d8b24bc9f7175303b77f",
+   "c55ccb55f96b86827e88f73c356da19dec46358ac18bfe64a1c9aeaf3aadddfc"
+  ],
+  "sha256_snapshots": "3144167796d9c3edc1d63e51a0ecfed8861a8be2c9e4380f14ca52e5bf21c142"
+ },
  "v9x_copy": {
   "run": "the #113 case from t = 0 to 140 kyr under the copy rule (its rows 30169.3 to 60000 yr are kept)",
   "aragog": "26.11.8.post1.dev3+gbfb122428",
