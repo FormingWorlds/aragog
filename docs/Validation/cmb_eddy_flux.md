@@ -253,15 +253,15 @@ At rtol $10^{-9}$, $10^{-10}$ and $10^{-11}$ the CMB heat of the call that ends 
 
 **Why this check exists.** With a CMB cell of 750 m, a run under the CMB node rule holds $F_\mathrm{cmb}$ near $10^{-3}$ W m$^{-2}$ from 14.8 to 63.3 kyr. A low flux is also the sign of the fault of issue #113, where the CMB node is unstable but has no eddy diffusivity. The test tells the 2 apart: it checks the state of the nodes in every snapshot of the low-flux interval.
 
-**What it tests.** The case of issue #113 from $t = 0$ with a CMB cell of 750 m (`cmb_cell_thickness`) and the `nearest_boundary` mixing-length profile, in 5 stored runs. Each run continued once from its stored state; runs with the same build letter use the same build of Aragog, and `cmb_eddy_flux_runs_provenance.json` lists the build of each run.
+**What it tests.** The case of issue #113 from $t = 0$ with a CMB cell of 750 m (`cmb_cell_thickness`) and the `nearest_boundary` mixing-length profile, in 5 stored runs. Each run continued once from its stored state; runs with the same build letter use the same build of Aragog, and `cmb_eddy_flux_runs_provenance.json` lists the build of each run. `basal750_tip_r10` shows which results the integration error sets; `basal750_tip_rerun` repeats `basal750_tip` with build c; `basal750_main_r10` runs past the end of its low-flux interval.
 
-| Run (npz key) | Rule | rtol | Time span | Continued at | Build | What it shows |
+| Run (npz key) | Rule | rtol | Time span | Continued at | Build | Shows |
 |---|---|---|---|---|---|---|
-| `basal750_tip` | CMB node rule | $10^{-8}$ | 0 to 140 kyr | 60 kyr | a | the stable layer |
-| `basal750_main` | copy rule | $10^{-8}$ | 0 to 140 kyr | 60 kyr | b | the failure to compare with |
-| `basal750_tip_r10` | CMB node rule | $10^{-10}$ | 0 to 70 kyr | 45.1 kyr | c | which results the integration error sets |
-| `basal750_tip_rerun` | CMB node rule | $10^{-8}$ | 0 to 70 kyr | 42.8 kyr | c | that build c gives the rows of `basal750_tip` |
-| `basal750_main_r10` | copy rule | $10^{-10}$ | 0 to 46.9 kyr | 14682.0 yr | d | the copy rule past the end of its low-flux interval |
+| `basal750_tip` | CMB node | $10^{-8}$ | 0 to 140 kyr | 60 kyr | a | the stable layer |
+| `basal750_main` | copy | $10^{-8}$ | 0 to 140 kyr | 60 kyr | b | the failure |
+| `basal750_tip_r10` | CMB node | $10^{-10}$ | 0 to 70 kyr | 45.1 kyr | c | the rtol effect |
+| `basal750_tip_rerun` | CMB node | $10^{-8}$ | 0 to 70 kyr | 42.8 kyr | c | the build effect |
+| `basal750_main_r10` | copy | $10^{-10}$ | 0 to 46.9 kyr | 14.7 kyr | d | the copy rule at $10^{-10}$ |
 
 $S_0$ and $T_0$ are the entropy and the temperature of the lowest cell. $S_\mathrm{above}$ and $T_\mathrm{above}$ are those of the cell just above the last stable node, at the top of the stable layer. The test reads the snapshots from 10 to 70 kyr. Under the CMB node rule it checks the low-flux interval, the state of the nodes in each snapshot inside it, the entropy and temperature steps across the stable layer, and the snapshots just before and after the layer. Under the copy rule it checks the low-flux interval and the state of the CMB node in it. For both rules it checks $T_\mathrm{cmb}$ after the layer. The test details list each checked value.
 
