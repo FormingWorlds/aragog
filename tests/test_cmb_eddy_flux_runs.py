@@ -508,23 +508,36 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert int(runs[f'{rule}/snap_n_stable'][k0]) == 5
     assert _quoted(f[k0], 3) == 5.18
     assert _quoted(runs[f'{rule}/snap_Ftot0'][k0], 3) == 1.09e-3  # node flux at the call end
-    assert int(runs[f'{rule}/snap_n_stable'][k0 - 1]) == 0
+    # in the snapshot before it, nodes 0 and 1 are unstable
+    assert runs[f'{rule}/snap_dSdr0'][k0 - 1] < 0.0 and runs[f'{rule}/snap_dSdr1'][k0 - 1] < 0.0
+    assert st[k0 - 1] == pytest.approx(14225.1, abs=0.05)
     assert st.size == 127 and [round(float(st[0]), 1), round(float(st[-1]), 1)] == [
         10130.5,
         69925.8,
     ]
-    # the lowest cell keeps its entropy; the entropy at the layer top falls to it in every snapshot
+    # S0 rises slowly; the entropy at the layer top falls to it between every 2 snapshots
     s0, s_top = runs[f'{rule}/snap_S0'][m], runs[f'{rule}/snap_S_above'][m]
     assert [round(float(s0.min()), 2), round(float(s0.max()), 2)] == [5503.78, 5503.84]
+    d_s0 = np.diff(s0)
+    assert [
+        _quoted(d_s0.min(), 2),
+        _quoted(d_s0.max(), 2),
+        round(float(s0[-1] - s0[0]), 2),
+    ] == [
+        6.4e-5,
+        1.5e-3,
+        0.05,
+    ]
     assert [round(float(s_top[0]), 0), round(float(s_top[-1]), 1)] == [7018.0, 5508.5]
     ds = s_top - s0
     dt = (runs[f'{rule}/snap_T_above'] - runs[f'{rule}/snap_T0'])[m]
-    assert np.all(np.diff(ds) < 0.0)
+    assert np.all(np.diff(ds) < 0.0) and int(np.sum(np.diff(ds) > -1.0e-3)) == 20
     assert [_quoted(ds[0], 4), _quoted(ds[-1], 2)] == [1514.0, 4.6]
     plateau = (st[m] >= 22000.0) & (st[m] <= 42400.0)
     assert [round(float(ds[plateau].min())), round(float(ds[plateau].max()))] == [869, 876]
     assert [_quoted(dt[0], 3), _quoted(dt[-1], 1)] == [260.0, 0.06]
     assert int(np.sum(np.diff(dt) > 0.0)) == 1  # the temperature step rises once
+    assert int(np.sum((np.diff(dt) <= 0.0) & (np.diff(dt) > -1.0e-3))) == 23
     assert _quoted(np.max(np.diff(dt)), 2) == 0.25
     # the last snapshot of the layer and the next one, 601 yr later, with no stable node
     t_last = st[m][-1]
@@ -532,13 +545,16 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     nxt = int(np.flatnonzero(st > t_last)[0])
     assert st[nxt] == pytest.approx(63338.1, abs=0.05) and round(st[nxt] - t_last) == 601
     assert runs[f'{rule}/snap_dSdr0'][nxt] < 0.0 and runs[f'{rule}/snap_kh0'][nxt] > 0.0
-    assert np.all(runs[f'{rule}/snap_n_stable'][st > t_last] == 0.0)
+    assert np.all(runs[f'{rule}/snap_dSdr0'][st > t_last] < 0.0)
+    assert np.all(runs[f'{rule}/snap_dSdr1'][st > t_last] < 0.0)
     # the copy rule: an unstable CMB node, without eddy diffusivity in 54 of 61 snapshots
     spans_c, mc, _ = _low_flux(runs, copy)
     assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(14684.1, abs=0.05)
     assert spans_c[0][1] == pytest.approx(44087.6, abs=0.05)
     assert int(np.sum(mc)) == 61 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
-    assert int(np.sum(runs[f'{copy}/snap_kh0'][mc] == 0.0)) == 54
+    no_kh = runs[f'{copy}/snap_kh0'][mc] == 0.0
+    assert int(np.sum(no_kh)) == 54
+    assert np.array_equal(no_kh, runs[f'{copy}/snap_dSdr1'][mc] > 0.0)
     rc = _rows(runs, copy)
     dc = rc['T_cmb'] - rc['T_cmb_node']
     assert dc.min() == pytest.approx(-923.5, abs=0.05)
@@ -604,7 +620,16 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     w = (r['Time'] >= spans[0][0]) & (r['Time'] < spans[0][1])
     assert [_quoted(r['F_cmb'][w].min(), 2), _quoted(r['F_cmb'][w].max(), 2)] == [0.10, 0.20]
     assert int(np.sum(m)) == 7 and np.all(runs[f'{rule}/snap_dSdr0'][m] < 0.0)
+    g0 = runs[f'{rule}/snap_dSdr0'][m]
+    assert [_quoted(g0.min(), 2), _quoted(g0.max(), 2)] == [-1.3e-9, -6.5e-10]
+    # the CMB node keeps its own floor (kappah_floor 10, rfront_loc 0.4, rfront_wid 0.2)
+    floor0 = 10.0 * 0.5 * (1.0 + np.tanh((runs[f'{rule}/snap_phi0'][m] - 0.4) / 0.2))
+    assert np.allclose(runs[f'{rule}/snap_kh0'][m], floor0, rtol=1e-12, atol=0.0)
     assert np.all(np.abs(runs[f'{rule}/snap_kh0'][m] - 7.07) < 0.005)
+    assert list(runs[f'{rule}/snap_dSdr1'][m] > 0.0) == [False] * 3 + [True] * 4
+    ftot, jcond = runs[f'{rule}/snap_Ftot0'][m], runs[f'{rule}/snap_Jcond0'][m]
+    assert [_quoted(ftot.min(), 2), _quoted(ftot.max(), 2)] == [0.10, 0.20]
+    assert np.all(np.abs(jcond - 1.19e-3) < 5.0e-6)
     # stable nodes in the snapshots from 10 to 70 kyr: (time [yr], count) of each run
     for key, want in (
         (rule, [(38574.7, 1), (48540.5, 5)]),
@@ -619,6 +644,15 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
         # each stable snapshot is the end of 1 call: the next snapshot has no stable node
         idx = np.flatnonzero(n > 0)
         assert np.all(n[idx + 1] == 0.0)
+        # node 1 stable over an unstable CMB node: (first, last time [yr], count) of each run
+        alone = np.flatnonzero((n == 0) & (runs[f'{key}/snap_dSdr1'] > 0.0))
+        cuts = np.split(alone, np.flatnonzero(np.diff(alone) > 1) + 1)
+        assert [
+            (round(float(st[c[0]]), 1), round(float(st[c[-1]]), 1), c.size) for c in cuts
+        ] == {
+            rule: [(17870.8, 18148.2, 2), (40688.1, 42310.8, 4)],
+            copy: [(17870.8, 37105.1, 50)],
+        }[key]
         assert np.all(runs[f'{key}/snap_dSdr0'][idx] > 0.0)
         kh0 = runs[f'{key}/snap_kh0'][idx]
         assert np.array_equal(kh0, runs[f'{key}/snap_kh_layer_max'][idx])
