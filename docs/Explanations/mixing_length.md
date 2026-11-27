@@ -58,10 +58,8 @@ When solid-state mantle rheology is enabled, the mixing-length profile boundary 
 Which mixing length does Aragog use near the boundaries, and which eddy diffusivity does the CMB node take?
 
 Aragog offers 2 profiles: `nearest_boundary`, which goes to 0 at both boundaries, and `constant`.
-With `nearest_boundary` the node above the CMB can turn stable while the CMB gradient stays unstable; the CMB node then keeps its own floor, and in an Earth-mass run with `kappah_floor` = 10 m$^2$ s$^{-1}$ the core stays coupled to the mantle ([CMB eddy flux](../Validation/cmb_eddy_flux.md#an-earth-mass-run-where-node-1-turns-stable)).
-In an Earth-mass run with `nearest_boundary` and a CMB cell of 750 m, a quarter of the default, a stable layer at the base of the mantle holds the CMB flux near $10^{-3}$ W m$^{-2}$ from 14.8 to 63.3 kyr ([CMB eddy flux](../Validation/cmb_eddy_flux.md#a-stable-mush-layer-at-the-base-of-the-mantle)). While nodes 0 and 1 are both stable, the CMB node has no eddy diffusivity (with $D = 0$, the default), and heat crosses the CMB by conduction only. With the default CMB cell of 3000 m the same case shows a stable layer in single snapshots only, so the result depends on the mesh ([CMB eddy flux](../Validation/cmb_eddy_flux.md#with-a-3000-m-cmb-cell-no-layer-holds-the-flux-low)).
-PROTEUS runs `constant` by default.
 Aragog itself has no default profile: each configuration sets `mixing_length_profile`.
+PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 The `nearest_boundary` profile is
 
 $$
@@ -76,9 +74,13 @@ The CMB node takes the mixing-length eddy diffusivity of the first node above it
 With `nearest_boundary` the length at that node is the thickness of the bottom cell.
 If that node turns stable, its mixing-length diffusivity is 0 (for a positive `eddy_diffusivity_thermal`), and over an unstable CMB gradient the CMB node keeps only its floor.
 That floor is 0 with `kappah_floor = 0`, and in a fully solid cell with the solid rheology on.
-PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
+While nodes 0 and 1 are both stable, the CMB node has no eddy diffusivity (with $D = 0$, the default), and heat crosses the CMB by conduction only.
 
-**Where this is checked.** The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
+**Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md) checks this rule in Earth-mass runs with `nearest_boundary`.
+With `kappah_floor` = 10 m$^2$ s$^{-1}$ the core stays coupled to the mantle when node 1 turns stable ([case](../Validation/cmb_eddy_flux.md#an-earth-mass-run-where-node-1-turns-stable)).
+With a CMB cell of 750 m, a quarter of the default, a stable layer at the base of the mantle holds the CMB flux near $10^{-3}$ W m$^{-2}$ from 14.8 to about 63 kyr; the end moves with the call times and the solver tolerance ([case](../Validation/cmb_eddy_flux.md#a-stable-mush-layer-at-the-base-of-the-mantle)).
+With the default CMB cell of 3000 m the same case shows a stable layer in single snapshots only, so the result depends on the mesh ([case](../Validation/cmb_eddy_flux.md#with-a-3000-m-cmb-cell-no-layer-holds-the-flux-low)).
+The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
 
 ## Boundary-layer theory in companion codes
 

@@ -13,8 +13,8 @@ sweep values, and for the runs of ``SNAP_RUNS`` the CMB node states of their sna
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
 "aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
-CVODE rtol checked in its log and stored, with the start time, kind and atol factor of each
-retry of a call; ``log`` can be a list of the logs of a run and its resume; a run of
+CVODE rtol checked in its log and stored, with the base atol, the core boundary condition and the
+start time, kind, rtol and atol factor of each retry of a call; ``log`` can be a list of the logs of a run and its resume; a run of
 ``SNAP_RUNS`` also names its output folder as ``snapshots``; a run stopped by hand names its
 last kept row as ``end`` [yr] and has no status stored), the key ``v9x_copy`` to the helpfile,
 status, versions
@@ -68,7 +68,7 @@ SNAP_RUNS = tuple(
 SNAP_WINDOW = (10000.0, 70000.0)
 SNAP_COLUMNS = tuple(
     't dSdr0 dSdr1 kh0 kh1 phi0 phi1 n_stable top_km S0 S_above T0 T_above '
-    'Ftot0 Jcond0 kh_layer_max Jgrav_layer_max'.split()
+    'Ftot0 Jcond0 kh_layer_max Jgrav_layer_max rho_node0 T_node0 S1 dr01 n_cells'.split()
 )
 # runs that print the in-call CMB flux of each call in their own log
 PARTS_OWN = ('v9x_tip', 'v9x_tip_r9', 'v9x_tip_r10')
@@ -79,8 +79,12 @@ LEDGER = re.compile(
 # a failed call is retried (PROTEUS interior_energetics/aragog.py): after mxstep with a looser rtol
 # (kind 0), after another failure with half the step and a larger atol (kind 1)
 RETRY = re.compile(
-    r'Aragog (CV_TOO_MUCH_WORK|solver failed) at t=([0-9.e+]+) yr[^\n]*atol_sf=([0-9.]+)x'
+    rf'Aragog (CV_TOO_MUCH_WORK|solver failed) at t={NUM} yr[^\n]*?Retrying with '
+    r'(?:max_steps=\d+, rtol=([0-9.e+-]+), )?[^\n]*?atol_sf=([0-9.]+)x'
 )
+# the base atol of each solve (atol factor 1) and the core boundary condition of the run
+ATOL = re.compile(r'atol_sf=1\.0x, atol=([0-9.e+-]+), rtol=')
+CORE_BC = re.compile(r'Initial state \((\w+)\)')
 COLUMNS = ('Time', 'F_cmb', 'T_cmb', 'T_cmb_node', 'step_dE_F_cmb_J')
 
 
@@ -125,7 +129,10 @@ def _snapshots(run_dir: str, end: float = np.inf) -> tuple[np.ndarray, str]:
     last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that node
     (cell 0 when node 0 is unstable). ``Ftot0`` and ``Jcond0`` are the total and the conductive
     flux of node 0; ``kh_layer_max`` and ``Jgrav_layer_max`` the largest eddy diffusivity and the
-    largest |gravitational separation flux| over the stable nodes (NaN without one). Raises
+    largest |gravitational separation flux| over the stable nodes (NaN without one);
+    ``rho_node0`` and ``T_node0`` the density and the temperature of node 0; ``S1`` the entropy of
+    cell 1, ``dr01`` the distance [m] between the centres of cells 0 and 1 and ``n_cells`` the
+    number of cells. Raises
     ValueError for a snapshot with a gradient that is not finite. Also returns the sha256 of the
     snapshot files read.
     """
@@ -142,9 +149,12 @@ def _snapshots(run_dir: str, end: float = np.inf) -> tuple[np.ndarray, str]:
         sha.update(f.read_bytes())
         with netCDF4.Dataset(f) as ds:
             g, kh, phi = (np.ravel(ds[v][:]) for v in ('dSdr_b', 'eddy_diff_b', 'phi_basic_b'))
-            s, temp, rb = (np.ravel(ds[v][:]) for v in ('entropy_s', 'temp_s', 'radius_b'))
-            ftot, jcond, jgrav = (
-                np.ravel(ds[v][:]) for v in ('Ftotal_b', 'Jcond_b', 'Jgrav_b')
+            s, temp, rb, rs = (
+                np.ravel(ds[v][:]) for v in ('entropy_s', 'temp_s', 'radius_b', 'radius_s')
+            )
+            ftot, jcond, jgrav, rho_b, temp_b = (
+                np.ravel(ds[v][:])
+                for v in ('Ftotal_b', 'Jcond_b', 'Jgrav_b', 'rho_basic_b', 'T_basic_b')
             )
         if not np.all(np.isfinite(g)):
             raise ValueError(f'{f}: dSdr_b is not finite')
@@ -170,6 +180,11 @@ def _snapshots(run_dir: str, end: float = np.inf) -> tuple[np.ndarray, str]:
                 jcond[0],
                 kh[:n].max() if n else np.nan,
                 np.abs(jgrav[:n]).max() if n else np.nan,
+                rho_b[0],
+                temp_b[0],
+                s[1],
+                (rs[1] - rs[0]) * 1.0e3,  # radius_s is in km
+                s.size,
             ]
         )
     return np.array(rows), sha.hexdigest()
@@ -218,11 +233,20 @@ def main(spec_path: str) -> None:
             retries = RETRY.findall(log)
             if len(retries) != log.count('Retrying with'):
                 raise ValueError(f'{key}: a retry line of another kind')
-            out[f'{key}/retry_t'] = np.array([float(t) for _, t, _ in retries])
+            out[f'{key}/retry_t'] = np.array([float(t) for _, t, _, _ in retries])
             out[f'{key}/retry_kind'] = np.array(
-                [int(k == 'solver failed') for k, _, _ in retries]
+                [int(k == 'solver failed') for k, _, _, _ in retries]
             )
-            out[f'{key}/retry_atol_sf'] = np.array([float(a) for _, _, a in retries])
+            out[f'{key}/retry_rtol'] = np.array(
+                [float(r) if r else np.nan for *_, r, _ in retries]
+            )
+            out[f'{key}/retry_atol_sf'] = np.array([float(a) for *_, a in retries])
+            for name, pat in (('atol', ATOL), ('core_bc', CORE_BC)):
+                found = set(pat.findall(log))
+                if len(found) != 1:
+                    raise ValueError(f'{key}: {name} {found}')
+                v = found.pop()
+                out[f'{key}/{name}'] = np.array(float(v) if name == 'atol' else v)
         sweep = [
             json.loads(ln[len('VRUN sweep ') :])
             for ln in log.splitlines()
