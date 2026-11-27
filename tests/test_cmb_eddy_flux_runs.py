@@ -418,12 +418,13 @@ def _last_disagreement(runs, case):
 
 
 def _check_calls(runs, key, n_calls, top):
-    """The run ends at 140 kyr with the target-time status, rtol 1e-8 and n_calls ledger calls,
-    all inside the bound; the largest |r|/B rounds to top."""
+    """The run ends at 140 kyr with the target-time status, rtol 1e-8 with no retry at a looser
+    rtol and n_calls ledger calls, all inside the bound; the largest |r|/B rounds to top."""
     rb = np.abs(runs[f'{key}/ledger_rB'])
     assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
     assert runs[f'{key}/Time'][-1] == 140000.0
     assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
+    assert int(runs[f'{key}/rtol_retries']) == 0
     assert rb.size == n_calls and _quoted(rb.max(), 4) == top and np.sum(rb > 1.0) == 0
 
 
@@ -602,6 +603,52 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
         'cmb_eddy_flux_basal_layer_750m',
     )
     validation_plot(layer, 'cmb_eddy_flux_basal_layer_750m_step')
+
+
+def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
+    """The 750 m case under the CMB node rule at rtol 1e-10 on this source, t = 0 to 70 kyr: the
+    layer holds F_cmb near 1e-3 W m^-2 from 14788.2 to 63632.1 yr with 3 to 5 stable nodes. S0
+    rises and both steps fall between every 2 snapshots, with 2 near-flat pairs each and no rise
+    of the temperature step; the entropy step has no plateau at 22 to 42.4 kyr."""
+    key = 'basal750_tip_r10'
+    rb = np.abs(runs[f'{key}/ledger_rB'])
+    assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
+    assert runs[f'{key}/Time'][-1] == 70000.0
+    assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-10, rel=1e-12)
+    assert int(runs[f'{key}/rtol_retries']) == 2  # 2 calls reached mxstep, retried at 2e-10
+    assert rb.size == 217 and _quoted(rb.max(), 4) == 0.9995 and np.sum(rb > 1.0) == 0
+    prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
+    assert prov[key]['aragog'].startswith('af8bb2f5') and len(prov[key]['sha256_log']) == 2
+    spans, m, _ = _low_flux(runs, key)
+    assert len(spans) == 2
+    assert list(spans[0]) == pytest.approx([9754.3, 9940.0], abs=0.05)  # 1 row
+    assert list(spans[1]) == pytest.approx([14788.2, 63632.1], abs=0.05)
+    r = _rows(runs, key)
+    w = (r['Time'] >= spans[1][0]) & (r['Time'] < spans[1][1])
+    assert int(np.sum(w)) == 100 and np.all(np.abs(r['T_cmb'][w] - 4789.2) < 0.01)
+    # the snapshots start after the 1-row interval: all 100 inside belong to the layer
+    st = runs[f'{key}/snap_t']
+    assert st[0] > spans[0][1] and int(np.sum(m)) == 100
+    g0, g1 = runs[f'{key}/snap_dSdr0'][m], runs[f'{key}/snap_dSdr1'][m]
+    assert np.all(g0 > 0.0) and np.all(g1 > 0.0)
+    assert [int(np.sum(np.abs(g) < 1.0e-5)) for g in (g0, g1)] == [30, 7]
+    assert np.all(runs[f'{key}/snap_kh0'][m] == 0.0)
+    n, top_km = runs[f'{key}/snap_n_stable'][m], runs[f'{key}/snap_top_km'][m]
+    assert [int(n.min()), int(n.max())] == [3, 5]
+    assert [_quoted(top_km.min(), 3), _quoted(top_km.max(), 3)] == [1.56, 3.41]
+    s0 = runs[f'{key}/snap_S0'][m]
+    ds = runs[f'{key}/snap_S_above'][m] - s0
+    dt = (runs[f'{key}/snap_T_above'] - runs[f'{key}/snap_T0'])[m]
+    assert np.all(np.diff(s0) > 0.0) and _quoted(s0[-1] - s0[0], 2) == 0.056
+    assert np.all(np.diff(ds) < 0.0) and int(np.sum(np.diff(ds) > -1.0e-3)) == 2
+    assert np.all(np.diff(dt) < 0.0) and int(np.sum(np.diff(dt) > -1.0e-3)) == 2
+    plateau = (st[m] >= 22000.0) & (st[m] <= 42400.0)
+    assert [round(float(ds[plateau].min())), round(float(ds[plateau].max()))] == [890, 972]
+    # after the layer, nodes 0 and 1 are unstable in every snapshot
+    after = st > st[m][-1]
+    assert st[after][0] == pytest.approx(63632.1, abs=0.05)
+    assert np.all(runs[f'{key}/snap_dSdr0'][after] < 0.0)
+    assert np.all(runs[f'{key}/snap_dSdr1'][after] < 0.0)
 
 
 def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):

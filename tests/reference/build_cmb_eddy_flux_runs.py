@@ -13,8 +13,8 @@ sweep values, and for the runs of ``SNAP_RUNS`` the CMB node states of their sna
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
 "aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
-CVODE rtol checked in its log and stored; ``log`` can be a list of the logs of a run and its
-resume; a run of ``SNAP_RUNS`` also names its output folder as ``snapshots``), the key ``v9x_copy`` to the helpfile, status, versions
+CVODE rtol checked in its log and stored, with the number of retries of a call at a looser
+rtol; ``log`` can be a list of the logs of a run and its resume; a run of ``SNAP_RUNS`` also names its output folder as ``snapshots``), the key ``v9x_copy`` to the helpfile, status, versions
 and configured ``rtol`` of the copy-rule run of issue #113, the key ``rtol_calls`` to the single
 calls rerun from a stored start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the
 key ``v9_parts_log`` to the
@@ -54,9 +54,16 @@ RUNS = {
     'basal750_main': -1.0,
     'basal3000_tip': -1.0,
     'basal3000_main': -1.0,
+    'basal750_tip_r10': -1.0,
 }
 # runs whose CMB node states are stored from their snapshots, in the window [yr]
-SNAP_RUNS = ('basal750_tip', 'basal750_main', 'basal3000_tip', 'basal3000_main')
+SNAP_RUNS = (
+    'basal750_tip',
+    'basal750_main',
+    'basal3000_tip',
+    'basal3000_main',
+    'basal750_tip_r10',
+)
 SNAP_WINDOW = (10000.0, 70000.0)
 SNAP_COLUMNS = tuple(
     't dSdr0 dSdr1 kh0 kh1 phi0 phi1 n_stable top_km S0 S_above T0 T_above '
@@ -68,6 +75,7 @@ NUM = r'([-+0-9.eE]+|nan|inf|-inf)'
 LEDGER = re.compile(
     rf"ledger t1={NUM} terms=\{{'r': np\.float64\({NUM}\), 'bound': np\.float64\({NUM}\)"
 )
+RETRY = re.compile(r'Retrying with max_steps=\d+, rtol=')
 COLUMNS = ('Time', 'F_cmb', 'T_cmb', 'T_cmb_node', 'step_dE_F_cmb_J')
 
 
@@ -193,6 +201,8 @@ def main(spec_path: str) -> None:
         if 'rtol' in s:
             _check_rtol(key, log, s['rtol'])
             out[f'{key}/rtol'] = np.array(float(s['rtol']))
+            # a call that reaches mxstep is retried with a looser rtol, outside the options line
+            out[f'{key}/rtol_retries'] = np.array(len(RETRY.findall(log)))
         sweep = [
             json.loads(ln[len('VRUN sweep ') :])
             for ln in log.splitlines()
