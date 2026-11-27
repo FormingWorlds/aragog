@@ -1052,7 +1052,7 @@ def test_step_energy_stratified_core_module_and_fallback(caplog):
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
 
-    budget._vmap_effective_capacity = fail_vmap
+    budget.capacity_upper_batch = fail_vmap
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
@@ -1371,6 +1371,10 @@ def test_the_padded_capacity_branch_equals_a_loop(n_nodes):
         @staticmethod
         def effective_capacity(t):
             return 2.0e27 + 1.0e24 * (t - 4000.0)
+
+        @staticmethod
+        def capacity_batch(t):
+            return 2.0e27 + 1.0e24 * (np.asarray(t) - 4000.0)
 
     s = SimpleNamespace(_n_stag=0)
     t_core = 4000.0 - np.arange(n_nodes) ** 1.5

@@ -31,6 +31,7 @@ from scipy import constants as sp_constants
 from scipy.interpolate import CubicSpline, PchipInterpolator
 from scipy.optimize import brentq
 
+from aragog.core._pytree import register_pytree
 from aragog.core.iron_table import LiquidIronTable
 
 jax.config.update('jax_enable_x64', True)
@@ -81,6 +82,7 @@ def _hermite(x, nodes, values, slopes):
     return b0 * values[i] + b1 * h * slopes[i] + b2 * values[i + 1] + b3 * h * slopes[i + 1]
 
 
+@register_pytree
 class TabulatedCoreProfiles:
     """Density, mass, gravity, pressure, potential and isentrope of a tabulated core.
 

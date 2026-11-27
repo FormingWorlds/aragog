@@ -433,7 +433,7 @@ def _eos_table_sha256(eos) -> str:
         h.update(np.asarray(table._values).tobytes())
     for attr in ['_solidus', '_liquidus']:
         pb = getattr(eos, attr)
-        h.update(np.asarray(pb._P).tobytes())
+        h.update(np.asarray(pb._P.value).tobytes())
         h.update(np.asarray(pb._S).tobytes())
     return h.hexdigest()
 

@@ -38,8 +38,6 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections import OrderedDict
-from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
@@ -47,8 +45,6 @@ import numpy as np
 from aragog.config.boundary import CORE_BC_MODES
 
 logger = logging.getLogger('fwl.' + __name__)
-
-_CACHE_MAXSIZE = 8
 
 # Fixed chunk length for batched per-call energy power evaluation.
 C: int = 512
@@ -64,33 +60,152 @@ class UnsupportedCoreBCError(ValueError):
     """A config ``core_bc_mode`` with no JAX RHS (bower2018, gradient); solve() uses NumPy."""
 
 
-@dataclass
-class _JitCacheEntry:
-    rhs_jit: Any
-    jac_jit: Any
-    phase_params: Any
-    eos_jax: Any
-    budget: Any = None
-    powers_jit: Any = None
-    weights_jit: Any = None
+class _ByValue:
+    """A pytree held as a static program argument: its leaves are compile-time constants, and
+    two holders are equal when their treedefs and the bytes of their leaves are equal.
+
+    The leaves are read-only host copies, so a later in-place change of the source cannot reach
+    a compiled program. The hash is taken once; equality is identity first.
+    """
+
+    __slots__ = ('tree', '_leaves', '_treedef', '_hash')
+
+    def __init__(self, tree) -> None:
+        import jax
+
+        leaves, treedef = jax.tree.flatten(tree)
+        held = []
+        for x in leaves:
+            a = np.array(x)
+            a.flags.writeable = False
+            held.append(a)
+        for name, value in (
+            ('tree', jax.tree.unflatten(treedef, held)),
+            ('_leaves', tuple(held)),
+            ('_treedef', treedef),
+            (
+                '_hash',
+                hash((treedef, tuple((a.tobytes(), a.dtype.str, a.shape) for a in held))),
+            ),
+        ):
+            object.__setattr__(self, name, value)
+
+    def __setattr__(self, name, value) -> None:
+        raise AttributeError('a _ByValue cannot change after it is built')
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, _ByValue) or self._hash != other._hash:
+            return False
+        return self._treedef == other._treedef and all(
+            a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()
+            for a, b in zip(self._leaves, other._leaves, strict=True)
+        )
 
 
-_JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
+# One static argument tuple per value, so a program's jit cache matches builds by identity.
+_HELD: dict = {}
+
+# Core budget leaves held as program constants, by attribute path: the config constants. The
+# profile fit (rho_cen, length_scale, d_scale) and the CMB follow the structure and stay traced.
+_BUDGET_CONSTANTS = frozenset(
+    {
+        ('alpha_c',),
+        ('c_light',),
+        ('ds_fusion',),
+        ('icn_width',),
+        ('latent_heat',),
+        ('melting_curve', 'depression'),
+        ('melting_curve', 'light_element_fraction'),
+        ('melting_curve', 't_m0'),
+        ('melting_curve', 't_m1'),
+        ('melting_curve', 't_m2'),
+        ('profiles', 'alpha'),
+        ('profiles', 'c_p'),
+    }
+)
+
+
+def _is_constant(path) -> bool:
+    """Whether the leaf at ``path`` of ``(data, phase_params, eos, budget)`` is held as a
+    program constant: every phase parameter and EOS table value, and the budget config
+    constants."""
+    part = path[0].idx
+    if part == 3:
+        return tuple(getattr(k, 'name', None) for k in path[1:]) in _BUDGET_CONSTANTS
+    return part in (1, 2)
+
+
+# At most this many input forms keep compiled CVODE programs; a new form beyond it clears them.
+MAX_FORMS = 8
+_FORMS: set = set()
 
 
 def clear_jit_cache() -> None:
-    """Clear the module-level JIT cache and reset trace counters."""
-    _JIT_CACHE.clear()
-    _TRACE_COUNTERS['rhs'] = 0
-    _TRACE_COUNTERS['jac'] = 0
-    _TRACE_COUNTERS['powers'] = 0
+    """Drop the compiled CVODE programs, the record of their input forms, the interned static
+    arguments and the trace counters."""
+    if _programs.cache_info().currsize:
+        for program in _programs():
+            program.clear_cache()
+    _programs.cache_clear()
+    _FORMS.clear()
+    _HELD.clear()
+    for key in _TRACE_COUNTERS:
+        _TRACE_COUNTERS[key] = 0
+
+
+def _bound_forms(core_bc_mode, use_radio, data, consts) -> None:
+    """Record the input form of a factory build; a new form beyond ``MAX_FORMS`` first clears the
+    compiled programs.
+
+    Notes
+    -----
+    The bound covers the 4 CVODE programs of ``_programs`` (RHS, Jacobian, powers, lid weight),
+    by the count of input forms. It counts builds: a factory built before a clear and called
+    again compiles once more, and its static arguments then match those of a later equal build
+    by value, not identity. Outside the bound:
+
+    - the budget programs of ``aragog.core.budget``: their batch calls are padded to a power-of-2
+      length, so they compile once per length class and budget form; a tabulated core whose grid
+      length follows ``r_cmb`` is a new budget form, so it compiles them again at each structure
+      update;
+    - the executables JAX keeps for eager array operations, 1 per operation and input shape, so a
+      new mesh size adds some.
+
+    A tabulated core with the default ``t_cmb_range`` sizes its CMB temperature grid from the
+    core pressures, so a structure update that changes its length is also a new form of the RHS
+    and Jacobian.
+    """
+    import jax
+
+    leaves, treedef = jax.tree_util.tree_flatten((data, consts))
+    form = (
+        core_bc_mode,
+        use_radio,
+        treedef,
+        tuple(
+            x if isinstance(x, _ByValue) else (np.shape(x), getattr(x, 'dtype', type(x)))
+            for x in leaves
+        ),
+    )
+    if form in _FORMS:
+        return
+    if len(_FORMS) >= MAX_FORMS:
+        logger.debug('JAX CVODE programs: %d input forms held, clearing them', len(_FORMS))
+        clear_jit_cache()
+    _FORMS.add(form)
 
 
 def _args_from_data(
     data, phase_params: Any, eos_jax: Any, use_radio: bool, budget: Any = None
 ) -> tuple:
-    """Build the physical RHS argument tuple from data and closure parameters; for
-    core_module it ends with the budget and the data entries after the state offset."""
+    """Build the physical RHS argument tuple from the program arguments ``data``, the phase
+    parameters and the EOS; for core_module it ends with the budget and the data entries after
+    the state offset."""
     from aragog.jax import solver as js
 
     mesh_arrays, boundary_params, heating_jax, radio_arrays = data[:4]
@@ -103,126 +218,102 @@ def _args_from_data(
     return args if budget is None else args + (budget, *data[8:])
 
 
-def _make_jitted_rhs_and_jacobian(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build JIT-compiled RHS and Jacobian functions.
-
-    PhaseParams, eos_jax and the core_module budget are closure constants. All remaining
-    parameters are passed as a pytree in data; for core_module it ends with the core source
-    power and the critical Rayleigh number of the CMB boundary layer.
-    """
-    import jax
-
+def _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts):
+    """Nondimensional RHS of the state ``y_nd`` at time ``t_nd``; ``consts`` holds the phase
+    parameters, the EOS and the core_module budget (None in the other modes)."""
     from aragog.jax import solver as js
 
-    _rhs_jax = {
+    rhs = {
         'quasi_steady': js.dSdt,
         'energy_balance': js.dSdt_energy_balance,
         'core_module': js.dSdt_core_module,
     }[core_bc_mode]
-
-    def _eval_core(t_nd, y_nd, data):
-        state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
-        t_phys = t_nd * t_ref_jax
-        S_phys = y_nd * state_scale_jax + offset_jax
-        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
-        dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
-        return dydt_phys * rhs_scale_jax
-
-    def _make_wrapper(kind: str):
-        def _wrapper(t_nd, y_nd, data):
-            _TRACE_COUNTERS[kind] += 1
-            return _eval_core(t_nd, y_nd, data)
-
-        return _wrapper
-
-    rhs_jit = jax.jit(_make_wrapper('rhs'))
-    jac_jit = jax.jit(jax.jacrev(_make_wrapper('jac'), argnums=1))
-    return rhs_jit, jac_jit
+    phase_params, eos_jax, budget = consts
+    state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
+    args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
+    dydt_phys = rhs(t_nd * t_ref_jax, y_nd * state_scale_jax + offset_jax, args_tuple)
+    return dydt_phys * rhs_scale_jax
 
 
-def _make_jitted_powers(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build JIT-compiled vmapped step_powers function over chunks of size C."""
+def _flat_core(core_bc_mode, use_radio, held, layout, t_nd, y_nd, leaves):
+    """``_eval_core`` with the constant leaves from the static holder ``held`` and the other
+    leaves flat; ``layout`` is the treedef of ``(data, phase_params, eos, budget)`` and its mask
+    of constant leaves."""
+    import jax
+
+    treedef, mask = layout
+    const, traced = iter(jax.tree.map(jax.numpy.asarray, held.tree)), iter(leaves)
+    data, *consts = jax.tree.unflatten(treedef, [next(const if m else traced) for m in mask])
+    return _eval_core(core_bc_mode, use_radio, t_nd, y_nd, data, consts)
+
+
+def _rhs_program(core_bc_mode, use_radio, held, layout, t_nd, y_nd, *leaves):
+    _TRACE_COUNTERS['rhs'] += 1
+    return _flat_core(core_bc_mode, use_radio, held, layout, t_nd, y_nd, leaves)
+
+
+def _jac_program(core_bc_mode, use_radio, held, layout, t_nd, y_nd, *leaves):
+    _TRACE_COUNTERS['jac'] += 1
+    return _flat_core(core_bc_mode, use_radio, held, layout, t_nd, y_nd, leaves)
+
+
+def _powers_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, aux, consts):
     import jax
 
     from aragog.jax import solver as js
 
-    def _eval_node(t_phys, y_phys, data, aux):
+    _TRACE_COUNTERS['powers'] += 1
+    phase_params, eos_jax, budget = consts
+
+    def _eval_node(t_phys, y_phys):
         args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         return js.step_powers(t_phys, y_phys, args_tuple, core_bc_mode, aux)
 
-    def _eval_chunk(t_chunk, Y_chunk, data, aux):
-        _TRACE_COUNTERS['powers'] += 1
-        return jax.vmap(_eval_node, in_axes=(0, 1, None, None))(t_chunk, Y_chunk, data, aux)
-
-    return jax.jit(_eval_chunk)
+    return jax.vmap(_eval_node, in_axes=(0, 1))(t_chunk, Y_chunk)
 
 
-def _make_jitted_lid_weights(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-):
-    """Build the JIT-compiled vmapped lid weight over chunks of size C."""
+def _lid_weight_program(core_bc_mode, use_radio, t_chunk, Y_chunk, data, consts):
     import jax
 
     from aragog.jax import solver as js
 
-    def _eval_node(t_phys, y_phys, data):
+    phase_params, eos_jax, budget = consts
+
+    def _eval_node(t_phys, y_phys):
         args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         return js.lid_weight(t_phys, y_phys, args_tuple, core_bc_mode)
 
-    def _eval_chunk(t_chunk, Y_chunk, data):
-        return jax.vmap(_eval_node, in_axes=(0, 1, None))(t_chunk, Y_chunk, data)
-
-    return jax.jit(_eval_chunk)
+    return jax.vmap(_eval_node, in_axes=(0, 1))(t_chunk, Y_chunk)
 
 
-def _get_or_create_jitted(
-    core_bc_mode: str,
-    use_radio: bool,
-    phase_params: Any,
-    eos_jax: Any,
-    budget: Any = None,
-) -> tuple[_JitCacheEntry, bool]:
-    """Retrieve cached jitted functions or compile new ones.
+@functools.cache
+def _programs():
+    """The RHS, Jacobian, step-power and lid-weight programs, with the core_bc mode and the
+    radiogenic switch static. The RHS and Jacobian also take as static arguments the by-value
+    holder of the constant leaves (the phase parameters, the EOS tables and the budget config
+    constants) and the layout (treedef and mask), and every other leaf flat; the step-power
+    and lid-weight programs take all inputs as traced arguments."""
+    import jax
 
-    Returns
-    -------
-    tuple
-        (_JitCacheEntry, is_cache_hit)
-    """
-    key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
-    key += () if budget is None else (id(budget),)
-    entry = _JIT_CACHE.pop(key, None)
-    hit = (
-        entry is not None
-        and entry.phase_params is phase_params
-        and entry.eos_jax is eos_jax
-        and entry.budget is budget
+    return (
+        jax.jit(_rhs_program, static_argnums=(0, 1, 2, 3)),
+        jax.jit(jax.jacrev(_jac_program, argnums=5), static_argnums=(0, 1, 2, 3)),
+        jax.jit(_powers_program, static_argnums=(0, 1)),
+        jax.jit(_lid_weight_program, static_argnums=(0, 1)),
     )
-    if not hit:
-        rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
-            core_bc_mode, use_radio, phase_params, eos_jax, budget
-        )
-        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax, budget)
-    _JIT_CACHE[key] = entry
-    if len(_JIT_CACHE) > _CACHE_MAXSIZE:
-        _JIT_CACHE.popitem(last=False)
-    return entry, hit
+
+
+def _strong(tree):
+    """``tree`` with its Python and NumPy float leaves as strong float64 scalars and its weak JAX
+    arrays as strong arrays, so that every build passes the same argument types."""
+    import jax
+
+    def leaf(x):
+        if isinstance(x, jax.Array) and x.weak_type:
+            return x.astype(x.dtype)
+        return np.float64(x) if isinstance(x, (float, np.floating)) else x
+
+    return jax.tree_util.tree_map(leaf, tree)
 
 
 class LidFactoryMismatch(ValueError):
@@ -338,6 +429,19 @@ def build_jax_rhs_and_jacobian(
         inputs of the wrong size or shape, a type 5 setup that
         ``aragog.jax.solver.check_surface_temperature`` refuses, and radionuclide arrays
         that ``aragog.jax.solver.check_radio_arrays`` refuses.
+
+    Notes
+    -----
+    The RHS and Jacobian programs compile once per input form: the mode, the radiogenic
+    switch, the shape and dtype of each traced leaf, and the values of the compile-time
+    constants. Those are every leaf of ``phase_params`` and of ``eos_jax``, the budget leaves
+    named in ``_BUDGET_CONSTANTS``, and every static field of the inputs, which the treedef
+    holds: the EOS pressure and entropy grid axes, the boundary condition types and
+    ``param_utbl``, the mesh flag ``top_limited``, the static phase fields
+    ``matprop_smooth_width`` and ``rheology``, and the non-array budget attributes. The mesh
+    and boundary arrays and every other budget leaf are traced, so a structure update with new
+    mesh, boundary and core profile values compiles nothing; a new EOS table value compiles
+    once.
     """
     if core_bc_mode == 'core_module' and core_module_budget is None:
         raise ValueError(
@@ -355,6 +459,7 @@ def build_jax_rhs_and_jacobian(
         )
 
     try:
+        import jax
         import jax.numpy as jnp
 
         import aragog.jax.solver
@@ -468,11 +573,37 @@ def build_jax_rhs_and_jacobian(
         )
 
     budget = core_module_budget if core_bc_mode == 'core_module' else None
-    entry, is_cache_hit = _get_or_create_jitted(
-        core_bc_mode, use_radio, phase_params, eos_jax, budget
-    )
-    rhs_jit = entry.rhs_jit
-    jac_jit = entry.jac_jit
+    data, consts = _strong(data), _strong((phase_params, eos_jax, budget))
+    paths, treedef = jax.tree_util.tree_flatten_with_path((data, *consts))
+    mask = tuple(_is_constant(p) for p, _ in paths)
+    held = _ByValue(tuple(x for (_, x), m in zip(paths, mask, strict=True) if m))
+    _bound_forms(core_bc_mode, use_radio, data, (held, consts))
+    rhs_program, jac_program, powers_program, weights_program = _programs()
+
+    # flattened once per build, on the device from the first call on, not at every call
+    leaves = [x for (_, x), m in zip(paths, mask, strict=True) if not m]
+    static_args = (core_bc_mode, use_radio, held, (treedef, mask))
+    # after the bound, which can clear _HELD
+    static_args = _HELD.setdefault(static_args, static_args)
+
+    rhs_jit = functools.partial(rhs_program, *static_args)
+    jac_jit = functools.partial(jac_program, *static_args)
+
+    def first_call(kind, label, program, t_nd, y_nd):
+        """Put the traced leaves on the device, run ``program`` once and log whether it
+        compiled a program or reused one."""
+        leaves[:] = [jnp.asarray(x) for x in leaves]
+        before = _TRACE_COUNTERS[kind]
+        out = program(t_nd, y_nd, *leaves)
+        compiled = _TRACE_COUNTERS[kind] > before
+        how = 'compiled for new inputs' if compiled else 'reused'
+        logger.log(
+            logging.INFO if compiled else logging.DEBUG,
+            'JAX %s first call: program %s',
+            label,
+            how,
+        )
+        return out
 
     info = {
         'lid': lid_params is not None,
@@ -485,15 +616,13 @@ def build_jax_rhs_and_jacobian(
     def rhs_fn(t_nd, y_nd, ydot_nd):
         """scikits.odes RHS function: fills ydot in-place."""
         try:
-            result = rhs_jit(float(t_nd), jnp.asarray(y_nd), data)
-            ydot_nd[:] = np.asarray(result)
-            info['rhs_calls'] += 1
-            if not info['first_rhs_compile_done']:
+            t, y = float(t_nd), jnp.asarray(y_nd)
+            if info['first_rhs_compile_done']:
+                ydot_nd[:] = np.asarray(rhs_jit(t, y, *leaves))
+            else:
+                ydot_nd[:] = np.asarray(first_call('rhs', 'RHS', rhs_jit, t, y))
                 info['first_rhs_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX RHS cache hit')
-                else:
-                    logger.info('JAX RHS first call (JIT compile complete)')
+            info['rhs_calls'] += 1
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -502,15 +631,13 @@ def build_jax_rhs_and_jacobian(
     def jacfn(t_nd, y_nd, fy_nd, J, user_data=None):
         """scikits.odes Jacobian function: fills J in-place."""
         try:
-            jac = jac_jit(float(t_nd), jnp.asarray(y_nd), data)
-            J[...] = np.asarray(jac)
-            info['jac_calls'] += 1
-            if not info['first_jac_compile_done']:
+            t, y = float(t_nd), jnp.asarray(y_nd)
+            if info['first_jac_compile_done']:
+                J[...] = np.asarray(jac_jit(t, y, *leaves))
+            else:
+                J[...] = np.asarray(first_call('jac', 'Jacobian', jac_jit, t, y))
                 info['first_jac_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX Jacobian cache hit')
-                else:
-                    logger.info('JAX Jacobian first call (JIT compile complete)')
+            info['jac_calls'] += 1
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
@@ -562,20 +689,18 @@ def build_jax_rhs_and_jacobian(
             if n == 0:
                 return np.empty((0, 7), dtype=np.float64)
 
-            if entry.powers_jit is None:
-                entry.powers_jit = _make_jitted_powers(
-                    core_bc_mode, use_radio, phase_params, eos_jax, budget
-                )
-
             pad_len = -n % C
             t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
             Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
             chunks = [
-                entry.powers_jit(
+                powers_program(
+                    core_bc_mode,
+                    use_radio,
                     t_pad[k : k + C],
                     Y_pad[:, k : k + C],
                     data,
                     aux,
+                    consts,
                 )
                 for k in range(0, t_pad.size, C)
             ]
@@ -595,15 +720,20 @@ def build_jax_rhs_and_jacobian(
                     )
                 if t_arr.size == 0:
                     return np.empty(0, dtype=np.float64)
-                if entry.weights_jit is None:
-                    entry.weights_jit = _make_jitted_lid_weights(
-                        core_bc_mode, use_radio, phase_params, eos_jax, budget
-                    )
                 pad_len = -t_arr.size % C
                 t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
                 Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
                 chunks = [
-                    np.asarray(entry.weights_jit(t_pad[k : k + C], Y_pad[:, k : k + C], data))
+                    np.asarray(
+                        weights_program(
+                            core_bc_mode,
+                            use_radio,
+                            t_pad[k : k + C],
+                            Y_pad[:, k : k + C],
+                            data,
+                            consts,
+                        )
+                    )
                     for k in range(0, t_pad.size, C)
                 ]
                 return np.concatenate(chunks)[: t_arr.size]
@@ -617,6 +747,7 @@ def build_jax_rhs_and_jacobian(
     rhs_fn.phase_params = phase_params
     rhs_fn.rheology = getattr(phase_params, 'rheology', None)
     rhs_fn.lid = lid_params is not None
+    rhs_fn.program_args = (data, consts)
 
     return rhs_fn, jacfn, info
 

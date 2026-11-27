@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as _np
 
+from aragog.core._pytree import register_pytree
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.stratification import _q_ad
@@ -35,9 +36,13 @@ _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
 _GL_W = jnp.asarray(_GL_W)
 
-_BISECT_ITERS = 80  # halves the bracket to ~1e-24 of r_cmb: machine precision
+_BISECT_ITERS = 80  # steps of the kink bisection
+# ITP search of the boundary on u = r / r_cmb in [0, 1] (Oliveira & Takahashi 2020, Alg. 1):
+# eps = 2^-54 is half the float spacing just below u = 1, so n_1/2 = 53; n0 = 5 is the slack.
+_ITP_EPS, _ITP_STEPS, _ITP_K1, _ITP_K2 = 2.0**-54, 53 + 5, 0.2, 2.0
 
 
+@register_pytree
 class CoreEnergyBudget:
     """Energy budget of a well-mixed core with inner-core growth.
 
@@ -259,58 +264,134 @@ class CoreEnergyBudget:
         return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
 
     @functools.cached_property
-    def _bisect_body(self):
-        """Bisection step, built once per budget so that the loop compiles once."""
+    def _root_steps(self):
+        """Condition and step of the boundary root search, built once per budget so that the
+        loop compiles once. An entry steps while its bracket is wider than 2 eps, as in
+        Algorithm 1; an array of temperatures loops until its slowest entry stops, and the
+        entries that have stopped are held."""
+        r_cmb = self.profiles.r_cmb
 
-        def body(_, carry):
-            lo, hi, t_cmb = carry
-            mid = (lo + hi) / 2.0
-            frozen = self.superheat(mid, t_cmb) < 0.0
-            return jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid), t_cmb
+        def cond(carry):
+            k, a, b = carry[:3]
+            return jnp.any(b - a > 2.0 * _ITP_EPS) & (k < _ITP_STEPS)
 
-        return body
+        def body(carry):
+            k, a, b, f_a, f_b, kept, t_cmb = carry
+            mid = (a + b) / 2.0
+            # the secant needs a sign change; with a frozen b end (f_b < 0) the step bisects
+            sign = (f_b >= 0.0) & (f_b > f_a)
+            x_f = jnp.where(sign, (f_b * a - f_a * b) / jnp.where(sign, f_b - f_a, 1.0), mid)
+            sigma = jnp.sign(mid - x_f)
+            delta = _ITP_K1 * (b - a) ** _ITP_K2
+            x_t = jnp.where(delta <= jnp.abs(mid - x_f), x_f + sigma * delta, mid)
+            reach = jnp.maximum(_ITP_EPS * 2.0 ** (_ITP_STEPS - k) - (b - a) / 2.0, 0.0)
+            x = jnp.where(jnp.abs(x_t - mid) <= reach, x_t, mid - sigma * reach)
+            x = jnp.where((x > a) & (x < b), x, mid)
+            f_x = self.superheat(x * r_cmb, t_cmb)
+            frozen = f_x < 0.0
+            new = (
+                jnp.where(frozen, x, a),
+                jnp.where(frozen, b, x),
+                # Illinois: the stored superheat of an end kept twice in a row is halved
+                jnp.where(frozen, f_x, jnp.where(kept == -1, f_a / 2.0, f_a)),
+                jnp.where(frozen, jnp.where(kept == 1, f_b / 2.0, f_b), f_x),
+                jnp.where(frozen, 1, -1).astype(kept.dtype),
+            )
+            go = b - a > 2.0 * _ITP_EPS
+            held = (
+                jnp.where(go, n, o) for n, o in zip(new, (a, b, f_a, f_b, kept), strict=True)
+            )
+            return (k + 1, *held, t_cmb)
 
-    def _r_icb_bisect(self, t_cmb):
-        """Primal bisection for the boundary radius; see :meth:`r_icb`."""
+        return cond, body
+
+    def _r_icb_bracket(self, t_cmb):
+        """Steps, final bracket [m] and end superheats [K] as the search stored them; the stored
+        superheats bracket a sign change unless the centre is liquid or no point is liquid."""
         p = self.profiles
         # t_cmb rides in the carry: a value closed over would make a new loop at every call.
         t = t_cmb * 1.0
-        init = (jnp.zeros_like(t), jnp.full_like(t, p.r_cmb), t)
-        lo, hi, _ = jax.lax.fori_loop(0, _BISECT_ITERS, self._bisect_body, init)
-        root = (lo + hi) / 2.0
-        # All-liquid guard: with positive centre superheat there is no root.
-        return jnp.where(self.superheat(0.0, t_cmb) > 0.0, 0.0, root)
+        f_0, f_c = self.superheat(0.0, t_cmb), self.superheat(p.r_cmb, t_cmb)
+        b = jnp.where(f_0 > 0.0, 0.0, jnp.ones_like(t))  # a liquid centre: [0, 0], no step
+        init = (0, jnp.zeros_like(t), b, f_0, f_c, jnp.zeros(jnp.shape(t), jnp.int32), t)
+        k, a, b, f_a, f_b, *_ = jax.lax.while_loop(*self._root_steps, init)
+        frozen = (b == 1.0) & (f_c < 0.0)  # no liquid bisection point: r_cmb
+        return k, jnp.where(frozen, p.r_cmb, a * p.r_cmb), b * p.r_cmb, f_a, f_b
+
+    def _r_icb_solve(self, t_cmb):
+        """Boundary radius [m] of the root search, NaN for a NaN ``t_cmb``; see :meth:`r_icb`."""
+        _, lo, hi, _, _ = self._r_icb_bracket(t_cmb)
+        return jnp.where(jnp.isnan(t_cmb), jnp.nan, (lo + hi) / 2.0)
 
     def r_icb(self, t_cmb):
         """Inner-core boundary radius [m] at ``t_cmb``.
 
-        Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
-        crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
-        so the value is always defined and trace-safe. A liquid centre
-        returns zero regardless of frozen shells above it (the top-down
-        and snow topologies have no inner core in the bottom-up sense);
-        the boundary terms drop to zero there, and the solver refuses those
-        states (``aragog.core.regime.refuse_unmodelled_regime``).
+        ITP root search of the superheat on u = r / r_cmb in [0, 1]
+        (Oliveira & Takahashi 2020, Algorithm 1, p. 5:21,
+        https://doi.org/10.1145/3423597) with k1 = 0.2, k2 = 2, n0 = 5 and
+        eps = 2^-54: at most n_1/2 + n0 = 58 steps, and a final bracket of at
+        most 2 eps r_cmb plus 1 ulp of r_cmb (8.5e-10 m for r_cmb = 3480 km).
+        The interpolation step is modified: its regula falsi point uses the
+        stored superheats, and the stored superheat of an end kept twice in a
+        row is halved (the Illinois rule, Dowell & Jarratt 1971,
+        https://doi.org/10.1007/BF01934364). Truncation and projection are
+        those of Algorithm 1, so the evaluated point stays in the minmax
+        interval of Theorem 2.1 (p. 5:6) and the bound holds.
+
+        With a frozen CMB the bracket has no sign change, and the search
+        bisects until it finds a liquid point. It then finds the inner-core
+        crossing a bisection finds, and returns r_cmb when no bisection point
+        is liquid (at most 58 steps): a core frozen throughout, or a liquid
+        layer under the frozen CMB that lies between the points. With a frozen
+        CMB the boundary terms are zero, so the radius reaches the diagnostics
+        and the checks of accepted steps, not the right-hand side. A liquid centre
+        returns zero with no step, whatever lies above it (a top-down or snow
+        topology with a liquid centre has no inner core in the bottom-up
+        sense); the boundary terms drop to zero there, and the solver refuses
+        those states
+        (``aragog.core.regime.refuse_unmodelled_regime``). A NaN temperature
+        gives a NaN radius and derivative.
 
         The derivative is the implicit-function sensitivity attached as a
-        custom JVP: a comparison-driven bisection carries no gradient of
+        custom JVP: a comparison-driven search carries no gradient of
         its own (autodiff sees only the converged constant trace), so
         without this rule anything differentiating through the boundary
-        would silently read zero.
+        would silently read zero. The rule divides by the magnitude of
+        dS/dr: a crossing from frozen below to liquid above has dS/dr >= 0,
+        and a negative computed slope is round-off inside the onset band.
         """
-        return self._r_icb_root(t_cmb)
+        if isinstance(t_cmb, jax.core.Tracer) or isinstance(
+            self.profiles.r_cmb, jax.core.Tracer
+        ):
+            return self._r_icb_root(t_cmb)
+        return _r_icb_one(self, t_cmb)
 
     @functools.cached_property
     def r_icb_batch(self):
-        """``r_icb`` vectorised and compiled, once per budget."""
-        return jax.jit(jax.vmap(self.r_icb))
+        """``r_icb`` vectorised, compiled once per budget form."""
+        return functools.partial(_r_icb_batch, self)
 
     @functools.cached_property
     def regime_batch(self):
-        """``crystallization_regime`` vectorised and compiled, once per budget."""
-        from aragog.core.regime import crystallization_regime
+        """``crystallization_regime`` vectorised, compiled once per budget form."""
+        return functools.partial(_regime_batch, self)
 
-        return jax.jit(jax.vmap(lambda t_cmb: crystallization_regime(self, t_cmb)))
+    @functools.cached_property
+    def capacity_batch(self):
+        """``effective_capacity`` vectorised, compiled once per budget form."""
+        return functools.partial(_capacity_batch, self)
+
+    @functools.cached_property
+    def capacity_upper_batch(self):
+        """``effective_capacity`` vectorised over CMB temperatures and light-element mixing
+        tops ``gravitational_upper``, compiled once per budget form."""
+        return functools.partial(_capacity_upper_batch, self)
+
+    @functools.cached_property
+    def rate(self):
+        """``dtcmb_dt``, or ``core_rates`` of a stratified core, compiled once per budget form;
+        the internal sources [W] are its last argument."""
+        return functools.partial(_core_rates if self.stratification else _rate, self)
 
     @functools.cached_property
     def _r_icb_root(self):
@@ -318,20 +399,20 @@ class CoreEnergyBudget:
 
         @jax.custom_jvp
         def root(t_cmb):
-            return self._r_icb_bisect(t_cmb)
+            return self._r_icb_solve(t_cmb)
 
         @root.defjvp
         def root_jvp(primals, tangents):
             (t_cmb,) = primals
             (t_dot,) = tangents
-            radius = self._r_icb_bisect(t_cmb)
+            radius = self._r_icb_solve(t_cmb)
             d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
             d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
-            safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
+            safe = jnp.where(jnp.abs(d_dr) > 0.0, jnp.abs(d_dr), 1.0)
             # Interior boundary: dr/dT from the implicit function theorem;
-            # pinned at the domain ends where the root does not move.
+            # pinned at the domain ends where the root does not move; NaN for a NaN radius.
             interior = (radius > 0.0) & (radius < self.profiles.r_cmb)
-            drdt = jnp.where(interior, -d_dt / safe, 0.0)
+            drdt = jnp.where(interior, -d_dt / safe, jnp.where(jnp.isnan(radius), jnp.nan, 0.0))
             return radius, drdt * t_dot
 
         return root
@@ -432,7 +513,7 @@ class CoreEnergyBudget:
         """
         if self.capacity_mode == 'legacy':
             return self.secular_capacity()
-        upper = self.r_convecting
+        upper = self.r_convecting if self.stratification else None
         top = upper if gravitational_upper is None else gravitational_upper
         return (
             self.secular_capacity(upper=upper, t_cmb=t_cmb)
@@ -568,10 +649,9 @@ class CoreEnergyBudget:
 
     @functools.cached_property
     def _boundary(self):
-        """Latent plus gravitational capacity [J/K] at CMB temperatures, jitted once."""
-        return jax.jit(
-            jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
-        )
+        """Latent plus gravitational capacity [J/K] at CMB temperatures, compiled once per
+        budget form."""
+        return functools.partial(_boundary_batch, self)
 
     @functools.cached_property
     def _freeze_out_edges(self):
@@ -628,3 +708,52 @@ class CoreEnergyBudget:
             t_cmb, gravitational_upper=shell.layer_base(t_shell, t_cmb)
         )
         return (q_conv - q_base) / capacity, d_shell
+
+
+# Programs of the budget functions, compiled once per budget form and batch length class; the
+# budget is a pytree argument, so a new budget of the same form reuses them. clear_jit_cache of
+# cvode_jax does not clear them; a tabulated core with an r_cmb-dependent grid compiles again.
+@jax.jit
+def _r_icb_one(budget, t_cmb):
+    return budget._r_icb_root(t_cmb)
+
+
+@jax.jit
+def _r_icb_batch(budget, t_cmb):
+    return jax.vmap(budget.r_icb)(t_cmb)
+
+
+@jax.jit
+def _regime_batch(budget, t_cmb):
+    from aragog.core.regime import crystallization_regime
+
+    return jax.vmap(lambda t: crystallization_regime(budget, t))(t_cmb)
+
+
+@jax.jit
+def _boundary_batch(budget, t_cmb):
+    return jax.vmap(lambda t: budget.latent_capacity(t) + budget.gravitational_capacity(t))(
+        t_cmb
+    )
+
+
+@jax.jit
+def _capacity_batch(budget, t_cmb):
+    return jax.vmap(budget.effective_capacity)(t_cmb)
+
+
+@jax.jit
+def _capacity_upper_batch(budget, t_cmb, upper):
+    return jax.vmap(lambda t, u: budget.effective_capacity(t, gravitational_upper=u))(
+        t_cmb, upper
+    )
+
+
+@jax.jit
+def _rate(budget, t_cmb, q_cmb, q_sources=0.0):
+    return budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources)
+
+
+@jax.jit
+def _core_rates(budget, t_cmb, t_shell, q_cmb, q_sources=0.0):
+    return budget.core_rates(t_cmb, t_shell, q_cmb, q_sources=q_sources)

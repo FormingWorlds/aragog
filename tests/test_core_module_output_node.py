@@ -171,3 +171,18 @@ def test_core_module_without_jax_names_the_requirement(monkeypatch):
         _build('core_module', entropy_eos_copy(), dict(CORE_MODULE_PARAMS))
     other = _build('energy_balance', entropy_eos_copy())
     assert np.all(np.isfinite(other.dSdt(0.0, other._S0)))
+
+
+def test_a_rebuilt_budget_reuses_the_compiled_rate():
+    """The solver keeps the rate program of the budget form: after a rebuild with a new central
+    density the rate of the new budget compiles nothing."""
+    import jax.numpy as jnp
+
+    from tests.test_core_budget_pytree import _compiles
+
+    fresh = _build('core_module', entropy_eos_copy(), dict(CORE_MODULE_PARAMS), s_init='driven')
+    args = (jnp.float64(4000.0), jnp.float64(3e12), jnp.float64(1e11))
+    fresh._core_module_budget_rate(*args)
+    fresh.parameters.boundary_conditions.core_module_params['rho_cen'] = 12000.0
+    fresh.reset()
+    assert _compiles(lambda: fresh._core_module_budget_rate(*args)) == 0

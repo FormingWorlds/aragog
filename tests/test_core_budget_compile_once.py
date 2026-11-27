@@ -1,10 +1,11 @@
 """The inner-core boundary solve of ``aragog.core.budget.CoreEnergyBudget`` compiles once.
 
-Modules under test: ``CoreEnergyBudget._r_icb_bisect`` through ``r_icb``,
+Modules under test: ``CoreEnergyBudget._r_icb_solve`` through ``r_icb``,
 ``aragog.core.regime.refuse_unmodelled_regime`` and ``aragog.solver.entropy_solver._padded_call``.
 Invariants: after the first calls, an eager call at a new CMB temperature or a new number of
 states reuses the compiled programs, so a long core_module run does not add an XLA program at
-every step; the padding to a length bucket changes no value. Compiles are counted with the
+every step; the padding to a length bucket changes no value; with jit off every compiled
+budget program runs eagerly and gives its compiled value. Compiles are counted with the
 backend-compile events of ``jax.monitoring``.
 """
 
@@ -43,7 +44,9 @@ def _compiles(calls):
 
 @pytest.fixture
 def budget():
-    """A fresh Earth-like alloy budget in the partial-inner-core regime (onset near 4147 K)."""
+    """A fresh Earth-like alloy budget in the partial-inner-core regime (onset near 4147 K), with
+    no compiled program left: budgets of one form share them, so an earlier test can warm them."""
+    jax.clear_caches()
     prof = GaussianCoreProfiles(
         rho_cen=12500.0,
         length_scale=7200e3,
@@ -72,6 +75,24 @@ def test_eager_boundary_solves_at_new_temperatures_reuse_the_compiled_loop(budge
     temperatures = (4000.0, 3990.0, 3980.0, 3970.0, 3960.0)
     assert _compiles(lambda: [budget.r_icb(jnp.float64(t)) for t in temperatures]) == 0
     assert _compiles(lambda: [budget.r_icb(t) for t in temperatures]) == 0
+
+
+def test_a_second_budget_of_the_same_form_reuses_the_boundary_solve(budget):
+    """After a scalar boundary solve on one budget, the same solve on a budget of the same form
+    with other values (a new structure) compiles nothing."""
+    budget.r_icb(4100.0)
+    budget.r_icb(jnp.float64(4100.0))
+    prof = GaussianCoreProfiles(
+        rho_cen=12400.0,
+        length_scale=7150e3,
+        r_cmb=3470e3,
+        p_cmb=135e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    other = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    assert _compiles(lambda: [other.r_icb(4050.0), other.r_icb(jnp.float64(4050.0))]) == 0
 
 
 def test_the_regime_check_compiles_once_per_power_of_two_bucket(budget):
@@ -140,9 +161,11 @@ def test_padding_changes_no_value(budget, n):
     """For states across T_freeze and T_onset, the padding to a length bucket changes no value:
     the regime codes equal the unpadded codes, and at the bucket length the boundary radius,
     regime codes and layer base of the real states do not depend on the padding values. The
-    radius and layer base equal the unpadded calls to rtol 1e-13: from jax 0.12 XLA rounds a
-    batched program by its length (main itself varies by 1.5e-14 between lengths); with jax 0.9.2
-    they are equal bit for bit."""
+    unpadded call is another compiled program: the layer base equals it to rtol 1e-13 (from jax
+    0.12 XLA rounds a batched program by its length). The radius equals it at 0 and r_cmb, and
+    elsewhere within the final bracket width plus the root shift of a superheat round-off of 16
+    ulp of T, min(dS / |S'|, sqrt(dS / |a|)): the root search steps by superheat values, so a
+    program that rounds its steps differently ends at another point of that round-off band."""
     import contextlib
 
     from aragog.core.regime import refuse_unmodelled_regime
@@ -160,7 +183,17 @@ def test_padding_changes_no_value(budget, n):
     radius = _padded_call(budget.r_icb_batch, t)
     for row in (0, n // 2):
         assert np.array_equal(radius, np.asarray(budget.r_icb_batch(refill(t, m, row)))[:n])
-    np.testing.assert_allclose(radius, budget.r_icb_batch(t), rtol=1e-13, atol=0)
+    unpadded, r_cmb = np.asarray(budget.r_icb_batch(t)), budget.profiles.r_cmb
+    s_r = jax.grad(budget.superheat)
+    slope = np.abs(np.asarray(jax.vmap(s_r)(unpadded, t)))
+    a = np.abs(np.asarray(jax.vmap(jax.grad(s_r))(unpadded, t))) / 2.0
+    d_s = 16.0 * np.finfo(float).eps * t
+    with np.errstate(divide='ignore'):
+        shift = np.minimum(d_s / slope, np.sqrt(d_s / a))
+    edge = (unpadded == 0.0) | (unpadded == r_cmb)
+    assert np.array_equal(radius[edge], unpadded[edge])
+    bound = 2.0**-53 * r_cmb + np.spacing(r_cmb) + shift
+    assert np.all(np.abs(radius - unpadded)[~edge] <= bound[~edge])
 
     real, seen = budget.regime_batch, []
     budget.regime_batch = lambda x: seen.append(np.asarray(real(x))) or seen[-1]
@@ -177,3 +210,53 @@ def test_padding_changes_no_value(budget, n):
     other = layer_base(refill(t_shell, m, 0), refill(t_core, m, 0))
     assert np.array_equal(base, np.asarray(other)[:n])
     np.testing.assert_allclose(base, layer_base(t_shell, t_core), rtol=1e-13, atol=0)
+
+
+def test_the_budget_programs_give_the_compiled_values_without_jit(budget):
+    """With jit off (jax.disable_jit, JAX_DISABLE_JIT) every compiled budget program runs
+    eagerly and gives its compiled value: the boundary radius, the cooling rate and the batches."""
+    t_cmb, q_cmb, temps = 4000.0, 1.0e13, jnp.array([3900.0, 4000.0, 4100.0])
+
+    def values():
+        return [
+            np.asarray(v, dtype=float)
+            for v in (
+                budget.r_icb(t_cmb),
+                budget.rate(t_cmb, q_cmb),
+                budget.r_icb_batch(temps),
+                budget.regime_batch(temps),
+                budget.capacity_batch(temps),
+            )
+        ]
+
+    compiled = values()
+    try:
+        with jax.disable_jit():
+            eager = values()
+    except RecursionError as exc:
+        pytest.fail(f'a budget program recursed with jit off: {exc}')
+    assert 0.0 < compiled[0] < budget.profiles.r_cmb
+    assert compiled[1] < 0.0
+    for c, e in zip(compiled, eager, strict=True):
+        np.testing.assert_allclose(e, c, rtol=1e-12, atol=0.0)
+
+
+def test_the_core_heat_compiles_once_per_length_bucket(budget):
+    """Without stratification, after a call of 33 states the core heat of calls of 34 to 64
+    states (one bucket) compiles nothing, and each capacity is the effective capacity."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = SimpleNamespace(_n_stag=1)
+
+    def call(n):
+        y = np.zeros((3, n))
+        y[2] = np.linspace(4100.0, 4200.0, n)
+        return y, EntropySolver._core_capacity(solver, budget, y)
+
+    call(33)
+    assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0
+    y, cap = call(40)
+    want = [float(budget.effective_capacity(t)) for t in y[2]]
+    np.testing.assert_allclose(cap, want, rtol=1e-12)

@@ -226,10 +226,16 @@ PARITY = [
 
 @pytest.mark.parametrize(('core_bc', 'rheology', 'heating'), PARITY)
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid(core_bc, rheology, heating):
-    """The JAX factory right-hand side with the lid equals the NumPy one on active and
-    handed-over lids: the top cell and the 2 lid rates to relative 1e-12, the other slots to
-    1e-12 of the largest mantle rate. The call counter proves the JAX path ran."""
-    _assert_rhs_parity(_lid_solver(core_bc, rheology, heating))
+    """The jitted JAX factory right-hand side with the lid equals the NumPy one on active and
+    handed-over lids: the 2 lid rates to relative 1e-12, the top cell to 1e-12 (5e-12 for the
+    quasi_steady lid_closure case), the other slots to 1e-12 of the largest mantle rate. The call
+    counter proves the JAX path ran."""
+    # Top cell of that case: a difference of 2 fluxes whose JAX and NumPy operation orders differ
+    # by 1.32e-12 on Linux and macOS, the same with jit and eagerly
+    loose = (core_bc, rheology, heating) == ('quasi_steady', 'lid_closure', None)
+    _assert_rhs_parity(
+        _lid_solver(core_bc, rheology, heating), rtol_top=5e-12 if loose else 1e-12
+    )
 
 
 def test_jax_rhs_matches_the_numpy_rhs_with_the_lid_without_convection():
@@ -906,3 +912,17 @@ def test_lid_params_follows_the_positional_arguments_of_main():
     names = list(params)
     assert names.index('start_time') == names.index('core_module_ra_crit_cmb') + 1
     assert params['lid_params'].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_lid_enthalpy_table_has_one_shape_for_every_structure():
+    """The JAX lid enthalpy table of the solver is padded to the most knots the slice below
+    the solidus can hold, so its shape does not follow the top-cell pressure; ``n`` is the
+    knot count of the NumPy table."""
+    from aragog.solver.entropy_solver import LID_TABLE_KNOTS
+
+    s = _lid_solver()
+    e = s.jax_lid_params().e
+    assert LID_TABLE_KNOTS == 2049
+    assert e.T.shape == (LID_TABLE_KNOTS,) and e.c.shape == (4, LID_TABLE_KNOTS - 1)
+    assert int(e.n) == len(s._lid_hv.data[1]) < LID_TABLE_KNOTS
+    assert np.all(np.isinf(np.asarray(e.T)[int(e.n) :]))
