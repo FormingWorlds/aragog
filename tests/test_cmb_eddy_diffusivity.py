@@ -262,22 +262,25 @@ def test_cmb_node_has_no_eddy_diffusivity_when_nodes_0_and_1_are_stable(phi):
     assert float(kh_jax[2]) > 0.0 and state.eddy_diffusivity[2] > 0.0  # node 2 convects
 
 
-def test_cmb_node_takes_its_own_floor_when_nodes_0_and_1_are_stable_below_d():
-    """0 < dS/dr = 5e-4 < D = 1e-3 at nodes 0 and 1: the floor acts on both nodes and node 1 has no
-    mixing-length value, so kh[0] is the floor of node 0 and kh[1] that of node 1; with melt
-    fractions 0.6 and 0.35 the 2 floors differ, so the copy rule (kh[0] = kh[1]) fails here."""
+@pytest.mark.parametrize('g1', [5.0e-4, 2.0e-3])
+def test_cmb_node_takes_its_own_floor_when_nodes_0_and_1_are_stable_below_d(g1):
+    """0 < dS/dr[0] = 5e-4 < D = 1e-3, node 1 stable: the floor acts on node 0 and node 1 has no
+    mixing-length value, so kh[0] is the floor of node 0; kh[1] is the floor of node 1 when
+    dS/dr[1] < D and 0 above D. With melt fractions 0.6 and 0.35 the 2 floors differ, so the
+    copy rule (kh[0] = kh[1]) and the mask of node 1 at node 0 fail here."""
     D = 1.0e-3
     state, mesh = _state(kappah_floor=_KAPPAH_FLOOR, D=D)
     phi_stag = np.full(mesh.N, _PHI_MUSH)
     phi_stag[0], phi_stag[1] = 0.6, 0.35
-    dSdr = _update(state, mesh, [5.0e-4, 5.0e-4], phi_stag)
+    dSdr = _update(state, mesh, [5.0e-4, g1], phi_stag)
     kh_jax, kh_mlt_jax = _jax_twin(state, mesh, dSdr, _KAPPAH_FLOOR, D)
     phi_b = _basic(state, 'melt_fraction')[:2]
     floor = [_KAPPAH_FLOOR * float(tanh_weight(f, _PHI_RHEO, _PHI_WIDTH)) for f in phi_b]
     assert float(kh_mlt_jax[1]) == 0.0 and floor[0] > 1.01 * floor[1] > 0.0
-    for i in (0, 1):  # the mask is on at both nodes
-        assert float(kh_jax[i]) == pytest.approx(floor[i], rel=1e-12, abs=0.0), i
-        assert state.eddy_diffusivity[i] == pytest.approx(floor[i], rel=1e-10, abs=0.0), i
+    expect = [floor[0], floor[1] if g1 < D else 0.0]  # the mask is on where dS/dr < D
+    for i in (0, 1):
+        assert float(kh_jax[i]) == pytest.approx(expect[i], rel=1e-12, abs=0.0), i
+        assert state.eddy_diffusivity[i] == pytest.approx(expect[i], rel=1e-10, abs=0.0), i
 
 
 # ---------------------------------------------------------------------------

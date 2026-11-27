@@ -416,8 +416,8 @@ def _spans(r):
 
 
 def test_spans_keeps_an_interval_open_at_the_last_row():
-    """A low-flux interval that runs to the last row ends at inf; a closed one at its first row back
-    above 1 W m^-2."""
+    """A low-flux interval that runs to the last row ends at inf; a closed one at its first row
+    back above 1 W m^-2."""
     r = {
         'Time': np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
         'F_cmb': np.array([5.0, 0.5, 5.0, 0.4, 0.3]),
@@ -453,29 +453,47 @@ def _check_setup(runs, key):
 
 
 def _retried(runs, key, kind):
-    """Mask of the snapshots that end a call retried with ``kind``: the call starts at the snapshot
-    before, and the log gives its start time to 4 significant digits."""
+    """Mask of the snapshots that end a call retried with ``kind``: the call starts at the
+    snapshot before, and the log gives its start time to 4 significant digits."""
     st = runs[f'{key}/snap_t']
     t_r = runs[f'{key}/retry_t'][runs[f'{key}/retry_kind'] == kind]
     start = np.r_[np.nan, st[:-1]]
     return np.array([np.any(np.isclose(float(f'{t:.3e}'), t_r)) for t in start])
 
 
+def _call_tols(runs, key, rtol):
+    """rtol and atol of the call that ends at each snapshot: those of the run, or of the last
+    retry of the call; each retry time matches the start of exactly 1 call."""
+    st = runs[f'{key}/snap_t']
+    start = np.array([float(f'{t:.3e}') for t in np.r_[np.nan, st[:-1]]])
+    atol = float(runs[f'{key}/atol'])
+    rt, at = np.full(st.size, rtol), np.full(st.size, atol)
+    for t, r, sf in zip(*(runs[f'{key}/retry_{c}'] for c in ('t', 'rtol', 'atol_sf'))):
+        hit = np.isclose(start, t)
+        assert int(hit.sum()) == 1, t
+        rt[hit] = rtol if np.isnan(r) else r
+        at[hit] = atol * sf
+    return rt, at
+
+
 def _floor0(phi):
-    """Floor of the CMB node at melt fraction phi (kappah_floor 10, rfront_loc 0.4, rfront_wid 0.2)."""
+    """Floor of the CMB node at melt fraction phi (kappah_floor 10, rfront_loc 0.4, rfront_wid
+    0.2)."""
     return 10.0 * 0.5 * (1.0 + np.tanh((phi - 0.4) / 0.2))
 
 
 def _margins(runs, key, i, rtol):
-    """At the snapshots i: the eddy flux of the CMB node if it were unstable, rho T floor |dS/dr0|
-    [W m^-2], and the gradients at nodes 0 and 1 over their per-step tolerances, alone and times
-    sqrt(N). The node 0 gradient is the state dSdr_cmb (tolerance rtol |g0| + atol); the node 1
-    gradient is (S1 - S0) / dr01 (tolerance (tol(S0) + tol(S1)) / dr01)."""
+    """At the snapshots i: the eddy flux of the CMB node if it were unstable, rho T floor
+    |dS/dr0| [W m^-2], and the gradients at nodes 0 and 1 over their per-step tolerances (those
+    of the call that ends at the snapshot), alone and times sqrt(N). The node 0 gradient is the
+    state dSdr_cmb (tolerance rtol |g0| + atol); the node 1 gradient is (S1 - S0) / dr01 to 5e-4
+    (tolerance (tol(S0) + tol(S1)) / dr01)."""
     g = {c: runs[f'{key}/snap_{c}'][i] for c in SNAP}
-    atol, n = float(runs[f'{key}/atol']), g['n_cells'] + 1.0
+    rt, at = (x[i] for x in _call_tols(runs, key, rtol))
+    n = g['n_cells'] + 1.0
     flux = g['rho_node0'] * g['T_node0'] * _floor0(g['phi0']) * np.abs(g['dSdr0'])
-    tol_s = [rtol * np.abs(g[c]) + atol for c in ('S0', 'S1')]
-    r0 = g['dSdr0'] / (rtol * np.abs(g['dSdr0']) + atol)
+    tol_s = [rt * np.abs(g[c]) + at for c in ('S0', 'S1')]
+    r0 = g['dSdr0'] / (rt * np.abs(g['dSdr0']) + at)
     r1 = g['dSdr1'] / ((tol_s[0] + tol_s[1]) / g['dr01'])
     w1 = g['dSdr1'] / (np.hypot(*tol_s) / g['dr01'])
     return flux, r0, r0 / np.sqrt(n), r1, w1 / np.sqrt(n)
@@ -485,18 +503,19 @@ SNAP = 'dSdr0 dSdr1 phi0 rho_node0 T_node0 S0 S1 dr01 n_cells'.split()
 
 
 def _check_margins(runs, key, rtol, want):
-    """The flux bound (min, max, median) and the margins (smallest node 0 and node 1 ratios inside
-    the low-flux interval, and both at the snapshot before it) against ``want``; the 30 snapshots
-    with |dS/dr0| < 1e-5 are the first 30 of the interval."""
+    """The flux bound (min, max, median) and the margins (smallest node 0 and node 1 ratios
+    inside the low-flux interval, and both at the snapshot before it) against ``want``; the 30
+    snapshots with |dS/dr0| < 1e-5 are the first 30 of the interval."""
     _, m, _ = _low_flux(runs, key)
     idx = np.flatnonzero(m)
+    assert idx[0] > 0  # a snapshot before the interval
     flux, r0, s0, r1, s1 = _margins(runs, key, idx, rtol)
     # 782 m between the centres of cells 0 and 1, N = 79 cells + the CMB gradient
     assert np.all(np.round(runs[f'{key}/snap_dr01'][idx]) == 782.0)
     assert np.all(runs[f'{key}/snap_n_cells'][idx] == 79.0)
     on = _margins(runs, key, idx[:1] - 1, rtol)
     got = [_quoted(flux.min(), 3), _quoted(flux.max(), 3), _quoted(np.median(flux), 3)]
-    got += [round(float(r0.min()), 1), round(float(s0.min()), 1)]
+    got += [round(float(r0.min()), 1), _quoted(s0.min(), 3)]
     got += [_quoted(r1.min(), 2), _quoted(s1.min(), 2), _quoted(on[0][0], 3)]
     got += [round(float(on[1][0]), 1), round(float(on[2][0]), 1), _quoted(on[3][0], 2)]
     assert got == want, got
@@ -576,7 +595,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
         4.9e-7,
     ]
     assert [int(np.sum(np.abs(snap[g]) < 1.0e-5)) for g in ('dSdr0', 'dSdr1')] == [30, 7]
-    want = [49.1, 1.16e4, 2160.0, 59.0, 6.6, 3.5, 0.55, 33.2, 39.9, 4.5, 0.96]
+    want = [49.1, 1.16e4, 2160.0, 59.0, 6.60, 3.5, 0.55, 33.2, 39.9, 4.5, 0.96]
     t30, share = _check_margins(runs, rule, 1.0e-8, want)
     assert round(float(t30), 1) == 26133.7 and share == 75.9
     assert np.all(snap['kh0'] == 0.0) and np.all(snap['kh1'] == 0.0)
@@ -695,12 +714,12 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
 
 
 def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
-    """The 750 m case under the CMB node rule at rtol 1e-10 (basal750_tip_r10), t = 0 to 70 kyr: the
-    layer is there at 14495.2 yr, at the end of a call retried at rtol 2e-10, and holds F_cmb near
-    1e-3 W m^-2 from 14788.2 to 63632.1 yr with 3 to 5 stable nodes, 4 (top node 3) in 91 of 100
-    snapshots. S0 rises and both steps fall between every 2 snapshots, with 2 near-flat pairs each
-    and no rise of the temperature step; with 4 stable nodes the entropy step falls from 971.9 to
-    964.1 J kg^-1 K^-1 from 22.3 to 40.0 kyr."""
+    """The 750 m case under the CMB node rule at rtol 1e-10 (basal750_tip_r10), t = 0 to 70 kyr:
+    the layer is there at 14495.2 yr, at the end of a call retried at rtol 2e-10, and holds
+    F_cmb near 1e-3 W m^-2 from 14788.2 to 63632.1 yr with 3 to 5 stable nodes, 4 (top node 3)
+    in 91 of 100 snapshots. S0 rises and both steps fall between every 2 snapshots, with 2
+    near-flat pairs each and no rise of the temperature step; with 4 stable nodes the entropy
+    step falls from 971.9 to 964.1 J kg^-1 K^-1 from 22.3 to 40.0 kyr."""
     key = 'basal750_tip_r10'
     _check_calls(runs, key, 217, 0.9995, 70000.0, 1.0e-10, 11)
     # 2 calls retried at a looser rtol, 5 with half the step and a larger atol (9 retries)
@@ -710,6 +729,7 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
     assert set(runs[f'{key}/retry_atol_sf'][kind == 1]) == {3.0, 5.0}
     assert set(runs[f'{key}/retry_atol_sf'][kind == 0]) == {1.0}
     assert list(runs[f'{key}/retry_rtol'][kind == 0]) == [2.0e-10, 2.0e-10]
+    assert np.all(np.isnan(runs[f'{key}/retry_rtol'][kind == 1]))
     prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
     assert prov[key]['aragog'].startswith('af8bb2f5') and len(prov[key]['sha256_log']) == 2
     # the call that ends with the first layer snapshot ran at the retry rtol 2e-10
@@ -732,7 +752,7 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
     assert np.all(g0 > 0.0) and np.all(g1 > 0.0)
     assert [int(np.sum(np.abs(g) < 1.0e-5)) for g in (g0, g1)] == [30, 7]
     assert [_quoted(g0.min(), 2), _quoted(g1.min(), 2)] == [3.5e-7, 4.5e-7]
-    want = [29.5, 1.27e4, 1670.0, 35.4, 4.0, 310.0, 50.0, 13.6, 16.3, 1.8, 70.0]
+    want = [29.5, 1.27e4, 1670.0, 35.4, 3.96, 310.0, 50.0, 13.6, 16.3, 1.8, 35.0]
     t30, share = _check_margins(runs, key, 1.0e-10, want)
     assert round(float(t30), 1) == 26118.6 and share == 76.1
     # the snapshots that end the 5 calls retried with the larger atol
@@ -767,11 +787,11 @@ def test_basal_mush_layer_forms_at_rtol_1e_10(runs):
 
 
 def test_basal_mush_layer_run_repeats_with_a_newer_build(runs):
-    """basal750_tip_rerun repeats basal750_tip (rtol 1e-8) from t = 0 to 70 kyr with the newer build
-    of basal750_tip_r10: its rows equal those of basal750_tip to 59939.2 yr, across its own resume
-    at 42.8 kyr. basal750_tip stops at 60 kyr and continues from its state there, the repeat does
-    not: from that time the call times differ, and the low-flux interval ends at 62950.0 yr,
-    against 63338.1 yr."""
+    """basal750_tip_rerun repeats basal750_tip (rtol 1e-8) from t = 0 to 70 kyr with the newer
+    build of basal750_tip_r10: its rows equal those of basal750_tip to 59939.2 yr, across its
+    own resume at 42.8 kyr. basal750_tip stops at 60 kyr and continues from its state there, the
+    repeat does not: from that time the call times differ, and the low-flux interval ends at
+    62950.0 yr, against 63338.1 yr."""
     rule, rep = 'basal750_tip', 'basal750_tip_rerun'
     _check_calls(runs, rep, 209, 0.9942, 70000.0)
     prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
@@ -794,11 +814,11 @@ def test_basal_mush_layer_run_repeats_with_a_newer_build(runs):
 
 
 def test_copy_rule_at_rtol_1e_10_leaves_the_cmb_node_without_eddy_diffusivity(runs):
-    """basal750_main_r10, the 750 m case under the copy rule at rtol 1e-10 with another build than
-    basal750_main, t = 0 to 46939.4 yr: F_cmb is below 1 W m^-2 from the row at 14682.0 yr, where
-    the run continued from its stored state, to 44283.1 yr (basal750_main: 44087.6 yr). In all 85
-    snapshots inside, the CMB gradient is negative, and node 1 is stable in exactly the 79 where
-    the CMB node has no eddy diffusivity (basal750_main: 54 of 61)."""
+    """basal750_main_r10, the 750 m case under the copy rule at rtol 1e-10 with another build
+    than basal750_main, t = 0 to 46939.4 yr: F_cmb is below 1 W m^-2 from the row at 14682.0 yr,
+    where the run continued from its stored state, to 44283.1 yr (basal750_main: 44087.6 yr). In
+    all 85 snapshots inside, the CMB gradient is negative, and node 1 is stable in exactly the
+    79 where the CMB node has no eddy diffusivity (basal750_main: 54 of 61)."""
     key = 'basal750_main_r10'
     rb = np.abs(runs[f'{key}/ledger_rB'])
     # stopped by hand: the rows after 46939.4 yr are not stored
@@ -814,6 +834,7 @@ def test_copy_rule_at_rtol_1e_10_leaves_the_cmb_node_without_eddy_diffusivity(ru
     assert [t_r[kind == 1].min(), t_r[kind == 1].max()] == [29570.0, 35100.0]
     assert set(runs[f'{key}/retry_atol_sf'][kind == 1]) == {3.0, 5.0}
     assert list(runs[f'{key}/retry_rtol'][kind == 0]) == [2.0e-10, 2.0e-10]
+    assert np.all(np.isnan(runs[f'{key}/retry_rtol'][kind == 1]))
     prov = json.loads(DATA.with_name('cmb_eddy_flux_runs_provenance.json').read_text())
     assert prov[key]['aragog'].startswith('211760d1') and len(prov[key]['sha256_log']) == 2
     assert not prov[key]['aragog'].startswith(prov['basal750_main']['aragog'][:8])
@@ -837,12 +858,42 @@ def test_copy_rule_at_rtol_1e_10_leaves_the_cmb_node_without_eddy_diffusivity(ru
     assert st[-1] == pytest.approx(runs[f'{key}/Time'][-1], abs=1.0e-3)
 
 
+@pytest.mark.parametrize(
+    'key, mesh',
+    [
+        ('basal750_tip', 0.999833),
+        ('basal750_main', 0.999833),
+        ('basal750_tip_r10', 0.999833),
+        ('basal750_main_r10', 0.999833),
+        ('basal3000_tip', 0.999526),
+        ('basal3000_main', 0.999526),
+    ],
+)
+def test_stored_node_columns_agree_with_the_rows_and_the_eddy_flux(runs, key, mesh):
+    """In every stored snapshot: 79 cells; T_node0 is T_cmb_node of the row; where the CMB node
+    is unstable with an eddy diffusivity, its eddy flux Ftot0 - Jcond0 is rho0 T0 kh0 |dS/dr0|;
+    the gradient at node 1 is (S1 - S0) / dr01 times a constant mesh factor."""
+    g = {c: runs[f'{key}/snap_{c}'] for c in SNAP + ['kh0', 'Ftot0', 'Jcond0', 't']}
+    r = _rows(runs, key)
+    j = np.abs(r['Time'][:, None] - g['t'][None, :]).argmin(axis=0)
+    assert np.all(g['n_cells'] == 79.0)
+    assert np.array_equal(g['T_node0'], r['T_cmb_node'][j])
+    un = (g['dSdr0'] < 0.0) & (g['kh0'] > 0.0)
+    eddy = g['rho_node0'] * g['T_node0'] * g['kh0'] * -g['dSdr0']
+    assert un.sum() > 20 and np.allclose(
+        (g['Ftot0'] - g['Jcond0'])[un], eddy[un], rtol=1e-12, atol=0.0
+    )
+    q = (g['S1'] - g['S0']) / g['dr01'] / g['dSdr1']
+    assert np.allclose(q, mesh, rtol=1e-6, atol=0.0)
+
+
 def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
-    """The #113 case with a 3000 m CMB cell, t = 0 to 140 kyr: no stable layer holds the flux low.
-    Under the CMB node rule F_cmb is below 1 W m^-2 only from 39097.7 to 42859.0 yr, with a CMB
-    gradient below atol (sign not resolved) and the CMB node on its floor; under the copy rule from
-    18148.2 to 37620.1 yr, with an unstable CMB node without eddy diffusivity. Stable nodes occur in single snapshots only, with
-    F_cmb above 1000 W m^-2. The 2 rules differ by less than 1 K in T_cmb after 42.8 kyr."""
+    """The #113 case with a 3000 m CMB cell, t = 0 to 140 kyr: no stable layer holds the flux
+    low. Under the CMB node rule F_cmb is below 1 W m^-2 only from 39097.7 to 42859.0 yr, with a
+    CMB gradient below atol (sign not resolved) and the CMB node on its floor; under the copy
+    rule from 18148.2 to 37620.1 yr, with an unstable CMB node without eddy diffusivity. Stable
+    nodes occur in single snapshots only, with F_cmb above 1000 W m^-2. The 2 rules differ by
+    less than 1 K in T_cmb after 42.8 kyr."""
     rule, copy = BASAL[3000]
     _check_calls(runs, rule, 538, 0.9918)
     _check_calls(runs, copy, 538, 0.9919)
@@ -856,7 +907,7 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     g0 = runs[f'{rule}/snap_dSdr0'][m]
     assert [_quoted(g0.min(), 2), _quoted(g0.max(), 2)] == [-1.3e-9, -6.5e-10]
     # the CMB node keeps its own floor (kappah_floor 10, rfront_loc 0.4, rfront_wid 0.2)
-    floor0 = 10.0 * 0.5 * (1.0 + np.tanh((runs[f'{rule}/snap_phi0'][m] - 0.4) / 0.2))
+    floor0 = _floor0(runs[f'{rule}/snap_phi0'][m])
     assert np.allclose(runs[f'{rule}/snap_kh0'][m], floor0, rtol=1e-12, atol=0.0)
     assert np.all(np.abs(runs[f'{rule}/snap_kh0'][m] - 7.07) < 0.005)
     assert list(runs[f'{rule}/snap_dSdr1'][m] > 0.0) == [False] * 3 + [True] * 4

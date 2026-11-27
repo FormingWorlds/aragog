@@ -12,19 +12,18 @@ sweep values, and for the runs of ``SNAP_RUNS`` the CMB node states of their sna
 
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
-"aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
-CVODE rtol checked in its log and stored, with the base atol, the core boundary condition and the
-start time, kind, rtol and atol factor of each retry of a call; ``log`` can be a list of the logs of a run and its resume; a run of
-``SNAP_RUNS`` also names its output folder as ``snapshots``; a run stopped by hand names its
-last kept row as ``end`` [yr] and has no status stored), the key ``v9x_copy`` to the helpfile,
-status, versions
-and configured ``rtol`` of the copy-rule run of issue #113, the key ``rtol_calls`` to the single
-calls rerun from a stored start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the
-key ``v9_parts_log`` to the
-log of the V9 resume that prints the in-call CMB flux of each call, and the key ``v7_probe_log``
-to the log of the V7 rule run with the JAX count of CMB evaluations that differ from the copy. The provenance file holds the
-descriptions, the commits and the sha256 of each helpfile and log, not the local paths.
-"""
+"aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has
+that CVODE rtol checked in its log and stored, with the base atol, the core boundary condition
+and the start time, kind, rtol and atol factor of each retry of a call; ``log`` can be a list of
+the logs of a run and its resume; a run of ``SNAP_RUNS`` also names its output folder as
+``snapshots``; a run stopped by hand names its last kept row as ``end`` [yr] and has no status
+stored), the key ``v9x_copy`` to the helpfile, status, versions and configured ``rtol`` of the
+copy-rule run of issue #113, the key ``rtol_calls`` to the single calls rerun from a stored
+start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the key ``v9_parts_log`` to
+the log of the V9 resume that prints the in-call CMB flux of each call, and the key
+``v7_probe_log`` to the log of the V7 rule run with the JAX count of CMB evaluations that differ
+from the copy. The provenance file holds the descriptions, the commits and the sha256 of each
+helpfile and log, not the local paths."""
 
 from __future__ import annotations
 
@@ -123,19 +122,18 @@ def _store_parts(out: dict, key: str, parts: list[dict]) -> None:
 
 
 def _snapshots(run_dir: str, end: float = np.inf) -> tuple[np.ndarray, str]:
-    """CMB node states of each snapshot in ``SNAP_WINDOW`` up to ``end``, columns ``SNAP_COLUMNS``.
+    """CMB node states of each snapshot in ``SNAP_WINDOW`` up to ``end``, columns
+    ``SNAP_COLUMNS``.
 
     ``n_stable`` counts the nodes with dS/dr > 0 up from node 0, ``top_km`` is the height of the
-    last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that node
-    (cell 0 when node 0 is unstable). ``Ftot0`` and ``Jcond0`` are the total and the conductive
-    flux of node 0; ``kh_layer_max`` and ``Jgrav_layer_max`` the largest eddy diffusivity and the
-    largest |gravitational separation flux| over the stable nodes (NaN without one);
-    ``rho_node0`` and ``T_node0`` the density and the temperature of node 0; ``S1`` the entropy of
-    cell 1, ``dr01`` the distance [m] between the centres of cells 0 and 1 and ``n_cells`` the
-    number of cells. Raises
-    ValueError for a snapshot with a gradient that is not finite. Also returns the sha256 of the
-    snapshot files read.
-    """
+    last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that
+    node (cell 0 when node 0 is unstable). ``Ftot0`` and ``Jcond0`` are the total and the
+    conductive flux of node 0; ``kh_layer_max`` and ``Jgrav_layer_max`` the largest eddy
+    diffusivity and the largest |gravitational separation flux| over the stable nodes (NaN
+    without one); ``rho_node0`` and ``T_node0`` the density and the temperature of node 0;
+    ``S1`` the entropy of cell 1, ``dr01`` the distance [m] between the centres of cells 0 and 1
+    and ``n_cells`` the number of cells. Raises ValueError for a snapshot with a gradient that
+    is not finite. Also returns the sha256 of the snapshot files read."""
     import netCDF4
 
     def t_of(f: Path) -> float:
