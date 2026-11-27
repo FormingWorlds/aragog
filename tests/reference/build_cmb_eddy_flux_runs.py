@@ -58,24 +58,9 @@ RUNS = {
 # runs whose CMB node states are stored from their snapshots, in the window [yr]
 SNAP_RUNS = ('basal750_tip', 'basal750_main', 'basal3000_tip', 'basal3000_main')
 SNAP_WINDOW = (10000.0, 70000.0)
-SNAP_COLUMNS = (
-    't',
-    'dSdr0',
-    'dSdr1',
-    'kh0',
-    'kh1',
-    'phi0',
-    'phi1',
-    'n_stable',
-    'top_km',
-    'S0',
-    'S_above',
-    'T0',
-    'T_above',
-    'Ftot0',
-    'Jcond0',
-    'kh_layer_max',
-    'Jgrav_layer_max',
+SNAP_COLUMNS = tuple(
+    't dSdr0 dSdr1 kh0 kh1 phi0 phi1 n_stable top_km S0 S_above T0 T_above '
+    'Ftot0 Jcond0 kh_layer_max Jgrav_layer_max'.split()
 )
 # runs that print the in-call CMB flux of each call in their own log
 PARTS_OWN = ('v9x_tip', 'v9x_tip_r9', 'v9x_tip_r10')

@@ -246,6 +246,22 @@ def test_cmb_rule_holds_on_random_states(g0, g1, phi0, phi1, D, edt, kappah_floo
     assert state.eddy_diffusivity[0] == pytest.approx(float(kh_jax[0]), rel=1e-10, abs=1e-30)
 
 
+@pytest.mark.parametrize('phi', [0.35, 0.6])
+def test_cmb_node_has_no_eddy_diffusivity_when_nodes_0_and_1_are_stable(phi):
+    """dS/dr > 0 at nodes 0 and 1 (D = 0, positive eddy_diffusivity_thermal): the mixing length
+    gives node 1 no eddy diffusivity and the floor does not act, so kh[0] = kh[1] = 0 in the NumPy
+    update and in the JAX compute_mlt."""
+    state, mesh = _state(kappah_floor=_KAPPAH_FLOOR, D=0.0)
+    phi_stag = np.full(mesh.N, _PHI_MUSH)
+    phi_stag[0], phi_stag[1] = phi, phi
+    dSdr = _update(state, mesh, [1.0e-4, 1.0e-4], phi_stag)
+    kh_jax, kh_mlt_jax = _jax_twin(state, mesh, dSdr, _KAPPAH_FLOOR, 0.0)
+    assert float(kh_mlt_jax[1]) == 0.0
+    assert float(kh_jax[0]) == 0.0 and float(kh_jax[1]) == 0.0
+    assert state.eddy_diffusivity[0] == 0.0 and state.eddy_diffusivity[1] == 0.0
+    assert float(kh_jax[2]) > 0.0 and state.eddy_diffusivity[2] > 0.0  # node 2 convects
+
+
 # ---------------------------------------------------------------------------
 # The CMB flux invariant
 # ---------------------------------------------------------------------------

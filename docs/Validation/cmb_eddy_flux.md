@@ -7,7 +7,7 @@ The CMB node (node 0) takes the mixing-length eddy diffusivity of node 1, the no
 We call this the CMB node rule. The cases compare it with the copy rule, where the CMB node copies the floored value of node 1.
 If this part were wrong, the heat flow out of the core could jump between 2 values when the entropies of the 2 lowest cells cross, or fall to 0 while the CMB gradient is unstable.
 The core would then cool at the wrong rate: the energy check can stop the run, or the run can go on with the core almost cut off from the mantle.
-A low CMB flux is not always a fault: over a stable layer at the base of the mantle the CMB node has no eddy diffusivity; heat crosses the CMB by conduction only ([A stable mush layer at the base of the mantle](#a-stable-mush-layer-at-the-base-of-the-mantle)).
+A low CMB flux is not always a fault: when the CMB node and node 1 are both stable, at the base of a stable layer, the CMB node has no eddy diffusivity; heat crosses the CMB by conduction only ([A stable mush layer at the base of the mantle](#a-stable-mush-layer-at-the-base-of-the-mantle)).
 
 ## How the cases are checked
 
@@ -149,7 +149,7 @@ This case has no plot: each test is a single pass or refusal.
     - Tolerance: every call below the bound (measured: at most $|r|/B = 5.2 \times 10^{-9}$ in 14 calls); no helpfile row with a CMB heat below $-10^{25}$ J (the copy rule has none either: it stops before an accepted step). Copy rule: 3 calls above $10 B$ (at most 21.1), PROTEUS status 20 (error); CMB node rule: status 13 (completed at the target time).
     - Step test: copy rule $|\Delta P_\mathrm{cmb}| = 9.105$ to $9.212 \times 10^{16}$ W at a step of $10^{-9}$, and at least $9.105 \times 10^{16}$ W at $10^{-12}$, at all 416 points of 3 calls. CMB node rule: at most $9.8 \times 10^{-4}$ W at $10^{-9}$ (relative $1.2 \times 10^{-15}$) and 0 at $10^{-12}$, at all 544 points of 5 calls.
     - Test id: `tests/test_cmb_eddy_flux_runs.py::test_case_38_runs_where_the_copy_rule_stops`, `tests/test_cmb_eddy_flux_runs.py::test_case_38_cmb_power_has_no_step_at_s1_equal_s0`
-    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`). The tests of the 6 run cases read these stored runs and do not run the code again, so a change of the code does not fail them.
+    - Data: `tests/validation/data/cmb_eddy_flux_runs.npz`, built by `tests/reference/build_cmb_eddy_flux_runs.py` (versions and checksums in `cmb_eddy_flux_runs_provenance.json`). The tests of the 8 run cases read these stored runs and do not run the code again, so a change of the code does not fail them.
     - Command: `pytest tests/test_cmb_eddy_flux_runs.py` (add `--validation-plots` to write the plot pairs)
 
 ## An Earth-mass run where node 1 turns stable
@@ -258,14 +258,14 @@ With the CMB node rule, the test checks:
 - the temperature step $T_\mathrm{above} - T_0$ goes from 260 K to 0.06 K, with 1 rise of 0.25 K between 2 snapshots;
 - in the next snapshot, 601 yr later, no node is stable and the CMB node has an eddy diffusivity again.
 
-**How we know the right answer.** This run has no exact answer. When nodes 0 and 1 are both stable, the mixing-length theory gives node 1 no eddy diffusivity. The floor acts only on unstable nodes. So the CMB node rule gives the CMB node no eddy diffusivity either. The heat flux at the CMB is then conduction only. The layer lasts while the entropy rises across it. In the run the entropy of the lowest cell stays constant, while the entropy at the top of the layer falls, slowly from 22 to 42.4 kyr and faster after. In the last snapshot of the layer the step is 4.6 J kg$^{-1}$ K$^{-1}$; 601 yr later no node is stable. This agrees with a layer that ends when the entropy at its top has fallen to that of the lowest cell; the stored output does not show the end itself. The copy rule gives the failure to compare with. In its low-flux interval the CMB node is unstable in all 61 snapshots and has no eddy diffusivity in 54 of them, the fault of issue #113. Inside that interval the lowest cell is 0.17 to 0.38 K colder than the CMB node. Before it, from 3.9 to 10.7 kyr, the lowest cell of the copy rule is more than 100 K below the CMB node, by up to 923.5 K at 5405 yr. Under the CMB node rule the difference stays between $-1.78$ and 2.52 K over the whole run. The energy check of each call gives the pass mark: no call above the bound $B$.
+**How we know the right answer.** This run has no exact answer. When nodes 0 and 1 are both stable, the mixing-length theory gives node 1 no eddy diffusivity. The floor acts only on unstable nodes ($D = 0$, the default). So the CMB node rule gives the CMB node no eddy diffusivity either. The heat flux at the CMB is then conduction only. The layer lasts while the entropy rises across it. In the run the entropy of the lowest cell stays constant, while the entropy at the top of the layer falls, slowly from 22 to 42.4 kyr and faster after. In the last snapshot of the layer the step is 4.6 J kg$^{-1}$ K$^{-1}$; 601 yr later no node is stable. This agrees with a layer that ends when the entropy at its top has fallen to that of the lowest cell; the stored output does not show the end itself. The copy rule gives the failure to compare with. In its low-flux interval the CMB node is unstable in all 61 snapshots and has no eddy diffusivity in 54 of them, the fault of issue #113. Inside that interval the lowest cell is 0.17 to 0.38 K colder than the CMB node. Before it, from 3.9 to 10.7 kyr, the lowest cell of the copy rule is more than 100 K below the CMB node, by up to 923.5 K at 5405 yr. Under the CMB node rule the difference stays between $-1.78$ and 2.52 K over the whole run. The energy check of each call gives the pass mark: no call above the bound $B$.
 
 **Why it matters.** The core loses almost no heat while the layer lasts, so the time when the layer ends sets when the core starts to cool again. In the 750 m run under the CMB node rule the low flux comes from a stable layer of the model; under the copy rule it comes mostly from the fault of issue #113.
 
 ![CMB heat flux and temperature of the lowest mantle cell against time, copy rule and CMB node rule, the case of issue 113 with a 750 m CMB cell to 140 kyr](../assets/validation/cmb_eddy_flux_basal_layer_750m.svg#only-light){ width="70%" }
 ![CMB heat flux and temperature of the lowest mantle cell against time, copy rule and CMB node rule, the case of issue 113 with a 750 m CMB cell to 140 kyr](../assets/validation/cmb_eddy_flux_basal_layer_750m_dark.svg#only-dark){ width="70%" }
 
-**How to read the plot.** Panel (a) shows $F_\mathrm{cmb}$ of each helpfile row on a log scale; the dotted line is 1 W m$^{-2}$. Panel (b) shows $T_\mathrm{cmb}$, the temperature of the lowest mantle cell. The dashed line is the copy rule, the solid line the CMB node rule. The CMB node rule holds $F_\mathrm{cmb}$ near $10^{-3}$ W m$^{-2}$ and $T_\mathrm{cmb}$ flat from 14.8 to 63.3 kyr. After that the 2 lines differ by at most 3.0 K and by less than 1 K after 93.9 kyr.
+**How to read the plot.** Panel (a) shows $F_\mathrm{cmb}$ of each helpfile row on a log scale; the dotted line is 1 W m$^{-2}$. Panel (b) shows $T_\mathrm{cmb}$, the temperature of the lowest mantle cell. The dashed line is the copy rule, the solid line the CMB node rule. The CMB node rule holds $F_\mathrm{cmb}$ near $10^{-3}$ W m$^{-2}$ and $T_\mathrm{cmb}$ flat from 14.8 to 63.3 kyr. From the first row after the layer ends, at 63938.8 yr, the 2 lines differ by at most 2.99 K, at that row; they differ by less than 1 K after 93.9 kyr.
 
 ![Height of the top of the stable layer above the CMB and entropy step above the layer against time, CMB node rule, 750 m CMB cell](../assets/validation/cmb_eddy_flux_basal_layer_750m_step.svg#only-light){ width="70%" }
 ![Height of the top of the stable layer above the CMB and entropy step above the layer against time, CMB node rule, 750 m CMB cell](../assets/validation/cmb_eddy_flux_basal_layer_750m_step_dark.svg#only-dark){ width="70%" }
@@ -277,7 +277,7 @@ With the CMB node rule, the test checks:
 **Known limit.** The layer turns over between 2 snapshots 601 yr apart (62736.9 and 63338.1 yr), so the stored output does not show how it turns over.
 
 ??? info "Test details"
-    - Reference: the copy rule in the same build (versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call; the node states of the stored snapshots from 10 to 70 kyr.
+    - Reference: the copy rule (aragog 548ea357; the CMB node rule runs use aragog 2268ce2e, versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call; the node states of the stored snapshots from 10 to 70 kyr.
     - Tolerance:
         - every call below the bound $B$; both runs status 13 at 140 kyr;
         - CMB node rule: 424 calls, $|r|/B$ at most 0.9942; $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ from $-1.78$ to 2.52 K;
@@ -307,7 +307,7 @@ With the CMB node rule, the test checks:
 **How to read the plot.** The panels and lines are as in the first plot of the case above, for the 3000 m cell. The copy rule falls below 1 W m$^{-2}$ from 18.1 to 37.6 kyr, the CMB node rule from 39.1 to 42.9 kyr. The 2 lines of $T_\mathrm{cmb}$ differ by less than 1 K after 42.8 kyr.
 
 ??? info "Test details"
-    - Reference: the copy rule in the same build (versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call; the node states of the stored snapshots from 10 to 70 kyr.
+    - Reference: the copy rule (aragog 548ea357; the CMB node rule runs use aragog 2268ce2e, versions in `cmb_eddy_flux_runs_provenance.json`); the energy check of each call; the node states of the stored snapshots from 10 to 70 kyr.
     - Tolerance:
         - every call below the bound $B$; both runs status 13 at 140 kyr;
         - CMB node rule: 538 calls, $|r|/B$ at most 0.9918; $T_\mathrm{cmb} - T_\mathrm{cmb,node}$ from $-2.35$ to 1.94 K;

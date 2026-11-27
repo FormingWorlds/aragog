@@ -395,35 +395,26 @@ def _rows(runs, key):
 
 
 def _low_flux(runs, key):
-    """Intervals with F_cmb < 1 W m^-2: (first row below, first row back above or None), and a
-    mask of the stored snapshots whose own helpfile row is below."""
+    """Intervals with F_cmb < 1 W m^-2 as (first row below, first row back above), a mask of the
+    stored snapshots whose own helpfile row is below, and F_cmb of the row of each snapshot."""
     r = _rows(runs, key)
     below = r['F_cmb'] < 1.0
     edges = np.flatnonzero(np.diff(np.r_[0, below.astype(int), 0]))
-    spans = [
-        (r['Time'][i0], r['Time'][i1] if i1 < below.size else None)
-        for i0, i1 in zip(edges[::2], edges[1::2])
-    ]
+    spans = [(r['Time'][i0], r['Time'][i1]) for i0, i1 in zip(edges[::2], edges[1::2])]
     # snapshot names carry the time to 3 decimals: match each to its nearest row
     st = runs[f'{key}/snap_t']
     j = np.abs(r['Time'][:, None] - st[None, :]).argmin(axis=0)
     assert np.all(np.abs(r['Time'][j] - st) < 1.0e-3), key  # every snapshot has its row
-    return spans, below[j]
+    return spans, below[j], r['F_cmb'][j]
 
 
-def _row_flux(runs, key, t):
-    """F_cmb of the helpfile row at time t [yr]."""
-    r = _rows(runs, key)
-    return float(r['F_cmb'][np.argmin(np.abs(r['Time'] - t))])
-
-
-def _last_disagreement(runs, case, tol=1.0):
-    """Last time [yr] where T_cmb of the 2 rules differs by tol K or more, on a 10 yr grid with
+def _last_disagreement(runs, case):
+    """Last time [yr] where T_cmb of the 2 rules differs by 1 K or more, on a 10 yr grid with
     both helpfiles interpolated linearly."""
     a, b = (_rows(runs, k) for k in BASAL[case])
     g = np.linspace(0.0, 140000.0, 14001)
     d = np.abs(np.interp(g, a['Time'], a['T_cmb']) - np.interp(g, b['Time'], b['T_cmb']))
-    return g[np.flatnonzero(d >= tol)[-1]], g, d
+    return g[np.flatnonzero(d >= 1.0)[-1]], g, d
 
 
 def _check_calls(runs, key, n_calls, top):
@@ -461,7 +452,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     """The #113 case with a 750 m CMB cell, t = 0 to 140 kyr: under the CMB node rule a stable
     layer of 3 to 8 nodes holds F_cmb near 1e-3 W m^-2 from 14788.5 to 63338.1 yr while T_cmb stays
     at 4789.2 K. The entropy of the lowest cell stays constant while the entropy at the top of the
-    layer falls to it; then the layer turns over. After it the 2 rules differ by at most 3.0 K,
+    layer falls to it; then the layer ends. After it the 2 rules differ by at most 2.99 K,
     and by less than 1 K after 93.9 kyr."""
     rule, copy = BASAL[750]
     _check_calls(runs, rule, 424, 0.9942)
@@ -477,7 +468,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert runs[f'{rule}/Time'].size == 428 and np.sum(runs[f'{rule}/Time'] == 0.0) == 3
     r = _rows(runs, rule)
     assert r['Time'].size == 426
-    spans, m = _low_flux(runs, rule)
+    spans, m, f = _low_flux(runs, rule)
     assert len(spans) == 1
     assert spans[0][0] == pytest.approx(14788.5, abs=0.05)
     assert spans[0][1] == pytest.approx(63338.1, abs=0.05)
@@ -502,8 +493,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert [_quoted(jgrav[0], 3), _quoted(jgrav[1], 3)] == [57.7, 20.7]
     assert np.argmax(jgrav) == 0 and _quoted(np.max(jgrav[2:]), 2) == 0.055
     # the node flux of a snapshot and the call average of its row agree inside the interval
-    rowf = np.array([_row_flux(runs, rule, t) for t in runs[f'{rule}/snap_t'][m]])
-    rel = np.max(np.abs(runs[f'{rule}/snap_Ftot0'][m] / rowf - 1.0))
+    rel = np.max(np.abs(runs[f'{rule}/snap_Ftot0'][m] / f[m] - 1.0))
     assert _quoted(100.0 * rel, 2) == 0.13
     n, top_km = runs[f'{rule}/snap_n_stable'][m], runs[f'{rule}/snap_top_km'][m]
     assert [int(n.min()), int(n.max())] == [3, 8]
@@ -516,7 +506,7 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     k0 = int(np.flatnonzero(m)[0]) - 1
     assert st[k0] == pytest.approx(14495.2, abs=0.05)
     assert int(runs[f'{rule}/snap_n_stable'][k0]) == 5
-    assert _quoted(_row_flux(runs, rule, st[k0]), 3) == 5.18
+    assert _quoted(f[k0], 3) == 5.18
     assert _quoted(runs[f'{rule}/snap_Ftot0'][k0], 3) == 1.09e-3  # node flux at the call end
     assert int(runs[f'{rule}/snap_n_stable'][k0 - 1]) == 0
     assert st.size == 127 and [round(float(st[0]), 1), round(float(st[-1]), 1)] == [
@@ -541,11 +531,10 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert t_last == pytest.approx(62736.9, abs=0.05)
     nxt = int(np.flatnonzero(st > t_last)[0])
     assert st[nxt] == pytest.approx(63338.1, abs=0.05) and round(st[nxt] - t_last) == 601
-    assert int(runs[f'{rule}/snap_n_stable'][nxt]) == 0
     assert runs[f'{rule}/snap_dSdr0'][nxt] < 0.0 and runs[f'{rule}/snap_kh0'][nxt] > 0.0
     assert np.all(runs[f'{rule}/snap_n_stable'][st > t_last] == 0.0)
     # the copy rule: an unstable CMB node, without eddy diffusivity in 54 of 61 snapshots
-    spans_c, mc = _low_flux(runs, copy)
+    spans_c, mc, _ = _low_flux(runs, copy)
     assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(14684.1, abs=0.05)
     assert spans_c[0][1] == pytest.approx(44087.6, abs=0.05)
     assert int(np.sum(mc)) == 61 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
@@ -565,9 +554,13 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
         -0.17,
     ]
     # after the layer: the 2 rules converge
-    last, g, d = _last_disagreement(runs, 750)
+    last, _, _ = _last_disagreement(runs, 750)
     assert last == pytest.approx(93860.0, abs=10.0)
-    assert _quoted(d[g >= 63400.0].max(), 2) == 3.0
+    # after the layer: each rule row after 63338.1 yr against the copy rule between its 2 rows
+    after = r['Time'] > 63338.1
+    diff = np.abs(r['T_cmb'][after] - np.interp(r['Time'][after], rc['Time'], rc['T_cmb']))
+    assert r['Time'][after][0] == pytest.approx(63938.8, abs=0.05)
+    assert _quoted(diff.max(), 3) == 2.99 and int(np.argmax(diff)) == 0
     assert [round(float(x['T_cmb'][-1]), 2) for x in (r, rc)] == [4586.46, 4586.86]
 
     def layer():
@@ -604,7 +597,7 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
     rule, copy = BASAL[3000]
     _check_calls(runs, rule, 538, 0.9918)
     _check_calls(runs, copy, 538, 0.9919)
-    spans, m = _low_flux(runs, rule)
+    spans, m, f = _low_flux(runs, rule)
     assert len(spans) == 1 and spans[0][0] == pytest.approx(39097.7, abs=0.05)
     assert spans[0][1] == pytest.approx(42859.0, abs=0.05)
     r = _rows(runs, rule)
@@ -620,7 +613,7 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
         n, st = runs[f'{key}/snap_n_stable'], runs[f'{key}/snap_t']
         got = [(round(float(t), 1), int(k)) for t, k in zip(st, n) if k > 0]
         assert st.size == 158 and got == want, key
-        assert all(_row_flux(runs, key, t) > 1000.0 for t, _ in got)
+        assert np.all(_low_flux(runs, key)[2][n > 0] > 1000.0)
         top = runs[f'{key}/snap_top_km'][n == 5]
         assert _quoted(float(top[0]), 3) == 13.2
         # each stable snapshot is the end of 1 call: the next snapshot has no stable node
@@ -630,12 +623,10 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
         kh0 = runs[f'{key}/snap_kh0'][idx]
         assert np.array_equal(kh0, runs[f'{key}/snap_kh_layer_max'][idx])
         assert _quoted(float(runs[f'{key}/snap_Ftot0'][n == 5][0]), 3) == 1.15e-3
-    # the node alone stable keeps the mixing-length value of node 1 (> 0)
+    # the node alone stable takes the mixing-length value of node 1, below its floored kh1
     i1 = int(np.flatnonzero(runs[f'{rule}/snap_n_stable'] == 1.0)[0])
-    assert runs[f'{rule}/snap_kh0'][i1] > 0.0
-    # canary of _row_flux: a low-flux snapshot has its row below 1 W m^-2
-    assert _row_flux(runs, rule, runs[f'{rule}/snap_t'][m][0]) < 1.0
-    spans_c, mc = _low_flux(runs, copy)
+    assert 0.0 < runs[f'{rule}/snap_kh0'][i1] < runs[f'{rule}/snap_kh1'][i1]
+    spans_c, mc, _ = _low_flux(runs, copy)
     assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(18148.2, abs=0.05)
     assert spans_c[0][1] == pytest.approx(37620.1, abs=0.05)
     assert int(np.sum(mc)) == 49 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
