@@ -470,6 +470,9 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     for key, commit in ((rule, '2268ce2e'), (copy, '548ea357')):
         for k in (key, key.replace('750', '3000')):
             assert prov[k]['aragog'].startswith(commit), k
+    # the 750 m runs ran in 2 jobs (2 logs), the 3000 m runs in 1
+    assert all(len(prov[k]['sha256_log']) == 2 for k in BASAL[750])
+    assert all(isinstance(prov[k]['sha256_log'], str) for k in BASAL[3000])
     # the start writes 3 rows at t = 0; _rows keeps 1
     assert runs[f'{rule}/Time'].size == 428 and np.sum(runs[f'{rule}/Time'] == 0.0) == 3
     r = _rows(runs, rule)
@@ -495,7 +498,13 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert np.all(np.abs(snap['phi0'] - 0.350) < 5.0e-4)
     # the CMB flux is conduction only; gravitational separation still moves heat in the layer
     assert np.array_equal(runs[f'{rule}/snap_Ftot0'][m], runs[f'{rule}/snap_Jcond0'][m])
-    assert _quoted(np.max(runs[f'{rule}/snap_Jgrav_layer_max'][m]), 3) == 57.7
+    jgrav = runs[f'{rule}/snap_Jgrav_layer_max'][m]
+    assert [_quoted(jgrav[0], 3), _quoted(jgrav[1], 3)] == [57.7, 20.7]
+    assert np.argmax(jgrav) == 0 and _quoted(np.max(jgrav[2:]), 2) == 0.055
+    # the node flux of a snapshot and the call average of its row agree inside the interval
+    rowf = np.array([_row_flux(runs, rule, t) for t in runs[f'{rule}/snap_t'][m]])
+    rel = np.max(np.abs(runs[f'{rule}/snap_Ftot0'][m] / rowf - 1.0))
+    assert _quoted(100.0 * rel, 2) == 0.13
     n, top_km = runs[f'{rule}/snap_n_stable'][m], runs[f'{rule}/snap_top_km'][m]
     assert [int(n.min()), int(n.max())] == [3, 8]
     assert [_quoted(top_km.min(), 3), _quoted(top_km.max(), 3)] == [1.56, 6.80]
@@ -508,6 +517,12 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert st[k0] == pytest.approx(14495.2, abs=0.05)
     assert int(runs[f'{rule}/snap_n_stable'][k0]) == 5
     assert _quoted(_row_flux(runs, rule, st[k0]), 3) == 5.18
+    assert _quoted(runs[f'{rule}/snap_Ftot0'][k0], 3) == 1.09e-3  # node flux at the call end
+    assert int(runs[f'{rule}/snap_n_stable'][k0 - 1]) == 0
+    assert st.size == 127 and [round(float(st[0]), 1), round(float(st[-1]), 1)] == [
+        10130.5,
+        69925.8,
+    ]
     # the lowest cell keeps its entropy; the entropy at the layer top falls to it in every snapshot
     s0, s_top = runs[f'{rule}/snap_S0'][m], runs[f'{rule}/snap_S_above'][m]
     assert [round(float(s0.min()), 2), round(float(s0.max()), 2)] == [5503.78, 5503.84]
@@ -516,6 +531,8 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     dt = (runs[f'{rule}/snap_T_above'] - runs[f'{rule}/snap_T0'])[m]
     assert np.all(np.diff(ds) < 0.0)
     assert [_quoted(ds[0], 4), _quoted(ds[-1], 2)] == [1514.0, 4.6]
+    plateau = (st[m] >= 22000.0) & (st[m] <= 42400.0)
+    assert [round(float(ds[plateau].min())), round(float(ds[plateau].max()))] == [869, 876]
     assert [_quoted(dt[0], 3), _quoted(dt[-1], 1)] == [260.0, 0.06]
     assert int(np.sum(np.diff(dt) > 0.0)) == 1  # the temperature step rises once
     assert _quoted(np.max(np.diff(dt)), 2) == 0.25
@@ -534,7 +551,19 @@ def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
     assert int(np.sum(mc)) == 61 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
     assert int(np.sum(runs[f'{copy}/snap_kh0'][mc] == 0.0)) == 54
     rc = _rows(runs, copy)
-    assert np.min(rc['T_cmb'] - rc['T_cmb_node']) == pytest.approx(-923.5, abs=0.05)
+    dc = rc['T_cmb'] - rc['T_cmb_node']
+    assert dc.min() == pytest.approx(-923.5, abs=0.05)
+    assert rc['Time'][np.argmin(dc)] == pytest.approx(5405.0, abs=0.05)
+    deep = rc['Time'][dc < -100.0]  # all before the low-flux interval
+    assert deep.size == 47 and [round(deep[0] / 1e3, 1), round(deep[-1] / 1e3, 1)] == [
+        3.9,
+        10.7,
+    ]
+    inside = (rc['Time'] >= spans_c[0][0]) & (rc['Time'] < spans_c[0][1])
+    assert [round(float(dc[inside].min()), 2), round(float(dc[inside].max()), 2)] == [
+        -0.38,
+        -0.17,
+    ]
     # after the layer: the 2 rules converge
     last, g, d = _last_disagreement(runs, 750)
     assert last == pytest.approx(93860.0, abs=10.0)
@@ -594,6 +623,18 @@ def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
         assert all(_row_flux(runs, key, t) > 1000.0 for t, _ in got)
         top = runs[f'{key}/snap_top_km'][n == 5]
         assert _quoted(float(top[0]), 3) == 13.2
+        # each stable snapshot is the end of 1 call: the next snapshot has no stable node
+        idx = np.flatnonzero(n > 0)
+        assert np.all(n[idx + 1] == 0.0)
+        assert np.all(runs[f'{key}/snap_dSdr0'][idx] > 0.0)
+        kh0 = runs[f'{key}/snap_kh0'][idx]
+        assert np.array_equal(kh0, runs[f'{key}/snap_kh_layer_max'][idx])
+        assert _quoted(float(runs[f'{key}/snap_Ftot0'][n == 5][0]), 3) == 1.15e-3
+    # the node alone stable keeps the mixing-length value of node 1 (> 0)
+    i1 = int(np.flatnonzero(runs[f'{rule}/snap_n_stable'] == 1.0)[0])
+    assert runs[f'{rule}/snap_kh0'][i1] > 0.0
+    # canary of _row_flux: a low-flux snapshot has its row below 1 W m^-2
+    assert _row_flux(runs, rule, runs[f'{rule}/snap_t'][m][0]) < 1.0
     spans_c, mc = _low_flux(runs, copy)
     assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(18148.2, abs=0.05)
     assert spans_c[0][1] == pytest.approx(37620.1, abs=0.05)
