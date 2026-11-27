@@ -381,3 +381,192 @@ def test_seal_case_ledger_misses_fall_with_rtol(runs, validation_plot):
         return fig
 
     validation_plot(figure, 'cmb_eddy_flux_seal_rtol')
+
+
+BASAL = {750: ('basal750_tip', 'basal750_main'), 3000: ('basal3000_tip', 'basal3000_main')}
+
+
+def _rows(runs, key):
+    """Helpfile columns of a run, one row per time (the start writes several rows at t = 0)."""
+    _, first = np.unique(runs[f'{key}/Time'], return_index=True)
+    i = np.sort(first)
+    return {c: runs[f'{key}/{c}'][i] for c in ('Time', 'F_cmb', 'T_cmb', 'T_cmb_node')}
+
+
+def _low_flux(runs, key):
+    """Intervals with F_cmb < 1 W m^-2: (first row below, first row back above or None), and a
+    mask of the stored snapshots whose own helpfile row is below."""
+    r = _rows(runs, key)
+    below = r['F_cmb'] < 1.0
+    edges = np.flatnonzero(np.diff(np.r_[0, below.astype(int), 0]))
+    spans = [
+        (r['Time'][i0], r['Time'][i1] if i1 < below.size else None)
+        for i0, i1 in zip(edges[::2], edges[1::2])
+    ]
+    # snapshot names carry the time to 3 decimals: match each to its nearest row
+    st = runs[f'{key}/snap_t']
+    j = np.abs(r['Time'][:, None] - st[None, :]).argmin(axis=0)
+    return spans, (np.abs(r['Time'][j] - st) < 1.0e-2) & below[j]
+
+
+def _last_disagreement(runs, case, tol=1.0):
+    """Last time [yr] on a 10 yr grid where T_cmb of the 2 rules differs by tol K or more."""
+    a, b = (_rows(runs, k) for k in BASAL[case])
+    g = np.linspace(0.0, 140000.0, 14001)
+    d = np.abs(np.interp(g, a['Time'], a['T_cmb']) - np.interp(g, b['Time'], b['T_cmb']))
+    return g[np.flatnonzero(d >= tol)[-1]], g, d
+
+
+def test_basal_mush_layer_insulates_the_core_until_the_mantle_cools_to_it(
+    runs, validation_plot
+):
+    """The #113 case with a 750 m CMB cell, t = 0 to 140 kyr: under the CMB node rule a stable
+    layer of 3 to 8 nodes holds F_cmb near 1e-3 W m^-2 from 14788.5 to 63338.1 yr while T_cmb stays
+    at 4789.2 K; the entropy step above the layer falls in every snapshot until the layer turns
+    over. After it the 2 rules differ by at most 3.0 K, and by less than 1 K after 93.9 kyr."""
+    rule, copy = BASAL[750]
+    for key, n_calls, top in ((rule, 424, 0.9942), (copy, 423, 0.9941)):
+        rb = np.abs(runs[f'{key}/ledger_rB'])
+        assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
+        assert runs[f'{key}/Time'][-1] == 140000.0
+        assert float(runs[f'{key}/rtol']) == pytest.approx(1.0e-8, rel=1e-12)
+        assert rb.size == n_calls and _quoted(rb.max(), 4) == top and np.sum(rb > 1.0) == 0
+    spans, m = _low_flux(runs, rule)
+    assert len(spans) == 1
+    assert spans[0][0] == pytest.approx(14788.5, abs=0.05)
+    assert spans[0][1] == pytest.approx(63338.1, abs=0.05)
+    r = _rows(runs, rule)
+    w = (r['Time'] >= spans[0][0]) & (r['Time'] < spans[0][1])
+    assert [_quoted(r['F_cmb'][w].min(), 3), _quoted(r['F_cmb'][w].max(), 3)] == [
+        9.94e-4,
+        1.09e-3,
+    ]
+    assert np.all(np.abs(r['T_cmb'][w] - 4789.2) < 0.01)
+    # the CMB node states of the 95 snapshots inside: nodes 0 and 1 stable, no eddy diffusivity
+    assert int(np.sum(m)) == 95
+    assert np.all(runs[f'{rule}/snap_dSdr0'][m] > 0.0) and np.all(
+        runs[f'{rule}/snap_dSdr1'][m] > 0.0
+    )
+    assert np.all(runs[f'{rule}/snap_kh0'][m] == 0.0) and np.all(
+        runs[f'{rule}/snap_kh1'][m] == 0.0
+    )
+    assert np.all(np.abs(runs[f'{rule}/snap_phi0'][m] - 0.350) < 5.0e-4)
+    n, top_km = runs[f'{rule}/snap_n_stable'][m], runs[f'{rule}/snap_top_km'][m]
+    assert [int(n.min()), int(n.max())] == [3, 8]
+    assert [_quoted(top_km.min(), 3), _quoted(top_km.max(), 3)] == [1.56, 6.80]
+    # the cell just above the layer loses entropy and heat in every snapshot until they match
+    ds = (runs[f'{rule}/snap_S_above'] - runs[f'{rule}/snap_S0'])[m]
+    dt = (runs[f'{rule}/snap_T_above'] - runs[f'{rule}/snap_T0'])[m]
+    assert np.all(np.diff(ds) < 0.0)
+    assert [_quoted(ds[0], 4), _quoted(ds[-1], 2)] == [1514.0, 4.6]
+    # the last snapshot before the layer turns over, 601 yr before the first row back above
+    t_last = runs[f'{rule}/snap_t'][m][-1]
+    assert t_last == pytest.approx(62736.9, abs=0.05) and round(spans[0][1] - t_last) == 601
+    assert [_quoted(dt[0], 3), _quoted(dt[-1], 1)] == [260.0, 0.06]
+    after = runs[f'{rule}/snap_t'] > spans[0][1] + 0.05
+    assert np.all(runs[f'{rule}/snap_n_stable'][after] == 0.0)
+    # the copy rule: its low-flux interval has an unstable CMB node without eddy diffusivity
+    spans_c, mc = _low_flux(runs, copy)
+    assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(14684.1, abs=0.05)
+    assert spans_c[0][1] == pytest.approx(44087.6, abs=0.05)
+    assert int(np.sum(mc)) == 61 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
+    assert int(np.sum(runs[f'{copy}/snap_kh0'][mc] == 0.0)) == 54
+    rc = _rows(runs, copy)
+    assert np.min(rc['T_cmb'] - rc['T_cmb_node']) == pytest.approx(-923.5, abs=0.05)
+    # after the layer: the 2 rules converge
+    last, g, d = _last_disagreement(runs, 750)
+    assert last == pytest.approx(93860.0, abs=10.0)
+    assert _quoted(d[g >= 63400.0].max(), 2) == 3.0
+    assert [round(float(x['T_cmb'][-1]), 2) for x in (r, rc)] == [4586.46, 4586.86]
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(5.8, 4.8), sharex=True)
+        for x, ls, lab in ((rc, '--', COPY), (r, '-', RULE)):
+            ax0.plot(x['Time'] / 1.0e3, x['F_cmb'], ls, lw=1.2, label=lab)
+            ax1.plot(x['Time'] / 1.0e3, x['T_cmb'], ls, lw=1.2)
+        ax0.axhline(1.0, ls=(0, (1, 3)), color=plt.rcParams['text.color'], lw=0.8)
+        ax0.set(yscale='log', ylabel='$F_\\mathrm{cmb}$ [W m$^{-2}$]')
+        ax0.set_yticks([1.0e-3, 1.0, 1.0e3, 1.0e6])
+        ax0.legend(fontsize=7, loc='upper right')
+        ax1.set(xlabel='Time [kyr]', ylabel='$T_\\mathrm{cmb}$ [K]')
+        for ax, s in ((ax0, '(a)'), (ax1, '(b)')):
+            ax.set_title(s, loc='left', fontsize=9)
+        fig.tight_layout()
+        return fig
+
+    def layer():
+        import matplotlib.pyplot as plt
+
+        t_kyr = runs[f'{rule}/snap_t'][m] / 1.0e3
+        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(5.8, 4.2), sharex=True)
+        ax0.plot(t_kyr, top_km, '-', lw=1.2, color='C1', drawstyle='steps-post')
+        ax0.set(ylabel='Layer top [km]', ylim=(0.0, 7.5))
+        ax1.plot(t_kyr, ds, '-', lw=1.2, color='C1')
+        ax1.set(
+            yscale='log',
+            xlabel='Time [kyr]',
+            ylabel='$S_\\mathrm{above} - S_0$\n[J kg$^{-1}$ K$^{-1}$]',
+        )
+        for ax, s in ((ax0, '(a)'), (ax1, '(b)')):
+            ax.set_title(s, loc='left', fontsize=9)
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'cmb_eddy_flux_basal_layer_750m')
+    validation_plot(layer, 'cmb_eddy_flux_basal_layer_750m_step')
+
+
+def test_no_basal_layer_with_a_3000_m_cmb_cell(runs, validation_plot):
+    """The #113 case with a 3000 m CMB cell, t = 0 to 140 kyr: under the CMB node rule F_cmb is
+    below 1 W m^-2 only from 39097.7 to 42859.0 yr, with an unstable CMB node that keeps its eddy
+    diffusivity; under the copy rule from 18148.2 to 37620.1 yr, with an unstable CMB node without
+    it. The 2 rules differ by less than 1 K in T_cmb after 42.8 kyr."""
+    rule, copy = BASAL[3000]
+    for key, top in ((rule, 0.9918), (copy, 0.9919)):
+        rb = np.abs(runs[f'{key}/ledger_rB'])
+        assert int(runs[f'{key}/status']) == STATUS_TARGET_TIME
+        assert runs[f'{key}/Time'][-1] == 140000.0
+        assert rb.size == 538 and _quoted(rb.max(), 4) == top and np.sum(rb > 1.0) == 0
+    spans, m = _low_flux(runs, rule)
+    assert len(spans) == 1 and spans[0][0] == pytest.approx(39097.7, abs=0.05)
+    assert spans[0][1] == pytest.approx(42859.0, abs=0.05)
+    r = _rows(runs, rule)
+    w = (r['Time'] >= spans[0][0]) & (r['Time'] < spans[0][1])
+    assert [_quoted(r['F_cmb'][w].min(), 2), _quoted(r['F_cmb'][w].max(), 2)] == [0.10, 0.20]
+    assert int(np.sum(m)) == 7 and np.all(runs[f'{rule}/snap_dSdr0'][m] < 0.0)
+    assert np.all(np.abs(runs[f'{rule}/snap_kh0'][m] - 7.07) < 0.005)
+    spans_c, mc = _low_flux(runs, copy)
+    assert len(spans_c) == 1 and spans_c[0][0] == pytest.approx(18148.2, abs=0.05)
+    assert spans_c[0][1] == pytest.approx(37620.1, abs=0.05)
+    assert int(np.sum(mc)) == 49 and np.all(runs[f'{copy}/snap_dSdr0'][mc] < 0.0)
+    assert np.all(runs[f'{copy}/snap_kh0'][mc] == 0.0) and np.all(
+        runs[f'{copy}/snap_dSdr1'][mc] > 0.0
+    )
+    rc = _rows(runs, copy)
+    assert np.min(rc['T_cmb'] - rc['T_cmb_node']) == pytest.approx(-246.25, abs=0.005)
+    dr = r['T_cmb'] - r['T_cmb_node']
+    assert [round(float(dr.min()), 2), round(float(dr.max()), 2)] == [-2.35, 1.94]
+    last, _, _ = _last_disagreement(runs, 3000)
+    assert last == pytest.approx(42780.0, abs=10.0)
+    assert [round(float(x['T_cmb'][-1]), 2) for x in (r, rc)] == [4586.03, 4586.08]
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(5.8, 4.8), sharex=True)
+        for x, ls, lab in ((rc, '--', COPY), (r, '-', RULE)):
+            ax0.plot(x['Time'] / 1.0e3, x['F_cmb'], ls, lw=1.2, label=lab)
+            ax1.plot(x['Time'] / 1.0e3, x['T_cmb'], ls, lw=1.2)
+        ax0.axhline(1.0, ls=(0, (1, 3)), color=plt.rcParams['text.color'], lw=0.8)
+        ax0.set(yscale='log', ylabel='$F_\\mathrm{cmb}$ [W m$^{-2}$]')
+        ax0.set_yticks([1.0e-1, 1.0e1, 1.0e3, 1.0e5])
+        ax0.legend(fontsize=7, loc='upper right')
+        ax1.set(xlabel='Time [kyr]', ylabel='$T_\\mathrm{cmb}$ [K]')
+        for ax, s in ((ax0, '(a)'), (ax1, '(b)')):
+            ax.set_title(s, loc='left', fontsize=9)
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'cmb_eddy_flux_basal_layer_3000m')

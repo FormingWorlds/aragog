@@ -5,14 +5,16 @@ Each run couples this aragog (``energy_balance`` core, JAX right-hand side) to P
 of the runs prints one line per call with the CMB ledger of the call (``self.cmb_ledger``) and, for
 the case 38 resume, the CMB power at S1 = S0 +- 1e-9 and +- 1e-12 J/kg/K at every output point of
 the first calls. The file holds, per run, the helpfile columns Time, F_cmb, T_cmb and
-step_dE_F_cmb_J of the rows after the resume time, |r|/B of each ledger call, the status, and the
-sweep values. The provenance (run descriptions, aragog and PROTEUS commits, checksums) goes to
+step_dE_F_cmb_J of the rows after the resume time, |r|/B of each ledger call, the status, the
+sweep values, and for the runs of ``SNAP_RUNS`` the CMB node states of their snapshots in
+``SNAP_WINDOW``. The provenance (run descriptions, aragog and PROTEUS commits, checksums) goes to
 ``cmb_eddy_flux_runs_provenance.json``.
 
 Usage: ``python tests/reference/build_cmb_eddy_flux_runs.py <runs.json>``, where ``runs.json``
 maps each key of ``RUNS`` to ``{"helpfile": ..., "log": ..., "status": ..., "run": ...,
 "aragog": ..., "proteus": ...}`` (``run`` describes the case; a run with the key ``rtol`` has that
-CVODE rtol checked in its log and stored), the key ``v9x_copy`` to the helpfile, status, versions
+CVODE rtol checked in its log and stored; ``log`` can be a list of the logs of a run and its
+resume; a run of ``SNAP_RUNS`` also names its output folder as ``snapshots``), the key ``v9x_copy`` to the helpfile, status, versions
 and configured ``rtol`` of the copy-rule run of issue #113, the key ``rtol_calls`` to the single
 calls rerun from a stored start (``log``, ``helpfile``, ``rtol``, ``call_end`` [yr], ``run``), the
 key ``v9_parts_log`` to the
@@ -48,7 +50,29 @@ RUNS = {
     'v9x_tip': 30169.30,
     'v9x_tip_r9': 30169.30,
     'v9x_tip_r10': 30169.30,
+    'basal750_tip': -1.0,
+    'basal750_main': -1.0,
+    'basal3000_tip': -1.0,
+    'basal3000_main': -1.0,
 }
+# runs whose CMB node states are stored from their snapshots, in the window [yr]
+SNAP_RUNS = ('basal750_tip', 'basal750_main', 'basal3000_tip', 'basal3000_main')
+SNAP_WINDOW = (10000.0, 70000.0)
+SNAP_COLUMNS = (
+    't',
+    'dSdr0',
+    'dSdr1',
+    'kh0',
+    'kh1',
+    'phi0',
+    'phi1',
+    'n_stable',
+    'top_km',
+    'S0',
+    'S_above',
+    'T0',
+    'T_above',
+)
 # runs that print the in-call CMB flux of each call in their own log
 PARTS_OWN = ('v9x_tip', 'v9x_tip_r9', 'v9x_tip_r10')
 NUM = r'([-+0-9.eE]+|nan|inf|-inf)'
@@ -92,6 +116,49 @@ def _store_parts(out: dict, key: str, parts: list[dict]) -> None:
     out[f'{key}/call_Etrap_B'] = np.array([p['E_trap'] / p['bound'] for p in parts])
 
 
+def _snapshots(run_dir: str) -> tuple[np.ndarray, str]:
+    """CMB node states of each snapshot in ``SNAP_WINDOW``, columns ``SNAP_COLUMNS``.
+
+    ``n_stable`` counts the nodes with dS/dr > 0 up from node 0, ``top_km`` is the height of the
+    last of them above the CMB; ``S_above`` and ``T_above`` belong to the cell just above that node
+    (cell 0 when node 0 is unstable). Also returns the sha256 of the snapshot files read.
+    """
+    import netCDF4
+
+    def t_of(f: Path) -> float:
+        return float(f.name.split('_')[0].replace('p', '.'))
+
+    files = sorted(Path(run_dir, 'data').glob('*_int.nc'), key=t_of)
+    files = [f for f in files if SNAP_WINDOW[0] <= t_of(f) <= SNAP_WINDOW[1]]
+    rows, sha = [], hashlib.sha256()
+    for f in files:
+        sha.update(f.read_bytes())
+        with netCDF4.Dataset(f) as ds:
+            g, kh, phi = (np.ravel(ds[v][:]) for v in ('dSdr_b', 'eddy_diff_b', 'phi_basic_b'))
+            s, temp, rb = (np.ravel(ds[v][:]) for v in ('entropy_s', 'temp_s', 'radius_b'))
+        n = int(np.argmax(g <= 0.0)) if np.any(g <= 0.0) else g.size
+        k = max(n - 1, 0)
+        top = rb[n - 1] - rb[0] if n else 0.0  # radius_b is in km
+        rows.append(
+            [
+                t_of(f),
+                g[0],
+                g[1],
+                kh[0],
+                kh[1],
+                phi[0],
+                phi[1],
+                n,
+                top,
+                s[0],
+                s[k],
+                temp[0],
+                temp[k],
+            ]
+        )
+    return np.array(rows), sha.hexdigest()
+
+
 def _table(path: str) -> dict[str, np.ndarray]:
     """Every numeric column of a helpfile."""
     lines = Path(path).read_text().splitlines()
@@ -108,7 +175,8 @@ def main(spec_path: str) -> None:
         s = spec[key]
         for col, values in _helpfile(s['helpfile'], t0).items():
             out[f'{key}/{col}'] = values
-        log = Path(s['log']).read_text()
+        logs = s['log'] if isinstance(s['log'], list) else [s['log']]
+        log = ''.join(Path(f).read_text() for f in logs)
         led = np.array(
             [
                 [float(m.group(1)), float(m.group(2)) / float(m.group(3))]
@@ -135,8 +203,16 @@ def main(spec_path: str) -> None:
             for step in ('1e-09', '1e-12'):
                 out[f'{key}/sweep_P_{step}'] = np.array([p['P'][step] for p in pts])
         prov[key] = {k: s[k] for k in ('run', 'aragog', 'proteus')}
-        for k in ('helpfile', 'log'):
-            prov[key][f'sha256_{k}'] = hashlib.sha256(Path(s[k]).read_bytes()).hexdigest()
+        prov[key]['sha256_helpfile'] = hashlib.sha256(
+            Path(s['helpfile']).read_bytes()
+        ).hexdigest()
+        shas = [hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in logs]
+        prov[key]['sha256_log'] = shas[0] if len(shas) == 1 else shas
+        if key in SNAP_RUNS:
+            snap, sha = _snapshots(s['snapshots'])
+            for j, col in enumerate(SNAP_COLUMNS):
+                out[f'{key}/snap_{col}'] = snap[:, j]
+            prov[key]['sha256_snapshots'] = sha
     _store_parts(out, 'v9_tip', _parts(spec['v9_parts_log']))
     for key in PARTS_OWN:
         parts = _parts(spec[key]['log'])

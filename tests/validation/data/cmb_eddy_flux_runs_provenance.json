@@ -97,6 +97,44 @@
   "sha256_helpfile": "9b735cf71e7205192d6b60cd02d427fd368c581484aa9150f44560f0712e5020",
   "sha256_log": "1438cc94256096efcbba86e01ee70a4be772496039ccd172c4f2ed1c7207b519"
  },
+ "basal750_tip": {
+  "run": "1 Earth mass, nearest-boundary mixing length (the #113 case) with cmb_cell_thickness 750 m, t = 0 to 140 kyr (0 to 60 kyr, then resumed from its 60 kyr state), CMB node rule, aragog rtol 1e-8",
+  "aragog": "2268ce2e7b8c7d938f83822b31ace257514cad65",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "31bd2a2f6c640bd1c2f61e43c61baa3b9f7bd983619b513c210763c4df6d1939",
+  "sha256_log": [
+   "297edebc46d53ef29cf3b490bbfe0dd891f43065c9e3116e993052dcff06f509",
+   "64e268f7940765e587cf65d2f04d0cf290055f20cae9bcc37669fa086eb552eb"
+  ],
+  "sha256_snapshots": "c7f71903aafeb562673914eb7ead37b2b26a148641532b5ade01e46a480490d0"
+ },
+ "basal750_main": {
+  "run": "as basal750_tip, copy rule",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "9dafd4c0638ee98ce95e4db08431bd00134f5cdbb344cefe785d98fd7b4b2456",
+  "sha256_log": [
+   "0172dd261a04d8564273bc602beef8c29228fa24f319a2aaec7c419a53eb2525",
+   "81789cdbc131f0ee8423dfacc5aaa83864b48be0cf5490ed161d5578de694b88"
+  ],
+  "sha256_snapshots": "36e5a49639cda00dd956f7e0e93308301c507cc709a5747364318d2d472d6cf8"
+ },
+ "basal3000_tip": {
+  "run": "1 Earth mass, nearest-boundary mixing length (the #113 case) with cmb_cell_thickness 3000 m, t = 0 to 140 kyr, CMB node rule, aragog rtol 1e-8",
+  "aragog": "2268ce2e7b8c7d938f83822b31ace257514cad65",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "0cd2a27879a511d29aeeb29d41e0f00d23d61abc0a031d927026d0e92a9f51ec",
+  "sha256_log": "83b0e3f633d30574e165d2c6b037dd80c4fc116f1b373c253b4a8ad5a1ea95ce",
+  "sha256_snapshots": "c4b0bb6bcb17dcc6b48c83f4161c6b54b2e0612e89d9732794f176f6169fae34"
+ },
+ "basal3000_main": {
+  "run": "as basal3000_tip, copy rule",
+  "aragog": "548ea35712d21412af9ec42efc50520df5f3d8b7",
+  "proteus": "afc419febf3f290c7a7a48d41c3bdc550b7502f3",
+  "sha256_helpfile": "cec4a47b951a405474f88d889b6bfcaa6f8226f694d58b5231f07c492487ebb2",
+  "sha256_log": "86c26a9c7a481c7e9b6c0b0dd41c50704b5667a2eef259b2923459ce1e79db11",
+  "sha256_snapshots": "ad2e815fcbaa6512115b29103496ddae622e7f0384f4f67312173925c55eb602"
+ },
  "v9x_copy": {
   "run": "the #113 case from t = 0 to 140 kyr under the copy rule (its rows 30169.3 to 60000 yr are kept)",
   "aragog": "26.11.8.post1.dev3+gbfb122428",
