@@ -1014,6 +1014,9 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'docs' / 'assets').mkdir(parents=True)
     (o / 'src' / 'a.py').write_text('a = 1\n')
     (o / 'docs' / 'assets' / 'old.svg').write_text('<svg/>\n')
+    (o / 'tests' / 'reference').mkdir(parents=True)
+    for name, size in (('gone.json', 30000), ('grow.json', 1), ('moved.json', 30000)):
+        (o / 'tests' / 'reference' / name).write_text('[0]\n' * size)
     (o / 'README.md').write_text('r\n')
     _git(o, 'add', '-A')
     _git(o, 'commit', '-qm', 'base')
@@ -1030,8 +1033,11 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'src' / 'ä.py').write_text('b = 1\n')
     (o / 'tests' / 'validation' / 'data').mkdir(parents=True)
     (o / 'tests' / 'validation' / 'data' / 'x.csv').write_text('1\n')
-    (o / 'tests' / 'reference').mkdir()
     (o / 'tests' / 'reference' / 'big.json').write_text('[0]\n' * 30000)
+    (o / 'tests' / 'reference' / 'UPPER.JSON').write_text('[1]\n' * 30000)
+    (o / 'tests' / 'reference' / 'grow.json').write_text('[0]\n' * 30000)
+    (o / 'tests' / 'reference' / 'gone.json').unlink()
+    _git(o, 'mv', 'tests/reference/moved.json', 'tests/reference/moved2.json')
     (o / 'tools').mkdir()
     (o / 'tools' / 'run.sh').write_bytes(b'rm -rf /\x00\n')
     _git(o, 'mv', 'docs/assets/old.svg', 'docs/assets/new.svg')
@@ -1074,7 +1080,16 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
         'docs/assets/old.svg',
         'docs/assets/é.svg',
         'tests/reference/big.json',
+        'tests/reference/UPPER.JSON',
+        'tests/reference/gone.json',
+        'tests/reference/grow.json',
+        'tests/reference/moved.json',
+        'tests/reference/moved2.json',
     }
+    assert sorted(p.name for p in (tmp_path / 'review_in').iterdir()) == [
+        'diff.patch',
+        'left_out.txt',
+    ]
     assert [line.split('\t')[2] for line in kept_binary.splitlines() if '\t' in line] == [
         'tools/run.sh'
     ]
@@ -1084,7 +1099,7 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     assert f'+Subproject commit {"1" * 40}' in patch
     assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch
     assert 'b/tests/validation/data/x.csv' in patch
-    assert 'big.json' not in patch and 'Fig.PNG' not in patch
+    assert 'Fig.PNG' not in patch and 'tests/reference/' not in patch
     assert '.svg' not in patch
     assert not marker.exists()
     first = patch.splitlines()[0]
