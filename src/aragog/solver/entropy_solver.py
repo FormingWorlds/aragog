@@ -7019,6 +7019,9 @@ class EntropySolver:
         (None when the call is not checked). B is a worst case: at rtol 1e-8 a 2-yr core_module
         call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
         a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
+        B sums the error test of each step on the node only, so it does not bound how the errors
+        of the other states change the CMB heat: at rtol 1e-8 an energy_balance call in the mush can
+        miss by more than 10 B with the closure right, and pass from the same start at 1e-10.
 
         Raises
         ------
