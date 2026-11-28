@@ -285,17 +285,16 @@ jobs:
           # A .gitattributes of the pull request must not hide a change; info/attributes wins over it.
           attr=$(git rev-parse --git-path info/attributes); mkdir -p "${attr%/*}"; echo '* !diff' > "$attr"
           # The pull request diff starts at the merge base, which a depth-2 checkout does not hold.
-          if mb=$(gh api "repos/$GITHUB_REPOSITORY/compare/$(git rev-parse HEAD^1)...$head" --jq .merge_base_commit.sha) \
-              && [[ $mb =~ ^[0-9a-f]{40}$ ]] \
-              && { git cat-file -e "$mb^{commit}" 2>/dev/null || git fetch -q --no-tags --depth=1 origin "$mb"; }; then
-            note=''
-          else
-            mb=$(git rev-parse HEAD^1)
-            note='The merge base was not found: diff.patch starts at the tip of the base branch.'
+          mb=$(git rev-parse HEAD^1)
+          note='The merge base was not found: diff.patch starts at the tip of the base branch.'
+          if m=$(gh api "repos/$GITHUB_REPOSITORY/compare/$mb...$head" --jq .merge_base_commit.sha) \
+              && [[ $m =~ ^[0-9a-f]{40}$ ]] \
+              && { git cat-file -e "$m^{commit}" 2>/dev/null || git fetch -q --no-tags --depth=1 origin "$m"; }; then
+            mb=$m note=''
           fi
           specs=('**/*.'{svg,png,jpg,jpeg,gif,webp,avif,pdf,npz,npy,nc,h5,hdf5})
           specs+=({tests/reference,tests/validation/data,docs/assets,docs/figures,data}'/**/*.'{csv,json,dat,txt,tsv})
-          args=(--no-ext-diff --no-textconv --no-color "$mb" "$head" --)
+          args=(--no-ext-diff --no-textconv --ignore-submodules=none --no-color "$mb" "$head" --)
           git -c core.quotepath=false diff "${args[@]}" . "${specs[@]/#/:(exclude,glob,icase)}" > "$in/diff.patch"
           {
             [ -z "$note" ] || echo "$note"
