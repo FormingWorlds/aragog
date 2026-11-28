@@ -210,20 +210,25 @@ def test_no_repeat_at_or_below_the_repeat_rtol(monkeypatch, rtol):
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.timeout(600)
-def test_no_repeat_for_a_slope_fault(monkeypatch):
-    """A slope fault is not a ledger miss: it raises at once, with no repeat."""
-    from aragog.solver.entropy_solver import CMBClosureError, CMBLedgerMissError, EntropySolver
+@pytest.mark.parametrize('fault', ['CMBClosureError', 'CMBEddyFluxError'])
+def test_no_repeat_for_a_slope_or_eddy_flux_fault(monkeypatch, fault):
+    """A slope fault or an eddy-flux fault is not a ledger miss: it raises at once, with no
+    repeat. The eddy-flux case runs where the solver module has that error class."""
+    from aragog.solver import entropy_solver as es
 
+    if not hasattr(es, fault):
+        pytest.skip(f'no {fault} in this aragog')
+    error = getattr(es, fault)
     solver = _call()
 
-    def slope_fault(self):
-        raise CMBClosureError('CMB closure: node slope (dT/dS)_P = -1 at the probe')
+    def faulty(self):
+        raise error('CMB fault at the probe')
 
-    monkeypatch.setattr(EntropySolver, '_cmb_closure_cp', slope_fault)
+    monkeypatch.setattr(es.EntropySolver, '_cmb_closure_cp', faulty)
     calls = _record_starts(monkeypatch)
-    with pytest.raises(CMBClosureError, match='at the probe') as info:
+    with pytest.raises(error, match='at the probe') as info:
         solver.solve()
-    assert not isinstance(info.value, CMBLedgerMissError) and len(calls) == 1
+    assert not isinstance(info.value, es.CMBLedgerMissError) and len(calls) == 1
     assert solver._cmb_ledger_repeats == {'repeated': 0, 'failed': 0}
 
 
