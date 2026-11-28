@@ -1026,6 +1026,8 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'src' / 'a.py').write_text('a = 2\n')
     (o / 'src' / 'k.csv').write_text('1\n')
     (o / 'docs' / 'assets' / 'é.svg').write_text('<svg/>\n')
+    (o / 'docs' / 'assets' / 'Fig.PNG').write_text('png\n')
+    (o / 'src' / 'ä.py').write_text('b = 1\n')
     (o / 'tests' / 'validation' / 'data').mkdir(parents=True)
     (o / 'tests' / 'validation' / 'data' / 'x.csv').write_text('1\n')
     _git(o, 'mv', 'docs/assets/old.svg', 'docs/assets/new.svg')
@@ -1040,7 +1042,10 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     _git(tmp_path, 'clone', '-q', '--depth=2', o.as_uri(), str(ws))
     bin_ = tmp_path / 'bin'
     bin_.mkdir()
-    (bin_ / 'gh').write_text(f'#!/bin/sh\necho "{base if found else ""}"\n')
+    reply = base if found else ''
+    (bin_ / 'gh').write_text(
+        f'#!/bin/sh\ncase "$2" in */compare/*...*) echo "{reply}";; esac\n'
+    )
     (bin_ / 'gh').chmod(0o755)
     marker = tmp_path / 'driver_ran'
     (tmp_path / 'global.cfg').write_text(f'[diff]\n\texternal = touch {marker}\n')
@@ -1058,6 +1063,7 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     left = (tmp_path / 'review_in' / 'left_out.txt').read_text().splitlines()
     rows = {line.split('\t')[2] for line in left if '\t' in line}
     assert rows == {
+        'docs/assets/Fig.PNG',
         'docs/assets/new.svg',
         'docs/assets/old.svg',
         'docs/assets/é.svg',
@@ -1066,7 +1072,8 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     assert 'Binary files' not in patch
     assert '+a = 2' in patch
     assert f'+Subproject commit {"1" * 40}' in patch
-    assert 'b/src/k.csv' in patch
+    assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch
+    assert 'x.csv' not in patch and 'Fig.PNG' not in patch
     assert '.svg' not in patch
     assert not marker.exists()
     assert left[0].startswith('The merge base was not found') is not found
