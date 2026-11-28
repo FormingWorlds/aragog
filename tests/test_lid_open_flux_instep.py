@@ -277,6 +277,7 @@ class TestOpenFluxNumpy:
         _, _, _, T_node, T_b = _eval(_open_solver(eos), y0)
         assert s._lid_T_m0 == max(T_node, T_b)
 
+    @pytest.mark.usefixtures('keep_energy_trace')
     def test_booked_surface_energy_holds_the_open_flux_response(self, eos):
         """The booked surface integral of a call is the trapezoid, over the accepted
         states, of the loss without the conductance plus ``(1 - w) G (T_m - T_m0)``."""
@@ -337,8 +338,14 @@ class TestOpenFluxNumpy:
         assert out.T_magma == pytest.approx(w * T_b + (1.0 - w) * max(T_node, T_b), rel=1e-12)
         assert out.T_magma > w * T_b + (1.0 - w) * T_node + 1.0
 
-    def test_largest_lid_weight_of_the_accepted_states(self, eos):
-        """``lid_weight_max`` of a call is the largest weight over its accepted states."""
+    @pytest.mark.usefixtures('keep_energy_trace')
+    @pytest.mark.parametrize('chunk', [4, 2048])
+    def test_largest_lid_weight_of_the_accepted_states(self, eos, monkeypatch, chunk):
+        """``lid_weight_max`` of a call is the largest weight over its accepted states, also
+        when the nodes pass in 4-node chunks."""
+        from aragog.solver import energy_stream
+
+        monkeypatch.setattr(energy_stream, 'CHUNK', chunk)
         s = _open_solver(eos, G=G_OPEN, end=200.0)
         s._S0 = _state(s, 100.0)
         s.solve()

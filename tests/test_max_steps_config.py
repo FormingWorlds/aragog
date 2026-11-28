@@ -163,7 +163,7 @@ class _CapturingCVODE:
     def solve(self, tspan, y0):
         class _V:
             t = np.asarray(tspan, dtype=float)
-            y = np.tile(np.asarray(y0, dtype=float).reshape(-1, 1), (1, len(t)))
+            y = np.tile(np.asarray(y0, dtype=float), (len(t), 1))  # (n_time, n_state)
 
         class _Sol:
             flag = 0

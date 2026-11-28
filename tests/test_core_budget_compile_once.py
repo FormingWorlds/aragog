@@ -142,7 +142,7 @@ def test_the_stratified_core_heat_compiles_once_per_length_bucket():
         y = np.zeros((3 + cells, n))
         y[2] = np.linspace(4100.0, 4200.0, n)
         y[3:] = np.asarray(_layered_shell(budget))[:, None] + np.linspace(0.0, 5.0, n)
-        return y, EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))[1]
+        return y, EntropySolver._core_capacity(solver, budget, y)
 
     call(33)
     assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0
@@ -253,7 +253,7 @@ def test_the_core_heat_compiles_once_per_length_bucket(budget):
     def call(n):
         y = np.zeros((3, n))
         y[2] = np.linspace(4100.0, 4200.0, n)
-        return y, EntropySolver._core_heat_change(solver, budget, y, np.zeros_like(y))[1]
+        return y, EntropySolver._core_capacity(solver, budget, y)
 
     call(33)
     assert _compiles(lambda: [call(n) for n in (34, 40, 64)]) == 0

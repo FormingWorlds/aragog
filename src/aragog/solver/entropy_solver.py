@@ -20,6 +20,7 @@ import numbers
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -62,6 +63,18 @@ from aragog.parser import Parameters
 from aragog.rheology import R_GAS as _R_GAS
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.cvode_jax import LidFactoryMismatch, UnsupportedCoreBCError
+from aragog.solver.energy_stream import (
+    CallNodes,
+    CMBLedger,
+    DomainCheck,
+    EnergyQuadrature,
+    FloorMin,
+    ListSink,
+    RegimeCheck,
+    SolveNodes,
+    TableGuard,
+    feed,
+)
 from aragog.solver.entropy_state import EntropyState
 from aragog.utilities import positive_gravity
 
@@ -168,7 +181,6 @@ _LID_E_DENSITY_SCALE = 3.6e6
 _LID_TABLE_COUNTS = (2048, 512, 2048)
 LID_TABLE_KNOTS = _LID_TABLE_COUNTS[0] + 1
 _CALL_START = object()  # solve() reads the call-start solution itself
-_EOS_DOMAIN_BLOCK = 4096  # states per table pass of the EOS domain check (bounds its memory)
 
 
 def _eos_domain_of(eos):
@@ -1658,6 +1670,8 @@ class EntropySolver:
 
     # callable(t_nodes, Y_nodes, aux) -> ndarray (n, 7)
     _cvode_step_powers_batch: Callable[..., Any] | None = None
+    # Also keep every quadrature node of a CVODE solve as ``energy_trace`` (for tests).
+    keep_energy_trace: bool = False
     _batch_powers_calls: int = 0
 
     def _sync_top_node(self) -> None:
@@ -2271,24 +2285,6 @@ class EntropySolver:
                 f'rheology invariant violated at step {step_idx}, t={t_val:.6e} yr, '
                 f'node {bad_node}: entropy S={s_arr[bad_node]:.6f} J/(kg K) '
                 f'outside EOS table [{s_min:.6f}, {s_max:.6f}] J/(kg K)'
-            )
-
-    def _check_rheology_eos_trace(self, t_pts: npt.ArrayLike, y_pts: npt.ArrayLike) -> None:
-        """Check ``_check_rheology_eos_range`` across every accepted state in ``(t_pts, y_pts)``."""
-        y_arr = np.asarray(y_pts, dtype=float)
-        if y_arr.ndim == 1:
-            y_arr = y_arr.reshape(-1, 1)
-        t_arr = np.atleast_1d(np.asarray(t_pts, dtype=float)).ravel()
-        for step_idx in range(y_arr.shape[1]):
-            t_i = (
-                float(t_arr[step_idx])
-                if step_idx < t_arr.size
-                else float(getattr(self.state, '_time', 0.0))
-            )
-            self._check_rheology_eos_range(
-                self._stag_entropy(y_arr[:, step_idx]),
-                step_idx=step_idx,
-                time_yr=t_i,
             )
 
     def _check_rheology_step_invariants(
@@ -4981,45 +4977,6 @@ class EntropySolver:
         return np.array([start_time, end_time], dtype=float)
 
     @staticmethod
-    def _energy_trace(
-        nodes: list, t: npt.NDArray, y: npt.NDArray
-    ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Quadrature nodes of one CVODE call, in the solver's nondimensional units.
-
-        Nodes past the call end and nodes not later than the previous kept node are
-        dropped; the rest are bracketed by the call's start and end states (the root on a
-        fired call). At a fired root the step end lies past the call end, so the increasing
-        root-search iterates below the root stay; these iterates are interpolated states of
-        the accepted step.
-
-        Parameters
-        ----------
-        nodes : list of tuple
-            ``(t, y)`` pairs the root function saw, nondimensional.
-        t : ndarray
-            Result times of the call, nondimensional.
-        y : ndarray, shape (n_state, n_t)
-            Result states of the call, nondimensional.
-
-        Returns
-        -------
-        t_nodes : ndarray
-            Node times.
-        y_nodes : ndarray, shape (n_state, n_nodes)
-            Node states.
-        """
-        t_end = float(t[-1])
-        ts, ys = [float(t[0])], [y[:, 0]]
-        for tn, yn in nodes:
-            if ts[-1] < tn <= t_end:
-                ts.append(tn)
-                ys.append(yn)
-        if ts[-1] < t_end:
-            ts.append(t_end)
-            ys.append(y[:, -1])
-        return np.array(ts), np.array(ys).T
-
-    @staticmethod
     def _physical_trace(
         trace: tuple[npt.NDArray, npt.NDArray],
         t_ref: float,
@@ -5066,6 +5023,8 @@ class EntropySolver:
         tspan: 'npt.NDArray | None' = None,
         keep_points_before_root: bool = False,
         lid_rootfn: 'Callable | None' = None,
+        nodes=None,
+        join: bool = False,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -5107,20 +5066,33 @@ class EntropySolver:
         keep_points_before_root : bool
             On a root, keep the output points reached before it; otherwise the
             result holds only the start and the root.
+        nodes : object with ``add(t, y)``, optional
+            Receives the nondimensional quadrature nodes of the call (see ``CallNodes``);
+            without it they are collected as ``energy_trace``.
+        join : bool
+            The call continues the last node of ``nodes``, so its start state is not added.
 
         Returns
         -------
         OptimizeResult
-            Also carries ``energy_trace``, the nondimensional ``(t, y)`` quadrature nodes of
-            the per-call energy integrals (see ``_energy_trace``).
+            Without ``nodes``, also carries ``energy_trace``, the nondimensional ``(t, y)``
+            quadrature nodes of the per-call energy integrals.
         """
+        # CVODE calls the root function at t0, every accepted step end, every output and,
+        # on a fired root, the root-search points; CallNodes keeps the increasing ones up to
+        # the call end as quadrature nodes. Without a user root function a g=1 one records.
+        zero_span = not (end_time > start_time)
+        if tspan is None and not zero_span:
+            tspan = self._output_grid(start_time, end_time)
+        sink = ListSink() if nodes is None else nodes
+        call = CallNodes(sink, start_time, y0, [start_time] if zero_span else tspan, not join)
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
         # but CVODE rejects it with "tout too close to t0". This
         # happens during Aragog's static-init PROTEUS iterations where
         # start_time == end_time == 0. Return a scipy-compatible
         # result without invoking CVODE at all.
-        if not (end_time > start_time):
+        if zero_span:
             result = OptimizeResult()
             y_arr = np.asarray(y0, dtype=float).ravel().reshape(-1, 1)
             result.t = np.array([float(start_time)])
@@ -5132,13 +5104,16 @@ class EntropySolver:
             # flag attributes are always present on a _solve_cvode result.
             result.cvode_flag = 0
             result.cvode_flag_name = _cvode_flag_name(0)
+            call.end(result.t, result.y)  # the start state, a merged lid among them
+            if nodes is None:
+                result.energy_trace = sink.arrays()
             return result
 
         # Wrap the RHS into the in-place (t, y, ydot) -> int signature
         # that scikits.odes CVODE expects. Count RHS calls for parity
         # with scipy's sol.nfev.
         _rhs = rhs if rhs is not None else self.dSdt
-        nfev_box, rhs_fault = [0], []
+        nfev_box, fault = [0], []
 
         if cvode_rhs_fn_override is not None:
             # Option Z: caller supplies a fully-formed CVODE RHS
@@ -5157,7 +5132,7 @@ class EntropySolver:
                 try:
                     ydot[:] = _rhs(t, y)
                 except CMBClosureError as err:  # CVODE can turn a raise into a failed step
-                    rhs_fault.append(err)
+                    fault.append(err)
                     return -1
                 nfev_box[0] += 1
                 return 0
@@ -5259,15 +5234,16 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
-        # CVODE calls the root function at t0, every accepted step end, every output and,
-        # on a fired root, the root-search points; _energy_trace keeps the increasing ones up
-        # to the call end as quadrature nodes. Without a user root function a g=1 one records.
-        nodes, user_rootfn = [], cvode_options.get('rootfn')
+        user_rootfn = cvode_options.get('rootfn')
         user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
         n_user = int(cvode_options.get('nr_rootfns', 1)) if user_rootfn is not None else 1
 
         def rootfn(t, y, g):
-            nodes.append((float(t), np.array(y, dtype=float)))
+            try:  # scikits-odes loses a raise in a callback; remove with #126
+                call.record(t, y)
+            except Exception as err:
+                fault.append(err)
+                return -1
             if user_rootfn is None:
                 g[0] = 1.0
                 rc = 0
@@ -5289,14 +5265,12 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
-        if tspan is None:
-            tspan = self._output_grid(start_time, end_time)
         cvode_sol = solver.solve(
             tspan,
             np.asarray(y0, dtype=float).ravel(),
         )
-        if rhs_fault:
-            raise rhs_fault[0]
+        if fault:
+            raise fault[0]
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
@@ -5400,10 +5374,12 @@ class EntropySolver:
                 result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
-        result.energy_trace = self._energy_trace(nodes, result.t, result.y)
+        call.end(result.t, result.y)
+        if nodes is None:
+            result.energy_trace = sink.arrays()
         # CVODE calls the root function once per accepted step, so a completed call keeps
         # about one node per step.
-        nst, n_nodes = int(result.get('cvode_nst', 0)), len(result.energy_trace[0])
+        nst, n_nodes = int(result.get('cvode_nst', 0)), call.count
         if flag in (0, 2) and n_nodes + max(10, nst // 100) < nst:
             logger.warning('energy quadrature: %d nodes for %d CVODE steps', n_nodes, nst)
         result.message = getattr(cvode_sol, 'message', '')
@@ -5513,7 +5489,11 @@ class EntropySolver:
         cap = cvode_kw.pop('phi_cap_rootfn', None)
         t, y, inside = float(start_time), np.asarray(y0, dtype=float).ravel(), None
         ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
-        et, ey = [], []
+        nodes = cvode_kw.pop('nodes', None)
+        own_nodes = nodes is None
+        if own_nodes:
+            nodes = ListSink()
+        joined = False
         nfev = nst = nfe = 0
         trigger = 'start'
         res = None
@@ -5561,17 +5541,14 @@ class EntropySolver:
                 phi_cap_rootfn=cap if last else roots,
                 tspan=tspan,
                 keep_points_before_root=True,
+                nodes=nodes,
+                # a later segment's first node repeats the join point, except after a merge
+                join=joined and not keep_first,
                 **seg_kw,
             )
+            joined, keep_first = True, False
             ts.append(np.asarray(res.t, dtype=float)[1:])
             ys.append(np.asarray(res.y, dtype=float)[:, 1:])
-            tr = res.get('energy_trace')
-            if tr is not None:
-                # a later segment's first node repeats the join point, except after a merge
-                skip = 1 if et and not keep_first else 0
-                keep_first = False
-                et.append(tr[0][skip:])
-                ey.append(tr[1][:, skip:])
             nfev += int(res.nfev)
             nst += int(res.get('cvode_nst', 0))
             nfe += int(res.get('cvode_nfe', 0))
@@ -5601,7 +5578,8 @@ class EntropySolver:
                 inside = not roots.inside
         res.t = np.concatenate(ts)
         res.y = np.concatenate(ys, axis=1)
-        res.energy_trace = (np.concatenate(et), np.concatenate(ey, axis=1)) if et else None
+        if own_nodes:
+            res.energy_trace = nodes.arrays()
         res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log
         logger.info(
             'rate cap: %d segment(s), nst=%d, triggers %s',
@@ -6069,7 +6047,9 @@ class EntropySolver:
             )
         use_cvode = solver_method == 'cvode' and _CVODE_AVAILABLE
         self._cvode_step_powers_batch = self._cvode_lid_weights_batch = None
+        stream = None
         if use_cvode:
+            stream = self._energy_stream(scales, floor)
             # Build JAX-derived CVODE callbacks when the factory is registered
             # and use_jax_jacobian is active. Callbacks reuse cached functions.
             cvode_rhs_override = None
@@ -6210,6 +6190,7 @@ class EntropySolver:
                     )
 
                 self._solution = self._solve_cvode_segments(
+                    nodes=stream.nodes,
                     start_time=start_nd,
                     end_time=end_nd,
                     y0=S0_nd,
@@ -6232,12 +6213,18 @@ class EntropySolver:
                         max_step=max_step_nd,
                         lid_rootfn=lid_g,
                         keep_points_before_root=lid_g is not None,
+                        nodes=stream.nodes,
                         **cvode_kw,
                     )
 
                 self._solution = _run(start_nd, S0_nd)
                 if self._solution.get('lid_handover'):
                     self._solution = self._lid_handover(self._solution, _run, lid_merge_nd)
+            stream.nodes.close()
+            if stream.nodes.n:  # the nodes went to the stream
+                self._solution.pop('energy_trace', None)
+            else:  # a zero-span call: the result points are the nodes
+                stream = None
         else:
             shell = self._core_shell() is not None
             if shell and solver_method == 'radau':
@@ -6299,6 +6286,8 @@ class EntropySolver:
             # the integrated temperatures without their start offset, for the core heat change
             t_trace, sol.energy_change = self._physical_trace(trace, t_ref, _state_scale)
             sol.energy_trace = (t_trace, sol.energy_change + np.reshape(_offset, (-1, 1)))
+        elif stream is not None and stream.nodes.keep:
+            sol.energy_trace, sol.energy_change = stream.nodes.kept()
         # a handed-over lid (thickness 0) has energy 0, not the round-off of its offset
         if self._n_lid:
             for y in (sol.y, *(() if trace is None else sol.energy_trace[1:])):
@@ -6309,11 +6298,10 @@ class EntropySolver:
             sol.message = 'EOS floor: the call does not advance'
         elif floor is not None and sol.status >= 0 and sol.t is not None and len(sol.t):
             t_end = float(np.asarray(sol.t)[-1])
-            ys = [np.asarray(sol.y, dtype=float)]
-            if trace is not None:
-                ys.append(np.asarray(sol.energy_trace[1], dtype=float))
-            S_all = np.concatenate([y[:n_s] for y in ys], axis=1)
-            low = min(float(np.min(floor['floor_weights'] @ S_all)), float(S_all.min()))
+            low = math.inf if stream is None else stream.floor.low
+            for y in (sol.y, *(() if trace is None else sol.energy_trace[1:])):
+                S = np.asarray(y, dtype=float)[:n_s]
+                low = min(low, float(np.min(floor['floor_weights'] @ S)), float(S.min()))
             if low < S_tab:
                 return self.solve(
                     _start=last_accepted,
@@ -6438,7 +6426,8 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
-        if not _status_failed(sol.status) and (bad := self._eos_table_failure(sol)):
+        guard = None if stream is None else stream.guard
+        if not _status_failed(sol.status) and (bad := self._eos_table_failure(sol, guard)):
             t_bad, sol.message = bad
             keep = sol.t < t_bad
             keep[0] = True  # a failed call holds the states before the first one outside
@@ -6449,7 +6438,10 @@ class EntropySolver:
             # the cut removed any hand-over of this call
             if self._n_lid and sol.y[-2, -1] != 0.0:
                 self._lid_handover_time = self._lid_start_handover_time
-        if not _status_failed(sol.status) and (outside := self._eos_domain_failure(sol)):
+        domain = None if stream is None else stream.domain
+        if not _status_failed(sol.status) and (
+            outside := self._eos_domain_failure(sol, domain)
+        ):
             if self.parameters.solver.eos_domain_check == 'raise':
                 self._solution = last_accepted  # back to the solution held at the call start
                 raise EOSDomainError(outside)
@@ -6461,16 +6453,20 @@ class EntropySolver:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
         budget = getattr(self, '_core_module_budget', None)
-        trace_t, trace_y = sol.get('energy_trace') or (sol.t, sol.y)
         if self._core_bc == 'core_module' and budget is not None:
-            from aragog.core.regime import refuse_unmodelled_regime
-
             # every accepted step of the call, not only the output points
-            t_core = trace_y[self._n_stag + 1]
-            refuse_unmodelled_regime(budget, t_core)
+            if stream is None:
+                from aragog.core.regime import refuse_unmodelled_regime
+
+                trace_t, trace_y = sol.get('energy_trace') or (sol.t, sol.y)
+                refuse_unmodelled_regime(budget, trace_y[self._n_stag + 1])
+            elif stream.regime.error is not None:
+                raise stream.regime.error
         t_solved = time.perf_counter()
         try:
-            sol.energy_integrals = self._compute_step_energy_integrals()
+            sol.energy_integrals = self._compute_step_energy_integrals(
+                None if stream is None else stream.quad
+            )
         except CMBClosureError:
             self._solution = last_accepted  # back to the solution held at the call start
             raise
@@ -6480,7 +6476,35 @@ class EntropySolver:
             t_solved - wall_start,
         )
 
-    def _eos_table_failure(self, sol) -> tuple[float, str] | None:
+    def _energy_stream(self, scales, floor) -> SimpleNamespace:
+        """Consumers of the quadrature nodes of one CVODE solve and the node stream feeding
+        them (``aragog.solver.energy_stream``)."""
+        quad, guard, domain = EnergyQuadrature(self), TableGuard(self), self._eos_domain_check()
+        consumers = [quad, guard, *(() if domain is None else (domain,))]
+        floor_min = regime = None
+        if floor is not None:
+            floor_min = FloorMin(self, floor['floor_weights'])
+            consumers.append(floor_min)
+        budget = getattr(self, '_core_module_budget', None)
+        if self._core_bc == 'core_module' and budget is not None:
+            regime = RegimeCheck(self, budget)
+            consumers.append(regime)
+        nodes = SolveNodes(
+            consumers,
+            scales.t_ref,
+            scales.state_scale,
+            scales.state_offset,
+            self._n_stag + 1,
+            lid=bool(self._n_lid),
+            keep=self.keep_energy_trace,
+        )
+        return SimpleNamespace(
+            nodes=nodes, quad=quad, guard=guard, domain=domain, floor=floor_min, regime=regime
+        )
+
+    def _eos_table_failure(
+        self, sol, guard: TableGuard | None = None
+    ) -> tuple[float, str] | None:
         """Find the first cell entropy of a call outside the loaded EOS tables.
 
         The call's accepted and root-search states count.
@@ -6495,6 +6519,9 @@ class EntropySolver:
         ----------
         sol : OptimizeResult
             Result of the call, with ``energy_trace`` when CVODE recorded its accepted steps.
+        guard : TableGuard, optional
+            The guard that saw the nodes of a streamed CVODE call; without it the guard runs
+            on ``energy_trace`` (or the result points).
 
         Returns
         -------
@@ -6512,24 +6539,12 @@ class EntropySolver:
             or not sol.t[-1] > sol.t[0]
         ):
             return None
-        s_min, s_max = float(eos.S_min), float(eos.S_max)
-        t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
-        for t, y in zip(t_pts, np.asarray(y_pts, dtype=float).T):
-            s = self._stag_entropy(y)
-            bad = ~((s >= s_min - _EOS_TABLE_TOL) & (s <= s_max + _EOS_TABLE_TOL))
-            if bad.any():
-                node = int(np.flatnonzero(bad)[0])
-                where = (
-                    'at the call start, a shorter step does not help' if t == t_pts[0] else ''
-                )
-                msg = (
-                    f'EOS table guard: cell {node} entropy {s[node]:.6g} J/kg/K outside the EOS '
-                    f'tables [{s_min:.3f}, {s_max:.3f}] J/kg/K at t={float(t):.6e} yr {where}'
-                ).rstrip()
-                if self.parameters.solver.strict_accepted_range:
-                    raise AcceptedStateRangeError(msg)
-                return float(t), msg
-        return None
+        if guard is None:
+            guard = TableGuard(self)
+            feed([guard], *(sol.get('energy_trace') or (sol.t, sol.y)))
+        if guard.error is not None:
+            raise guard.error
+        return guard.bad
 
     def _eos_domain_prepare(self) -> None:
         """Check the domain settings and read the masks before a call integrates, so that a bad
@@ -6540,7 +6555,22 @@ class EntropySolver:
         if cfg.eos_domain_check != 'off' and not self.parameters.phase_mixed.const_properties:
             _eos_domain_of(self.entropy_eos)
 
-    def _eos_domain_failure(self, sol) -> str | None:
+    def _eos_domain_check(self) -> DomainCheck | None:
+        """A fresh ``DomainCheck`` for one call; None when the check is off: with
+        ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties."""
+        cfg = self.parameters.solver
+        check_eos_domain_mode(cfg.eos_domain_check)
+        if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
+            return None
+        domain = _eos_domain_of(self.entropy_eos)
+        if domain is None:
+            return None
+        tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
+        return DomainCheck(self, domain, tol, k_cmb)
+
+    def _eos_domain_failure(self, sol, check: DomainCheck | None = None) -> str | None:
         """Judge the EOS lookup points of a call's accepted states against the valid table window.
 
         The points are those the EOS reads in the right-hand side: each staggered node at its
@@ -6548,77 +6578,41 @@ class EntropySolver:
         ``EntropyState.basic_entropy`` gives it (the CMB node from the state's CMB gradient in
         energy_balance and core_module, the top node at the surface entropy with BC 5), with the
         phase-boundary lookups of the smoothing band; see ``TableDomain.lookup_distances``. The
-        states are those of the call's energy trace (accepted steps and root-search points);
-        without a trace only the output states ``sol.y`` count, with 1 info line per solver, and
-        a state that leaves the window and returns between 2 output points is not seen. Off
-        with ``eos_domain_check = 'off'``, an EOS without mask files, or constant properties.
+        states are the quadrature nodes of the call (accepted steps and root-search points):
+        those ``check`` saw in the node stream of a CVODE call, else those of the energy trace;
+        without either only the output states ``sol.y`` count, with 1 info line per solver, and
+        a state that leaves the window and returns between 2 output points is not seen.
 
         Parameters
         ----------
         sol : OptimizeResult
             Result of the call, with ``energy_trace`` when the call kept it.
+        check : DomainCheck, optional
+            The check that saw the nodes of a streamed CVODE call.
 
         Returns
         -------
         str or None
             A message on the worst point more than ``eos_domain_tolerance_cells`` outside, with
-            the count of such points summed over the output states; None when there is none.
+            the count of such points summed over the states; None when there is none or the
+            check is off.
         """
-        eos, cfg = self.entropy_eos, self.parameters.solver
-        check_eos_domain_mode(cfg.eos_domain_check)
-        if cfg.eos_domain_check == 'off' or self.parameters.phase_mixed.const_properties:
-            return None
-        domain = _eos_domain_of(eos)
-        if domain is None:
-            return None
-        tol = check_eos_domain_tolerance(cfg.eos_domain_tolerance_cells)
-        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
-        k_cmb = self._n_stag + slots.index('dSdr_cmb') if 'dSdr_cmb' in slots else None
-        trace = sol.get('energy_trace')
-        if trace is None:
-            self._warn_once(
-                'eos_domain_output_states',
-                'EOS domain check: the calls keep no energy trace, so the check judges their '
-                'output states only',
-                logging.INFO,
-            )
-        t_pts, y_pts = trace or (sol.t, sol.y)
-        widths = (
-            float(self.state.phase_staggered._matprop_smooth_width),
-            float(self.state.phase_basic._matprop_smooth_width),
-        )
-        Y = np.asarray(y_pts, dtype=float)
-        n_out, worst = 0, None
-        for i0 in range(0, Y.shape[1], _EOS_DOMAIN_BLOCK):  # one row per state in a block
-            S_s, S_b = [], []
-            for y in Y[:, i0 : i0 + _EOS_DOMAIN_BLOCK].T:
-                S_s.append(self._stag_entropy(y))
-                if self._core_bc == 'gradient':
-                    n_b = self._n_stag + 1
-                    S_b.append(
-                        self.state.basic_entropy(
-                            S_s[-1],
-                            entropy_basic=self._reconstruct_entropy(y[:n_b], float(y[n_b]))[1],
-                        )
-                    )
-                else:
-                    S_b.append(
-                        self.state.basic_entropy(S_s[-1], None if k_cmb is None else y[k_cmb])
-                    )
-            for kind, P, S, r, width in (
-                ('staggered', self._P_stag_flat, np.array(S_s), self._r_stag_flat, widths[0]),
-                ('basic', self._P_basic_flat, np.array(S_b), self._r_basic_flat, widths[1]),
-            ):
-                d, melt, s_look = domain.lookup_distances(eos, P, S, smooth_width=width)
-                d = np.where(np.isnan(d), np.inf, d)  # a non-finite point counts as outside
-                j = np.unravel_index(int(np.argmax(d)), d.shape)  # (state in the block, node)
-                if not d[j] > tol:
-                    continue
-                n_out += int((d > tol).sum())
-                if worst is None or d[j] > worst[0]:
-                    k = int(j[1])
-                    t = t_pts[i0 + j[0]]
-                    worst = (d[j], t, kind, k, r[k], P[k], S[j], melt[j], s_look[j])
+        states = 'accepted'
+        if check is None:
+            check = self._eos_domain_check()
+            if check is None:
+                return None
+            trace = sol.get('energy_trace')
+            if trace is None:
+                states = 'output'
+                self._warn_once(
+                    'eos_domain_output_states',
+                    'EOS domain check: the calls keep no energy trace, so the check judges '
+                    'their output states only',
+                    logging.INFO,
+                )
+            feed([check], *(trace or (sol.t, sol.y)))
+        worst, domain, eos, tol = check.worst, check.domain, self.entropy_eos, check.tol
         if worst is None:
             return None
         d_k, t, kind, k, r, P, S, melt, s_look = worst
@@ -6631,10 +6625,9 @@ class EntropySolver:
             how = 'no valid window at this pressure (a mask column with no valid node)'
         else:
             how = f'{d_k:.2f} cells outside'
-        states = 'accepted' if trace is not None else 'output'
         return (
-            f'EOS domain check: {n_out} lookup points over the {np.size(t_pts)} {states} states of '
-            f'the call more than {tol:g} table S cells outside the valid window; worst at '
+            f'EOS domain check: {check.n_out} lookup points over the {check.n_states} {states} '
+            f'states of the call more than {tol:g} table S cells outside the valid window; worst at '
             f't={t:.6e} yr: {kind} node {k} (r={r:.6e} m), P={P:.6e} Pa, S={S:.6f} J/kg/K, '
             f'read on the {"melt" if melt else "solid"} table at S={s_look:.6f} J/kg/K, window '
             f'[{lo:.6f}, {hi:.6f}] J/kg/K, ' + how + f', T={T:.6f} K'
@@ -6659,13 +6652,16 @@ class EntropySolver:
                 'EntropySolver: integration failed (status=%d): %s', sol.status, sol.message
             )
 
-    def _compute_step_energy_integrals(self) -> dict[str, float | None]:
+    def _compute_step_energy_integrals(
+        self, quad: EnergyQuadrature | None = None
+    ) -> dict[str, float | None]:
         """Per-call energy contributions [J] of the last solve.
 
-        The quadrature nodes are ``sol.energy_trace`` on the CVODE path (the call start,
-        every accepted step end, every output point and, on a fired root, the increasing
-        root-search points below the root) and the returned ``sol.t`` on the scipy path,
-        whose points are the accepted steps. When a JAX CVODE factory provides
+        The quadrature nodes are those of the CVODE path (the call start, every accepted step
+        end, every output point and, on a fired root, the increasing root-search points below
+        the root), which ``quad`` summed chunk by chunk during the solve, or else
+        ``sol.energy_trace``, or the returned ``sol.t`` on the scipy path, whose points are the
+        accepted steps. When a JAX CVODE factory provides
         ``step_powers``, per-node powers are evaluated with one cached JAX batch callable.
         On scipy, CVODE without the JAX factory, or boundary conditions without a JAX RHS
         (gradient, bower2018), ``_step_powers`` evaluates the powers at each node in a
@@ -6691,7 +6687,6 @@ class EntropySolver:
             points the integrals are zero and ``F_cmb_step_avg`` is None.
         """
         sol = self._solution
-        rheo = self._solid_rheology()
         check_rheo = self._rheology_enabled
         no_ledger = self.entropy_eos is None and not getattr(self, '_lid_const', False)
         if no_ledger or sol is None or sol.t.size < 2:
@@ -6717,191 +6712,30 @@ class EntropySolver:
                 )
             return dict(_ZERO_ENERGY_INTEGRALS)
 
-        # On the scipy path solve_ivp returns its accepted steps as sol.t.
-        t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
-        t_pts = np.asarray(t_pts, dtype=float)
-        y_pts = np.asarray(y_pts, dtype=float)
-        if self._n_lid:  # largest delta / cap - 1 over the accepted states with a lid
-            d, cap = y_pts[-2], _lid.LID_CAP_FRAC * self._lid_h_top
-            lid_lo = min(self._lid_delta_lo, float(d[0]))
-            grown = d[d > 0.0]
-            sol.lid_cap_excess = float(grown.max() / cap - 1.0) if grown.size else math.nan
-        # The replay refreshes self.state at every node; keep the solve's cache statistics.
-        counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
-        P = weights = None
-        batch_fn = self._cvode_step_powers_batch
-        if batch_fn is not None:
-            try:
-                P = self._step_powers_batch(t_pts, y_pts)
-                if P.shape != (t_pts.size, 7):
-                    raise ValueError(
-                        f'Expected batch step powers shape ({t_pts.size}, 7), got {P.shape}'
+        if quad is None:  # a stored trace: on the scipy path the accepted steps are sol.t
+            t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
+            y_pts = np.atleast_2d(np.asarray(y_pts, dtype=float))
+            change = None
+            budget = getattr(self, '_core_module_budget', None)
+            if getattr(self, '_core_bc', None) == 'core_module' and budget is not None:
+                change = sol.get('energy_change')
+                change = np.atleast_2d(change) if change is not None else None
+                if change is None or change.shape != y_pts.shape:
+                    self._warn_once(
+                        'energy_change_fallback',
+                        f'EntropySolver: the call has {"no" if change is None else "a mismatched"}'
+                        ' energy_change; its core heat is booked from the states, to the float '
+                        'spacing of the absolute temperatures',
                     )
-                if not np.isfinite(P).all():
-                    raise ValueError(
-                        'Batch step powers returned non-finite values (NaN or Inf)'
-                    )
-            except Exception as exc:
-                self._warn_once(
-                    'batch_powers_failed',
-                    f'EntropySolver: batch step powers evaluation failed ({exc}); '
-                    'falling back to numpy loop',
-                )
-                P = None
+                    change = y_pts
+                change = change[self._n_stag + 1 :]
+            quad = EnergyQuadrature(self)
+            feed([quad], t_pts, y_pts, change)
+        return quad.result(sol)
 
-        try:
-            if P is not None:
-                self._batch_powers_calls += 1
-                logger.info(
-                    'EntropySolver: evaluated energy powers via JAX batch path (%d nodes)',
-                    t_pts.size,
-                )
-                if check_rheo:
-                    self._check_rheology_eos_trace(t_pts, y_pts)
-                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
-                if self._n_lid:
-                    lo, hi = self._lid_S_range
-                    S_f = np.array([self._stag_entropy(y)[-1] for y in y_pts.T])
-                    bad = np.flatnonzero((y_pts[-2] != 0.0) & ~((S_f >= lo) & (S_f <= hi)))
-                    if bad.size:
-                        k = int(bad[0])
-                        raise RuntimeError(
-                            f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: entropy '
-                            f'S_f {S_f[k]:.6g} J/kg/K outside the lid heat table'
-                        )
-                    if self._lid_mush:  # the floor check of _check_lid_step at every node
-                        floor = self._lid_S_sol + _lid.LID_FLOOR_SLACK
-                        bad = np.flatnonzero((y_pts[-2] != 0.0) & (S_f < floor))
-                        if bad.size:
-                            k = int(bad[0])
-                            raise RuntimeError(
-                                f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: top '
-                                f'cell entropy {S_f[k]:.6g} J/kg/K below the floor, solidus '
-                                f'{self._lid_S_sol:.6g} J/kg/K'
-                            )
-                    thin = (d != 0.0) & (d < self._lid_lo_bound(lid_lo))
-                    bad = np.flatnonzero((d > cap * (1.0 + _LID_CAP_SLACK)) | thin)
-                    if bad.size:
-                        k = int(bad[0])
-                        raise RuntimeError(
-                            f'lid invariant violated at step {k}, t={t_pts[k]:.6e} yr: thickness '
-                            f'{d[k]:.6g} m outside [{self._lid_lo_bound(lid_lo):.6g}, '
-                            f'{cap * (1.0 + _LID_CAP_SLACK):.6g}] m (stops {lid_lo:.6g} and '
-                            f'{cap:.6g} m)'
-                        )
-                if self._n_lid and self._lid_active:
-                    self._check_lid_step(lid_lo, int(t_pts.size - 1), float(t_pts[-1]))
-                if check_rheo:
-                    self._check_rheology_step_invariants(
-                        rheo, step_idx=int(t_pts.size - 1), time_yr=float(t_pts[-1])
-                    )
-            else:
-                logger.info(
-                    'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
-                    t_pts.size,
-                )
-                rows, weights = [], []
-                for step_idx, (t, y) in enumerate(zip(t_pts, y_pts.T)):
-                    if check_rheo:
-                        self._check_rheology_eos_range(
-                            self._stag_entropy(y), step_idx=step_idx, time_yr=float(t)
-                        )
-                    rows.append(self._step_powers(float(t), y))
-                    weights.append(self._lid_weight_now())
-                    if self._n_lid and self._lid_active:
-                        self._check_lid_step(lid_lo, step_idx, float(t))
-                    if check_rheo:
-                        self._check_rheology_step_invariants(
-                            rheo, step_idx=step_idx, time_yr=float(t)
-                        )
-                P = np.array(rows)
-            if self._n_lid:
-                if weights is None:
-                    weights = self._lid_weights_of(t_pts, y_pts)
-                sol.lid_weight_max = float(np.max(weights))
-        finally:
-            self.state._pb_cache_hits, self.state._pb_cache_misses = counters
-        P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
-
-        n_stag = getattr(self, '_n_stag', 0)
-        core_bc = getattr(self, '_core_bc', None)
-
-        dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
-
-        def trap(p):
-            return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
-
-        # Heat content change from the start and end states alone (EOS quadrature of
-        # rho T dS), independent of the flux trajectory, so it checks the flux budget.
-        state_heat = self._step_heat_content(
-            self._stag_entropy(sol.y[:, 0]), self._stag_entropy(sol.y[:, -1])
-        )
-        if self._n_lid:
-            state_heat += self._lid_heat_change(sol.y[:, 0], sol.y[:, -1])
-
-        # Energy-conserving step-average CMB heat flux: the trapezoidal
-        # time-mean of the basic-node-0 flux whose integral over the call
-        # equals step_dE_F_cmb by construction. None on a zero-duration or
-        # zero-area call, so the caller keeps the end-of-step snapshot.
-        step_dE_F_cmb = trap(P_F_cmb)
-        if core_bc in ('energy_balance', 'gradient'):
-            self._check_cmb_ledger(t_pts, np.atleast_2d(y_pts), P_F_cmb, step_dE_F_cmb)
-        denom = 4.0 * np.pi * float(self._r_basic_flat[0]) ** 2 * float(np.sum(dt_s))
-        f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
-
-        # Core energy content change over the call [J] from closed-form C_eff.
-        step_dE_core, step_core_tol = 0.0, float('nan')
-        y_arr = np.atleast_2d(y_pts)
-        if core_bc == 'core_module' and getattr(self, '_core_module_budget', None) is not None:
-            change = sol.get('energy_change')
-            d_arr = np.atleast_2d(change) if change is not None else None
-            if d_arr is None or d_arr.shape != y_arr.shape:
-                self._warn_once(
-                    'energy_change_fallback',
-                    f'EntropySolver: the call has {"no" if d_arr is None else "a mismatched"} '
-                    'energy_change; its core heat is booked from the states, to the float '
-                    'spacing of the absolute temperatures',
-                )
-                d_arr = y_arr
-            d_arr = d_arr - d_arr[:, :1]
-            step_dE_core, c_eff_vals = self._core_heat_change(
-                self._core_module_budget, y_arr, d_arr
-            )
-            if t_pts[-1] > t_pts[0]:  # a call that does not advance has no scale
-                step_core_tol = self._core_heat_tolerance(d_arr[n_stag + 1, :], c_eff_vals)
-            top = (
-                y_arr.shape[0] - 1 - self._n_lid
-                if self._core_shell() is not None
-                else n_stag + 1
-            )
-            self._check_cmb_ledger(t_pts, y_arr, P_F_cmb, step_dE_F_cmb, d_top=d_arr[top])
-        elif core_bc == 'bower2018':
-            C_core = getattr(self, '_core_cap', None)
-            if C_core is None:
-                p = self.parameters
-                rho_c = float(p.mesh.core_density)
-                cp_c = float(p.boundary_conditions.core_heat_capacity)
-                vol_c = 4.0 / 3.0 * np.pi * float(self._r_basic_flat[0]) ** 3
-                C_core = vol_c * rho_c * cp_c
-            t_start = float(y_arr[n_stag, 0])
-            t_end = float(y_arr[n_stag, -1])
-            step_dE_core = float(C_core * (t_end - t_start))
-
-        return {
-            'F_int': trap(P_F_int),
-            'F_cmb': step_dE_F_cmb,
-            'F_cmb_step_avg': f_cmb_step_avg,
-            'Q_radio': trap(P_radio),
-            'Q_tidal': trap(P_tidal),
-            'Q_radio_cons': trap(P_radio_cons),
-            'Q_tidal_cons': trap(P_tidal_cons),
-            'solver_residual': trap(P_resid_solver),
-            'state_heat': state_heat,
-            'core': step_dE_core,
-            'core_tol': step_core_tol,
-        }
-
-    def _check_cmb_ledger(self, t_pts, y_arr, p_cmb, q, d_top=None) -> None:
+    def _check_cmb_ledger(
+        self, t_pts=None, y_arr=None, p_cmb=None, q=0.0, d_top=None, ledger=None
+    ) -> None:
         """Check the CMB closure of a call against the solver's own error bound.
 
         energy_balance and gradient: the core heat change ``r = C (T_end - T_start) + q``
@@ -6920,118 +6754,24 @@ class EntropySolver:
         call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
         a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
 
+        The solve passes the ``CMBLedger`` it filled while CVODE stepped as ``ledger``;
+        without it the check runs on the nodes ``t_pts``, ``y_arr`` with ``p_cmb`` or ``d_top``.
+
         Raises
         ------
         CMBClosureError
             On a node slope that is not finite and positive, or a miss above 10 B.
         """
-        self.cmb_ledger = None
-        n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
-        tol = getattr(self, '_call_tol', None)  # set by solve()
-        if ev is None or tol is None or t_pts.size < 2 or t_pts[-1] <= t_pts[0]:
-            return
-        atol, rtol = tol
-        if self._core_bc == 'gradient':
-            dr, g = np.diff(self._r_stag_flat), y_arr[: n + 1]
-            S0 = y_arr[n + 1] - dr @ g[1:n]
-            w0 = rtol * np.abs(y_arr[n + 1]) + atol + dr @ (rtol * np.abs(g[1:n]) + atol)
-            off = float(self._r_basic_flat[0] - self._r_stag_flat[0])  # to the staggered radius
-        else:
-            S0, g = y_arr[0], y_arr[n : n + 1]
-            w0 = rtol * np.abs(S0) + atol
-            off = -0.5 * float(self._cmb_dr_cmb)  # to the basic-node midpoint
-        S_node = S0 + g[0] * off
-        w = w0 + abs(off) * (rtol * np.abs(g[0]) + atol)
-        h = 1.0e-3
-        ev.set_pressure(np.full(S_node.size, float(self._P_basic_flat[0])))
+        if ledger is None:
+            ledger = CMBLedger(self, core=d_top is not None)
+            ledger.add(np.asarray(t_pts, dtype=float), np.atleast_2d(y_arr), p=p_cmb, d=d_top)
+        ledger.finish(q)
 
-        def blend(S):
-            ev.set_entropy(S)
-            ev.update()
-            return np.ravel(ev.temperature()), np.ravel(ev.temperature_slope())
+    def _core_capacity(self, budget, y_arr) -> npt.NDArray:
+        """C_eff [J/K] of the core at the node states ``y_arr`` (n_state, n_nodes).
 
-        T, slope = blend(S_node)
-        bad = np.flatnonzero(~(np.isfinite(slope) & (slope > 0.0)))
-        if bad.size:
-            k = int(bad[0])
-            raise CMBClosureError(
-                f'CMB closure: node slope (dT/dS)_P = {slope[k]:.6g} at t = {t_pts[k]:.6e} yr, '
-                f'S = {S_node[k]:.6g} J/kg/K; the closure needs a finite positive slope'
-            )
-        s_tab = (blend(S_node + h)[0] - blend(S_node - h)[0]) / (2.0 * h)
-        nst, n_slots = t_pts.size - 1, y_arr.shape[0]
-        floor = np.sqrt(n_slots) * nst * float(np.max(slope * w))
-        if d_top is None:
-            C = float(self._core_cp * self._core_tfac * self._core_M)
-            t_s = t_pts * SECS_PER_YEAR
-            idx = np.unique(np.r_[np.arange(0, t_pts.size, 2), t_pts.size - 1])
-            q2 = float(np.trapezoid(p_cmb[idx], t_s[idx]))
-            scale = float(np.trapezoid(np.abs(p_cmb), t_s))  # int |E| dt: E can change sign
-            r, extra = C * (T[-1] - T[0]) + q, abs(q - q2) / 3.0
-            floor *= C
-        else:
-            scale = float(np.sum(np.abs(np.diff(d_top))))
-            r = (T[-1] - T[0]) - (d_top[-1] - d_top[0])
-            extra = (
-                np.sqrt(n_slots) * nst * (atol + rtol * float(np.max(np.abs(d_top - d_top[0]))))
-            )
-        excluded = bool(np.any(s_tab <= 1.0e-6 * slope))  # a flat cell leaves round-off only
-        rel = float(np.max(np.abs(s_tab / slope - 1.0)))
-        bound = rel * scale + extra + floor
-        self.cmb_ledger = {'r': r, 'bound': bound, 'rel': rel, 'excluded': excluded}
-        counts = self._cmb_ledger_counts
-        if excluded:
-            counts['excluded'] += 1
-            logger.warning(
-                'EntropySolver: CMB closure check skipped for the call to t = %.6e yr: the node '
-                'table slope is <= 1e-6 of the closure slope (padded or clamped cell); %d call(s) '
-                'skipped so far',
-                t_pts[-1],
-                counts['excluded'],
-            )
-            return
-        counts['missed'] += int(abs(r) > bound)
-        if abs(r) > 10.0 * bound:
-            raise CMBClosureError(
-                f'CMB closure fault in the call to t = {t_pts[-1]:.6e} yr: ledger miss {r:.6g} '
-                f'is above 10x the solver bound {bound:.6g} ({"J" if d_top is None else "K"})'
-            )
-        if abs(r) > bound:
-            logger.warning(
-                'EntropySolver: CMB closure ledger miss %.6g above the bound %.6g in the call '
-                'to t = %.6e yr; %d call(s) missed so far',
-                r,
-                bound,
-                t_pts[-1],
-                counts['missed'],
-            )
-
-    def _core_heat_change(self, budget, y_arr, d_arr) -> tuple[float, npt.NDArray]:
-        """Heat change [J] of the core over a call and C_eff [J/K] at its nodes.
-
-        Unstratified: the closed form :meth:`CoreEnergyBudget.heat_change` of the integrated
-        change of T_core. Stratified: the trapezoid of C_eff over that change plus the shell's
-        c_p sum m dT (:meth:`CoreShell.heat_change`). ``d_arr`` holds the changes from the call
-        start as the solver integrates them: an absolute temperature holds a change only to its
-        float spacing, 4.5e-13 K below 4096 K and 9.1e-13 K above. C_eff of the test cores is
-        1.84e27 to 9.31e27 J/K at 1 Earth mass (the maximum 10 to 60 K below onset), 9.0e26 to
-        1.84e27 J/K for the exoplanet profile and 1.5e26 J/K for the convecting volume of the
-        stratified core with the default layer base above onset, so the spacing is about 1.4e14
-        to 8e15 J.
-
-        Parameters
-        ----------
-        budget : CoreEnergyBudget
-            Core energy budget of the call.
-        y_arr : ndarray, shape (n_state, n_nodes)
-            Node states in physical units.
-        d_arr : ndarray, shape (n_state, n_nodes)
-            Node state changes from the call start.
-
-        Returns
-        -------
-        tuple of (float, ndarray)
-            Heat change [J] and C_eff [J/K] at the nodes.
+        With a stratified core it follows the layer base of each state, and an inner core
+        that reaches the shell base is refused (``_check_shell_base``).
         """
         import jax
 
@@ -7050,11 +6790,8 @@ class EntropySolver:
             except Exception:
                 c_eff_vals = np.array([float(c_eff(*map(float, a))) for a in zip(t_core, base)])
             self._check_shell_base(budget, t_core, base)
-            shell_heat = float(shell.heat_change(d_arr[n + 2 : n + 2 + shell.n_cells, -1]))
-            heat = np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * np.diff(d_arr[n + 1]))
-            return float(heat) + shell_heat, c_eff_vals
-        capacity = _padded_call(budget.capacity_batch, t_core)
-        return budget.heat_change(t_core[0], d_arr[n + 1, -1]), capacity
+            return c_eff_vals
+        return _padded_call(budget.capacity_batch, t_core)
 
     def _core_heat_tolerance(self, d_core, c_eff_vals) -> float:
         """Error scale [J] of the core heat change of a call from the T_core error control.

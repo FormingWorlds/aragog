@@ -17,4 +17,8 @@ The solver checks the CMB closure of each `energy_balance`, `gradient` and `core
 - `aragog.solver.entropy_solver.CMBClosureError`, a `RuntimeError`, is raised when a ledger miss is above 10 times its bound or the node slope $(\partial T/\partial S)_P$ is not finite and positive. The solver then puts back the solution it held at the start of the call.
 - `EntropySolver.cmb_ledger` is a dict with the terms of the last checked call: `r` and `bound` (J in `energy_balance` and `gradient`, K in `core_module`), `rel` (dimensionless) and `excluded` (true when the check was skipped). It is `None` after a call that the check does not cover.
 
+`aragog.solver.energy_stream` evaluates the per-call energy integrals and the node checks over every accepted CVODE step in chunks of 2048 nodes while the solve runs. A node is passed on once CVODE has returned the output time after it, so the memory of a call grows with the steps of one output interval (at most `max_steps`), not with its step count.
+
 ::: aragog.solver
+
+::: aragog.solver.energy_stream

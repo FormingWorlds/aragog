@@ -426,7 +426,7 @@ def _fake_rate(monkeypatch, s, rate):
     """Drive ``s`` with ``rate(t, y)``; its energy integrals are zero, as the fake has no physics."""
     monkeypatch.setattr(s, '_dSdt_single', rate)
     monkeypatch.setattr(
-        s, '_compute_step_energy_integrals', lambda: dict(_ZERO_ENERGY_INTEGRALS)
+        s, '_compute_step_energy_integrals', lambda quad=None: dict(_ZERO_ENERGY_INTEGRALS)
     )
 
 
@@ -618,6 +618,7 @@ def test_rate_mode_ends_a_subsolidus_segment_at_the_solidus(shared_eos, validati
 @pytest.mark.smoke
 @pytest.mark.reference_pinned
 @pytest.mark.timeout(240, method='signal')
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_rate_mode_takes_long_steps_while_a_cell_heats_to_the_solidus(
     shared_eos, validation_plot
 ):
@@ -762,6 +763,7 @@ def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
     """Each CVODE segment must re-anchor its root function to the segment start state."""
     s = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
@@ -944,10 +946,12 @@ def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segmen
     def fake_solve_cvode(**kw):
         t_nodes, flag = next(segs)
         assert kw['start_time'] == t_nodes[0]
-        res = OptimizeResult(
-            t=t_nodes[[0, -1]], y=np.vstack([t_nodes[[0, -1]], -t_nodes[[0, -1]]])
-        )
-        res.energy_trace = (t_nodes, np.vstack([t_nodes, -t_nodes]))
+        y = np.vstack([t_nodes, -t_nodes])
+        res = OptimizeResult(t=t_nodes[[0, -1]], y=y[:, [0, -1]])
+        call = es.CallNodes(kw['nodes'], t_nodes[0], y[:, 0], kw['tspan'], start=not kw['join'])
+        for k in range(1, t_nodes.size):  # the states the real call's root function sees
+            call.record(t_nodes[k], y[:, k])
+        call.end(res.t, res.y)
         res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
         res.cvode_flag = flag
         return res

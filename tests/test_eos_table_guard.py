@@ -86,7 +86,7 @@ def test_the_failure_holds_on_each_core_mode(eos, core, method):
 def test_a_call_that_failed_already_keeps_its_own_failure(eos, monkeypatch):
     """An integrator failure is not judged: its flag name and message stay the integrator's."""
     monkeypatch.setattr(
-        EntropySolver, '_eos_table_failure', lambda self, sol: pytest.fail('judged')
+        EntropySolver, '_eos_table_failure', lambda self, sol, guard=None: pytest.fail('judged')
     )
     p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
     s = EntropySolver(p, entropy_eos=eos)
@@ -294,7 +294,7 @@ def test_a_call_inside_the_table_is_bit_equal_with_and_without_the_guard(
         return s._solution
 
     a = run()
-    monkeypatch.setattr(EntropySolver, '_eos_table_failure', lambda self, sol: None)
+    monkeypatch.setattr(EntropySolver, '_eos_table_failure', lambda self, sol, guard=None: None)
     b = run()
     assert a.status == b.status and a.status in (0, 1)
     assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)

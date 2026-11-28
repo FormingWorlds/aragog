@@ -713,6 +713,7 @@ def test_entropy_outside_the_heat_table_fails_the_jax_batch_path():
 @pytest.mark.parametrize(
     ('past', 'refused'), [(5e-4, False), (2e-3, True)], ids=['in_the_band', 'above_the_band']
 )
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(end, past, refused):
     """On the trace of the JAX batch path a fluid entropy past a table end passes within the
     tolerance of the EOS table guard, and fails beyond it."""
@@ -735,6 +736,7 @@ def test_heat_table_check_of_the_jax_batch_path_has_the_guard_band(end, past, re
         assert math.isnan(ints['core_tol'])  # no core tolerance scale outside core_module
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     """The JAX batch path checks the fluid entropy of every accepted state against the heat
     table, not only the last one: one state in the middle of the trace past the table top
@@ -753,6 +755,7 @@ def test_intermediate_entropy_outside_the_heat_table_fails_the_jax_batch_path():
     assert s._batch_powers_calls == calls + 1
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.parametrize('lid', ['before', 'after'])
 def test_handover_call_checks_the_lid_states_on_the_jax_batch_path(lid):
     """In a call that ends with the lid handed over, the JAX batch path checks the fluid
@@ -778,6 +781,7 @@ def test_handover_call_checks_the_lid_states_on_the_jax_batch_path(lid):
     assert s._batch_powers_calls == calls + 1
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_entropy_on_the_heat_table_ends_passes_the_jax_batch_path():
     """Accepted states whose fluid entropy lies exactly on an end of the heat table pass the
     range check of the JAX batch path."""
@@ -846,6 +850,7 @@ def test_jax_base_flux_is_never_negative(monkeypatch):
     assert not np.array_equal(lid(50.0), lid(0.0))
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.parametrize('case', ['growth', 'melt_back', 'start_below'])
 def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
     """The JAX batch path checks every accepted state, not only the last: one state in the
@@ -876,6 +881,7 @@ def test_intermediate_lid_past_a_stop_fails_the_jax_batch_path(case):
     assert s._batch_powers_calls == calls + 1
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_jax_path_records_the_largest_lid_excess_of_the_call():
     """On the JAX batch path lid_cap_excess is the largest delta / cap - 1 over the accepted
     states of the call, here at the start of a lid set above the growth stop."""

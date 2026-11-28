@@ -51,6 +51,7 @@ def _solver(a, *, lid, nodes, cell, end):
     stored_column(c, cell)
     c.boundary_conditions.emissivity, c.mesh.number_of_nodes = 1.0, nodes
     s = EntropySolver(c, entropy_eos=entropy_eos_copy(a.eos_dir))
+    s.keep_energy_trace = True  # the merge check reads every quadrature node
     s.initialize()
     s.set_initial_entropy(2437.5)
     return s
@@ -102,8 +103,7 @@ def over_the_merge(
     finally:
         EntropySolver._lid_merge = merge
     sol = s._solution
-    t, y = sol.get('energy_trace') or (sol.t, sol.y)
-    t, y = np.asarray(t, dtype=float), np.asarray(y, dtype=float)
+    t, y = (np.asarray(v, dtype=float) for v in sol.energy_trace)
     t_merge = float(s._lid_handover_time)
     negative = [k for k in np.flatnonzero(t > t_merge) if _state(s, y[:, k])['flux'] < 0.0]
     delta = float(merged['before'][-2])

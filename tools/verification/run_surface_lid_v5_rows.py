@@ -69,6 +69,8 @@ def lid_subledger(s, t: np.ndarray, y: np.ndarray) -> dict:
 
 def _solver_class(lid: bool, closure: str, rec: dict):
     class LidHarnessSolver(es_mod.EntropySolver):
+        keep_energy_trace = True  # the lid sub-ledger needs every quadrature node
+
         def __init__(self, p, **kw):
             rheo = p.phase_solid.rheology
             p.phase_solid.rheology = dataclasses.replace(rheo, stress_closure_mode=closure)
@@ -88,10 +90,7 @@ def _solver_class(lid: bool, closure: str, rec: dict):
                 'guard': abs(miss) / max(sum(abs(ei[n]) for n in POWERS) + abs(dX), 1.0),
             }
             if lid and float(sol.y[-2, 0]) > 0.0:
-                t, y = (
-                    np.asarray(v, dtype=float)
-                    for v in (sol.get('energy_trace') or (sol.t, sol.y))
-                )
+                t, y = (np.asarray(v, dtype=float) for v in sol.energy_trace)
                 call['lid'] = lid_subledger(self, t, y)
             rec['calls'].append(call)
             h = self.get_state().lid_handover_time if lid else float('nan')

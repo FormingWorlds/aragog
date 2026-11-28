@@ -243,6 +243,7 @@ def _make_cvode_jax_factory(
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
 @pytest.mark.parametrize('use_tidal', [False, True])
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_per_node_parity(
     eos_np, eos_jax, mode: str, use_radio: bool, use_tidal: bool
 ):
@@ -332,6 +333,7 @@ def test_step_powers_per_node_parity(
 
 @pytest.mark.smoke
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax, mode: str):
     """Verify per-node power parity when matprop_smooth_width is active.
 
@@ -471,6 +473,7 @@ GOLDEN_DSDT_ENERGY_BALANCE = np.array(
 
 
 @pytest.mark.smoke
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_per_node_parity_production(eos_np, eos_jax):
     """Verify per-node power parity on production flux paths.
 
@@ -550,6 +553,7 @@ def test_step_powers_per_node_parity_production(eos_np, eos_jax):
 
 
 @pytest.mark.smoke
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_evolution_unchanged_factory_vs_no_attr(eos_np, eos_jax):
     """Verify solve evolution is bit-identical between factory and factory_no_attr."""
     assert not eos_np._has_alpha_tables
@@ -892,6 +896,7 @@ def test_step_powers_radio_uses_table_density(eos_jax):
         ('quasi_steady', 550),
     ],
 )
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: int, caplog):
     """Verify per-call energy integrals match reference within tolerance."""
     assert not eos_np._has_alpha_tables
@@ -1320,6 +1325,7 @@ def test_step_powers_batch_interface(eos_np):
 
 
 @pytest.mark.smoke
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_match_jax_with_thermal_exp_tables_loaded(eos_np_table, eos_jax):
     """With the thermal_exp tables loaded, the numpy and JAX F_cmb agree to rounding: both
     paths take alpha from the identity."""
@@ -1401,6 +1407,7 @@ def test_step_powers_match_jax_with_thermal_exp_tables_loaded(eos_np_table, eos_
 
 @pytest.mark.smoke
 @pytest.mark.parametrize('stratified', [False, True])
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog):
     """A core_module solve with radiogenic and tidal heating takes its energy powers from the
     JAX batch, whose per-node powers and per-call integrals match the numpy loop on derived

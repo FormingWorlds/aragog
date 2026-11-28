@@ -77,13 +77,14 @@ def _drained(
         p.energy, **{'phi_step_cap': None, **caps}, **floor, phase_boundary_cap=mode
     )
     s = EntropySolver(p, entropy_eos=eos)
+    s.keep_energy_trace = True  # the floor check below reads every node of a CVODE call
     s.initialize()
     s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
     s.solve()
     if margin is not _UNSET and margin is not None and margin > 0.0:
         # the floor keeps basic nodes and cells in the table
         sol, S_min = s._solution, float(eos.S_min)
-        tt, ty = sol.get('energy_trace') or (sol.t, sol.y)
+        tt, ty = sol.energy_trace if method == 'cvode' else (sol.t, sol.y)
         after = np.asarray(tt) > sol.t[0]  # the call start is the previous call's end
         assert np.all(_basic(s) >= S_min) and np.all(_cells(s)[:, sol.t > sol.t[0]] >= S_min)
         ty = np.asarray(ty)[: s._n_stag, after]
@@ -98,6 +99,7 @@ def _floor_logs(caplog):
     ]
 
 
+@pytest.mark.usefixtures('keep_energy_trace')
 @pytest.mark.parametrize('margin', [_UNSET, 0.0, -50.0], ids=['default', 'zero', 'negative'])
 @pytest.mark.parametrize('method', CVODE_BDF)
 def test_the_default_config_leaves_the_floor_off(
@@ -574,6 +576,7 @@ def _scipy_stop_below(monkeypatch):
 @pytest.mark.parametrize(
     ('method', 'start_time'), [('cvode', 1.0e9), ('bdf', 9.0e9), ('radau', 1.2345678e9)]
 )
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
     shared_eos, caplog, monkeypatch, method, start_time
 ):
@@ -659,9 +662,8 @@ def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
             S_min = float(self.entropy_eos.S_min)
             if where == 'trace':
                 bad[: self._n_stag] = S_min - 1.0
-                tt, ty = res.energy_trace
-                col = ((bad - sc.state_offset) / sc.state_scale)[:, np.newaxis]
-                res.energy_trace = (np.append(tt, tt[-1]), np.hstack([ty, col]))
+                # one more node at the call end, only in the energy quadrature nodes
+                kwargs['nodes'].add(float(res.t[-1]), (bad - sc.state_offset) / sc.state_scale)
             else:
                 if where == 'cell':
                     bad[5] = S_min - 1.0

@@ -1,4 +1,4 @@
-"""Per-call energy quadrature over CVODE's accepted internal steps (``EntropySolver._energy_trace``)."""
+"""Per-call energy quadrature over CVODE's accepted internal steps (``energy_stream``)."""
 
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ def _pulse(t: float) -> float:
     return np.exp(-(((t - T_PULSE) / WIDTH) ** 2))
 
 
-def _solve(n_out=2, rootfn=None):
+def _solve(n_out=2, rootfn=None, max_steps=100000, nodes=None):
     """Integrate y' = -AMP pulse(t) over [0, 1] through ``_solve_cvode``."""
     s = es.EntropySolver.__new__(es.EntropySolver)
-    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', n_out, 100000
+    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', n_out, max_steps
     # A time-only pulse has no state signature, so a step cap makes CVODE step through it.
     return s._solve_cvode(
         start_time=0.0,
@@ -37,6 +37,7 @@ def _solve(n_out=2, rootfn=None):
         max_step=0.01,
         rhs=lambda t, y: np.array([-AMP * _pulse(t)]),
         phi_cap_rootfn=rootfn,
+        nodes=nodes,
     )
 
 
@@ -48,7 +49,12 @@ def _trap(t, p):
 def test_trace_filters_nodes():
     t, y = np.array([0.0, 1.0]), np.array([[1.0, 5.0], [2.0, 6.0]])
     nodes = [(0.3, [1.1, 2.1]), (0.2, [9, 9]), (0.5, [1.2, 2.2]), (0.5, [9, 9]), (1.5, [9, 9])]
-    ts, ys = es.EntropySolver._energy_trace(nodes, t, y)
+    sink = es.ListSink()
+    call = es.CallNodes(sink, t[0], y[:, 0], t)
+    for tn, yn in nodes:
+        call.record(tn, yn)
+    call.end(t, y)
+    ts, ys = sink.arrays()
     np.testing.assert_array_equal(ts, [0.0, 0.3, 0.5, 1.0])
     np.testing.assert_array_equal(ys, [[1, 1.1, 1.2, 5], [2, 2.1, 2.2, 6]])
 
@@ -138,6 +144,93 @@ def test_recording_a_firing_root_leaves_the_solution_unchanged():
     assert np.any(np.diff(seen) < 0), 'the root search must revisit earlier times'
 
 
+@pytest.mark.unit
+def test_an_error_of_the_node_stream_is_raised_after_the_solve():
+    """A sink that raises on its 3rd node, inside the CVODE root function, makes the call raise
+    that KeyError once CVODE returns, not fail as "rootfinding function failed" (status -1)."""
+
+    class Broken(es.ListSink):
+        def add(self, t, y):
+            if len(self.t) == 2:
+                raise KeyError('injected')
+            super().add(t, y)
+
+    sink = Broken()
+    with pytest.raises(KeyError, match='injected'):
+        _solve(n_out=11, nodes=sink)
+    assert len(sink.t) == 2 and sink.t[0] == 0.0 and 0.0 < sink.t[1] < 0.1
+
+
+@pytest.mark.unit
+def test_a_node_stream_error_in_a_root_call_stops_the_solve_at_that_call():
+    """A sink that raises once, on its 3rd node inside the CVODE root function, and then takes
+    nodes again: the call raises that KeyError when CVODE returns, and no later node reaches
+    the sink, neither from a later root call nor from the end of the call."""
+
+    class Once(es.ListSink):
+        def __init__(self):
+            super().__init__()
+            self.tries, self.raised = 0, False
+
+        def add(self, t, y):
+            self.tries += 1
+            if len(self.t) == 2 and not self.raised:
+                self.raised = True
+                raise KeyError('injected')
+            super().add(t, y)
+
+    sink = Once()
+    with pytest.raises(KeyError, match='injected'):
+        _solve(n_out=11, nodes=sink)
+    assert sink.raised and sink.tries == 3 and len(sink.t) == 2
+    assert sink.t[0] == 0.0 and 0.0 < sink.t[1] < 0.1  # the start node and 1 root-call node
+
+
+@pytest.mark.unit
+def test_a_failed_call_passes_no_node_past_its_returned_end():
+    """With 30 steps per output interval of 0.1 and steps of at most 0.01, CVODE stops before
+    t = 1: the root function saw steps past the last returned output time, and none of them
+    reaches the nodes, which end at that time as the stored-list filter did."""
+    seen = []
+
+    def watch(t, y, g):
+        seen.append(float(t))
+        g[0] = 1.0
+        return 0
+
+    sink = es.ListSink()
+    res = _solve(n_out=11, rootfn=watch, max_steps=12, nodes=sink)
+    t_nodes = np.asarray(sink.t)
+    assert res.status == -1 and res.t[-1] < 1.0
+    assert max(seen) > res.t[-1] + 1e-3  # the call stepped past the returned end
+    assert t_nodes[-1] == res.t[-1] and np.all(np.diff(t_nodes) > 0)
+    assert t_nodes.size > 2 * res.t.size  # the steps before the end are kept
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('join', [False, True])
+def test_a_zero_span_call_passes_its_start_state_as_a_node(join):
+    """A call of zero span, as after a lid hand-over at the call end, passes its start state
+    (the merged lid) to the nodes and returns it; joined to the previous call, it passes
+    nothing, since that call's end is the same node."""
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    sink = es.ListSink()
+    res = s._solve_cvode(
+        start_time=2.0,
+        end_time=2.0,
+        y0=np.array([5.0, -1.0]),
+        atol=1e-10,
+        rtol=1e-10,
+        max_step=1.0,
+        nodes=sink,
+        join=join,
+    )
+    assert res.status == 0 and res.t.tolist() == [2.0] and res.y[:, -1].tolist() == [5.0, -1.0]
+    assert sink.t == ([] if join else [2.0])
+    if not join:
+        np.testing.assert_array_equal(sink.y[0], [5.0, -1.0])
+
+
 @pytest.mark.smoke
 def test_cmb_energy_matches_the_core_energy_change():
     """bower2018 evolves T_core by -F_cmb A_cmb / C_core, so int F_cmb A_cmb dt = -C_core dT_core.
@@ -153,10 +246,11 @@ def test_cmb_energy_matches_the_core_energy_change():
     s.solve()
     core = -s._core_cap * float(s._solution.y[-1, -1] - s._solution.y[-1, 0])
     assert abs(core) > 1e24, 'the core must exchange a non-trivial amount of heat'
-    assert s._compute_step_energy_integrals()['F_cmb'] == pytest.approx(core, rel=1e-6)
+    assert s._solution.energy_integrals['F_cmb'] == pytest.approx(core, rel=1e-6)
 
 
 @pytest.mark.smoke
+@pytest.mark.usefixtures('keep_energy_trace')
 def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     """A temperature cap ends the call at a root after a steep grey-body flux decay.
 
@@ -530,9 +624,7 @@ def test_integrals_sub_interval_below_onset_resolves_cusp():
 
 @pytest.mark.unit
 def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
-    monkeypatch.setattr(
-        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
-    )
+    monkeypatch.setattr(es.CallNodes, 'record', lambda self, t, y: None)  # start and end only
     with caplog.at_level('WARNING', logger=es.logger.name):
         res = _solve()
     assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
@@ -633,9 +725,7 @@ def test_a_one_node_trace_integrates_to_zero():
 
 @pytest.mark.unit
 def test_a_failed_call_does_not_warn_about_the_trace(monkeypatch, caplog):
-    monkeypatch.setattr(
-        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
-    )
+    monkeypatch.setattr(es.CallNodes, 'record', lambda self, t, y: None)  # start and end only
     s = es.EntropySolver.__new__(es.EntropySolver)
     s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', 2, 200
     with caplog.at_level('WARNING', logger=es.logger.name):
@@ -684,11 +774,12 @@ def test_get_state_reports_the_integrals_of_one_solve(monkeypatch):
     values = {key: float(i + 1) for i, key in enumerate(_FIELDS)}
     traces = []
 
-    def integrals(self):
+    def integrals(self, quad=None):
         traces.append(self._solution.energy_trace[0].copy())
         return dict(values)
 
     monkeypatch.setattr(es.EntropySolver, '_compute_step_energy_integrals', integrals)
+    monkeypatch.setattr(es.EntropySolver, 'keep_energy_trace', True)
     s = _const_properties_solver()
     s.solve()
     first, second = s.get_state(), s.get_state()
@@ -702,7 +793,9 @@ def test_get_state_reports_the_integrals_of_one_solve(monkeypatch):
 def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        es.EntropySolver, '_compute_step_energy_integrals', lambda self: calls.append(1) or {}
+        es.EntropySolver,
+        '_compute_step_energy_integrals',
+        lambda self, quad=None: calls.append(1) or {},
     )
     s = _const_properties_solver(max_steps=1)
     s.solve()
@@ -776,3 +869,38 @@ def test_a_complete_call_does_not_warn_about_the_trace(caplog, case):
         )
     assert res.cvode_flag == (2 if case == 'fired root' else 0)
     assert not any('CVODE steps' in r.message for r in caplog.records)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_chunked_integrals_of_a_real_call_equal_the_one_chunk_integrals(monkeypatch):
+    """A 500 yr grey-body bower2018 call (about 3000 nodes, numpy powers at each node) in
+    16-node chunks keeps the same nodes bit for bit, and its integrals equal those of 2048-node
+    chunks to 1e-13; only the order of the trapezoid sums differs. Without kept nodes (the
+    default) the call stores none and its integrals are the same bit for bit."""
+    from aragog.solver import energy_stream as st
+
+    from .test_entropy_verification import TestCvodeEnergyOutputGrid
+
+    runs = []
+    for chunk, keep in ((2048, True), (16, True), (2048, False)):
+        monkeypatch.setattr(st, 'CHUNK', chunk)
+        monkeypatch.setattr(es.EntropySolver, 'keep_energy_trace', keep)
+        s = TestCvodeEnergyOutputGrid._build_greybody_solver(
+            'cvode', n_out=2, core_bc='bower2018'
+        )
+        s.parameters.solver.end_time = 500.0
+        s.solve()
+        runs.append((s._solution.get('energy_trace'), s._solution.energy_integrals))
+    # the default keeps no node and computes the same integrals bit for bit
+    assert runs[2][0] is None
+    np.testing.assert_equal(runs[2][1], runs[0][1])  # NaN core_tol equals NaN
+    (t_a, y_a), ref = runs[0]
+    (t_b, y_b), got = runs[1]
+    assert t_a.size > 2048  # two chunks at the default size, 187 at 16
+    np.testing.assert_array_equal(t_b, t_a)
+    np.testing.assert_array_equal(y_b, y_a)
+    for key in ('F_int', 'F_cmb', 'Q_radio', 'Q_tidal', 'core', 'state_heat'):
+        assert got[key] == pytest.approx(ref[key], rel=1e-13, abs=1e-13 * abs(ref['F_int']))
+    # the budget still closes: the CMB and surface energies against the state heat change
+    assert ref['F_int'] + ref['F_cmb'] == pytest.approx(ref['state_heat'], rel=5e-3)
