@@ -293,20 +293,25 @@ jobs:
             mb=$m note=''
           fi
           args=(--no-ext-diff --no-textconv --ignore-submodules=none --no-color "$mb" "$head" --)
-          specs=('**/*.'{svg,png,jpg,jpeg,gif,webp,avif,pdf,npz,npy,nc,h5,hdf5})
-          # Text data stays in diff.patch up to lim bytes (size at the head, at the base if deleted).
-          lim=100000 big=()
-          git diff -z --name-only --no-renames "${args[@]}" ':(glob,icase)**/*.'{csv,json,dat,txt,tsv} > "$in/data"
-          while IFS= read -r -d '' p; do
-            s=$(git cat-file -s "$head:$p" 2>/dev/null || git cat-file -s "$mb:$p")
-            if (( s > lim )); then big+=("$p"); fi
+          out=(':(glob,icase)**/*.'{svg,png,jpg,jpeg,gif,webp,avif,pdf,npz,npy,nc,h5,hdf5})
+          # Text data and files that git reads as binary stay in diff.patch up to lim bytes (the larger
+          # of the head and base sizes); a path with no blob (a submodule) counts as 0.
+          lim=100000
+          git diff -z --numstat --no-renames "${args[@]}" > "$in/data"
+          shopt -s nocasematch
+          while IFS=$'\t' read -r -d '' a d p; do
+            [[ $a == - || $p =~ \.(csv|json|dat|txt|tsv)$ ]] || continue
+            s1=$(git cat-file -s "$head:$p" 2>/dev/null || echo 0)
+            s0=$(git cat-file -s "$mb:$p" 2>/dev/null || echo 0)
+            if (( s1 > lim || s0 > lim )); then out+=(":(literal)$p"); fi
           done < "$in/data"
-          out=("${specs[@]/#/:(glob,icase)}" "${big[@]/#/:(literal)}")
-          { [ -z "$note" ] || echo "$note"; git -c core.quotepath=false diff --text "${args[@]}" . "${out[@]/#:(/:(exclude,}"; } > "$in/diff.patch"
+          shopt -u nocasematch
+          ex=("${out[@]/#:(/:(exclude,}")
+          { [ -z "$note" ] || echo "$note"; git -c core.quotepath=false diff --text "${args[@]}" . "${ex[@]}"; } > "$in/diff.patch"
           perl -pi -e 's/\0/<NUL>/g' "$in/diff.patch"
-          git -c core.quotepath=false diff --numstat --no-renames "${args[@]}" . "${out[@]/#:(/:(exclude,}" > "$in/kept"
+          git -c core.quotepath=false diff --numstat --no-renames "${args[@]}" . "${ex[@]}" > "$in/kept"
           {
-            echo "Plots, binary data and text data above $lim bytes left out of diff.patch (none if no row follows): lines added, lines removed ('-' for a binary file), path."
+            echo "Left out of diff.patch (none if no row follows): plots, and text data and binary files above $lim bytes. Columns: lines added, lines removed ('-' for a binary file), path."
             git -c core.quotepath=false diff --numstat --no-renames "${args[@]}" "${out[@]}"
             echo "Kept files that git reads as binary (none if no row follows); diff.patch shows them as text with <NUL> for a zero byte."
             awk -F '\t' '$1 == "-"' "$in/kept"
