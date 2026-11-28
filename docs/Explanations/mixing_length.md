@@ -55,11 +55,11 @@ When solid-state mantle rheology is enabled, the mixing-length profile boundary 
 
 ## The mixing-length profile and the core-mantle boundary
 
-Which mixing length does Aragog use near the boundaries, and why does PROTEUS run the `constant` profile?
+Which mixing length does Aragog use near the boundaries, and which eddy diffusivity does the CMB node take?
 
 Aragog offers 2 profiles: `nearest_boundary`, which goes to 0 at both boundaries, and `constant`.
-With `nearest_boundary` the flux out of the core can stop for tens of thousands of years, so PROTEUS runs `constant` by default.
 Aragog itself has no default profile: each configuration sets `mixing_length_profile`.
+PROTEUS runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
 The `nearest_boundary` profile is
 
 $$
@@ -70,14 +70,17 @@ the classical bounded-eddy profile that vanishes at both boundaries and reaches 
 Bower et al. (2018) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux fits experimental measurements (Fig. 3 in Abe (1995); Stothers & Chin (1997)[^cite-stothers1997]).
 The `constant` profile is a uniform fraction of the mantle thickness, `mixing_length_constant_fraction` (0.25 unless set, the value SPIDER uses); see [Heat transport](heat_transport.md#mixing-length-profile).
 
-The CMB node takes the eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), so the flux out of the core follows that node.
+The CMB node takes the mixing-length eddy diffusivity of the first node above it, as SPIDER does (`energy.c`), or its own floor, whichever is larger; see [Heat transport](heat_transport.md#eddy-diffusivity-at-the-cmb-node).
 With `nearest_boundary` the length at that node is the thickness of the bottom cell.
-If that node turns stable, its diffusivity is 0, and the flux out of the core falls to about 0.
-In PROTEUS runs of 1 Earth mass this lasts about 30 kyr on the uniform mesh of 80 nodes and on 80 nodes with a 3000 m CMB cell, but not on the uniform mesh of 160 nodes.
-The thickness of the bottom cell alone does not explain which meshes lose the flux.
-PROTEUS therefore runs Aragog with `constant` unless its configuration sets `interior_energetics.mixing_length = "nearest"`.
+If that node turns stable, its mixing-length diffusivity is 0 (for a positive `eddy_diffusivity_thermal`), and over an unstable CMB gradient the CMB node keeps only its floor.
+That floor is 0 with `kappah_floor = 0`, and in a fully solid cell with the solid rheology on.
+While nodes 0 and 1 are both stable, the CMB node has no eddy diffusivity (with $D = 0$, the default), and heat crosses the CMB by conduction only.
 
-**Where this is checked.** The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
+**Where this is checked.** [CMB eddy flux](../Validation/cmb_eddy_flux.md) checks this rule in Earth-mass runs with `nearest_boundary`.
+With `kappah_floor` = 10 m$^2$ s$^{-1}$ the core stays coupled to the mantle when node 1 turns stable ([case](../Validation/cmb_eddy_flux.md#an-earth-mass-run-where-node-1-turns-stable)).
+With a CMB cell of 750 m, a quarter of the default, a stable layer at the base of the mantle holds the CMB flux near $10^{-3}$ W m$^{-2}$ from 14.8 to about 63 kyr; the end moves with the call times and the solver tolerance ([case](../Validation/cmb_eddy_flux.md#a-stable-mush-layer-at-the-base-of-the-mantle)).
+With the default CMB cell of 3000 m the same case shows a stable layer in single snapshots only, so the result depends on the mesh ([case](../Validation/cmb_eddy_flux.md#with-a-3000-m-cmb-cell-no-layer-holds-the-flux-low)).
+The [PROTEUS validation page](https://proteus-framework.org/PROTEUS/Validation/interior_energetics/aragog.html) shows both profiles on several meshes.
 
 ## Boundary-layer theory in companion codes
 
@@ -173,7 +176,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   The narrow width keeps the inviscid contribution confined to the convecting regime without leaking into solid layers; a wider blend gave $T_\mathrm{core}$ bistability in test runs.
 
 - **Mixing-length profile.**
-  Aragog offers the bounded-eddy profile `nearest_boundary` and the `constant` profile; [The mixing-length profile and the core-mantle boundary](#the-mixing-length-profile-and-the-core-mantle-boundary) explains both and why PROTEUS runs `constant`.
+  Aragog offers the bounded-eddy profile `nearest_boundary` and the `constant` profile; [The mixing-length profile and the core-mantle boundary](#the-mixing-length-profile-and-the-core-mantle-boundary) explains both and the eddy diffusivity of the CMB node.
 
 - **Convective threshold.**
   The mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$ but uses at least a small gradient $D$ (`energy.convective_threshold`, default 0) on unstable nodes, and the floor acts up to $\partial S/\partial r = D$.

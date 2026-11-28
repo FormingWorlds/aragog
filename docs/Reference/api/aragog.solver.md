@@ -17,4 +17,16 @@ The solver checks the CMB closure of each `energy_balance`, `gradient` and `core
 - `aragog.solver.entropy_solver.CMBClosureError`, a `RuntimeError`, is raised when a ledger miss is above 10 times its bound or the node slope $(\partial T/\partial S)_P$ is not finite and positive. The solver then puts back the solution it held at the start of the call.
 - `EntropySolver.cmb_ledger` is a dict with the terms of the last checked call: `r` and `bound` (J in `energy_balance` and `gradient`, K in `core_module`), `rel` (dimensionless) and `excluded` (true when the check was skipped). It is `None` after a call that the check does not cover.
 
+The solver also checks the eddy diffusivity rule of the CMB basic node ([Eddy diffusivity at the CMB node](../../Explanations/heat_transport.md#eddy-diffusivity-at-the-cmb-node)) in every NumPy `EntropyState.update` with convection on:
+
+- `aragog.solver.entropy_state.check_cmb_convective_flux` compares the convective flux of the CMB node with the 2 inputs of the rule. It requires the flux to equal the rule within $10^{-12}$ relative, and it does not check a state with an input that is not finite.
+- The check takes the 2 inputs from the same mixing-length call that sets the eddy diffusivity of the CMB node, so it checks the value that this call gives the CMB node, not how the call computes the inputs. The test `tests/test_cmb_eddy_diffusivity.py::test_cmb_rule_holds_on_random_states` checks the rule itself: it computes the floor of node 0 from the melt fraction of node 0 and compares the NumPy update and the JAX function `compute_mlt` with the rule.
+- The check runs on the NumPy path: in the energy replay, in the NumPy right-hand side and in the update of the end state of each call. It does not run inside the JAX right-hand side.
+- On a failure it raises `aragog.solver.entropy_state.CMBEddyFluxError`, a `RuntimeError`, which names the part that fails, (i) to (iv).
+- `EntropyState.cmb_eddy_diffusivity_inputs` holds the 2 inputs of the last update: the mixing-length eddy diffusivity of node 1 before the floor and the floor of node 0, both in m$^2$ s$^{-1}$.
+
 ::: aragog.solver
+
+::: aragog.solver.entropy_state.check_cmb_convective_flux
+
+::: aragog.solver.entropy_state.CMBEddyFluxError

@@ -849,7 +849,11 @@ def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None
     floor_mask = solver.state._dSdr < solver.state._convective_threshold
     kh_expected_min = 10.0 * f_floor * floor_mask
     assert np.all(solver.state.eddy_diffusivity[1:] >= kh_expected_min[1:] - 1.0e-12)
-    assert solver.state.eddy_diffusivity[0] == solver.state.eddy_diffusivity[1]
+    # The CMB node takes the mixing-length value of node 1 or its own floor, not the floor of node 1.
+    kh_mlt_1, floor_0 = solver.state.cmb_eddy_diffusivity_inputs
+    assert floor_0 == pytest.approx(kh_expected_min[0], rel=1e-12, abs=0.0)
+    assert kh_mlt_1 <= solver.state.eddy_diffusivity[1]
+    assert solver.state.eddy_diffusivity[0] == max(kh_mlt_1, floor_0)
 
     rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_profile), args_jax))
     denom = float(np.max(np.abs(rhs_np)))

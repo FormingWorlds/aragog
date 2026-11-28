@@ -1016,13 +1016,12 @@ def compute_mlt(
     else:
         f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
     kh_floor = params.kappah_floor * f_floor * floor_mask
+    kappa_h_mlt = kappa_h
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
-    # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior
-    # node at the CMB basic node, since kappa_h is a nonlinear function of
-    # dSdr and the boundary extrapolation can over- or under-estimate it
-    # relative to the interior value. Mirrors numpy entropy_state.py:533.
-    kappa_h = kappa_h.at[0].set(kappa_h[1])
+    # CMB basic node: the mixing-length value of node 1 (SPIDER energy.c 220-223) or the
+    # floor of node 0 under its own mask, whichever is larger; numpy twin: EntropyState.update.
+    kappa_h = kappa_h.at[0].set(jnp.maximum(kappa_h_mlt[1], kh_floor[0]))
 
     if return_aux:
         if return_q_025:

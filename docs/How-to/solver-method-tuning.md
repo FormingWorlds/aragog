@@ -201,7 +201,7 @@ Near the upper edge of a window, 5 cells is a large temperature step. On the PAL
 ### Lock measurements
 
 ??? note "What the lock counts rest on"
-    **Setup.** A probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py`: 24 nodes, 200 yr, fixed cap unless stated. It draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$. The probe script is not in the repository, and the runs were on macOS arm64. The counts hold for this 24-node standalone case at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$, not for a coupled solve.
+    **Setup.** A probe variant of the energy_balance isentropic start of `tests/test_phase_boundary_cap.py`: 24 nodes, 200 yr, fixed cap unless stated. It draws the initial entropy uniformly between 8000 and 8400 J/kg/K for each run and adds a relative noise of $10^{-15}$. The probe script is not in the repository, and the runs were on macOS arm64. The counts hold for this 24-node standalone case at the default `convective_threshold = 0`, where the switch is at $dS/dr = 0$, not for a coupled solve. In these runs the CMB node took the floored eddy diffusivity of node 1, not the current [CMB node rule](../Explanations/heat_transport.md#eddy-diffusivity-at-the-cmb-node); the counts are not measured again under that rule.
 
     **What counts as locked.** A run that has not reached 200 yr after 600 s of wall time. Every run was screened at 60 s, and each run that missed that was run again alone to 600 s, by which time a locked run had used about $1.7 \times 10^5$ RHS evaluations.
 
@@ -222,7 +222,7 @@ Near the upper edge of a window, 5 cells is a large temperature step. On the PAL
 
     **Recorded steps.** 2 of the counted runs were run again with every accepted step recorded. Both kept a constant step with a period-2 oscillation of the entropy difference at mid-mantle nodes, at 1.41 RHS evaluations per step on the energy_balance core, where the difference stayed just below zero, and at 1.14 on the quasi_steady core, around zero. The other counted runs were not checked for the pattern.
 
-    **Why $D > 0$ differs.** At $D = 0$ the interior flux is continuous at the switch and only its slope jumps, but with `core_bc` `energy_balance` or `gradient` the convective CMB flux jumps by $\rho T \kappa_h^\mathrm{floor}\,|\partial S/\partial r|_\mathrm{cmb}$ when the node above the CMB crosses 0. At $D > 0$ the convective flux stays continuous at 0, but the mixing flux of a mush and the CMB flux jump at 0 and the floor flux jumps at $D$ (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). So the $D = 0$ counts and the `1e-8` remedy do not carry over to $D > 0$, and the probe did not cover it.
+    **Why $D > 0$ differs.** At $D = 0$ the interior flux and the convective CMB flux are continuous at the switch and only their slopes jump. At $D > 0$ the convective flux stays continuous at 0, but the mixing flux of a mush and the CMB flux jump at 0 (the minimum drive of the node above the CMB switches off there) and the floor flux jumps at $D$ (see [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory)). So the $D = 0$ counts and the `1e-8` remedy do not carry over to $D > 0$, and the probe did not cover it.
 
     **On CI.** The AVX-512 numpy path makes the test's own case, at its single fixed initial entropy, stall at `1e-6`, judged by the CI test timeout rather than by the 600 s criterion.
 

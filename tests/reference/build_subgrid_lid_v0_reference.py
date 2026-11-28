@@ -23,7 +23,7 @@ from tests.reference.subgrid_lid_v0_probe import CASES, MODES, case_name, mode_p
 
 BASE_COMMIT = '65e0d18ef13606515da9fa6ecba917e0620208d1'
 CORE_MODULE_COMMIT = '03962559665104b50d7893c1a2c1cefec38d43aa'
-ENERGY_BALANCE_COMMIT = '444f858b16053931a9ad99aa0a7e7e15dc9c7d85'
+ENERGY_BALANCE_COMMIT = 'c5778c51066da8991c7d7ccf5f1d2354b2c063d2'
 MODE_COMMITS = {
     '--core-module': ('core_module', CORE_MODULE_COMMIT),
     '--energy-balance': ('energy_balance', ENERGY_BALANCE_COMMIT),

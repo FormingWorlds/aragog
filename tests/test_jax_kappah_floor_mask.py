@@ -196,10 +196,10 @@ def test_threshold_is_strict_at_D(D):
     assert float(kh[3]) == 0.0 and float(kh[4]) == 0.0 and float(kc[3]) == 0.0
 
 
-def test_cmb_node_follows_the_node_above_across_0_and_D():
-    """The CMB node takes kappa_h of the node above it, whatever its own gradient. Just
-    below dS/dr = 0 that node has the kappa_h and kappa_c of a gradient D, from 0 to
-    below D the floor alone and no kappa_c, from D on neither."""
+def test_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor():
+    """The CMB node takes the mixing-length kappa_h of node 1 (before the floor) or the
+    floor of node 0 under its own mask, whichever is larger. Across node 1 at 0 and D the
+    CMB value therefore follows only the mixing-length part of node 1, not its floor."""
     D = 1.0e-6
     params = PhaseParams(**_PARAMS, convective_threshold=D)
     ph, mesh = _phase(4, [0.4] * 4), _mesh(4, ml=1.0e5)
@@ -207,17 +207,112 @@ def test_cmb_node_follows_the_node_above_across_0_and_D():
     # -1e-300, not the subnormal nextafter(0, -1), which XLA flushes to zero on the CPU.
     xs = (-1.0e-300, 0.0, np.nextafter(D, 0.0), D)
     for cmb in (-1.0e-4, 1.0e-4):
+        floor_0 = kh_floor if cmb < D else 0.0
         out = [compute_mlt(jnp.array([cmb, x1, -D, -1.0e-4]), ph, mesh, params) for x1 in xs]
-        assert all(float(kh[0]) == float(kh[1]) for kh, _ in out)
         (kh, kc), band, edge, (kh_d, kc_d) = out
-        assert float(kh[1]) == pytest.approx(float(kh[2]), rel=1e-12)
-        assert float(kh[1]) > 1.0e3 * kh_floor
+        # Node 2 sits at -D, so it carries the mixing-length value of a gradient D.
+        kh_drive = float(kh[2])
+        assert float(kh[1]) == pytest.approx(kh_drive, rel=1e-12)
+        assert kh_drive > 1.0e3 * kh_floor
         assert float(kc[1]) == pytest.approx(float(kc[2]), rel=1e-12)
+        assert float(kh[0]) == pytest.approx(kh_drive, rel=1e-12)
         for kh_b, kc_b in (band, edge):
             assert (
                 float(kh_b[1]) == pytest.approx(kh_floor, rel=1e-12) and float(kc_b[1]) == 0.0
             )
+            assert float(kh_b[0]) == floor_0
         assert float(kh_d[1]) == 0.0 and float(kc_d[1]) == 0.0
+        assert float(kh_d[0]) == floor_0
+
+
+def _kh_mlt(x, phi, **kw):
+    """Mixing-length kappa_h without the floor, for the same state."""
+    params = PhaseParams(**{**_PARAMS, 'kappah_floor': 0.0, **kw})
+    kh, _ = compute_mlt(jnp.asarray(x), _phase(len(x), phi), _mesh(len(x), ml=1.0e5), params)
+    return np.asarray(kh)
+
+
+def _floor(phi):
+    return 10.0 * float(tanh_weight(jnp.asarray(phi), 0.4, 0.15))
+
+
+# (kind, dS/dr at nodes 0 and 1, melt fraction at nodes 0 and 1); D = 0.
+_KINDS = [
+    ('a', (-1.0e-4, -1.0e-4), (0.6, 0.4)),
+    ('b', (1.0e-4, -1.0e-31), (0.6, 0.4)),
+    ('c', (-1.0e-4, -1.0e-31), (0.6, 0.4)),
+    ('d', (-1.0e-4, 1.0e-4), (0.6, 0.4)),
+    ('e', (-1.0e-31, -1.0e-31), (0.4, 0.4)),
+]
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('edt', [1.0, -1.0])
+@pytest.mark.parametrize(('kind', 'g', 'phi'), _KINDS)
+def test_cmb_node_known_answer_in_each_kind(kind, g, phi, edt):
+    """kh[0] = max(kh_mlt[1], kappah_floor f(phi_0) [dS/dr[0] < D]) in the 5 kinds of
+    CMB state, for a scaled and a constant (``eddy_diff_thermal < 0``) diffusivity.
+
+    Discriminating: in kind b node 1 sits on its floor (5 m^2/s) and the stable CMB node
+    must not take it; in kinds c and d node 0 takes the floor of its own melt fraction
+    (phi 0.6, about 9.4 m^2/s), not the floor of node 1 (phi 0.4, 5 m^2/s) or 0.
+    """
+    x = [g[0], g[1], -1.0e-4, -1.0e-4]
+    ph = [phi[0], phi[1], 0.4, 0.4]
+    kh_mlt = _kh_mlt(x, ph, eddy_diff_thermal=edt)
+    floor_0 = _floor(phi[0]) if g[0] < 0.0 else 0.0
+    params = PhaseParams(**{**_PARAMS, 'eddy_diff_thermal': edt}, convective_threshold=0.0)
+    kh, _ = compute_mlt(jnp.asarray(x), _phase(4, ph), _mesh(4, ml=1.0e5), params)
+    expect = max(float(kh_mlt[1]), floor_0)
+    assert float(kh[0]) == pytest.approx(expect, rel=1e-12, abs=0.0)
+    if kind == 'b' and edt > 0:
+        assert float(kh[1]) == pytest.approx(_floor(0.4), rel=1e-12)
+        assert float(kh[0]) < 1.0e-6 * float(kh[1])
+    if kind in ('c', 'd') and edt > 0:
+        assert float(kh[0]) == pytest.approx(_floor(0.6), rel=1e-12)
+
+
+@pytest.mark.parametrize(('kind', 'g', 'phi'), [k for k in _KINDS if k[0] in 'cd'])
+def test_cmb_node_takes_its_own_zero_anchored_floor_with_rheology(kind, g, phi):
+    """With the solid rheology on, the floor of node 0 uses the zero-anchored weight of its own
+    melt fraction: 0.298 m^2/s at 0.15, against 0.344 with the plain tanh weight and 5 for the
+    floor of node 1."""
+    from aragog.rheology import SolidRheologyParams
+    from aragog.utilities import zero_anchored_weight
+
+    rheo = SolidRheologyParams(enabled=True)
+    x = [g[0], g[1], -1.0e-4, -1.0e-4]
+    ph = [0.15, phi[1], 0.4, 0.4]
+    kh_mlt = _kh_mlt(x, ph, rheology=rheo)
+    floor_0 = 10.0 * float(zero_anchored_weight(tanh_weight, 0.15, 0.4, 0.15))
+    assert abs(floor_0 - _floor(0.15)) > 0.04
+    params = PhaseParams(**_PARAMS, convective_threshold=0.0, rheology=rheo)
+    kh, _ = compute_mlt(jnp.asarray(x), _phase(4, ph), _mesh(4, ml=1.0e5), params)
+    assert float(kh[0]) == pytest.approx(max(float(kh_mlt[1]), floor_0), rel=1e-12, abs=0.0)
+
+
+def test_cmb_flux_steps_where_the_cmb_gradient_crosses_d():
+    """For D > 0 the floor of node 0 is on below D and off at D, so with node 1 stable the CMB
+    node holds its floor just below D and 0 at D."""
+    D = 1.0e-6
+    params = PhaseParams(**_PARAMS, convective_threshold=D)
+    ph, mesh = _phase(4, [0.6, 0.4, 0.4, 0.4]), _mesh(4, ml=1.0e5)
+    below, _ = compute_mlt(
+        jnp.array([np.nextafter(D, 0.0), 1.0e-4, -1.0e-4, -1.0e-4]), ph, mesh, params
+    )
+    at, _ = compute_mlt(jnp.array([D, 1.0e-4, -1.0e-4, -1.0e-4]), ph, mesh, params)
+    assert float(below[0]) == pytest.approx(_floor(0.6), rel=1e-12)
+    assert float(at[0]) == 0.0
+
+
+@pytest.mark.parametrize(('kind', 'g', 'phi'), _KINDS)
+def test_cmb_node_without_floor_is_the_copy_of_node_1(kind, g, phi):
+    """With ``kappah_floor = 0`` the CMB node equals node 1 bit for bit (the SPIDER rule)."""
+    x = jnp.asarray([g[0], g[1], -1.0e-4, -1.0e-4])
+    params = PhaseParams(**{**_PARAMS, 'kappah_floor': 0.0}, convective_threshold=0.0)
+    kh, _ = compute_mlt(x, _phase(4, [phi[0], phi[1], 0.4, 0.4]), _mesh(4, ml=1.0e5), params)
+    assert float(kh[0]) == float(kh[1])
 
 
 def test_unstable_node_gets_at_least_the_drive_of_D():

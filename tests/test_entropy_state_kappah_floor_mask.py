@@ -533,21 +533,58 @@ def test_numpy_matches_jax_across_threshold(D, phi):
 
 
 @needs_eos
-def test_numpy_cmb_node_follows_the_node_above_across_0_and_D():
-    """The CMB node copies kappa_h of node 1, so its convective flux at a fixed CMB
-    gradient follows node 1 across 0 (mixing length to floor) and D (floor to 0)."""
+@pytest.mark.parametrize('cmb', [-1.0e-6, 1.0e-4])
+def test_numpy_cmb_node_takes_the_mixing_length_of_node_1_and_its_own_floor(cmb):
+    """The CMB node takes the mixing-length kappa_h of node 1 or the floor of node 0 under
+    its own mask (dS/dr[0] < D), whichever is larger, across node 1 at 0 and D, for a
+    convective and a stable CMB gradient; jconv[0] uses that value."""
     D = _D
     kh1 = []
     for x in (-1.0e-300, 0.0, np.nextafter(D, 0.0), D):
-        state, _, dSdr = _update_with_gradients([x], start=1, kappah_floor=_KAPPAH_FLOOR)
+        state, _, dSdr = _update_with_gradients([cmb, x], start=0, kappah_floor=_KAPPAH_FLOOR)
         kh = state.eddy_diffusivity
-        rho_t = (
-            np.asarray(state.phase_basic.density()).ravel()
-            * np.asarray(state.phase_basic.temperature()).ravel()
-        )
-        assert kh[0] == kh[1] and state.jconv[0] == pytest.approx(rho_t[0] * kh[1] * -dSdr[0])
+        pb = state.phase_basic
+        rho_t = np.asarray(pb.density()).ravel() * np.asarray(pb.temperature()).ravel()
+        phi_0 = float(np.asarray(pb.melt_fraction()).ravel()[0])
+        floor_0 = _KAPPAH_FLOOR * float(tanh_weight(phi_0, _PHI_RHEO, _PHI_WIDTH)) * (cmb < D)
+        # Node 1 is on its floor only in the band 0 <= dS/dr < D; there the mixing-length part is 0.
+        kh_mlt_1 = kh[1] if x < 0.0 else 0.0
+        if x < 0.0:  # the drive of D keeps node 1 above its floor, so kh[1] is kh_mlt[1]
+            assert kh[1] > _KAPPAH_FLOOR
+        # 0 and the band keep the numpy drive of x ~ 0 at node 1 (below 1e-18 m^2/s here).
+        assert kh[0] == pytest.approx(max(kh_mlt_1, floor_0), rel=1e-12, abs=1.0e-12)
+        assert state.jconv[0] == pytest.approx(rho_t[0] * kh[0] * -dSdr[0], rel=1e-12)
         kh1.append(kh[1])
     assert kh1[0] > kh1[1] == kh1[2] > 0.0 == kh1[3]
+
+
+@needs_eos
+@pytest.mark.parametrize('cmb', [-1.0e-4, -1.0e-31, 1.0e-31, 1.0e-4])
+@pytest.mark.parametrize('x', [-1.0e-4, -1.0e-31, 0.0, 1.0e-4])
+def test_numpy_cmb_node_without_floor_is_the_copy_of_node_1(cmb, x):
+    """With ``kappah_floor = 0`` the CMB node equals node 1 bit for bit on the numpy path (the
+    SPIDER rule), whatever the gradients of nodes 0 and 1."""
+    state, _, _ = _update_with_gradients([cmb, x], start=0, kappah_floor=0.0)
+    assert state.eddy_diffusivity[0] == state.eddy_diffusivity[1]
+
+
+@needs_eos
+def test_numpy_cmb_node_floor_steps_where_the_cmb_gradient_crosses_d():
+    """With D > 0 and node 1 stable, the CMB node holds its own floor just below
+    dS/dr[0] = D and loses it at D, as on the JAX path."""
+    D = _D
+    kh0 = []
+    for g0 in (np.nextafter(D, 0.0), D):
+        state, _, _ = _update_with_gradients([g0, 1.0e-4], start=0, kappah_floor=_KAPPAH_FLOOR)
+        phi_0 = float(np.asarray(state.phase_basic.melt_fraction()).ravel()[0])
+        kh0.append(
+            (
+                state.eddy_diffusivity[0],
+                _KAPPAH_FLOOR * float(tanh_weight(phi_0, _PHI_RHEO, _PHI_WIDTH)),
+            )
+        )
+    assert kh0[0][0] == pytest.approx(kh0[0][1], rel=1e-12) and kh0[0][1] > 1.0
+    assert kh0[1][0] < 1.0e-12  # node 1 stable: only the residual numpy drive remains
 
 
 @needs_eos

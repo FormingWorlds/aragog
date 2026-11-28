@@ -68,7 +68,15 @@ Integration-level parity between the two codes is the criterion that the product
 
 ### Convective threshold
 
-SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, and Aragog can drive an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default 0), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. Apart from the floor, the two codes therefore differ at nodes with $-D < \partial S/\partial r < 0$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
+SPIDER and the Aragog mixing-length drive both switch convection on at $\partial S/\partial r = 0$.
+Aragog adds 2 things that SPIDER does not have:
+
+- it can drive an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default 0);
+- its `kappah_floor` acts up to $\partial S/\partial r = D$.
+
+Apart from the floor, the 2 codes therefore differ at nodes with $-D < \partial S/\partial r < 0$.
+They also differ at the CMB node when node 1 is in that band, because the CMB node takes the mixing-length eddy diffusivity of node 1.
+With `kappah_floor > 0` the CMB node also takes its own floor where that is larger ([Heat transport](heat_transport.md#eddy-diffusivity-at-the-cmb-node)).
 The default `convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
 
 ### CMB closure in the melt band
