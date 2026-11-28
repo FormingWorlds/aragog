@@ -1022,6 +1022,8 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
         ('shrink.json', 30000),
     ):
         (o / 'tests' / 'reference' / name).write_text('[0]\n' * size)
+    (o / 'data').mkdir()
+    (o / 'data' / 'swap.json').write_text('[0]\n' * 30000)
     (o / 'README.md').write_text('r\n')
     _git(o, 'add', '-A')
     _git(o, 'commit', '-qm', 'base')
@@ -1043,8 +1045,13 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'tests' / 'reference' / 'grow.json').write_text('[0]\n' * 30000)
     (o / 'tests' / 'reference' / 'shrink.json').write_text('[0]\n')
     (o / 'tests' / 'reference' / 'gone.json').unlink()
-    for name in ('big.tsv', 'big.dat', 'big.txt', 'a[1].json'):
+    for name in ('big.tsv', 'big.dat', 'big.txt', 'big.csv', 'a[1].json'):
         (o / 'tests' / 'reference' / name).write_text('[0]\n' * 30000)
+    (o / 'tests' / 'reference' / 'a1.json').write_text('[1]\n')
+    (o / 'src' / 'big.py').write_text('x = 1\n' * 20000)
+    (o / 'data' / 'swap.json').unlink()
+    (o / 'data' / 'swap.json').mkdir()
+    (o / 'data' / 'swap.json' / 'evil.py').write_text('evil = 1\n')
     (o / 'src' / 'edge0.json').write_text('[0]\n' * 25000)
     (o / 'tests' / 'reference' / 'edge1.json').write_text('[0]\n' * 25000 + 'x')
     _git(o, 'mv', 'tests/reference/moved.json', 'tests/reference/moved2.json')
@@ -1096,7 +1103,12 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     assert f'+Subproject commit {"2" * 40}' in patch
     assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch and 'b/src/edge0.json' in patch
     assert 'b/tests/validation/data/x.csv' in patch
-    assert 'Fig.PNG' not in patch and 'tests/reference/' not in patch
+    assert 'b/src/big.py' in patch
+    assert '+evil = 1' in patch
+    assert [
+        line for line in patch.splitlines() if line.startswith('diff --git a/tests/reference/')
+    ] == ['diff --git a/tests/reference/a1.json b/tests/reference/a1.json']
+    assert 'Fig.PNG' not in patch
     assert '.svg' not in patch
     assert not marker.exists()
     assert sorted(p.name for p in (tmp_path / 'review_in').iterdir()) == [
@@ -1122,6 +1134,7 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
         'docs/assets/é.svg',
         'tests/reference/UPPER.JSON',
         'tests/reference/a[1].json',
+        'tests/reference/big.csv',
         'tests/reference/big.dat',
         'tests/reference/big.json',
         'tests/reference/big.tsv',
