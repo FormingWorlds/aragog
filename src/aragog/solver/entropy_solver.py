@@ -161,10 +161,6 @@ class CMBClosureError(RuntimeError):
     """The CMB closure of a call fails its ledger check, or the node slope is not positive."""
 
 
-class CMBLedgerMissError(CMBClosureError):
-    """A call misses the CMB ledger check by more than 10 times the solver bound."""
-
-
 # Volumetric heat capacity [J/m^3/K] of rock, for the solver scale of the lid energy state.
 _LID_E_DENSITY_SCALE = 3.6e6
 # Entropy intervals of the lid enthalpy table below the solidus, in the melt band and above it;
@@ -174,6 +170,10 @@ LID_TABLE_KNOTS = _LID_TABLE_COUNTS[0] + 1
 _CALL_START = object()  # solve() reads the call-start solution itself
 _LEDGER_REPEAT_RTOL = 1.0e-10  # rtol of the one repeat of a call that the CMB ledger refuses
 _EOS_DOMAIN_BLOCK = 4096  # states per table pass of the EOS domain check (bounds its memory)
+
+
+class CMBLedgerMissError(CMBClosureError):
+    """A call misses the CMB ledger check by more than 10 times the solver bound."""
 
 
 def _eos_domain_of(eos):
