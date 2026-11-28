@@ -152,4 +152,4 @@ ledger miss below 1e-4 of the CMB heat: True
 ledger miss within the solver bound: True
 ```
 
-With $c_p/T$ the same call would miss by about 9 % of $q$ (see [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band)). A miss above the bound logs a warning. A miss above 10 times the bound raises a `CMBClosureError`, which ends this script; a coupled PROTEUS run counts that interior step as skipped (see [what happens after a miss](../Explanations/core_bc.md#what-happens-after-a-miss)).
+With $c_p/T$ the same call would miss by about 9 % of $q$ (see [the CMB closure ledger across the melt band](../Validation/core.md#16-the-cmb-closure-ledger-across-the-melt-band)). A miss above the bound logs a warning. A miss above 10 times the bound raises a `CMBLedgerMissError`, a kind of `CMBClosureError`, which ends this script; a coupled PROTEUS run counts that interior step as skipped. At an `rtol` above $10^{-10}$ the solver first solves such a call once more at `rtol = 1e-10` and keeps that solve when it passes (see [what happens after a miss](../Explanations/core_bc.md#what-happens-after-a-miss)).

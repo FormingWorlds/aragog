@@ -139,7 +139,7 @@ def test_the_repeat_starts_from_the_call_start_with_the_lid(monkeypatch):
     """With the sub-grid lid and a lid set before the call, both attempts start from the same
     state, the lid slots included, and the kept solution starts from the set lid. The CMB heat
     of this call is far below its bound, so the check raises the miss at rtol 1e-8 by hand."""
-    from aragog.solver.entropy_solver import CMBLedgerMissError, EntropySolver
+    from aragog.solver.entropy_solver import EntropySolver
     from tests.conftest import EOS_DIR, entropy_eos_copy
     from tests.test_entropy_solver_bc_dispatch_smoke import _build
 
@@ -151,14 +151,7 @@ def test_the_repeat_starts_from_the_call_start_with_the_lid(monkeypatch):
     solver.initialize()
     solver.set_initial_entropy(3050.0)
     solver.set_initial_lid(2.0, -1.0e9)
-    check = EntropySolver._check_cmb_ledger
-
-    def refuse_at_1e8(self, *args, **kw):
-        check(self, *args, **kw)
-        if self.parameters.solver.rtol > 1.0e-10:
-            raise CMBLedgerMissError('CMB closure fault in the probe call')
-
-    monkeypatch.setattr(EntropySolver, '_check_cmb_ledger', refuse_at_1e8)
+    _refused_at_1e8(monkeypatch)
     calls = _record_starts(monkeypatch)
     solver.solve()
     assert solver._lid_on and solver._cmb_ledger_repeats == {'repeated': 1, 'failed': 0}
@@ -166,6 +159,62 @@ def test_the_repeat_starts_from_the_call_start_with_the_lid(monkeypatch):
     assert calls[0][0] == calls[1][0]
     np.testing.assert_array_equal(calls[0][1], calls[1][1])
     np.testing.assert_array_equal(solver._solution.y[-2:, 0], [2.0, -1.0e9])
+
+
+def _refused_at_1e8(monkeypatch):
+    """Let the ledger check raise its miss after the real check while the rtol is above 1e-10."""
+    from aragog.solver.entropy_solver import CMBLedgerMissError, EntropySolver
+
+    check = EntropySolver._check_cmb_ledger
+
+    def refuse(self, *args, **kw):
+        check(self, *args, **kw)
+        if self.parameters.solver.rtol > 1.0e-10:
+            raise CMBLedgerMissError('CMB closure fault in the probe call')
+
+    monkeypatch.setattr(EntropySolver, '_check_cmb_ledger', refuse)
+
+
+@pytest.mark.smoke
+@needs_eos
+@pytest.mark.timeout(900)
+@pytest.mark.parametrize(
+    ('core_bc', 'method'), [('energy_balance', 'cvode'), ('core_module', 'radau')]
+)
+def test_the_kept_repeat_equals_a_solve_at_1e10_on_cvode_and_core_module(
+    monkeypatch, core_bc, method
+):
+    """On the CVODE integrator and with the core_module ledger (in K), a call refused at rtol
+    1e-8 keeps a repeat equal to a solve at 1e-10 from the same start."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.conftest import EOS_DIR, entropy_eos_copy
+    from tests.test_cmb_closure_ledger import _profile
+    from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    if method == 'cvode':
+        pytest.importorskip('scikits_odes_sundials')
+        solver = _solver(0.9, end_time=20.0, solver_method='cvode', use_jax_jacobian=False)
+    else:
+        eos = entropy_eos_copy(EOS_DIR)
+        solver = _build(
+            'core_module', eos, CORE_MODULE_PARAMS, end_time=2.0, solver_method=method
+        )
+        S = _profile(solver, eos, 0.9)
+        solver.set_initial_entropy(S)
+        t_m = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], S[:1])).item())
+        solver.set_initial_core_temperature(t_m + 50.0)
+        solver.set_initial_entropy(S)
+    assert isinstance(solver, EntropySolver) and solver._core_bc == core_bc
+    solver.parameters.solver.rtol = RTOL
+    _refused_at_1e8(monkeypatch)
+    direct = copy.deepcopy(solver)
+    direct.parameters.solver.rtol = 1.0e-10
+    direct.solve()
+    solver.solve()
+    assert solver._cmb_ledger_repeats == {'repeated': 1, 'failed': 0}
+    assert solver.parameters.solver.rtol == RTOL
+    np.testing.assert_array_equal(solver._solution.y, direct._solution.y)
+    assert solver.cmb_ledger['repeat_of']['rtol'] == RTOL
 
 
 @pytest.mark.smoke
@@ -210,23 +259,18 @@ def test_no_repeat_at_or_below_the_repeat_rtol(monkeypatch, rtol):
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.timeout(600)
-@pytest.mark.parametrize('fault', ['CMBClosureError', 'CMBEddyFluxError'])
-def test_no_repeat_for_a_slope_or_eddy_flux_fault(monkeypatch, fault):
-    """A slope fault or an eddy-flux fault is not a ledger miss: it raises at once, with no
-    repeat. The eddy-flux case runs where the solver module has that error class."""
+def test_no_repeat_for_a_slope_fault(monkeypatch):
+    """A slope fault is not a ledger miss: it raises at once, with no repeat."""
     from aragog.solver import entropy_solver as es
 
-    if not hasattr(es, fault):
-        pytest.skip(f'no {fault} in this aragog')
-    error = getattr(es, fault)
     solver = _call()
 
     def faulty(self):
-        raise error('CMB fault at the probe')
+        raise es.CMBClosureError('CMB fault at the probe')
 
     monkeypatch.setattr(es.EntropySolver, '_cmb_closure_cp', faulty)
     calls = _record_starts(monkeypatch)
-    with pytest.raises(error, match='at the probe') as info:
+    with pytest.raises(es.CMBClosureError, match='at the probe') as info:
         solver.solve()
     assert not isinstance(info.value, es.CMBLedgerMissError) and len(calls) == 1
     assert solver._cmb_ledger_repeats == {'repeated': 0, 'failed': 0}
@@ -235,10 +279,11 @@ def test_no_repeat_for_a_slope_or_eddy_flux_fault(monkeypatch, fault):
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.timeout(600)
-@pytest.mark.parametrize('kind', ['slope', 'status', 'raise'])
+@pytest.mark.parametrize('kind', ['slope', 'status', 'range', 'raise'])
 def test_a_repeat_that_fails_another_way_raises_the_miss(monkeypatch, kind):
-    """A slope fault, a failed integrator status or another error in the repeat: the call raises
-    the ledger miss chained to it, from the call start, with the rtol of the run."""
+    """A slope fault, a failed integrator status, a state outside the EOS tables or another error
+    in the repeat: the call raises the ledger miss chained to it, from the call start, with the
+    rtol, tolerances and stop flag of the refused attempt and its ledger terms."""
     from scipy.optimize import OptimizeResult
 
     from aragog.solver import entropy_solver as es
@@ -262,6 +307,8 @@ def test_a_repeat_that_fails_another_way_raises_the_miss(monkeypatch, kind):
             return run(fun, t_span, y0, **kw)
         if kind == 'raise':
             raise RuntimeError('integrator probe')
+        if kind == 'range':
+            raise es.AcceptedStateRangeError('range probe')
         y = np.asarray(y0, dtype=float).reshape(-1, 1)
         return OptimizeResult(t=np.array(t_span[:1]), y=y, status=-1, message='probe', nfev=1)
 
@@ -270,7 +317,11 @@ def test_a_repeat_that_fails_another_way_raises_the_miss(monkeypatch, kind):
         solver.solve()
     assert info.value.__cause__ is not None
     assert solver.get_current_dSdr_cmb() == accepted
-    assert solver.parameters.solver.rtol == RTOL
+    assert solver.parameters.solver.rtol == RTOL and solver._call_tol[1] == RTOL
+    assert solver.stop_early is False
+    ledger = solver.cmb_ledger
+    assert abs(ledger['r']) > 10.0 * ledger['bound'] and ledger['rtol'] == RTOL
+    assert 'repeat' in ledger
     assert solver._cmb_ledger_repeats == {'repeated': 1, 'failed': 1}
 
 
@@ -281,22 +332,24 @@ def _stub_solver(rtol, outcomes):
 
     start = SimpleNamespace(tag='start')
     stub = EntropySolver.__new__(EntropySolver)
-    for name, value in {
-        'parameters': SimpleNamespace(solver=SimpleNamespace(rtol=rtol, end_time=1.0)),
-        '_solution': start,
-        '_S0': np.arange(4.0),
-        '_cmb_ledger_counts': {'missed': 0, 'excluded': 0},
-        '_cmb_ledger_repeats': {'repeated': 0, 'failed': 0},
-        'cmb_ledger': None,
-        'stop_early': False,
-        'seen': [],
-    }.items():
-        setattr(stub, name, value)
+    vars(stub).update(
+        parameters=SimpleNamespace(solver=SimpleNamespace(rtol=rtol, end_time=1.0)),
+        _solution=start,
+        _S0=np.arange(4.0),
+        _cmb_ledger_counts={'missed': 0, 'excluded': 0},
+        _cmb_ledger_repeats={'repeated': 0, 'failed': 0},
+        cmb_ledger=None,
+        stop_early=False,
+        _call_tol=(0.0, rtol),
+        _lid_call_tol=(0.0, rtol),
+        seen=[],
+    )
 
     def body(_floor_discard=None, _start=None):
         kind = outcomes[len(stub.seen)]
         stub.seen.append((stub.parameters.solver.rtol, _start))
         stub.stop_early = kind == 'stop'
+        stub._call_tol = stub._lid_call_tol = (0.0, stub.parameters.solver.rtol)
         stub.cmb_ledger = {'r': 1.0, 'bound': 1.0 if kind != 'miss' else 0.01}
         if kind == 'miss':
             stub._cmb_ledger_counts['missed'] += 1
@@ -314,7 +367,10 @@ def _stub_solver(rtol, outcomes):
 @pytest.mark.unit
 @settings(max_examples=300, deadline=None)
 @given(
-    rtol=st.floats(1.0e-12, 1.0e-6),
+    rtol=st.one_of(
+        st.floats(1.0e-12, 1.0e-6),
+        st.sampled_from([1.0e-10, np.nextafter(1.0e-10, 1.0), np.nextafter(1.0e-10, 0.0)]),
+    ),
     first=st.sampled_from(['pass', 'miss']),
     second=st.sampled_from(['pass', 'miss', 'stop', 'error']),
 )
@@ -325,12 +381,13 @@ def test_the_repeat_restores_the_rtol_and_counts_each_call_once(rtol, first, sec
     from aragog.solver.entropy_solver import CMBLedgerMissError, EntropySolver
 
     stub, start = _stub_solver(rtol, [first, second])
-    repeat = first == 'miss' and rtol > 1.0e-10
+    repeat = bool(first == 'miss' and rtol > 1.0e-10)
     fails = first == 'miss' and (not repeat or second != 'pass')
     if fails:
         with pytest.raises(CMBLedgerMissError):
             EntropySolver.solve(stub)
-        assert stub._solution is start
+        assert stub._solution is start and stub.stop_early is False
+        assert stub._call_tol[1] == rtol
     else:
         EntropySolver.solve(stub)
         assert stub._solution.tag == 'new'

@@ -5630,9 +5630,11 @@ class EntropySolver:
         ``_LEDGER_REPEAT_RTOL`` is solved once more from its start at that rtol, and the run
         keeps the repeat when it passes: ``cmb_ledger['repeat_of']`` holds the refused terms,
         and the solution has ``cmb_ledger_repeat`` True. ``_cmb_ledger_repeats`` counts the
-        repeats and the failed ones. A repeat that fails in any way raises
-        ``CMBLedgerMissError`` chained to its error, with the solver at the call start and at
-        the rtol of the run.
+        repeats and the failed ones. A repeat that fails in any way (also with
+        ``AcceptedStateRangeError`` or a failed integrator status) raises ``CMBLedgerMissError``
+        chained to its error, so a caller sees the error the refused call gave. The solver is
+        then at the call start, with the rtol, ``stop_early`` and tolerances of the refused
+        attempt, and ``cmb_ledger`` holds the refused terms with the repeat's under ``'repeat'``.
 
         Raises
         ------
@@ -5642,8 +5644,7 @@ class EntropySolver:
             When the refused attempt changed the start state, so no repeat can run.
         """
         start = getattr(self, '_solution', None) if _start is _CALL_START else _start
-        s0 = getattr(self, '_S0', None)
-        s0 = None if s0 is None else np.array(s0, dtype=float)
+        s0 = np.copy(getattr(self, '_S0', None))
         counts = dict(self._cmb_ledger_counts)
         try:
             self._solve_call(_floor_discard, start)
@@ -5663,14 +5664,17 @@ class EntropySolver:
         vector at the call start, ``counts`` the ledger counts before the call. The call counts
         once in ``_cmb_ledger_counts``: as the repeat when it passes, else as the refusal.
         """
-        s_now = getattr(self, '_S0', None)
-        same = s0 is None if s_now is None else s0 is not None and np.array_equal(s_now, s0)
-        if not same or self._solution is not start:
+        if not np.array_equal(getattr(self, '_S0', None), s0) or self._solution is not start:
             raise RuntimeError(
                 'CMB ledger repeat: the refused call changed its start state; no repeat'
             ) from miss
-        refused = {'r': self.cmb_ledger['r'], 'bound': self.cmb_ledger['bound'], 'rtol': rtol}
-        missed = dict(self._cmb_ledger_counts)
+        refused = {**(self.cmb_ledger or {}), 'rtol': rtol}
+        held = (
+            dict(self._cmb_ledger_counts),
+            self.stop_early,
+            self._call_tol,
+            self._lid_call_tol,
+        )
         self._cmb_ledger_counts.update(counts)
         self._cmb_ledger_repeats['repeated'] += 1
         self.parameters.solver.rtol = _LEDGER_REPEAT_RTOL
@@ -5680,8 +5684,9 @@ class EntropySolver:
                 raise RuntimeError(f'stopped: {getattr(self._solution, "message", "")}')
         except Exception as err:
             self._cmb_ledger_repeats['failed'] += 1
-            self._solution = start
-            self._cmb_ledger_counts.update(missed)
+            self._solution, self.cmb_ledger = start, {**refused, 'repeat': self.cmb_ledger}
+            self._cmb_ledger_counts.update(held[0])
+            self.stop_early, self._call_tol, self._lid_call_tol = held[1:]
             outcome = f'failed ({type(err).__name__}: {err})'
             self._log_repeat(refused, outcome)
             raise CMBLedgerMissError(
@@ -5690,11 +5695,10 @@ class EntropySolver:
         finally:
             self.parameters.solver.rtol = rtol
         ledger = self.cmb_ledger
-        outcome = (
-            'passed (not checked)'
-            if ledger is None
-            else f'passed (miss {ledger["r"]:.6g}, bound {ledger["bound"]:.6g})'
-        )
+        if ledger is None or ledger.get('excluded'):
+            outcome = 'passed (check skipped)'
+        else:
+            outcome = f'passed (miss {ledger["r"]:.6g}, bound {ledger["bound"]:.6g})'
         self.cmb_ledger = {**(ledger or {}), 'repeat_of': refused}
         self._solution.cmb_ledger_repeat = True
         self._log_repeat(refused, outcome)
@@ -5704,8 +5708,8 @@ class EntropySolver:
         logger.warning(
             'EntropySolver: CMB ledger miss %.6g above 10x the bound %.6g at rtol %.3g in the '
             'call to t = %.6e yr; the repeat at rtol %.3g %s; %d repeat(s), %d failed',
-            refused['r'],
-            refused['bound'],
+            refused.get('r', math.nan),
+            refused.get('bound', math.nan),
             refused['rtol'],
             float(self.parameters.solver.end_time),
             _LEDGER_REPEAT_RTOL,
@@ -5714,7 +5718,7 @@ class EntropySolver:
             self._cmb_ledger_repeats['failed'],
         )
 
-    def _solve_call(self, _floor_discard: str | None, _start: object) -> None:
+    def _solve_call(self, _floor_discard: str | None, last_accepted: object) -> None:
         """Run the BDF time integration of one call.
 
         A successful solve also stores the per-call energy integrals on the result as
@@ -5725,10 +5729,9 @@ class EntropySolver:
         warning: a call whose floor root returns a state below the EOS table, or stops at the
         call start, is solved again this way, so it returns its start state; a lid trigger
         already passed at the call start still merges, so that state then holds the merged lid.
-        ``_start`` (internal) is the solution held at the call start, passed on to that solve.
+        ``last_accepted`` is the solution held at the call start, passed on to that solve.
         """
         wall_start = time.perf_counter()
-        last_accepted = getattr(self, '_solution', None) if _start is _CALL_START else _start
         self._eos_domain_prepare()
         self.cmb_ledger = None
         s0 = getattr(self, '_S0', None)
@@ -7012,7 +7015,7 @@ class EntropySolver:
         tabulated blend, and ``E_trap`` the trapezoid error of ``q`` (every-other-node
         estimate). A state with ``s_tab <= 1e-6 s`` (a padded, clamped or reversed table
         cell) leaves the call out of the check, with one warning. A miss warns once per call; a
-        miss above 10 B raises ``CMBClosureError``. ``self.cmb_ledger`` holds the call's terms
+        miss above 10 B raises ``CMBLedgerMissError``. ``self.cmb_ledger`` holds the call's terms
         (None when the call is not checked). B is a worst case: at rtol 1e-8 a 2-yr core_module
         call (CVODE) with c_p/T in place of the slope misses by 0.0033 K against B = 1.2 K, for
         a core-top change of 0.032 K; a closure error shows only where its miss is large against B.
@@ -7020,7 +7023,9 @@ class EntropySolver:
         Raises
         ------
         CMBClosureError
-            On a node slope that is not finite and positive, or a miss above 10 B.
+            On a node slope that is not finite and positive.
+        CMBLedgerMissError
+            On a miss above 10 B.
         """
         self.cmb_ledger = None
         n, ev = self._n_stag, getattr(self, '_cmb_node_phase', None)
