@@ -114,6 +114,9 @@ def test_a_call_that_fails_twice_raises_and_keeps_the_call_start(monkeypatch, ca
     assert solver.parameters.solver.rtol == RTOL
     assert solver._cmb_ledger_repeats == {'repeated': 1, 'failed': 1}
     assert solver._cmb_ledger_counts['missed'] == 1
+    ledger = solver.cmb_ledger
+    assert ledger['rtol'] == RTOL and abs(ledger['r']) > 10.0 * ledger['bound']
+    assert abs(ledger['repeat']['r']) > 10.0 * ledger['repeat']['bound']
     lines = [r.getMessage() for r in caplog.records if 'repeat at rtol' in r.getMessage()]
     assert len(lines) == 1 and 'failed' in lines[0], lines
 
@@ -186,7 +189,6 @@ def test_the_kept_repeat_equals_a_solve_at_1e10_on_cvode_and_core_module(
 ):
     """On the CVODE integrator and with the core_module ledger (in K), a call refused at rtol
     1e-8 keeps a repeat equal to a solve at 1e-10 from the same start."""
-    from aragog.solver.entropy_solver import EntropySolver
     from tests.conftest import EOS_DIR, entropy_eos_copy
     from tests.test_cmb_closure_ledger import _profile
     from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
@@ -204,7 +206,7 @@ def test_the_kept_repeat_equals_a_solve_at_1e10_on_cvode_and_core_module(
         t_m = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], S[:1])).item())
         solver.set_initial_core_temperature(t_m + 50.0)
         solver.set_initial_entropy(S)
-    assert isinstance(solver, EntropySolver) and solver._core_bc == core_bc
+    assert solver._core_bc == core_bc
     solver.parameters.solver.rtol = RTOL
     _refused_at_1e8(monkeypatch)
     direct = copy.deepcopy(solver)
@@ -317,7 +319,8 @@ def test_a_repeat_that_fails_another_way_raises_the_miss(monkeypatch, kind):
         solver.solve()
     assert info.value.__cause__ is not None
     assert solver.get_current_dSdr_cmb() == accepted
-    assert solver.parameters.solver.rtol == RTOL and solver._call_tol[1] == RTOL
+    assert solver.parameters.solver.rtol == RTOL
+    assert solver._call_tol[1] == solver._lid_call_tol[1] == RTOL
     assert solver.stop_early is False
     ledger = solver.cmb_ledger
     assert abs(ledger['r']) > 10.0 * ledger['bound'] and ledger['rtol'] == RTOL
@@ -351,6 +354,8 @@ def _stub_solver(rtol, outcomes):
         stub.stop_early = kind == 'stop'
         stub._call_tol = stub._lid_call_tol = (0.0, stub.parameters.solver.rtol)
         stub.cmb_ledger = {'r': 1.0, 'bound': 1.0 if kind != 'miss' else 0.01}
+        if kind == 'skip':
+            stub.cmb_ledger['excluded'] = True
         if kind == 'miss':
             stub._cmb_ledger_counts['missed'] += 1
             stub._solution = _start
@@ -387,7 +392,7 @@ def test_the_repeat_restores_the_rtol_and_counts_each_call_once(rtol, first, sec
         with pytest.raises(CMBLedgerMissError):
             EntropySolver.solve(stub)
         assert stub._solution is start and stub.stop_early is False
-        assert stub._call_tol[1] == rtol
+        assert stub._call_tol == stub._lid_call_tol == (0.0, rtol)
     else:
         EntropySolver.solve(stub)
         assert stub._solution.tag == 'new'
@@ -400,6 +405,21 @@ def test_the_repeat_restores_the_rtol_and_counts_each_call_once(rtol, first, sec
         'failed': int(repeat and second != 'pass'),
     }
     assert stub._cmb_ledger_counts['missed'] == int(fails)
+
+
+@pytest.mark.unit
+def test_a_repeat_whose_check_is_skipped_is_kept_and_logged(caplog):
+    """A repeat that the check leaves out (a flat table cell) is kept, as a call without a
+    repeat would be, and its log line says that the check was skipped."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    stub, _ = _stub_solver(RTOL, ['miss', 'skip'])
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog'):
+        EntropySolver.solve(stub)
+    assert stub._solution.tag == 'new' and stub._solution.cmb_ledger_repeat is True
+    assert stub.cmb_ledger['excluded'] and stub.cmb_ledger['repeat_of']['rtol'] == RTOL
+    assert stub._cmb_ledger_repeats == {'repeated': 1, 'failed': 0}
+    assert 'the repeat at rtol 1e-10 passed (check skipped)' in caplog.text
 
 
 @pytest.mark.unit

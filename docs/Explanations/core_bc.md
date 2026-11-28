@@ -357,9 +357,17 @@ $$
 
 ### What happens after a miss
 
-A miss above $B$ logs a warning and is counted. A miss above $10\,B$ refuses the call. With the CMB node in the mush, such a miss at `rtol = 1e-8` can come from the solver error of that call alone (see [the repeat of a refused call](../Validation/core.md#19-the-repeat-of-a-call-that-the-ledger-refuses)). So a call refused at an `rtol` above $10^{-10}$ is solved once more from its start at `rtol = 1e-10`, and the run keeps that solve when it passes the check. Each such repeat logs one warning line with both misses.
+The response depends on the size of the miss and on `solver.rtol`:
 
-A miss above $10\,B$ at `rtol` $10^{-10}$ or below, or a repeat that fails in any way, raises a `CMBLedgerMissError`. It is a kind of `CMBClosureError` (a `RuntimeError`, from `aragog.solver.entropy_solver`), so code that catches `CMBClosureError` catches it too. The solver then drops the refused call, sets `rtol` back to the value of the run, and puts back the solution it held at the start of the call (none before the first call), from which a caller that goes on takes the CMB gradient. A coupled PROTEUS run sets the solver back to the state at the call start itself and skips the interior step without a retry; the third failed step in a row stops the run. A call through a table cell where $T$ does not rise with $S$ is skipped with a warning. `EntropySolver.cmb_ledger` holds the terms of the last call: `r` and `bound` (J, or K in `core_module`), `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). After a repeat that passes, `repeat_of` holds `r`, `bound` and `rtol` of the refused solve, and the solution has `cmb_ledger_repeat` set to `True`. `cmb_ledger` is `None` after a call that the check does not cover.
+- A miss above $B$ logs a warning and is counted. The run keeps the call.
+- A miss above $10\,B$ refuses the call. If `rtol` is above $10^{-10}$, the solver solves the call once more from its start at `rtol = 1e-10` and then sets `rtol` back. The run keeps the repeat when it passes the check or when the check skips it. Each repeat logs one warning line with the refused miss and the outcome of the repeat.
+- A miss above $10\,B$ at `rtol` $10^{-10}$ or below, or a repeat that fails in any way, raises a `CMBLedgerMissError`.
+
+Why repeat a refused call? $B$ sums the error test of each step on the node only, not how the errors of the other states change the CMB heat. So with the CMB node in the mush, a call at `rtol = 1e-8` can miss by more than $10\,B$ with the closure right, and pass from the same start at `rtol = 1e-10` ([the repeat of a refused call](../Validation/core.md#19-the-repeat-of-a-call-that-the-ledger-refuses)).
+
+`CMBLedgerMissError` is a kind of `CMBClosureError` (a `RuntimeError`, from `aragog.solver.entropy_solver`), so code that catches `CMBClosureError` catches it too. After the error the solver drops the refused call and puts back the solution it held at the start of the call (none before the first call), from which a caller that goes on takes the CMB gradient. A coupled PROTEUS run sets the solver back to the state at the call start itself and skips the interior step without a retry; the third failed step in a row stops the run.
+
+`EntropySolver.cmb_ledger` holds the terms of the last call: `r` and `bound` (J, or K in `core_module`), `rel` ($\epsilon_\text{tab}$) and `excluded` (the skip flag). After a kept repeat, `repeat_of` holds these terms and the `rtol` of the refused solve, and the solution has `cmb_ledger_repeat` set to `True`; the [API reference](../Reference/api/aragog.solver.md) gives the content after a failed repeat. `cmb_ledger` is `None` after a call that the check does not cover.
 
 ### What the ledger check detects
 

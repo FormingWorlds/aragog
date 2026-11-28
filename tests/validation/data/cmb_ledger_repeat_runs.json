@@ -2,68 +2,47 @@
  "provenance": {
   "config": "PROTEUS input/tutorials/tutorial_layer_trapping.toml of https://github.com/FormingWorlds/PROTEUS/pull/1090 with trap_mode = \"none\", aragog rtol 1e-8, each run with its own delta_T_super",
   "runs": {
-   "R_A": {
-    "aragog": "85da93b53df5487a8a3c564780c5286ac4d7abe8",
+   "R2_A": {
+    "aragog": "949fcca7cc14da75ce939192c723a1975f1fde5f",
     "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
     "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
     "delta_T_super": 500.0,
-    "log_sha256": "cedd35bc60b43b00fdf018f7426380ab541b58910831bcf6bc8a0e31c1ec4a5c"
+    "log_sha256": "d8898d536de4edd16f92c004d3fa9f3be90ac0c0bace5bf5fa5b460712bd24cf"
    },
-   "R_p4_A": {
-    "aragog": "85da93b53df5487a8a3c564780c5286ac4d7abe8",
+   "R2_p4_A": {
+    "aragog": "949fcca7cc14da75ce939192c723a1975f1fde5f",
     "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
     "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
     "delta_T_super": 500.00000020000004,
-    "log_sha256": "5a8d45f26c570157f5aab9394b7be856f03503355603261a8024329bcc95b081"
+    "log_sha256": "ffb4057c3e98515eb6d694b9b8f09e8569ad09849e298d72f289d42f29f9704d"
    },
-   "R_p9_A": {
-    "aragog": "85da93b53df5487a8a3c564780c5286ac4d7abe8",
+   "R2_p9_A": {
+    "aragog": "949fcca7cc14da75ce939192c723a1975f1fde5f",
     "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
     "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
     "delta_T_super": 500.00000045,
-    "log_sha256": "253c851a7fee2336677a5c1268c3f059df7be51f3c6a66d5712f330f0b751b15"
+    "log_sha256": "8395e347b68e025b823d0cb4a86f69689846c9c3f59e941e32e2beddb7d78371"
    },
-   "R_p10_A": {
-    "aragog": "85da93b53df5487a8a3c564780c5286ac4d7abe8",
+   "R2_p10_A": {
+    "aragog": "949fcca7cc14da75ce939192c723a1975f1fde5f",
     "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
     "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
     "delta_T_super": 500.00000050000006,
-    "log_sha256": "8aa0bb3038a9e419d4fee663e02fc658f3a24cc42918c4ca6cb25faa13a3f00c"
+    "log_sha256": "d976f8babd86ad5146658e2d1dd60716c2c561b307a785fca539e7547508c81d"
    },
-   "R_B": {
-    "aragog": "1789057e5f04ec9f15caa2464aa284dfc787e2ce",
+   "M_A": {
+    "aragog": "211760d1733a2d72e5c658572e9f9df7e090369d",
     "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
     "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
     "delta_T_super": 500.0,
-    "log_sha256": "34fe76aaba923475cd2864d7fe5101ce695a312dc2611a8966bd96b908137e7f"
-   },
-   "R_p1_B": {
-    "aragog": "1789057e5f04ec9f15caa2464aa284dfc787e2ce",
-    "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
-    "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
-    "delta_T_super": 500.00000005,
-    "log_sha256": "57897a726401b4a33318b3d70ce80b7378c0532f89f51d620c0bed6975922130"
-   },
-   "R_p3_B": {
-    "aragog": "1789057e5f04ec9f15caa2464aa284dfc787e2ce",
-    "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
-    "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
-    "delta_T_super": 500.00000015,
-    "log_sha256": "37487f94373aef0317cffcde4082ea9fad776bd367ffaf4a0c6a74d45f6767c4"
-   },
-   "R_p9_B": {
-    "aragog": "1789057e5f04ec9f15caa2464aa284dfc787e2ce",
-    "proteus": "f2c438c38c21335393b0924a1c3c6d52d26500d9",
-    "zalmoxis": "af9f16c21aed5f21f734aae2f1393d47ecca9476",
-    "delta_T_super": 500.00000045,
-    "log_sha256": "fe24632e6aeae055e591faf9cdffabddfd23fa7dcdc41b04e38663fb5ca23843"
+    "log_sha256": "bc4441de9a8dba70d6436378e57a78881a2fbdc47a19ca65f2d9f4d8258ccd96"
    }
   },
   "builder": "tests/reference/build_cmb_ledger_repeat_runs.py",
-  "note": "The runs on aragog 85da93b53df5487a8a3c564780c5286ac4d7abe8 use the code of this branch; the runs on 1789057e5f04ec9f15caa2464aa284dfc787e2ce use a local merge of that commit into b8f677e8229d23811095d06e4a2bb1c57763d0e6, the head of https://github.com/FormingWorlds/aragog/pull/136."
+  "note": "The 4 runs use aragog 949fcca7cc14da75ce939192c723a1975f1fde5f of this branch; the base run uses 211760d1733a2d72e5c658572e9f9df7e090369d of main, without the repeat."
  },
  "runs": {
-  "R_A": {
+  "R2_A": {
    "t_end": 3331501.1667906838,
    "status": "Completed (solidified)",
    "calls": 847,
@@ -71,9 +50,12 @@
    "repeats_failed": 0,
    "refusals_without_repeat": 0,
    "kept_1_to_10_B": 69,
-   "kept_above_10_B": 0
+   "kept_above_10_B": 0,
+   "steps": 220067,
+   "steps_refused": 285,
+   "steps_repeat": 700
   },
-  "R_p4_A": {
+  "R2_p4_A": {
    "t_end": 3329945.9667906836,
    "status": "Completed (solidified)",
    "calls": 848,
@@ -81,9 +63,12 @@
    "repeats_failed": 0,
    "refusals_without_repeat": 0,
    "kept_1_to_10_B": 83,
-   "kept_above_10_B": 0
+   "kept_above_10_B": 0,
+   "steps": 187384,
+   "steps_refused": 238,
+   "steps_repeat": 479
   },
-  "R_p9_A": {
+  "R2_p9_A": {
    "t_end": 3332985.9667906836,
    "status": "Completed (solidified)",
    "calls": 848,
@@ -91,9 +76,12 @@
    "repeats_failed": 0,
    "refusals_without_repeat": 0,
    "kept_1_to_10_B": 101,
-   "kept_above_10_B": 0
+   "kept_above_10_B": 0,
+   "steps": 186938,
+   "steps_refused": 273,
+   "steps_repeat": 288
   },
-  "R_p10_A": {
+  "R2_p10_A": {
    "t_end": 3332985.9667906836,
    "status": "Completed (solidified)",
    "calls": 848,
@@ -101,52 +89,22 @@
    "repeats_failed": 0,
    "refusals_without_repeat": 0,
    "kept_1_to_10_B": 93,
-   "kept_above_10_B": 0
-  },
-  "R_B": {
-   "t_end": 3332985.9667906836,
-   "status": "Completed (solidified)",
-   "calls": 848,
-   "repeats_passed": 2,
-   "repeats_failed": 0,
-   "refusals_without_repeat": 0,
-   "kept_1_to_10_B": 99,
-   "kept_above_10_B": 0
-  },
-  "R_p1_B": {
-   "t_end": 3332301.1667906838,
-   "status": "Completed (solidified)",
-   "calls": 847,
-   "repeats_passed": 3,
-   "repeats_failed": 0,
-   "refusals_without_repeat": 0,
-   "kept_1_to_10_B": 81,
-   "kept_above_10_B": 0
-  },
-  "R_p3_B": {
-   "t_end": 3335225.9667906836,
-   "status": "Completed (solidified)",
-   "calls": 848,
-   "repeats_passed": 2,
-   "repeats_failed": 0,
-   "refusals_without_repeat": 0,
-   "kept_1_to_10_B": 91,
-   "kept_above_10_B": 0
-  },
-  "R_p9_B": {
-   "t_end": 3332825.9667906836,
-   "status": "Completed (solidified)",
-   "calls": 848,
-   "repeats_passed": 6,
-   "repeats_failed": 0,
-   "refusals_without_repeat": 0,
-   "kept_1_to_10_B": 80,
-   "kept_above_10_B": 0
+   "kept_above_10_B": 0,
+   "steps": 168959,
+   "steps_refused": 308,
+   "steps_repeat": 752
+  }
+ },
+ "base_runs": {
+  "M_A": {
+   "t_end": 507296.3667906836,
+   "status": "Error (generic case, or configuration issue)",
+   "refusals_without_repeat": 3
   }
  },
  "rows": [
   {
-   "run": "R_A",
+   "run": "R2_A",
    "t": 499296.3667906836,
    "r": -2.8887234882527496e+26,
    "bound": 2.5270810479545403e+25,
@@ -154,7 +112,7 @@
    "bound_repeat": 5.473389490507971e+24
   },
   {
-   "run": "R_A",
+   "run": "R2_A",
    "t": 503296.3667906836,
    "r": -2.251626306474692e+26,
    "bound": 2.060464544744736e+25,
@@ -162,7 +120,7 @@
    "bound_repeat": 5.987759092245034e+24
   },
   {
-   "run": "R_A",
+   "run": "R2_A",
    "t": 730496.3667906837,
    "r": -2.7394829978528745e+26,
    "bound": 1.9079460759800264e+25,
@@ -170,7 +128,7 @@
    "bound_repeat": 3.5890660394636633e+24
   },
   {
-   "run": "R_A",
+   "run": "R2_A",
    "t": 746496.3667906837,
    "r": -3.432071275799025e+26,
    "bound": 2.7933303681934994e+25,
@@ -178,7 +136,7 @@
    "bound_repeat": 1.0352255912949383e+25
   },
   {
-   "run": "R_p4_A",
+   "run": "R2_p4_A",
    "t": 171296.3667906836,
    "r": 6.487523826278433e+26,
    "bound": 4.5450671143814015e+25,
@@ -186,7 +144,7 @@
    "bound_repeat": 1.0890802705646064e+25
   },
   {
-   "run": "R_p4_A",
+   "run": "R2_p4_A",
    "t": 499296.3667906836,
    "r": -2.831155111392741e+26,
    "bound": 1.830140200900531e+25,
@@ -194,7 +152,7 @@
    "bound_repeat": 5.439935316343053e+24
   },
   {
-   "run": "R_p9_A",
+   "run": "R2_p9_A",
    "t": 23210.84384201943,
    "r": -2.101348604972861e+27,
    "bound": 1.6355316833689987e+26,
@@ -202,7 +160,7 @@
    "bound_repeat": 2.6431783273130318e+26
   },
   {
-   "run": "R_p9_A",
+   "run": "R2_p9_A",
    "t": 395296.3667906836,
    "r": 2.2473010171574464e+26,
    "bound": 1.8754594872058518e+25,
@@ -210,7 +168,7 @@
    "bound_repeat": 4.123631380177774e+24
   },
   {
-   "run": "R_p9_A",
+   "run": "R2_p9_A",
    "t": 491296.3667906836,
    "r": -2.4284084527374223e+26,
    "bound": 1.8459233458903993e+25,
@@ -218,7 +176,7 @@
    "bound_repeat": 4.4411543394921735e+24
   },
   {
-   "run": "R_p10_A",
+   "run": "R2_p10_A",
    "t": 211296.3667906836,
    "r": 3.807157225293631e+26,
    "bound": 3.179204446762624e+25,
@@ -226,7 +184,7 @@
    "bound_repeat": 9.599176249534524e+24
   },
   {
-   "run": "R_p10_A",
+   "run": "R2_p10_A",
    "t": 499296.3667906836,
    "r": -2.0853135153528067e+26,
    "bound": 1.8631715398154403e+25,
@@ -234,7 +192,7 @@
    "bound_repeat": 5.659462732000674e+24
   },
   {
-   "run": "R_p10_A",
+   "run": "R2_p10_A",
    "t": 721056.3667906837,
    "r": -1.744869443813355e+26,
    "bound": 1.6558378531649063e+25,
@@ -242,116 +200,12 @@
    "bound_repeat": 3.69899707803065e+24
   },
   {
-   "run": "R_p10_A",
+   "run": "R2_p10_A",
    "t": 745056.3667906837,
    "r": -2.724744960804016e+26,
    "bound": 2.3661372052322784e+25,
    "r_repeat": -4.714326513039974e+23,
    "bound_repeat": 7.870796846217605e+24
-  },
-  {
-   "run": "R_B",
-   "t": 231296.36679068356,
-   "r": 4.736898391212268e+26,
-   "bound": 2.1915584359351535e+25,
-   "r_repeat": -1.0754366551892254e+24,
-   "bound_repeat": 8.255281983227372e+24
-  },
-  {
-   "run": "R_B",
-   "t": 263296.3667906836,
-   "r": 1.1425663193021102e+27,
-   "bound": 2.2173783741666106e+25,
-   "r_repeat": -7.766986070748616e+23,
-   "bound_repeat": 4.2761123948746223e+24
-  },
-  {
-   "run": "R_p1_B",
-   "t": 23210.84384201943,
-   "r": -3.516183578775048e+27,
-   "bound": 3.44409981506446e+26,
-   "r_repeat": -3.4176931761197457e+25,
-   "bound_repeat": 2.6464451652346127e+26
-  },
-  {
-   "run": "R_p1_B",
-   "t": 231296.36679068356,
-   "r": -2.415649004180764e+26,
-   "bound": 2.3276523885424372e+25,
-   "r_repeat": -2.576122927781458e+24,
-   "bound_repeat": 7.052251124541036e+24
-  },
-  {
-   "run": "R_p1_B",
-   "t": 255296.36679068356,
-   "r": -5.414621473527597e+26,
-   "bound": 3.3079540999919477e+25,
-   "r_repeat": 1.1545270372428849e+24,
-   "bound_repeat": 5.469883022095777e+24
-  },
-  {
-   "run": "R_p3_B",
-   "t": 275296.3667906836,
-   "r": -4.779985091376497e+26,
-   "bound": 2.309597140736021e+25,
-   "r_repeat": -9.447405340515374e+22,
-   "bound_repeat": 4.135788756862692e+24
-  },
-  {
-   "run": "R_p3_B",
-   "t": 722381.1667906836,
-   "r": -3.6476415731932586e+26,
-   "bound": 1.7629935784088362e+25,
-   "r_repeat": 1.8633402688233713e+23,
-   "bound_repeat": 3.6978930014978256e+24
-  },
-  {
-   "run": "R_p9_B",
-   "t": 23210.84384201943,
-   "r": 6.438631541754867e+27,
-   "bound": 3.637867508982376e+26,
-   "r_repeat": -6.643654023547447e+25,
-   "bound_repeat": 2.63087400799486e+26
-  },
-  {
-   "run": "R_p9_B",
-   "t": 103296.36679068358,
-   "r": 3.58231046055987e+26,
-   "bound": 3.544883594662308e+25,
-   "r_repeat": -6.053154517478982e+23,
-   "bound_repeat": 9.021159834139211e+24
-  },
-  {
-   "run": "R_p9_B",
-   "t": 195296.3667906836,
-   "r": 5.0209582490393856e+26,
-   "bound": 2.8958285355137278e+25,
-   "r_repeat": -3.277887431330321e+24,
-   "bound_repeat": 7.166465128192501e+24
-  },
-  {
-   "run": "R_p9_B",
-   "t": 375296.3667906836,
-   "r": -3.1477598138192946e+26,
-   "bound": 2.0889986356712855e+25,
-   "r_repeat": 1.2472019363761003e+23,
-   "bound_repeat": 5.486877998211285e+24
-  },
-  {
-   "run": "R_p9_B",
-   "t": 399296.3667906836,
-   "r": 2.46308357719438e+26,
-   "bound": 1.821550086355376e+25,
-   "r_repeat": -2.962077442981745e+24,
-   "bound_repeat": 3.947793238388633e+24
-  },
-  {
-   "run": "R_p9_B",
-   "t": 1008256.3667906837,
-   "r": -1.7453605122681293e+26,
-   "bound": 1.5592810662091852e+25,
-   "r_repeat": -1.4963297503791003e+23,
-   "bound_repeat": 3.472246377669711e+24
   }
  ]
 }
