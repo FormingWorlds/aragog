@@ -952,7 +952,7 @@ def test_workflow_files_for_the_model_live_outside_the_checkout():
         tools = '--allowedTools "Read(./**),Read(/${{ runner.temp }}/review_in/**)"\n'
         assert tools in args
         assert 'Bash(' not in args
-    assert 'gh pr diff "$PR_NUMBER"' in _step('Write the diff for the model passes')
+    assert 'gh pr diff' not in _step('Write the diff for the model passes')
     merge = _step('Check that the merge commit holds the head')
     assert "git ls-tree -z --name-only HEAD | grep -qz '^\\.review_'" in merge
 
@@ -995,6 +995,82 @@ def test_the_header_says_where_the_workflow_and_the_script_come_from():
 def _run_block(step):
     lines = step.split('run: |\n', 1)[1].splitlines()
     return '\n'.join(line[10:] for line in lines)
+
+
+def _git(cwd, *args):
+    cfg = ('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main')
+    return subprocess.run(
+        ['git', *cfg, *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize('found', [True, False])
+def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path, found):
+    """A pull request whose .gitattributes and .gitmodules try to hide changes, on a base that moved on."""
+    o = tmp_path / 'origin'
+    o.mkdir()
+    _git(o, 'init', '-q')
+    (o / 'src').mkdir()
+    (o / 'docs' / 'assets').mkdir(parents=True)
+    (o / 'src' / 'a.py').write_text('a = 1\n')
+    (o / 'docs' / 'assets' / 'old.svg').write_text('<svg/>\n')
+    (o / 'README.md').write_text('r\n')
+    _git(o, 'add', '-A')
+    _git(o, 'commit', '-qm', 'base')
+    base = _git(o, 'rev-parse', 'HEAD')
+    _git(o, 'switch', '-qc', 'pr')
+    (o / '.gitattributes').write_text('* -diff\n')
+    (o / '.gitmodules').write_text(
+        '[submodule "lib"]\n\tpath = lib\n\turl = ../lib\n\tignore = all\n'
+    )
+    (o / 'src' / 'a.py').write_text('a = 2\n')
+    (o / 'src' / 'k.csv').write_text('1\n')
+    (o / 'docs' / 'assets' / 'é.svg').write_text('<svg/>\n')
+    (o / 'tests' / 'validation' / 'data').mkdir(parents=True)
+    (o / 'tests' / 'validation' / 'data' / 'x.csv').write_text('1\n')
+    _git(o, 'mv', 'docs/assets/old.svg', 'docs/assets/new.svg')
+    _git(o, 'add', '-A')
+    _git(o, 'update-index', '--add', '--cacheinfo', f'160000,{"1" * 40},lib')
+    _git(o, 'commit', '-qm', 'pr')
+    _git(o, 'switch', '-q', 'main')
+    (o / 'README.md').write_text('r2\n')
+    _git(o, 'commit', '-qam', 'main moves on')
+    _git(o, 'merge', '-q', '--no-ff', '--no-edit', 'pr')
+    ws = tmp_path / 'ws'
+    _git(tmp_path, 'clone', '-q', '--depth=2', o.as_uri(), str(ws))
+    bin_ = tmp_path / 'bin'
+    bin_.mkdir()
+    (bin_ / 'gh').write_text(f'#!/bin/sh\necho "{base if found else ""}"\n')
+    (bin_ / 'gh').chmod(0o755)
+    marker = tmp_path / 'driver_ran'
+    (tmp_path / 'global.cfg').write_text(f'[diff]\n\texternal = touch {marker}\n')
+    (tmp_path / 'review_in').mkdir()
+    env = {
+        **os.environ,
+        'PATH': f'{bin_}:{os.environ["PATH"]}',
+        'RUNNER_TEMP': str(tmp_path),
+        'GITHUB_REPOSITORY': 'o/r',
+        'GIT_CONFIG_GLOBAL': str(tmp_path / 'global.cfg'),
+    }
+    step = _run_block(_step('Write the diff for the model passes'))
+    subprocess.run(['bash', '-e', '-c', step], cwd=ws, env=env, check=True, capture_output=True)
+    patch = (tmp_path / 'review_in' / 'diff.patch').read_text()
+    left = (tmp_path / 'review_in' / 'left_out.txt').read_text().splitlines()
+    rows = {line.split('\t')[2] for line in left if '\t' in line}
+    assert rows == {
+        'docs/assets/new.svg',
+        'docs/assets/old.svg',
+        'docs/assets/é.svg',
+        'tests/validation/data/x.csv',
+    }
+    assert 'Binary files' not in patch
+    assert '+a = 2' in patch
+    assert f'+Subproject commit {"1" * 40}' in patch
+    assert 'b/src/k.csv' in patch
+    assert '.svg' not in patch
+    assert not marker.exists()
+    assert left[0].startswith('The merge base was not found') is not found
+    assert ('-r2' in patch) is not found
 
 
 def test_the_tree_for_the_model_has_no_symlink_and_no_runtime_config(tmp_path):
