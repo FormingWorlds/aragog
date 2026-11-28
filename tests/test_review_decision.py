@@ -1015,7 +1015,12 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'src' / 'a.py').write_text('a = 1\n')
     (o / 'docs' / 'assets' / 'old.svg').write_text('<svg/>\n')
     (o / 'tests' / 'reference').mkdir(parents=True)
-    for name, size in (('gone.json', 30000), ('grow.json', 1), ('moved.json', 30000)):
+    for name, size in (
+        ('gone.json', 30000),
+        ('grow.json', 1),
+        ('moved.json', 30000),
+        ('shrink.json', 30000),
+    ):
         (o / 'tests' / 'reference' / name).write_text('[0]\n' * size)
     (o / 'README.md').write_text('r\n')
     _git(o, 'add', '-A')
@@ -1036,13 +1041,20 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'tests' / 'reference' / 'big.json').write_text('[0]\n' * 30000)
     (o / 'tests' / 'reference' / 'UPPER.JSON').write_text('[1]\n' * 30000)
     (o / 'tests' / 'reference' / 'grow.json').write_text('[0]\n' * 30000)
+    (o / 'tests' / 'reference' / 'shrink.json').write_text('[0]\n')
     (o / 'tests' / 'reference' / 'gone.json').unlink()
+    for name in ('big.tsv', 'big.dat', 'big.txt', 'a[1].json'):
+        (o / 'tests' / 'reference' / name).write_text('[0]\n' * 30000)
+    (o / 'src' / 'edge0.json').write_text('[0]\n' * 25000)
+    (o / 'tests' / 'reference' / 'edge1.json').write_text('[0]\n' * 25000 + 'x')
     _git(o, 'mv', 'tests/reference/moved.json', 'tests/reference/moved2.json')
     (o / 'tools').mkdir()
     (o / 'tools' / 'run.sh').write_bytes(b'rm -rf /\x00\n')
+    (o / 'tools' / 'blob.bin').write_bytes(b'\x00' * 120000)
     _git(o, 'mv', 'docs/assets/old.svg', 'docs/assets/new.svg')
     _git(o, 'add', '-A')
     _git(o, 'update-index', '--add', '--cacheinfo', f'160000,{"1" * 40},lib')
+    _git(o, 'update-index', '--add', '--cacheinfo', f'160000,{"2" * 40},sub.json')
     _git(o, 'commit', '-qm', 'pr')
     _git(o, 'switch', '-q', 'main')
     (o / 'README.md').write_text('r2\n')
@@ -1070,38 +1082,6 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     step = _run_block(_step('Write the diff for the model passes'))
     subprocess.run(['bash', '-e', '-c', step], cwd=ws, env=env, check=True, capture_output=True)
     patch = (tmp_path / 'review_in' / 'diff.patch').read_text()
-    left_out = (tmp_path / 'review_in' / 'left_out.txt').read_text()
-    assert left_out.count('\nKept files') == 1
-    left, kept_binary = left_out.split('\nKept files')
-    rows = {line.split('\t')[2] for line in left.splitlines() if '\t' in line}
-    assert rows == {
-        'docs/assets/Fig.PNG',
-        'docs/assets/new.svg',
-        'docs/assets/old.svg',
-        'docs/assets/é.svg',
-        'tests/reference/big.json',
-        'tests/reference/UPPER.JSON',
-        'tests/reference/gone.json',
-        'tests/reference/grow.json',
-        'tests/reference/moved.json',
-        'tests/reference/moved2.json',
-    }
-    assert sorted(p.name for p in (tmp_path / 'review_in').iterdir()) == [
-        'diff.patch',
-        'left_out.txt',
-    ]
-    assert [line.split('\t')[2] for line in kept_binary.splitlines() if '\t' in line] == [
-        'tools/run.sh'
-    ]
-    assert 'Binary files' not in patch and '\x00' not in patch
-    assert '+rm -rf /<NUL>' in patch
-    assert '+a = 2' in patch
-    assert f'+Subproject commit {"1" * 40}' in patch
-    assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch
-    assert 'b/tests/validation/data/x.csv' in patch
-    assert 'Fig.PNG' not in patch and 'tests/reference/' not in patch
-    assert '.svg' not in patch
-    assert not marker.exists()
     first = patch.splitlines()[0]
     if found:
         assert first.startswith('diff --git')
@@ -1109,6 +1089,53 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     else:
         assert first.startswith('The merge base was not found') and 'appear reversed' in first
         assert '-r2' in patch
+    assert 'Binary files' not in patch and '\x00' not in patch
+    assert '+rm -rf /<NUL>' in patch and 'blob.bin' not in patch
+    assert '+a = 2' in patch
+    assert f'+Subproject commit {"1" * 40}' in patch
+    assert f'+Subproject commit {"2" * 40}' in patch
+    assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch and 'b/src/edge0.json' in patch
+    assert 'b/tests/validation/data/x.csv' in patch
+    assert 'Fig.PNG' not in patch and 'tests/reference/' not in patch
+    assert '.svg' not in patch
+    assert not marker.exists()
+    assert sorted(p.name for p in (tmp_path / 'review_in').iterdir()) == [
+        'diff.patch',
+        'left_out.txt',
+    ]
+    lines = (tmp_path / 'review_in' / 'left_out.txt').read_text().splitlines()
+    head1 = (
+        'Left out of diff.patch (none if no row follows): plots, and text data and binary files'
+        " above 100000 bytes. Columns: lines added, lines removed ('-' for a binary file), path."
+    )
+    head2 = (
+        'Kept files that git reads as binary (none if no row follows);'
+        ' diff.patch shows them as text with <NUL> for a zero byte.'
+    )
+    assert lines[0] == head1 and lines.count(head2) == 1
+    k = lines.index(head2)
+    rows = {line.split('\t')[2] for line in lines[1:k]}
+    assert rows == {
+        'docs/assets/Fig.PNG',
+        'docs/assets/new.svg',
+        'docs/assets/old.svg',
+        'docs/assets/é.svg',
+        'tests/reference/UPPER.JSON',
+        'tests/reference/a[1].json',
+        'tests/reference/big.dat',
+        'tests/reference/big.json',
+        'tests/reference/big.tsv',
+        'tests/reference/big.txt',
+        'tests/reference/edge1.json',
+        'tests/reference/gone.json',
+        'tests/reference/grow.json',
+        'tests/reference/moved.json',
+        'tests/reference/moved2.json',
+        'tests/reference/shrink.json',
+        'tools/blob.bin',
+    }
+    assert '0\t30000\ttests/reference/gone.json' in lines[1:k]
+    assert [line.split('\t')[2] for line in lines[k + 1 :]] == ['tools/run.sh']
 
 
 def test_the_find_prompt_says_where_to_compare_a_left_out_file():
