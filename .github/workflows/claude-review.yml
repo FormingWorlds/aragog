@@ -295,17 +295,18 @@ jobs:
           args=(--no-ext-diff --no-textconv --ignore-submodules=none --no-color "$mb" "$head" --)
           out=(':(glob,icase)**/*.'{svg,png,jpg,jpeg,gif,webp,avif,pdf,npz,npy,nc,h5,hdf5})
           # Text data and files that git reads as binary stay in diff.patch up to lim bytes (the larger
-          # of the head and base sizes); a path with no blob (a submodule) counts as 0.
+          # of the head and base sizes); a path with no blob (a submodule) counts as 0, and a path
+          # that is a directory at the head is never left out, as that would hide the files in it.
           lim=100000
           git diff -z --numstat --no-renames "${args[@]}" > "$in/data"
           shopt -s nocasematch
           while IFS=$'\t' read -r -d '' a d p; do
             [[ $a == - || $p =~ \.(csv|json|dat|txt|tsv)$ ]] || continue
+            [[ $(git cat-file -t "$head:$p" 2>/dev/null) != tree ]] || continue
             s1=$(git cat-file -s "$head:$p" 2>/dev/null || echo 0)
             s0=$(git cat-file -s "$mb:$p" 2>/dev/null || echo 0)
             if (( s1 > lim || s0 > lim )); then out+=(":(literal)$p"); fi
           done < "$in/data"
-          shopt -u nocasematch
           ex=("${out[@]/#:(/:(exclude,}")
           { [ -z "$note" ] || echo "$note"; git -c core.quotepath=false diff --text "${args[@]}" . "${ex[@]}"; } > "$in/diff.patch"
           perl -pi -e 's/\0/<NUL>/g' "$in/diff.patch"
