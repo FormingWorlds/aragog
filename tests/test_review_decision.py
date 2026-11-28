@@ -1030,6 +1030,10 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     (o / 'src' / 'ä.py').write_text('b = 1\n')
     (o / 'tests' / 'validation' / 'data').mkdir(parents=True)
     (o / 'tests' / 'validation' / 'data' / 'x.csv').write_text('1\n')
+    (o / 'tests' / 'reference').mkdir()
+    (o / 'tests' / 'reference' / 'big.json').write_text('[0]\n' * 30000)
+    (o / 'tools').mkdir()
+    (o / 'tools' / 'run.sh').write_bytes(b'rm -rf /\x00\n')
     _git(o, 'mv', 'docs/assets/old.svg', 'docs/assets/new.svg')
     _git(o, 'add', '-A')
     _git(o, 'update-index', '--add', '--cacheinfo', f'160000,{"1" * 40},lib')
@@ -1060,24 +1064,41 @@ def test_the_diff_step_shows_every_change_and_lists_the_plots_and_data(tmp_path,
     step = _run_block(_step('Write the diff for the model passes'))
     subprocess.run(['bash', '-e', '-c', step], cwd=ws, env=env, check=True, capture_output=True)
     patch = (tmp_path / 'review_in' / 'diff.patch').read_text()
-    left = (tmp_path / 'review_in' / 'left_out.txt').read_text().splitlines()
-    rows = {line.split('\t')[2] for line in left if '\t' in line}
+    left_out = (tmp_path / 'review_in' / 'left_out.txt').read_text()
+    assert left_out.count('\nKept files') == 1
+    left, kept_binary = left_out.split('\nKept files')
+    rows = {line.split('\t')[2] for line in left.splitlines() if '\t' in line}
     assert rows == {
         'docs/assets/Fig.PNG',
         'docs/assets/new.svg',
         'docs/assets/old.svg',
         'docs/assets/é.svg',
-        'tests/validation/data/x.csv',
+        'tests/reference/big.json',
     }
-    assert 'Binary files' not in patch
+    assert [line.split('\t')[2] for line in kept_binary.splitlines() if '\t' in line] == [
+        'tools/run.sh'
+    ]
+    assert 'Binary files' not in patch and '\x00' not in patch
+    assert '+rm -rf /<NUL>' in patch
     assert '+a = 2' in patch
     assert f'+Subproject commit {"1" * 40}' in patch
     assert 'b/src/k.csv' in patch and 'b/src/ä.py' in patch
-    assert 'x.csv' not in patch and 'Fig.PNG' not in patch
+    assert 'b/tests/validation/data/x.csv' in patch
+    assert 'big.json' not in patch and 'Fig.PNG' not in patch
     assert '.svg' not in patch
     assert not marker.exists()
-    assert left[0].startswith('The merge base was not found') is not found
-    assert ('-r2' in patch) is not found
+    first = patch.splitlines()[0]
+    if found:
+        assert first.startswith('diff --git')
+        assert '-r2' not in patch
+    else:
+        assert first.startswith('The merge base was not found') and 'appear reversed' in first
+        assert '-r2' in patch
+
+
+def test_the_find_prompt_says_where_to_compare_a_left_out_file():
+    prompt = ' '.join(_step('Find').split())
+    assert 'compare it with ./.review_base/<path>' in prompt
 
 
 def test_the_tree_for_the_model_has_no_symlink_and_no_runtime_config(tmp_path):
